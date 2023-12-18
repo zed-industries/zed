@@ -151,9 +151,7 @@ impl Interactivity {
     {
         self.mouse_move_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && bounds.drag_target_contains(&event.position, cx)
-                {
+                if phase == DispatchPhase::Capture {
                     if cx
                         .active_drag
                         .as_ref()
@@ -1131,19 +1129,19 @@ impl Interactivity {
             });
         }
 
-        if cx.active_drag.is_some() {
-            let drop_listeners = mem::take(&mut self.drop_listeners);
-            let interactive_bounds = interactive_bounds.clone();
-            if !drop_listeners.is_empty() {
-                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble
-                        && interactive_bounds.drag_target_contains(&event.position, cx)
-                    {
-                        if let Some(drag_state_type) = cx
-                            .active_drag
-                            .as_ref()
-                            .map(|drag| drag.value.as_ref().type_id())
+        let mut drag_listener = mem::take(&mut self.drag_listener);
+        let drop_listeners = mem::take(&mut self.drop_listeners);
+        let click_listeners = mem::take(&mut self.click_listeners);
+
+        if !drop_listeners.is_empty() {
+            cx.on_mouse_event({
+                let interactive_bounds = interactive_bounds.clone();
+                move |event: &MouseUpEvent, phase, cx| {
+                    if let Some(drag) = &cx.active_drag {
+                        if phase == DispatchPhase::Bubble
+                            && interactive_bounds.drag_target_contains(&event.position, cx)
                         {
+                            let drag_state_type = drag.value.as_ref().type_id();
                             for (drop_state_type, listener) in &drop_listeners {
                                 if *drop_state_type == drag_state_type {
                                     let drag = cx
@@ -1156,77 +1154,27 @@ impl Interactivity {
                                     cx.stop_propagation();
                                 }
                             }
-                        } else {
-                            cx.active_drag = None;
                         }
                     }
-                });
-            }
+                }
+            });
         }
-
-        let click_listeners = mem::take(&mut self.click_listeners);
-        let mut drag_listener = mem::take(&mut self.drag_listener);
 
         if !click_listeners.is_empty() || drag_listener.is_some() {
             let pending_mouse_down = element_state
                 .pending_mouse_down
                 .get_or_insert_with(Default::default)
                 .clone();
-            let mouse_down = pending_mouse_down.borrow().clone();
-            if let Some(mouse_down) = mouse_down {
-                if drag_listener.is_some() {
-                    let active_state = element_state
-                        .clicked_state
-                        .get_or_insert_with(Default::default)
-                        .clone();
-                    let interactive_bounds = interactive_bounds.clone();
 
-                    cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                        if cx.active_drag.is_some() {
-                            if phase == DispatchPhase::Capture {
-                                cx.notify();
-                            }
-                        } else if phase == DispatchPhase::Bubble
-                            && interactive_bounds.visibly_contains(&event.position, cx)
-                            && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
-                        {
-                            let (drag_value, drag_listener) = drag_listener
-                                .take()
-                                .expect("The notify below should invalidate this callback");
+            let active_state = element_state
+                .clicked_state
+                .get_or_insert_with(Default::default)
+                .clone();
 
-                            *active_state.borrow_mut() = ElementClickedState::default();
-                            let cursor_offset = event.position - bounds.origin;
-                            let drag = (drag_listener)(drag_value.as_ref(), cx);
-                            cx.active_drag = Some(AnyDrag {
-                                view: drag,
-                                value: drag_value,
-                                cursor_offset,
-                            });
-                            cx.notify();
-                            cx.stop_propagation();
-                        }
-                    });
-                }
-
+            cx.on_mouse_event({
                 let interactive_bounds = interactive_bounds.clone();
-                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble
-                        && interactive_bounds.visibly_contains(&event.position, cx)
-                    {
-                        let mouse_click = ClickEvent {
-                            down: mouse_down.clone(),
-                            up: event.clone(),
-                        };
-                        for listener in &click_listeners {
-                            listener(&mouse_click, cx);
-                        }
-                    }
-                    *pending_mouse_down.borrow_mut() = None;
-                    cx.notify();
-                });
-            } else {
-                let interactive_bounds = interactive_bounds.clone();
-                cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                let pending_mouse_down = pending_mouse_down.clone();
+                move |event: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble
                         && event.button == MouseButton::Left
                         && interactive_bounds.visibly_contains(&event.position, cx)
@@ -1234,8 +1182,69 @@ impl Interactivity {
                         *pending_mouse_down.borrow_mut() = Some(event.clone());
                         cx.notify();
                     }
-                });
-            }
+                }
+            });
+
+            cx.on_mouse_event({
+                let pending_mouse_down = pending_mouse_down.clone();
+                move |event: &MouseMoveEvent, phase, cx| {
+                    let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                    if let Some(mouse_down) = pending_mouse_down.clone() {
+                        if cx.active_drag.is_some() {
+                            if phase == DispatchPhase::Capture {
+                                cx.notify();
+                            }
+                        } else if phase == DispatchPhase::Bubble
+                            && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
+                        {
+                            if let Some((drag_value, drag_listener)) = drag_listener.take() {
+                                *active_state.borrow_mut() = ElementClickedState::default();
+                                let cursor_offset = event.position - bounds.origin;
+                                let drag = (drag_listener)(drag_value.as_ref(), cx);
+                                cx.active_drag = Some(AnyDrag {
+                                    view: drag,
+                                    value: drag_value,
+                                    cursor_offset,
+                                });
+                                pending_mouse_down.take();
+                                cx.notify();
+                                cx.stop_propagation();
+                            }
+                        }
+                    }
+                }
+            });
+
+            cx.on_mouse_event({
+                let interactive_bounds = interactive_bounds.clone();
+                let mut captured_mouse_down = None;
+                move |event: &MouseUpEvent, phase, cx| match phase {
+                    // Clear the pending mouse down during the capture phase,
+                    // so that it happens even if another event handler stops
+                    // propagation.
+                    DispatchPhase::Capture => {
+                        let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                        if pending_mouse_down.is_some() {
+                            captured_mouse_down = pending_mouse_down.take();
+                            cx.notify();
+                        }
+                    }
+                    // Fire click handlers during the bubble phase.
+                    DispatchPhase::Bubble => {
+                        if let Some(mouse_down) = captured_mouse_down.take() {
+                            if interactive_bounds.visibly_contains(&event.position, cx) {
+                                let mouse_click = ClickEvent {
+                                    down: mouse_down,
+                                    up: event.clone(),
+                                };
+                                for listener in &click_listeners {
+                                    listener(&mouse_click, cx);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         if let Some(hover_listener) = self.hover_listener.take() {
