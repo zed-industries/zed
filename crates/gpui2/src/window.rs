@@ -2078,8 +2078,8 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     where
         S: 'static,
     {
-        let mut state = self
-                .window_mut()
+        let state = if self.window_mut().drawing {
+            self.window_mut()
                 .next_frame
                 .element_states
                 .remove(global_element_id)
@@ -2088,48 +2088,65 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                         .rendered_frame
                         .element_states
                         .remove(global_element_id)
-                }).map(|any| {
-                    let ElementStateBox {
-                        inner,
+                })
+        } else {
+            self.window_mut()
+                .rendered_frame
+                .element_states
+                .remove(global_element_id)
+        };
 
+        let mut state = state
+            .map(|any| {
+                let ElementStateBox {
+                    inner,
+
+                    #[cfg(debug_assertions)]
+                    type_name,
+                } = any;
+                inner
+                    .downcast::<S>()
+                    .map_err(|_| {
                         #[cfg(debug_assertions)]
-                        type_name
-                    } = any;
-                    inner
-                        .downcast::<S>()
-                        .map_err(|_| {
-                            #[cfg(debug_assertions)]
-                            {
-                                anyhow!(
-                                    "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                    std::any::type_name::<S>(),
-                                    type_name
-                                )
-                            }
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
 
-                            #[cfg(not(debug_assertions))]
-                            {
-                                anyhow!(
-                                    "invalid element state type for id, requested_type {:?}",
-                                    std::any::type_name::<S>(),
-                                )
-                            }
-                        })
-                        .unwrap()
-                });
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap()
+            });
 
         let result = f(&mut state, self);
 
         if let Some(state) = state {
-            self.window_mut().next_frame.element_states.insert(
-                global_element_id.clone(),
-                ElementStateBox {
-                    inner: state,
+            let state = ElementStateBox {
+                inner: state,
 
-                    #[cfg(debug_assertions)]
-                    type_name: std::any::type_name::<S>(),
-                },
-            );
+                #[cfg(debug_assertions)]
+                type_name: std::any::type_name::<S>(),
+            };
+            if self.window().drawing {
+                self.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_element_id.clone(), state);
+            } else {
+                self.window_mut()
+                    .rendered_frame
+                    .element_states
+                    .insert(global_element_id.clone(), state);
+            }
         }
 
         result
