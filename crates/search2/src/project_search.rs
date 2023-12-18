@@ -13,9 +13,9 @@ use editor::{
 use editor::{EditorElement, EditorStyle};
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context as _, Div, Element, EntityId,
-    EventEmitter, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement,
-    KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
+    IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString,
+    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
     WhiteSpace, WindowContext,
 };
 use menu::Confirm;
@@ -91,6 +91,7 @@ enum InputPanel {
 }
 
 pub struct ProjectSearchView {
+    focus_handle: FocusHandle,
     model: Model<ProjectSearch>,
     query_editor: View<Editor>,
     replacement_editor: View<Editor>,
@@ -107,6 +108,7 @@ pub struct ProjectSearchView {
     filters_enabled: bool,
     replace_enabled: bool,
     current_mode: SearchMode,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct SemanticState {
@@ -284,6 +286,7 @@ impl Render for ProjectSearchView {
             div()
                 .flex_1()
                 .size_full()
+                .track_focus(&self.focus_handle)
                 .child(self.results_editor.clone())
                 .into_any()
         } else {
@@ -359,10 +362,10 @@ impl Render for ProjectSearchView {
                     .child(Label::new(text).size(LabelSize::Small))
             });
             v_stack()
-                .track_focus(&self.query_editor.focus_handle(cx))
                 .flex_1()
                 .size_full()
                 .justify_center()
+                .track_focus(&self.focus_handle)
                 .child(
                     h_stack()
                         .size_full()
@@ -377,12 +380,8 @@ impl Render for ProjectSearchView {
 }
 
 impl FocusableView for ProjectSearchView {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        if self.has_matches() {
-            self.results_editor.focus_handle(cx)
-        } else {
-            self.query_editor.focus_handle(cx)
-        }
+    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -783,6 +782,7 @@ impl ProjectSearchView {
         let excerpts;
         let mut replacement_text = None;
         let mut query_text = String::new();
+        let mut subscriptions = Vec::new();
 
         // Read in settings if available
         let (mut options, current_mode, filters_enabled) = if let Some(settings) = settings {
@@ -805,8 +805,7 @@ impl ProjectSearchView {
                 options = SearchOptions::from_query(active_query);
             }
         }
-        cx.observe(&model, |this, _, cx| this.model_changed(cx))
-            .detach();
+        subscriptions.push(cx.observe(&model, |this, _, cx| this.model_changed(cx)));
 
         let query_editor = cx.build_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -815,10 +814,11 @@ impl ProjectSearchView {
             editor
         });
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
-        cx.subscribe(&query_editor, |_, _, event: &EditorEvent, cx| {
-            cx.emit(ViewEvent::EditorEvent(event.clone()))
-        })
-        .detach();
+        subscriptions.push(
+            cx.subscribe(&query_editor, |_, _, event: &EditorEvent, cx| {
+                cx.emit(ViewEvent::EditorEvent(event.clone()))
+            }),
+        );
         let replacement_editor = cx.build_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Replace in project..", cx);
@@ -832,17 +832,17 @@ impl ProjectSearchView {
             editor.set_searchable(false);
             editor
         });
-        cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
-            .detach();
+        subscriptions.push(cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab)));
 
-        cx.subscribe(&results_editor, |this, _, event: &EditorEvent, cx| {
-            if matches!(event, editor::EditorEvent::SelectionsChanged { .. }) {
-                this.update_match_index(cx);
-            }
-            // Reraise editor events for workspace item activation purposes
-            cx.emit(ViewEvent::EditorEvent(event.clone()));
-        })
-        .detach();
+        subscriptions.push(
+            cx.subscribe(&results_editor, |this, _, event: &EditorEvent, cx| {
+                if matches!(event, editor::EditorEvent::SelectionsChanged { .. }) {
+                    this.update_match_index(cx);
+                }
+                // Reraise editor events for workspace item activation purposes
+                cx.emit(ViewEvent::EditorEvent(event.clone()));
+            }),
+        );
 
         let included_files_editor = cx.build_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -851,10 +851,11 @@ impl ProjectSearchView {
             editor
         });
         // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
-        cx.subscribe(&included_files_editor, |_, _, event: &EditorEvent, cx| {
-            cx.emit(ViewEvent::EditorEvent(event.clone()))
-        })
-        .detach();
+        subscriptions.push(
+            cx.subscribe(&included_files_editor, |_, _, event: &EditorEvent, cx| {
+                cx.emit(ViewEvent::EditorEvent(event.clone()))
+            }),
+        );
 
         let excluded_files_editor = cx.build_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -863,13 +864,26 @@ impl ProjectSearchView {
             editor
         });
         // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
-        cx.subscribe(&excluded_files_editor, |_, _, event: &EditorEvent, cx| {
-            cx.emit(ViewEvent::EditorEvent(event.clone()))
-        })
-        .detach();
+        subscriptions.push(
+            cx.subscribe(&excluded_files_editor, |_, _, event: &EditorEvent, cx| {
+                cx.emit(ViewEvent::EditorEvent(event.clone()))
+            }),
+        );
+
+        let focus_handle = cx.focus_handle();
+        subscriptions.push(cx.on_focus_in(&focus_handle, |this, cx| {
+            if this.focus_handle.is_focused(cx) {
+                if this.has_matches() {
+                    this.results_editor.focus_handle(cx).focus(cx);
+                } else {
+                    this.query_editor.focus_handle(cx).focus(cx);
+                }
+            }
+        }));
 
         // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {
+            focus_handle,
             replacement_editor,
             search_id: model.read(cx).search_id,
             model,
@@ -886,6 +900,7 @@ impl ProjectSearchView {
             filters_enabled,
             current_mode,
             replace_enabled: false,
+            _subscriptions: subscriptions,
         };
         this.model_changed(cx);
         this
@@ -1186,6 +1201,7 @@ impl ProjectSearchBar {
             subscription: Default::default(),
         }
     }
+
     fn cycle_mode(&self, _: &CycleMode, cx: &mut ViewContext<Self>) {
         if let Some(view) = self.active_project_search.as_ref() {
             view.update(cx, |this, cx| {
@@ -1197,6 +1213,7 @@ impl ProjectSearchBar {
             });
         }
     }
+
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
@@ -1307,6 +1324,7 @@ impl ProjectSearchBar {
             false
         }
     }
+
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(search) = &self.active_project_search {
             search.update(cx, |this, cx| {
@@ -1400,6 +1418,7 @@ impl ProjectSearchBar {
             });
         }
     }
+
     fn new_placeholder_text(&self, cx: &mut ViewContext<Self>) -> Option<String> {
         let previous_query_keystrokes = cx
             .bindings_for_action(&PreviousHistoryQuery {})
@@ -2305,6 +2324,7 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.clone();
+        let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
             workspace
@@ -2320,8 +2340,14 @@ pub mod tests {
             "Expected no search panel to be active"
         );
 
-        workspace
-            .update(cx, |workspace, cx| {
+        window
+            .update(cx, move |workspace, cx| {
+                assert_eq!(workspace.panes().len(), 1);
+                workspace.panes()[0].update(cx, move |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                });
+
                 ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
             })
             .unwrap();
@@ -2600,6 +2626,7 @@ pub mod tests {
         });
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
+        let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
             workspace
@@ -2613,6 +2640,16 @@ pub mod tests {
             active_item.is_none(),
             "Expected no search panel to be active"
         );
+
+        window
+            .update(cx, move |workspace, cx| {
+                assert_eq!(workspace.panes().len(), 1);
+                workspace.panes()[0].update(cx, move |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                });
+            })
+            .unwrap();
 
         let one_file_entry = cx.update(|cx| {
             workspace
@@ -2734,9 +2771,20 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
         let workspace = window.root(cx).unwrap();
+        let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
+
         window
-            .update(cx, |workspace, cx| {
-                ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+            .update(cx, {
+                let search_bar = search_bar.clone();
+                move |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 1);
+                    workspace.panes()[0].update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+
+                    ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+                }
             })
             .unwrap();
 
@@ -2748,13 +2796,6 @@ pub mod tests {
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
                 .expect("Search view expected to appear after new search event trigger")
-        });
-
-        let search_bar = window.build_view(cx, |cx| {
-            let mut search_bar = ProjectSearchBar::new();
-            search_bar.set_active_pane_item(Some(&search_view), cx);
-            // search_bar.show(cx);
-            search_bar
         });
 
         // Add 3 search items into the history + another unsubmitted one.
