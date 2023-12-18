@@ -2027,20 +2027,33 @@ impl CollabPanel {
     }
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        v_stack().border_1().border_color(gpui::red()).child(
-            Button::new("sign_in", "Sign in to collaborate").on_click(cx.listener(
-                |this, _, cx| {
-                    let client = this.client.clone();
-                    cx.spawn(|_, mut cx| async move {
-                        client
-                            .authenticate_and_connect(true, &cx)
-                            .await
-                            .notify_async_err(&mut cx);
-                    })
-                    .detach()
-                },
-            )),
-        )
+        v_stack()
+            .justify_center()
+            .items_center()
+            .child(v_stack().gap_1().p_4()
+                .child(
+                    Label::new("Work with your team with realtive collaborative editing, voice, shared notes and more.")
+                )
+                .child(
+                    Label::new("Sign in to enable collaboration.")
+                )
+                .child(
+                Button::new("sign_in", "Sign in")
+                    .style(ButtonStyle::Filled)
+                    .full_width()
+                    .on_click(cx.listener(
+                    |this, _, cx| {
+                        let client = this.client.clone();
+                        cx.spawn(|_, mut cx| async move {
+                            client
+                                .authenticate_and_connect(true, &cx)
+                                .await
+                                .notify_async_err(&mut cx);
+                        })
+                        .detach()
+                    },
+                )),
+            ))
     }
 
     fn render_list_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
