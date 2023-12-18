@@ -47,7 +47,11 @@ impl RenderOnce for Avatar {
                 div()
                     .absolute()
                     .z_index(1)
-                    .bg(if is_free { gpui::green() } else { gpui::red() })
+                    .bg(if is_free {
+                        cx.theme().status().created
+                    } else {
+                        cx.theme().status().deleted
+                    })
                     .size(indicator_size)
                     .rounded(indicator_size)
                     .bottom_0()
