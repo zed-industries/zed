@@ -39,6 +39,7 @@ mod private {
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
+pub(crate) use arena::*;
 pub use assets::*;
 pub use color::*;
 pub use ctor::ctor;

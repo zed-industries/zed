@@ -102,6 +102,11 @@ thread_local! {
     pub static FRAME_ARENA: RefCell<Arena> = RefCell::new(Arena::new(16 * 1024 * 1024));
 }
 
+#[inline(always)]
+pub(crate) fn frame_alloc<T>(f: impl FnOnce() -> T) -> ArenaRef<T> {
+    FRAME_ARENA.with_borrow_mut(|arena| arena.alloc(f))
+}
+
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
@@ -829,15 +834,12 @@ impl<'a> WindowContext<'a> {
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
         let order = self.window.next_frame.z_index_stack.clone();
-        let handler = FRAME_ARENA
-            .with_borrow_mut(|arena| {
-                arena.alloc(
-                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
-                        handler(event.downcast_ref().unwrap(), phase, cx)
-                    },
-                )
-            })
-            .map(|handler| handler as _);
+        let handler = frame_alloc(|| {
+            move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
+                handler(event.downcast_ref().unwrap(), phase, cx)
+            }
+        })
+        .map(|handler| handler as _);
         self.window
             .next_frame
             .mouse_listeners
@@ -856,15 +858,14 @@ impl<'a> WindowContext<'a> {
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = FRAME_ARENA
-            .with_borrow_mut(|arena| {
-                arena.alloc(move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                    if let Some(event) = event.downcast_ref::<Event>() {
-                        listener(event, phase, cx)
-                    }
-                })
-            })
-            .map(|handler| handler as _);
+        let listener = frame_alloc(|| {
+            move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                if let Some(event) = event.downcast_ref::<Event>() {
+                    listener(event, phase, cx)
+                }
+            }
+        })
+        .map(|handler| handler as _);
         self.window.next_frame.dispatch_tree.on_key_event(listener);
     }
 
@@ -879,9 +880,7 @@ impl<'a> WindowContext<'a> {
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = FRAME_ARENA
-            .with_borrow_mut(|arena| arena.alloc(listener))
-            .map(|handler| handler as _);
+        let listener = frame_alloc(|| listener).map(|handler| handler as _);
         self.window
             .next_frame
             .dispatch_tree
@@ -1286,15 +1285,12 @@ impl<'a> WindowContext<'a> {
             cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
                 for (action_type, action_listeners) in &cx.app.global_action_listeners {
                     for action_listener in action_listeners.iter().cloned() {
-                        let listener = FRAME_ARENA
-                            .with_borrow_mut(|arena| {
-                                arena.alloc(
-                                    move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                                        action_listener(action, phase, cx)
-                                    },
-                                )
-                            })
-                            .map(|listener| listener as _);
+                        let listener = frame_alloc(|| {
+                            move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                                action_listener(action, phase, cx)
+                            }
+                        })
+                        .map(|listener| listener as _);
                         cx.window
                             .next_frame
                             .dispatch_tree

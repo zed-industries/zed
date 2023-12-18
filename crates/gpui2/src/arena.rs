@@ -12,6 +12,7 @@ struct ArenaElement {
 }
 
 impl Drop for ArenaElement {
+    #[inline(always)]
     fn drop(&mut self) {
         unsafe {
             (self.drop)(self.value);
@@ -48,15 +49,23 @@ impl Arena {
     }
 
     #[inline(always)]
-    pub fn alloc<T>(&mut self, value: T) -> ArenaRef<T> {
+    pub fn alloc<T>(&mut self, f: impl FnOnce() -> T) -> ArenaRef<T> {
+        #[inline(always)]
+        unsafe fn inner_writer<T, F>(ptr: *mut T, f: F)
+        where
+            F: FnOnce() -> T,
+        {
+            ptr::write(ptr, f());
+        }
+
         unsafe fn drop<T>(ptr: NonNull<u8>) {
             std::ptr::drop_in_place(ptr.cast::<T>().as_ptr());
         }
 
         unsafe {
-            let layout = alloc::Layout::for_value(&value).pad_to_align();
+            let layout = alloc::Layout::new::<T>().pad_to_align();
             let ptr = NonNull::new_unchecked(self.start.as_ptr().add(self.offset).cast::<T>());
-            ptr::write(ptr.as_ptr(), value);
+            inner_writer(ptr.as_ptr(), f);
 
             self.elements.push(ArenaElement {
                 value: ptr.cast(),
@@ -92,6 +101,7 @@ impl<T: ?Sized> Clone for ArenaRef<T> {
 }
 
 impl<T: ?Sized> ArenaRef<T> {
+    #[inline(always)]
     pub fn map<U: ?Sized>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaRef<U> {
         ArenaRef {
             ptr: unsafe { NonNull::new_unchecked(f(&mut *self)) },
@@ -110,6 +120,7 @@ impl<T: ?Sized> ArenaRef<T> {
 impl<T: ?Sized> Deref for ArenaRef<T> {
     type Target = T;
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         self.validate();
         unsafe { self.ptr.as_ref() }
@@ -117,6 +128,7 @@ impl<T: ?Sized> Deref for ArenaRef<T> {
 }
 
 impl<T: ?Sized> DerefMut for ArenaRef<T> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.validate();
         unsafe { self.ptr.as_mut() }
@@ -132,20 +144,20 @@ mod tests {
     #[test]
     fn test_arena() {
         let mut arena = Arena::new(1024);
-        let a = arena.alloc(1u64);
-        let b = arena.alloc(2u32);
-        let c = arena.alloc(3u16);
-        let d = arena.alloc(4u8);
+        let a = arena.alloc(|| 1u64);
+        let b = arena.alloc(|| 2u32);
+        let c = arena.alloc(|| 3u16);
+        let d = arena.alloc(|| 4u8);
         assert_eq!(*a, 1);
         assert_eq!(*b, 2);
         assert_eq!(*c, 3);
         assert_eq!(*d, 4);
 
         arena.clear();
-        let a = arena.alloc(5u64);
-        let b = arena.alloc(6u32);
-        let c = arena.alloc(7u16);
-        let d = arena.alloc(8u8);
+        let a = arena.alloc(|| 5u64);
+        let b = arena.alloc(|| 6u32);
+        let c = arena.alloc(|| 7u16);
+        let d = arena.alloc(|| 8u8);
         assert_eq!(*a, 5);
         assert_eq!(*b, 6);
         assert_eq!(*c, 7);
@@ -159,7 +171,7 @@ mod tests {
                 self.0.set(true);
             }
         }
-        arena.alloc(DropGuard(dropped.clone()));
+        arena.alloc(|| DropGuard(dropped.clone()));
         arena.clear();
         assert!(dropped.get());
     }
