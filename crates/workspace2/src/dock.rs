@@ -490,6 +490,7 @@ impl Render for Dock {
             let mut handle = div()
                 .id("resize-handle")
                 .on_drag(DraggedDock(position), |dock, cx| {
+                    cx.stop_propagation();
                     cx.build_view(|_| dock.clone())
                 })
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
@@ -525,8 +526,8 @@ impl Render for Dock {
                         .absolute()
                         .top(px(0.))
                         .left(px(0.))
-                        .w_full()
-                        .h(HANDLE_SIZE)
+                        .h_full()
+                        .w(HANDLE_SIZE)
                         .cursor_col_resize();
                 }
             }
