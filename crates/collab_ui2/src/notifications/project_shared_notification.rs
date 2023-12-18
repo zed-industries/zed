@@ -3,11 +3,13 @@ use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
 use gpui::{
-    px, AppContext, Div, Element, ParentElement, Render, RenderOnce, Size, Styled, ViewContext,
+    img, px, AppContext, Div, Element, ParentElement, Render, Size, Styled, ViewContext,
     VisualContext,
 };
+use settings::Settings;
 use std::sync::{Arc, Weak};
-use ui::{h_stack, v_stack, Avatar, Button, Clickable, Label};
+use theme::ThemeSettings;
+use ui::{h_stack, prelude::*, v_stack, Button, Label};
 use workspace::AppState;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
@@ -21,8 +23,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             worktree_root_names,
         } => {
             let window_size = Size {
-                width: px(380.),
-                height: px(64.),
+                width: px(400.),
+                height: px(96.),
             };
 
             for screen in cx.displays() {
@@ -119,7 +121,13 @@ impl ProjectSharedNotification {
 
     fn render_owner(&self) -> impl Element {
         h_stack()
-            .child(Avatar::new(self.owner.avatar_uri.clone()))
+            .gap_2()
+            .child(
+                img(self.owner.avatar_uri.clone())
+                    .w_16()
+                    .h_16()
+                    .rounded_full(),
+            )
             .child(
                 v_stack()
                     .child(Label::new(self.owner.github_login.clone()))
@@ -142,19 +150,15 @@ impl ProjectSharedNotification {
     fn render_buttons(&self, cx: &mut ViewContext<Self>) -> impl Element {
         let this = cx.view().clone();
         v_stack()
-            .child(Button::new("open", "Open").render(cx).on_click({
+            .child(Button::new("open", "Open").on_click({
                 let this = this.clone();
                 move |_, cx| {
                     this.update(cx, |this, cx| this.join(cx));
                 }
             }))
-            .child(
-                Button::new("dismiss", "Dismiss")
-                    .render(cx)
-                    .on_click(move |_, cx| {
-                        this.update(cx, |this, cx| this.dismiss(cx));
-                    }),
-            )
+            .child(Button::new("dismiss", "Dismiss").on_click(move |_, cx| {
+                this.update(cx, |this, cx| this.dismiss(cx));
+            }))
     }
 }
 
@@ -162,9 +166,25 @@ impl Render for ProjectSharedNotification {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        // TODO: Is there a better place for us to initialize the font?
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (
+                theme_settings.ui_font.family.clone(),
+                theme_settings.ui_font_size.clone(),
+            )
+        };
+
+        cx.set_rem_size(ui_font_size);
+
         h_stack()
+            .font(ui_font)
+            .text_ui()
+            .justify_between()
             .size_full()
-            .bg(gpui::red())
+            .elevation_3(cx)
+            .p_2()
+            .gap_2()
             .child(self.render_owner())
             .child(self.render_buttons(cx))
     }
