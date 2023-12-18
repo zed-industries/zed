@@ -2,10 +2,10 @@ use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     black, div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
     Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, Interactivity,
-    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
-    PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
-    TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels, PlatformInputHandler, Point,
+    Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem,
+    UnderlineStyle, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -759,30 +759,22 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type State = InteractiveElementState;
+    type FrameState = ();
 
-    fn layout(
-        &mut self,
-        element_state: Option<Self::State>,
-        cx: &mut WindowContext<'_>,
-    ) -> (LayoutId, Self::State) {
-        let (layout_id, interactive_state) =
-            self.interactivity
-                .layout(element_state, cx, |mut style, cx| {
-                    style.size.width = relative(1.).into();
-                    style.size.height = relative(1.).into();
-                    let layout_id = cx.request_layout(&style, None);
+    fn layout(&mut self, cx: &mut WindowContext<'_>) -> (LayoutId, Self::FrameState) {
+        let layout_id = self.interactivity.layout(cx, |mut style, _, cx| {
+            style.size.width = relative(1.).into();
+            style.size.height = relative(1.).into();
+            cx.request_layout(&style, None)
+        });
 
-                    layout_id
-                });
-
-        (layout_id, interactive_state)
+        (layout_id, ())
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::State,
+        state: &mut Self::FrameState,
         cx: &mut WindowContext<'_>,
     ) {
         let mut layout = self.compute_layout(bounds, cx);
@@ -812,7 +804,7 @@ impl Element for TerminalElement {
         // })
 
         let mut interactivity = mem::take(&mut self.interactivity);
-        interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
+        interactivity.paint(bounds, bounds.size, cx, |_, _, _, cx| {
             cx.handle_input(&self.focus, terminal_input_handler);
 
             self.register_key_listeners(cx);

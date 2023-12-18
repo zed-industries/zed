@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    point, size, Bounds, DevicePixels, Element, ImageData, InteractiveElement,
-    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedString, Size,
-    StyleRefinement, Styled, WindowContext,
+    point, size, Bounds, DevicePixels, Element, ImageData, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Pixels, SharedString, Size, StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
 use media::core_video::CVImageBuffer;
@@ -69,30 +68,19 @@ impl Img {
 }
 
 impl Element for Img {
-    type State = InteractiveElementState;
+    type FrameState = ();
 
-    fn layout(
-        &mut self,
-        element_state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
-        self.interactivity
-            .layout(element_state, cx, |style, cx| cx.request_layout(&style, []))
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
+        let layout_id = self
+            .interactivity
+            .layout(cx, |style, _, cx| cx.request_layout(&style, []));
+        (layout_id, ())
     }
 
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        element_state: &mut Self::State,
-        cx: &mut WindowContext,
-    ) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, _: &mut Self::FrameState, cx: &mut WindowContext) {
         let source = self.source.clone();
-        self.interactivity.paint(
-            bounds,
-            bounds.size,
-            element_state,
-            cx,
-            |style, _scroll_offset, cx| {
+        self.interactivity
+            .paint(bounds, bounds.size, cx, |style, _, _, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.with_z_index(1, |cx| {
                     match source {
@@ -130,8 +118,7 @@ impl Element for Img {
                         }
                     };
                 });
-            },
-        )
+            })
     }
 }
 

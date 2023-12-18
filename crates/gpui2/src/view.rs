@@ -79,19 +79,15 @@ impl<V: 'static> View<V> {
 }
 
 impl<V: Render> Element for View<V> {
-    type State = Option<AnyElement>;
+    type FrameState = Option<AnyElement>;
 
-    fn layout(
-        &mut self,
-        _state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
         let mut element = self.update(cx, |view, cx| view.render(cx).into_any());
         let layout_id = element.layout(cx);
         (layout_id, Some(element))
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::FrameState, cx: &mut WindowContext) {
         element.take().unwrap().paint(cx);
     }
 }
@@ -227,18 +223,14 @@ impl<V: Render> From<View<V>> for AnyView {
 }
 
 impl Element for AnyView {
-    type State = Option<AnyElement>;
+    type FrameState = Option<AnyElement>;
 
-    fn layout(
-        &mut self,
-        _state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
         let (layout_id, state) = (self.layout)(self, cx);
         (layout_id, Some(state))
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, state: &mut Self::FrameState, cx: &mut WindowContext) {
         debug_assert!(
             state.is_some(),
             "state is None. Did you include an AnyView twice in the tree?"

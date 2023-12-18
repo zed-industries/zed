@@ -24,28 +24,25 @@ impl Svg {
 }
 
 impl Element for Svg {
-    type State = InteractiveElementState;
+    type FrameState = ();
 
-    fn layout(
-        &mut self,
-        element_state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
-        self.interactivity.layout(element_state, cx, |style, cx| {
-            cx.request_layout(&style, None)
-        })
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
+        let layout_id = self
+            .interactivity
+            .layout(cx, |style, _, cx| cx.request_layout(&style, None));
+        (layout_id, ())
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut WindowContext,
     ) where
         Self: Sized,
     {
         self.interactivity
-            .paint(bounds, bounds.size, element_state, cx, |style, _, cx| {
+            .paint(bounds, bounds.size, cx, |style, _, _, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     cx.paint_svg(bounds, path.clone(), color).log_err();
                 }

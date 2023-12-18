@@ -1,22 +1,18 @@
 use crate::{
-    Bounds, DispatchPhase, Element, ElementId, HighlightStyle, IntoElement, LayoutId,
+    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, HighlightStyle, IntoElement, LayoutId,
     MouseDownEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle,
     WhiteSpace, WindowContext, WrappedLine,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
-use std::{cell::Cell, mem, ops::Range, rc::Rc, sync::Arc};
+use std::{mem, ops::Range, sync::Arc};
 use util::ResultExt;
 
 impl Element for &'static str {
-    type State = TextState;
+    type FrameState = TextState;
 
-    fn layout(
-        &mut self,
-        _: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(SharedString::from(*self), None, cx);
         (layout_id, state)
@@ -40,13 +36,9 @@ impl IntoElement for &'static str {
 }
 
 impl Element for SharedString {
-    type State = TextState;
+    type FrameState = TextState;
 
-    fn layout(
-        &mut self,
-        _: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
@@ -116,19 +108,20 @@ impl StyledText {
 }
 
 impl Element for StyledText {
-    type State = TextState;
+    type FrameState = TextState;
 
-    fn layout(
-        &mut self,
-        _: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::FrameState,
+        cx: &mut WindowContext,
+    ) {
         state.paint(bounds, &self.text, cx)
     }
 }
@@ -295,9 +288,9 @@ struct InteractiveTextClickEvent {
     mouse_up_index: usize,
 }
 
+#[derive(Default)]
 pub struct InteractiveTextState {
-    text_state: TextState,
-    mouse_down_index: Rc<Cell<Option<usize>>>,
+    mouse_down_index: Option<usize>,
 }
 
 impl InteractiveText {
@@ -329,86 +322,93 @@ impl InteractiveText {
 }
 
 impl Element for InteractiveText {
-    type State = InteractiveTextState;
+    type FrameState = TextState;
 
-    fn layout(
-        &mut self,
-        state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State) {
-        if let Some(InteractiveTextState {
-            mouse_down_index, ..
-        }) = state
-        {
-            let (layout_id, text_state) = self.text.layout(None, cx);
-            let element_state = InteractiveTextState {
-                text_state,
-                mouse_down_index,
-            };
-            (layout_id, element_state)
-        } else {
-            let (layout_id, text_state) = self.text.layout(None, cx);
-            let element_state = InteractiveTextState {
-                text_state,
-                mouse_down_index: Rc::default(),
-            };
-            (layout_id, element_state)
-        }
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::FrameState) {
+        self.text.layout(cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        if let Some(click_listener) = self.click_listener.take() {
-            if let Some(ix) = state
-                .text_state
-                .index_for_position(bounds, cx.mouse_position())
-            {
-                if self
-                    .clickable_ranges
-                    .iter()
-                    .any(|range| range.contains(&ix))
-                {
-                    cx.set_cursor_style(crate::CursorStyle::PointingHand)
-                }
-            }
-
-            let text_state = state.text_state.clone();
-            let mouse_down = state.mouse_down_index.clone();
-            if let Some(mouse_down_index) = mouse_down.get() {
-                let clickable_ranges = mem::take(&mut self.clickable_ranges);
-                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble {
-                        if let Some(mouse_up_index) =
-                            text_state.index_for_position(bounds, event.position)
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        text_state: &mut Self::FrameState,
+        cx: &mut WindowContext,
+    ) {
+        cx.with_element_id(Some(self.element_id.clone()), |global_element_id, cx| {
+            let global_element_id = global_element_id.unwrap();
+            cx.with_element_state::<InteractiveTextState, _>(
+                &global_element_id,
+                |element_state, cx| {
+                    let element_state = element_state.get_or_insert_with(Default::default);
+                    if let Some(click_listener) = self.click_listener.take() {
+                        if let Some(ix) = text_state.index_for_position(bounds, cx.mouse_position())
                         {
-                            click_listener(
-                                &clickable_ranges,
-                                InteractiveTextClickEvent {
-                                    mouse_down_index,
-                                    mouse_up_index,
-                                },
-                                cx,
-                            )
+                            if self
+                                .clickable_ranges
+                                .iter()
+                                .any(|range| range.contains(&ix))
+                            {
+                                cx.set_cursor_style(crate::CursorStyle::PointingHand)
+                            }
                         }
 
-                        mouse_down.take();
-                        cx.notify();
-                    }
-                });
-            } else {
-                cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
-                    if phase == DispatchPhase::Bubble {
-                        if let Some(mouse_down_index) =
-                            text_state.index_for_position(bounds, event.position)
-                        {
-                            mouse_down.set(Some(mouse_down_index));
-                            cx.notify();
+                        let text_state = text_state.clone();
+                        if let Some(mouse_down_index) = element_state.mouse_down_index {
+                            let global_element_id = global_element_id.clone();
+                            let clickable_ranges = mem::take(&mut self.clickable_ranges);
+                            cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    if let Some(mouse_up_index) =
+                                        text_state.index_for_position(bounds, event.position)
+                                    {
+                                        click_listener(
+                                            &clickable_ranges,
+                                            InteractiveTextClickEvent {
+                                                mouse_down_index,
+                                                mouse_up_index,
+                                            },
+                                            cx,
+                                        )
+                                    }
+
+                                    cx.with_element_state::<InteractiveTextState, _>(
+                                        &global_element_id,
+                                        |element_state, cx| {
+                                            if let Some(element_state) = element_state {
+                                                element_state.mouse_down_index = None;
+                                                cx.notify();
+                                            }
+                                        },
+                                    );
+                                }
+                            });
+                        } else {
+                            let global_element_id = global_element_id.clone();
+                            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    if let Some(mouse_down_index) =
+                                        text_state.index_for_position(bounds, event.position)
+                                    {
+                                        cx.with_element_state::<InteractiveTextState, _>(
+                                            &global_element_id,
+                                            |element_state, cx| {
+                                                if let Some(element_state) = element_state {
+                                                    element_state.mouse_down_index =
+                                                        Some(mouse_down_index);
+                                                    cx.notify();
+                                                }
+                                            },
+                                        );
+                                    }
+                                }
+                            });
                         }
                     }
-                });
-            }
-        }
+                },
+            )
+        });
 
-        self.text.paint(bounds, &mut state.text_state, cx)
+        self.text.paint(bounds, text_state, cx)
     }
 }
 

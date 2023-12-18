@@ -126,20 +126,19 @@ pub struct PopoverMenuState<M> {
 }
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
-    type State = PopoverMenuState<M>;
+    type FrameState = PopoverMenuState<M>;
 
-    fn layout(
-        &mut self,
-        element_state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (gpui::LayoutId, Self::State) {
+    fn layout(&mut self, cx: &mut WindowContext) -> (gpui::LayoutId, Self::FrameState) {
         let mut menu_layout_id = None;
 
-        let (menu, child_bounds) = if let Some(element_state) = element_state {
-            (element_state.menu, element_state.child_bounds)
-        } else {
-            (Rc::default(), None)
-        };
+        // todo!()
+        // let (menu, child_bounds) = if let Some(element_state) = element_state {
+        //     (element_state.menu, element_state.child_bounds)
+        // } else {
+        //     (Rc::default(), None)
+        // };
+        let menu: Rc<RefCell<Option<View<M>>>> = Rc::default();
+        let child_bounds = None;
 
         let menu_element = menu.borrow_mut().as_mut().map(|menu| {
             let mut overlay = overlay().snap_to_window().anchor(self.anchor);
@@ -184,7 +183,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn paint(
         &mut self,
         _: Bounds<gpui::Pixels>,
-        element_state: &mut Self::State,
+        element_state: &mut Self::FrameState,
         cx: &mut WindowContext,
     ) {
         if let Some(mut child) = element_state.child_element.take() {

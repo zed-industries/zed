@@ -1977,17 +1977,18 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     fn with_element_id<R>(
         &mut self,
         id: Option<impl Into<ElementId>>,
-        f: impl FnOnce(&mut Self) -> R,
+        f: impl FnOnce(Option<GlobalElementId>, &mut Self) -> R,
     ) -> R {
         if let Some(id) = id.map(Into::into) {
             let window = self.window_mut();
             window.element_id_stack.push(id.into());
-            let result = f(self);
+            let global_element_id = window.element_id_stack.clone();
+            let result = f(Some(global_element_id), self);
             let window: &mut Window = self.borrow_mut();
             window.element_id_stack.pop();
             result
         } else {
-            f(self)
+            f(None, self)
         }
     }
 
@@ -2071,90 +2072,67 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// when drawing the next frame.
     fn with_element_state<S, R>(
         &mut self,
-        id: ElementId,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+        global_element_id: &GlobalElementId,
+        f: impl FnOnce(&mut Option<Box<S>>, &mut Self) -> R,
     ) -> R
     where
         S: 'static,
     {
-        self.with_element_id(Some(id), |cx| {
-            let global_id = cx.window().element_id_stack.clone();
-
-            if let Some(any) = cx
+        let mut state = self
                 .window_mut()
                 .next_frame
                 .element_states
-                .remove(&global_id)
+                .remove(global_element_id)
                 .or_else(|| {
-                    cx.window_mut()
+                    self.window_mut()
                         .rendered_frame
                         .element_states
-                        .remove(&global_id)
-                })
-            {
-                let ElementStateBox {
-                    inner,
-
-                    #[cfg(debug_assertions)]
-                    type_name
-                } = any;
-                // Using the extra inner option to avoid needing to reallocate a new box.
-                let mut state_box = inner
-                    .downcast::<Option<S>>()
-                    .map_err(|_| {
-                        #[cfg(debug_assertions)]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                std::any::type_name::<S>(),
-                                type_name
-                            )
-                        }
-
-                        #[cfg(not(debug_assertions))]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}",
-                                std::any::type_name::<S>(),
-                            )
-                        }
-                    })
-                    .unwrap();
-
-                // Actual: Option<AnyElement> <- View
-                // Requested: () <- AnyElemet
-                let state = state_box
-                    .take()
-                    .expect("element state is already on the stack");
-                let (result, state) = f(Some(state), cx);
-                state_box.replace(state);
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id, ElementStateBox {
-                        inner: state_box,
+                        .remove(global_element_id)
+                }).map(|any| {
+                    let ElementStateBox {
+                        inner,
 
                         #[cfg(debug_assertions)]
                         type_name
-                    });
-                result
-            } else {
-                let (result, state) = f(None, cx);
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id,
-                        ElementStateBox {
-                            inner: Box::new(Some(state)),
-
+                    } = any;
+                    inner
+                        .downcast::<S>()
+                        .map_err(|_| {
                             #[cfg(debug_assertions)]
-                            type_name: std::any::type_name::<S>()
-                        }
+                            {
+                                anyhow!(
+                                    "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                    std::any::type_name::<S>(),
+                                    type_name
+                                )
+                            }
 
-                    );
-                result
-            }
-        })
+                            #[cfg(not(debug_assertions))]
+                            {
+                                anyhow!(
+                                    "invalid element state type for id, requested_type {:?}",
+                                    std::any::type_name::<S>(),
+                                )
+                            }
+                        })
+                        .unwrap()
+                });
+
+        let result = f(&mut state, self);
+
+        if let Some(state) = state {
+            self.window_mut().next_frame.element_states.insert(
+                global_element_id.clone(),
+                ElementStateBox {
+                    inner: state,
+
+                    #[cfg(debug_assertions)]
+                    type_name: std::any::type_name::<S>(),
+                },
+            );
+        }
+
+        result
     }
 
     /// Obtain the current content mask.

@@ -300,13 +300,9 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type State = ();
+    type FrameState = ();
 
-    fn layout(
-        &mut self,
-        _state: Option<Self::State>,
-        cx: &mut crate::WindowContext,
-    ) -> (crate::LayoutId, Self::State) {
+    fn layout(&mut self, cx: &mut crate::WindowContext) -> (crate::LayoutId, Self::FrameState) {
         let mut style = Style::default();
         style.refine(&self.style);
         let layout_id = cx.with_text_style(style.text_style().cloned(), |cx| {
@@ -318,7 +314,7 @@ impl Element for List {
     fn paint(
         &mut self,
         bounds: crate::Bounds<crate::Pixels>,
-        _state: &mut Self::State,
+        _state: &mut Self::FrameState,
         cx: &mut crate::WindowContext,
     ) {
         let state = &mut *self.state.0.borrow_mut();
