@@ -2230,15 +2230,17 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        let mut row = h_stack()
+        h_stack()
             .w_full()
             .group("section-header")
             .child(
                 ListHeader::new(text)
-                    .toggle(if can_collapse {
-                        Some(!is_collapsed)
-                    } else {
-                        None
+                    .when(can_collapse, |header| {
+                        header.toggle(Some(!is_collapsed)).on_toggle(cx.listener(
+                            move |this, event, cx| {
+                                this.toggle_section_expanded(section, cx);
+                            },
+                        ))
                     })
                     .inset(true)
                     .end_slot::<AnyElement>(button)
@@ -2253,13 +2255,7 @@ impl CollabPanel {
                             })
                             .detach_and_log_err(cx)
                     }))
-            });
-
-        if section == Section::Offline {
-            row = div().border_1().border_color(gpui::red()).child(row);
-        }
-
-        row
+            })
     }
 
     fn render_contact(
