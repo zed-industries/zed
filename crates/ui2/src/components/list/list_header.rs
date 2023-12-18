@@ -1,5 +1,6 @@
+use gpui::{AnyElement, ClickEvent, Div, Stateful};
+
 use crate::{h_stack, prelude::*, Disclosure, Label};
-use gpui::{AnyElement, ClickEvent, Div};
 
 #[derive(IntoElement)]
 pub struct ListHeader {
@@ -75,48 +76,52 @@ impl Selectable for ListHeader {
 }
 
 impl RenderOnce for ListHeader {
-    type Rendered = Div;
+    type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        h_stack().w_full().relative().group("list_header").child(
-            div()
-                .h_7()
-                .when(self.inset, |this| this.px_2())
-                .when(self.selected, |this| {
-                    this.bg(cx.theme().colors().ghost_element_selected)
-                })
-                .flex()
-                .flex_1()
-                .items_center()
-                .justify_between()
-                .w_full()
-                .gap_1()
-                .child(
-                    h_stack()
-                        .gap_1()
-                        .children(
-                            self.toggle
-                                .map(|is_open| Disclosure::new(is_open).on_toggle(self.on_toggle)),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap_1()
-                                .items_center()
-                                .children(self.start_slot)
-                                .child(Label::new(self.label.clone()).color(Color::Muted)),
-                        ),
-                )
-                .child(h_stack().children(self.end_slot))
-                .when_some(self.end_hover_slot, |this, end_hover_slot| {
-                    this.child(
-                        div()
-                            .absolute()
-                            .right_0()
-                            .visible_on_hover("list_header")
-                            .child(end_hover_slot),
+        h_stack()
+            .id(self.label.clone())
+            .w_full()
+            .relative()
+            .group("list_header")
+            .child(
+                div()
+                    .h_7()
+                    .when(self.inset, |this| this.px_2())
+                    .when(self.selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_selected)
+                    })
+                    .flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .children(self.toggle.map(|is_open| {
+                                Disclosure::new("toggle", is_open).on_toggle(self.on_toggle)
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .children(self.start_slot)
+                                    .child(Label::new(self.label.clone()).color(Color::Muted)),
+                            ),
                     )
-                }),
-        )
+                    .child(h_stack().children(self.end_slot))
+                    .when_some(self.end_hover_slot, |this, end_hover_slot| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .right_0()
+                                .visible_on_hover("list_header")
+                                .child(end_hover_slot),
+                        )
+                    }),
+            )
     }
 }

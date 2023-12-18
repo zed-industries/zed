@@ -193,7 +193,7 @@ impl RenderOnce for ListItem {
                             .absolute()
                             .left(rems(-1.))
                             .when(is_open, |this| this.visible_on_hover(""))
-                            .child(Disclosure::new(is_open).on_toggle(self.on_toggle))
+                            .child(Disclosure::new("toggle", is_open).on_toggle(self.on_toggle))
                     }))
                     .child(
                         h_stack()

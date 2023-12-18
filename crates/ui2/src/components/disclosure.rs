@@ -4,13 +4,15 @@ use crate::{prelude::*, Color, Icon, IconButton, IconSize};
 
 #[derive(IntoElement)]
 pub struct Disclosure {
+    id: ElementId,
     is_open: bool,
     on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl Disclosure {
-    pub fn new(is_open: bool) -> Self {
+    pub fn new(id: impl Into<ElementId>, is_open: bool) -> Self {
         Self {
+            id: id.into(),
             is_open,
             on_toggle: None,
         }
@@ -30,7 +32,7 @@ impl RenderOnce for Disclosure {
 
     fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
         IconButton::new(
-            "toggle",
+            self.id,
             match self.is_open {
                 true => Icon::ChevronDown,
                 false => Icon::ChevronRight,

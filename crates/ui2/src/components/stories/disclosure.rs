@@ -13,8 +13,8 @@ impl Render for DisclosureStory {
         Story::container()
             .child(Story::title_for::<Disclosure>())
             .child(Story::label("Toggled"))
-            .child(Disclosure::new(true))
+            .child(Disclosure::new("toggled", true))
             .child(Story::label("Not Toggled"))
-            .child(Disclosure::new(false))
+            .child(Disclosure::new("not_toggled", false))
     }
 }
