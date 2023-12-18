@@ -3,8 +3,7 @@ use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
 use gpui::{
-    img, px, AppContext, Div, Element, ParentElement, Render, Size, Styled, ViewContext,
-    VisualContext,
+    img, px, AppContext, Div, ParentElement, Render, Size, Styled, ViewContext, VisualContext,
 };
 use settings::Settings;
 use std::sync::{Arc, Weak};
@@ -118,48 +117,6 @@ impl ProjectSharedNotification {
             });
         }
     }
-
-    fn render_owner(&self) -> impl Element {
-        h_stack()
-            .gap_2()
-            .child(
-                img(self.owner.avatar_uri.clone())
-                    .w_16()
-                    .h_16()
-                    .rounded_full(),
-            )
-            .child(
-                v_stack()
-                    .child(Label::new(self.owner.github_login.clone()))
-                    .child(Label::new(format!(
-                        "is sharing a project in Zed{}",
-                        if self.worktree_root_names.is_empty() {
-                            ""
-                        } else {
-                            ":"
-                        }
-                    )))
-                    .children(if self.worktree_root_names.is_empty() {
-                        None
-                    } else {
-                        Some(Label::new(self.worktree_root_names.join(", ")))
-                    }),
-            )
-    }
-
-    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> impl Element {
-        let this = cx.view().clone();
-        v_stack()
-            .child(Button::new("open", "Open").on_click({
-                let this = this.clone();
-                move |_, cx| {
-                    this.update(cx, |this, cx| this.join(cx));
-                }
-            }))
-            .child(Button::new("dismiss", "Dismiss").on_click(move |_, cx| {
-                this.update(cx, |this, cx| this.dismiss(cx));
-            }))
-    }
 }
 
 impl Render for ProjectSharedNotification {
@@ -185,7 +142,45 @@ impl Render for ProjectSharedNotification {
             .elevation_3(cx)
             .p_2()
             .gap_2()
-            .child(self.render_owner())
-            .child(self.render_buttons(cx))
+            .child(
+                h_stack()
+                    .gap_2()
+                    .child(
+                        img(self.owner.avatar_uri.clone())
+                            .w_16()
+                            .h_16()
+                            .rounded_full(),
+                    )
+                    .child(
+                        v_stack()
+                            .child(Label::new(self.owner.github_login.clone()))
+                            .child(Label::new(format!(
+                                "is sharing a project in Zed{}",
+                                if self.worktree_root_names.is_empty() {
+                                    ""
+                                } else {
+                                    ":"
+                                }
+                            )))
+                            .children(if self.worktree_root_names.is_empty() {
+                                None
+                            } else {
+                                Some(Label::new(self.worktree_root_names.join(", ")))
+                            }),
+                    ),
+            )
+            .child(
+                v_stack()
+                    .child(Button::new("open", "Open").on_click(cx.listener(
+                        move |this, _event, cx| {
+                            this.join(cx);
+                        },
+                    )))
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        move |this, _event, cx| {
+                            this.dismiss(cx);
+                        },
+                    ))),
+            )
     }
 }
