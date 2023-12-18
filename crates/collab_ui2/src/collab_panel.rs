@@ -2028,17 +2028,20 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_stack()
-            .justify_center()
+            // .flex_1()
+            // .justify_center()
             .items_center()
-            .child(v_stack().gap_1().p_4()
+            .child(v_stack().gap_6().p_4()
                 .child(
-                    Label::new("Work with your team with realtive collaborative editing, voice, shared notes and more.")
+                    Label::new("Work with your team in realtime with collaborative editing, voice, shared notes and more.")
                 )
-                .child(
-                    Label::new("Sign in to enable collaboration.")
-                )
+                .child(v_stack().gap_2()
+
                 .child(
                 Button::new("sign_in", "Sign in")
+                    .icon_color(Color::Muted)
+                    .icon(Icon::Github)
+                    .icon_position(IconPosition::Start)
                     .style(ButtonStyle::Filled)
                     .full_width()
                     .on_click(cx.listener(
@@ -2052,6 +2055,12 @@ impl CollabPanel {
                         })
                         .detach()
                     },
+                )))
+                .child(
+                div().flex().w_full().items_center().child(
+                    Label::new("Sign in to enable collaboration.")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
                 )),
             ))
     }
