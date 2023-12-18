@@ -117,11 +117,6 @@ impl Render for Toolbar {
                                 .children(self.left_items().map(|item| item.to_any())),
                         )
                     })
-                    // Render an empty div that takes up the space between
-                    // the left and right sides. This won't cause items to
-                    // be centered like justify_center() will if left or
-                    // right is missing.
-                    .child(div().flex_1())
                     .when(self.right_items().count() > 0, |this| {
                         this.child(
                             h_stack()
