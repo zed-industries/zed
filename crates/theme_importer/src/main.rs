@@ -10,6 +10,7 @@ use std::process::Command;
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context, Result};
+use clap::Parser;
 use convert_case::{Case, Casing};
 use gpui::serde_json;
 use indexmap::IndexMap;
@@ -61,16 +62,34 @@ pub struct ThemeMetadata {
     pub appearance: ThemeAppearanceJson,
 }
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Whether to warn when values are missing from the theme.
+    #[arg(long)]
+    warn_on_missing: bool,
+}
+
 fn main() -> Result<()> {
     const SOURCE_PATH: &str = "assets/themes/src/vscode";
     const OUT_PATH: &str = "crates/theme2/src/themes";
 
-    let log_config = simplelog::ConfigBuilder::new()
-        .set_level_color(log::Level::Trace, simplelog::Color::Cyan)
-        .set_level_color(log::Level::Info, simplelog::Color::Blue)
-        .set_level_color(log::Level::Warn, simplelog::Color::Yellow)
-        .set_level_color(log::Level::Error, simplelog::Color::Red)
-        .build();
+    let args = Args::parse();
+
+    let log_config = {
+        let mut config = simplelog::ConfigBuilder::new();
+        config
+            .set_level_color(log::Level::Trace, simplelog::Color::Cyan)
+            .set_level_color(log::Level::Info, simplelog::Color::Blue)
+            .set_level_color(log::Level::Warn, simplelog::Color::Yellow)
+            .set_level_color(log::Level::Error, simplelog::Color::Red);
+
+        if !args.warn_on_missing {
+            config.add_filter_ignore_str("theme_printer");
+        }
+
+        config.build()
+    };
 
     TermLogger::init(LevelFilter::Trace, log_config, TerminalMode::Mixed)
         .expect("could not initialize logger");
