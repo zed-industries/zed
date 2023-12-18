@@ -1,0 +1,3 @@
+#!/bin/bash
+
+cargo run -p theme_importer

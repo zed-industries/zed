@@ -48,6 +48,8 @@ pub fn dracula() -> UserThemeFamily {
                     editor_gutter_background: Some(rgba(0x282a36ff).into()),
                     editor_line_number: Some(rgba(0x6272a4ff).into()),
                     editor_active_line_number: Some(rgba(0xf8f8f2ff).into()),
+                    editor_wrap_guide: Some(rgba(0xbd93f9ff).into()),
+                    editor_active_wrap_guide: Some(rgba(0xbd93f9ff).into()),
                     terminal_background: Some(rgba(0x282a36ff).into()),
                     terminal_ansi_bright_black: Some(rgba(0x6272a4ff).into()),
                     terminal_ansi_bright_red: Some(rgba(0xff6e6eff).into()),
