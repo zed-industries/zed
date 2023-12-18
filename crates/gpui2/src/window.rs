@@ -99,12 +99,12 @@ struct FocusEvent {
 slotmap::new_key_type! { pub struct FocusId; }
 
 thread_local! {
-    pub static FRAME_ARENA: RefCell<Arena> = RefCell::new(Arena::new(16 * 1024 * 1024));
+    pub static FRAME_ARENA: RefCell<Option<Arena>> = RefCell::new(None);
 }
 
 #[inline(always)]
 pub(crate) fn frame_alloc<T>(f: impl FnOnce() -> T) -> ArenaRef<T> {
-    FRAME_ARENA.with_borrow_mut(|arena| arena.alloc(f))
+    FRAME_ARENA.with_borrow_mut(|arena| arena.as_mut().unwrap().alloc(f))
 }
 
 impl FocusId {
@@ -254,6 +254,7 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    frame_arena: Option<Arena>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     blur_listeners: SubscriberSet<(), AnyObserver>,
@@ -397,6 +398,7 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            frame_arena: Some(Arena::new(16 * 1024 * 1024)),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             blur_listeners: SubscriberSet::new(),
@@ -1278,7 +1280,9 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.clear_input_handler();
         self.window.layout_engine.as_mut().unwrap().clear();
         self.window.next_frame.clear();
-        FRAME_ARENA.with_borrow_mut(|arena| arena.clear());
+        let mut frame_arena = self.window.frame_arena.take().unwrap();
+        frame_arena.clear();
+        FRAME_ARENA.replace(Some(frame_arena));
         let root_view = self.window.root_view.take().unwrap();
 
         self.with_z_index(0, |cx| {
@@ -1364,6 +1368,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.drawing = false;
+        self.window.frame_arena = Some(FRAME_ARENA.take().unwrap());
 
         scene
     }
