@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, ElementId, InteractiveElement, InteractiveElementState, Interactivity,
-    IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
+    Bounds, Element, ElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels,
+    SharedString, StyleRefinement, Styled, WindowContext,
 };
 use util::ResultExt;
 
@@ -33,12 +33,8 @@ impl Element for Svg {
         (layout_id, ())
     }
 
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        element_state: &mut Self::FrameState,
-        cx: &mut WindowContext,
-    ) where
+    fn paint(&mut self, bounds: Bounds<Pixels>, _: &mut Self::FrameState, cx: &mut WindowContext)
+    where
         Self: Sized,
     {
         self.interactivity

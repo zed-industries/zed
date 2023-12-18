@@ -1465,7 +1465,9 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
         let mut draw = window_state.lock().draw.take().unwrap();
+        let t0 = std::time::Instant::now();
         let scene = draw().log_err();
+        eprintln!("window draw: {:?}", t0.elapsed());
         let mut window_state = window_state.lock();
         window_state.draw = Some(draw);
         if let Some(scene) = scene {

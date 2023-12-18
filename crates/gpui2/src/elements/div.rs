@@ -1221,10 +1221,8 @@ impl Interactivity {
                         });
                     }
 
-                    dbg!("!!!!!!!!!!!!");
                     let interactive_bounds = interactive_bounds.clone();
                     cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
-                        dbg!("hey");
                         if phase == DispatchPhase::Bubble
                             && interactive_bounds.visibly_contains(&event.position, cx)
                         {
@@ -1259,7 +1257,6 @@ impl Interactivity {
                                 &global_element_id,
                                 |element_state, _cx| {
                                     if let Some(element_state) = element_state {
-                                        dbg!("setting pending mouse down");
                                         element_state.pending_mouse_down = Some(event.clone());
                                     }
                                 },
@@ -1456,10 +1453,10 @@ impl Interactivity {
                     }
                 });
             }
+        }
 
-            if let Some(group) = self.group.clone() {
-                GroupBounds::push(group, bounds, cx);
-            }
+        if let Some(group) = self.group.clone() {
+            GroupBounds::push(group, bounds, cx);
         }
 
         let scroll_offset = element_state
@@ -1510,10 +1507,8 @@ impl Interactivity {
         cx.with_element_id(self.element_id.clone(), |global_element_id, cx| {
             if let Some(global_element_id) = global_element_id {
                 cx.with_element_state(&global_element_id, |element_state, cx| {
-                    let mut element_state = element_state.get_or_insert_with(|| {
-                        println!("default InteractiveElementState");
-                        Box::<InteractiveElementState>::default()
-                    });
+                    let mut element_state = element_state
+                        .get_or_insert_with(|| Box::<InteractiveElementState>::default());
                     f(self, Some((&global_element_id, &mut element_state)), cx)
                 })
             } else {
