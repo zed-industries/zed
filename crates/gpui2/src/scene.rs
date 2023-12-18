@@ -857,55 +857,116 @@ impl Bounds<ScaledPixels> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{point, size};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{point, px, size, Size};
+    use smallvec::smallvec;
 
-//     use super::*;
-//     use smallvec::smallvec;
+    // todo!()
+    // #[test]
+    // fn test_scene() {
+    //     let mut scene = SceneBuilder::default();
+    //     assert_eq!(scene.layers_by_order.len(), 0);
 
-//     #[test]
-//     fn test_scene() {
-//         let mut scene = SceneBuilder::new();
-//         assert_eq!(scene.layers_by_order.len(), 0);
+    //     // div with z_index(1)
+    //     //     glyph with z_index(1)
+    //     // div with z_index(1)
+    //     //      glyph with z_index(1)
 
-//         scene.insert(&smallvec![1].into(), quad());
-//         scene.insert(&smallvec![2].into(), shadow());
-//         scene.insert(&smallvec![3].into(), quad());
+    //     scene.insert(
+    //         &smallvec![1].into(),
+    //         quad(
+    //             point(px(0.), px(0.)),
+    //             size(px(100.), px(100.)),
+    //             crate::black(),
+    //         ),
+    //     );
+    //     scene.insert(
+    //         &smallvec![1, 1].into(),
+    //         sprite(
+    //             point(px(0.), px(0.)),
+    //             size(px(10.), px(10.)),
+    //             crate::white(),
+    //         ),
+    //     );
+    //     scene.insert(
+    //         &smallvec![1].into(),
+    //         quad(
+    //             point(px(10.), px(10.)),
+    //             size(px(20.), px(20.)),
+    //             crate::green(),
+    //         ),
+    //     );
+    //     scene.insert(
+    //         &smallvec![1, 1].into(),
+    //         sprite(point(px(15.), px(15.)), size(px(5.), px(5.)), crate::blue()),
+    //     );
 
-//         let mut batches_count = 0;
-//         for _ in scene.build().batches() {
-//             batches_count += 1;
-//         }
-//         assert_eq!(batches_count, 3);
-//     }
+    //     assert!(!scene.layers_by_order.is_empty());
 
-//     fn quad() -> Quad {
-//         Quad {
-//             order: 0,
-//             bounds: Bounds {
-//                 origin: point(ScaledPixels(0.), ScaledPixels(0.)),
-//                 size: size(ScaledPixels(100.), ScaledPixels(100.)),
-//             },
-//             content_mask: Default::default(),
-//             background: Default::default(),
-//             border_color: Default::default(),
-//             corner_radii: Default::default(),
-//             border_widths: Default::default(),
-//         }
-//     }
+    //     for batch in scene.build().batches() {
+    //         println!("new batch");
+    //         match batch {
+    //             PrimitiveBatch::Quads(quads) => {
+    //                 for quad in quads {
+    //                     if quad.background == crate::black() {
+    //                         println!("  black quad");
+    //                     } else if quad.background == crate::green() {
+    //                         println!("  green quad");
+    //                     } else {
+    //                         todo!("  ((( bad quad");
+    //                     }
+    //                 }
+    //             }
+    //             PrimitiveBatch::MonochromeSprites { sprites, .. } => {
+    //                 for sprite in sprites {
+    //                     if sprite.color == crate::white() {
+    //                         println!("  white sprite");
+    //                     } else if sprite.color == crate::blue() {
+    //                         println!("  blue sprite");
+    //                     } else {
+    //                         todo!("  ((( bad sprite")
+    //                     }
+    //                 }
+    //             }
+    //             _ => todo!(),
+    //         }
+    //     }
+    // }
 
-//     fn shadow() -> Shadow {
-//         Shadow {
-//             order: Default::default(),
-//             bounds: Bounds {
-//                 origin: point(ScaledPixels(0.), ScaledPixels(0.)),
-//                 size: size(ScaledPixels(100.), ScaledPixels(100.)),
-//             },
-//             corner_radii: Default::default(),
-//             content_mask: Default::default(),
-//             color: Default::default(),
-//             blur_radius: Default::default(),
-//         }
-//     }
-// }
+    fn quad(origin: Point<Pixels>, size: Size<Pixels>, background: Hsla) -> Quad {
+        Quad {
+            order: 0,
+            bounds: Bounds { origin, size }.scale(1.),
+            background,
+            content_mask: ContentMask {
+                bounds: Bounds { origin, size },
+            }
+            .scale(1.),
+            border_color: Default::default(),
+            corner_radii: Default::default(),
+            border_widths: Default::default(),
+        }
+    }
+
+    fn sprite(origin: Point<Pixels>, size: Size<Pixels>, color: Hsla) -> MonochromeSprite {
+        MonochromeSprite {
+            order: 0,
+            bounds: Bounds { origin, size }.scale(1.),
+            content_mask: ContentMask {
+                bounds: Bounds { origin, size },
+            }
+            .scale(1.),
+            color,
+            tile: AtlasTile {
+                texture_id: AtlasTextureId {
+                    index: 0,
+                    kind: crate::AtlasTextureKind::Monochrome,
+                },
+                tile_id: crate::TileId(0),
+                bounds: Default::default(),
+            },
+        }
+    }
+}
