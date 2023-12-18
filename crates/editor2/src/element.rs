@@ -2283,36 +2283,19 @@ impl EditorElement {
                                 .justify_between()
                                 .cursor_pointer()
                                 .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                .on_click(cx.listener(|_editor, _event, _cx| {
-                                    // todo!() Implement collapsing path headers
-                                    // todo!("Clicking path header")
-                                }))
                                 .child(
-                                    h_stack()
-                                        .gap_3()
-                                        // TODO: Add open/close state and toggle action
-                                        .child(
-                                            div().border().border_color(gpui::red()).child(
-                                                ButtonLike::new("path-header-disclosure-control")
-                                                    .style(ButtonStyle::Subtle)
-                                                    .child(IconElement::new(match is_open {
-                                                        true => Icon::ChevronDown,
-                                                        false => Icon::ChevronRight,
-                                                    })),
-                                            ),
-                                        )
-                                        .child(
-                                            h_stack()
-                                                .gap_2()
-                                                .child(Label::new(
-                                                    filename
-                                                        .map(SharedString::from)
-                                                        .unwrap_or_else(|| "untitled".into()),
-                                                ))
-                                                .when_some(parent_path, |then, path| {
-                                                    then.child(Label::new(path).color(Color::Muted))
-                                                }),
-                                        ),
+                                    h_stack().gap_3().child(
+                                        h_stack()
+                                            .gap_2()
+                                            .child(Label::new(
+                                                filename
+                                                    .map(SharedString::from)
+                                                    .unwrap_or_else(|| "untitled".into()),
+                                            ))
+                                            .when_some(parent_path, |then, path| {
+                                                then.child(Label::new(path).color(Color::Muted))
+                                            }),
+                                    ),
                                 )
                                 .children(jump_handler.map(|jump_handler| {
                                     IconButton::new(block_id, Icon::ArrowUpRight)
