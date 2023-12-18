@@ -74,7 +74,11 @@ impl Render for WelcomePage {
                         .h(px(96.))
                         .mx_auto(),
                 )
-                .child(Label::new("Code at the speed of thought"))
+                .child(
+                    h_stack()
+                        .justify_center()
+                        .child(Label::new("Code at the speed of thought")),
+                )
                 .child(
                     v_stack()
                         .gap_2()
