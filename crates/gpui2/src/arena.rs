@@ -78,10 +78,6 @@ impl Arena {
             }
         }
     }
-
-    pub fn size(&self) -> usize {
-        self.offset
-    }
 }
 
 impl Drop for Arena {
