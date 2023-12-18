@@ -112,6 +112,7 @@ impl Render for Toolbar {
                     .when(self.left_items().count() > 0, |this| {
                         this.child(
                             h_stack()
+                                .p_1()
                                 .flex_1()
                                 .justify_start()
                                 .children(self.left_items().map(|item| item.to_any())),
