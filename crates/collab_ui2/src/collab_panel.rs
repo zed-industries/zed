@@ -2028,8 +2028,6 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_stack()
-            // .flex_1()
-            // .justify_center()
             .items_center()
             .child(v_stack().gap_6().p_4()
                 .child(
