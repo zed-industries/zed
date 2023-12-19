@@ -1369,7 +1369,7 @@ impl EditorElement {
                     {
                         let y = mouse_position.y;
                         let new_y = event.position.y;
-                        if thumb_top < y && y < thumb_bottom {
+                        if (track_bounds.top()..track_bounds.bottom()).contains(&y) {
                             let mut position = editor.scroll_position(cx);
                             position.y += (new_y - y) * (max_row as f32) / height;
                             if position.y < 0.0 {
