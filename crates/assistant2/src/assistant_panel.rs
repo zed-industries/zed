@@ -55,7 +55,7 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     h_stack, prelude::*, v_stack, Button, ButtonLike, Icon, IconButton, IconElement, Label, TabBar,
-    Tooltip,
+    Tooltip, TAB_HEIGHT_IN_REMS,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -1129,44 +1129,35 @@ impl Render for AssistantPanel {
                 .border()
                 .border_color(gpui::red())
         } else {
-            let title = self
-                .active_editor()
-                .map(|editor| Label::new(editor.read(cx).title(cx)));
-
-            // let mut header = h_stack()
-            //     .p_1()
-            //     .border_b()
-            //     .border_color(cx.theme().colors().border_variant)
-            //     .bg(cx.theme().colors().toolbar_background)
-            //     .child(div().flex_1());
-
             let header = TabBar::new("assistant_header")
                 .start_child(
-                    h_stack()
-                        .gap_1()
-                        .child(Self::render_hamburger_button(cx))
-                        .children(title),
+                    h_stack().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
                 )
+                .children(self.active_editor().map(|editor| {
+                    h_stack()
+                        .h(rems(TAB_HEIGHT_IN_REMS))
+                        .flex_1()
+                        .px_2()
+                        .child(Label::new(editor.read(cx).title(cx)).into_element())
+                }))
                 .end_child(if self.focus_handle.contains_focused(cx) {
                     h_stack()
-                        .gap_1()
-                        .children(self.render_editor_tools(cx))
-                        .child(Self::render_plus_button(cx))
-                        .child(self.render_zoom_button(cx))
+                        .gap_2()
+                        .child(h_stack().gap_1().children(self.render_editor_tools(cx)))
+                        .child(
+                            ui::Divider::vertical()
+                                .inset()
+                                .color(ui::DividerColor::Border),
+                        )
+                        .child(
+                            h_stack()
+                                .gap_1()
+                                .child(Self::render_plus_button(cx))
+                                .child(self.render_zoom_button(cx)),
+                        )
                 } else {
                     div()
                 });
-
-            // if self.focus_handle.contains_focused(cx) {
-            //     header = header.child(
-            //         div()
-            //             .flex()
-            //             .gap_1()
-            //             .children(self.render_editor_tools(cx))
-            //             .child(Self::render_plus_button(cx))
-            //             .child(self.render_zoom_button(cx)),
-            //     );
-            // }
 
             v_stack()
                 .size_full()

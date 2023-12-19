@@ -3,6 +3,8 @@ use gpui::{AnyElement, IntoElement, Stateful};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
+pub const TAB_HEIGHT_IN_REMS: f32 = 30. / 16.;
+
 /// The position of a [`Tab`] within a list of tabs.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TabPosition {
@@ -94,8 +96,6 @@ impl RenderOnce for Tab {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        const HEIGHT_IN_REMS: f32 = 30. / 16.;
-
         let (text_color, tab_bg, _tab_hover_bg, _tab_active_bg) = match self.selected {
             false => (
                 cx.theme().colors().text_muted,
@@ -112,7 +112,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(rems(HEIGHT_IN_REMS))
+            .h(rems(TAB_HEIGHT_IN_REMS))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
