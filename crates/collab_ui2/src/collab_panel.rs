@@ -1,128 +1,45 @@
 mod channel_modal;
 mod contact_finder;
 
-// use crate::{
-//     channel_view::{self, ChannelView},
-//     chat_panel::ChatPanel,
-//     face_pile::FacePile,
-//     panel_settings, CollaborationPanelSettings,
-// };
-// use anyhow::Result;
-// use call::ActiveCall;
-// use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
-// use channel_modal::ChannelModal;
-// use client::{
-//     proto::{self, PeerId},
-//     Client, Contact, User, UserStore,
-// };
+use self::channel_modal::ChannelModal;
+use crate::{
+    channel_view::ChannelView, chat_panel::ChatPanel, face_pile::FacePile,
+    CollaborationPanelSettings,
+};
+use call::ActiveCall;
+use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
+use client::{Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
+use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
+use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
+use fuzzy::{match_strings, StringMatchCandidate};
+use gpui::{
+    actions, canvas, div, fill, list, overlay, point, prelude::*, px, serde_json, AnyElement,
+    AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
+    FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, ListOffset, ListState,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
+    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+};
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
+use project::{Fs, Project};
 use rpc::proto::{self, PeerId};
+use serde_derive::{Deserialize, Serialize};
+use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
+use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
-// use context_menu::{ContextMenu, ContextMenuItem};
-// use db::kvp::KEY_VALUE_STORE;
-// use drag_and_drop::{DragAndDrop, Draggable};
-// use editor::{Cancel, Editor};
-// use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
-// use futures::StreamExt;
-// use fuzzy::{match_strings, StringMatchCandidate};
-// use gpui::{
-//     actions,
-//     elements::{
-//         Canvas, ChildView, Component, ContainerStyle, Empty, Flex, Image, Label, List, ListOffset,
-//         ListState, MouseEventHandler, Orientation, OverlayPositionMode, Padding, ParentElement,
-//         SafeStylable, Stack, Svg,
-//     },
-//     fonts::TextStyle,
-//     geometry::{
-//         rect::RectF,
-//         vector::{vec2f, Vector2F},
-//     },
-//     impl_actions,
-//     platform::{CursorStyle, MouseButton, PromptLevel},
-//     serde_json, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, FontCache,
-//     ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-// };
-// use menu::{Confirm, SelectNext, SelectPrev};
-// use project::{Fs, Project};
-// use serde_derive::{Deserialize, Serialize};
-// use settings::SettingsStore;
-// use std::{borrow::Cow, hash::Hash, mem, sync::Arc};
-// use theme::{components::ComponentExt, IconButton, Interactive};
-// use util::{maybe, ResultExt, TryFutureExt};
-// use workspace::{
-//     dock::{DockPosition, Panel},
-//     item::ItemHandle,
-//     FollowNextCollaborator, Workspace,
-// };
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct ToggleCollapse {
-//     location: ChannelId,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct NewChannel {
-//     location: ChannelId,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct RenameChannel {
-//     channel_id: ChannelId,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct ToggleSelectedIx {
-//     ix: usize,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct RemoveChannel {
-//     channel_id: ChannelId,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct InviteMembers {
-//     channel_id: ChannelId,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct ManageMembers {
-//     channel_id: ChannelId,
-// }
-
-#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct OpenChannelNotes {
-    pub channel_id: ChannelId,
-}
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// pub struct JoinChannelCall {
-//     pub channel_id: u64,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// pub struct JoinChannelChat {
-//     pub channel_id: u64,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// pub struct CopyChannelLink {
-//     pub channel_id: u64,
-// }
-
-// #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct StartMoveChannelFor {
-//     channel_id: ChannelId,
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// struct MoveChannel {
-//     to: ChannelId,
-// }
-
-impl_actions!(collab_panel, [OpenChannelNotes]);
+use ui::prelude::*;
+use ui::{
+    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
+    Label, ListHeader, ListItem, Tooltip,
+};
+use util::{maybe, ResultExt, TryFutureExt};
+use workspace::{
+    dock::{DockPosition, Panel, PanelEvent},
+    notifications::NotifyResultExt,
+    Workspace,
+};
 
 actions!(
     collab_panel,
@@ -138,69 +55,12 @@ actions!(
     ]
 );
 
-// impl_actions!(
-//     collab_panel,
-//     [
-//         RemoveChannel,
-//         NewChannel,
-//         InviteMembers,
-//         ManageMembers,
-//         RenameChannel,
-//         ToggleCollapse,
-//         OpenChannelNotes,
-//         JoinChannelCall,
-//         JoinChannelChat,
-//         CopyChannelLink,
-//         StartMoveChannelFor,
-//         MoveChannel,
-//         ToggleSelectedIx
-//     ]
-// );
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct ChannelMoveClipboard {
     channel_id: ChannelId,
 }
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
-
-use std::{mem, sync::Arc};
-
-use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
-use client::{Client, Contact, User, UserStore};
-use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
-use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
-use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{
-    actions, canvas, div, fill, impl_actions, list, overlay, point, prelude::*, px, serde_json,
-    AnyElement, AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
-    EventEmitter, FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement,
-    ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
-    Render, RenderOnce, SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView,
-};
-use project::{Fs, Project};
-use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
-use ui::prelude::*;
-use ui::{
-    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
-    Label, ListHeader, ListItem, Tooltip,
-};
-use util::{maybe, ResultExt, TryFutureExt};
-use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
-    notifications::NotifyResultExt,
-    Workspace,
-};
-
-use crate::channel_view::ChannelView;
-use crate::chat_panel::ChatPanel;
-use crate::{face_pile::FacePile, CollaborationPanelSettings};
-
-use self::channel_modal::ChannelModal;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -209,69 +69,6 @@ pub fn init(cx: &mut AppContext) {
         });
     })
     .detach();
-    //     contact_finder::init(cx);
-    //     channel_modal::init(cx);
-    //     channel_view::init(cx);
-
-    //     cx.add_action(CollabPanel::cancel);
-    //     cx.add_action(CollabPanel::select_next);
-    //     cx.add_action(CollabPanel::select_prev);
-    //     cx.add_action(CollabPanel::confirm);
-    //     cx.add_action(CollabPanel::insert_space);
-    //     cx.add_action(CollabPanel::remove);
-    //     cx.add_action(CollabPanel::remove_selected_channel);
-    //     cx.add_action(CollabPanel::show_inline_context_menu);
-    //     cx.add_action(CollabPanel::new_subchannel);
-    //     cx.add_action(CollabPanel::invite_members);
-    //     cx.add_action(CollabPanel::manage_members);
-    //     cx.add_action(CollabPanel::rename_selected_channel);
-    //     cx.add_action(CollabPanel::rename_channel);
-    //     cx.add_action(CollabPanel::toggle_channel_collapsed_action);
-    //     cx.add_action(CollabPanel::collapse_selected_channel);
-    //     cx.add_action(CollabPanel::expand_selected_channel);
-    //     cx.add_action(CollabPanel::open_channel_notes);
-    //     cx.add_action(CollabPanel::join_channel_chat);
-    //     cx.add_action(CollabPanel::copy_channel_link);
-
-    //     cx.add_action(
-    //         |panel: &mut CollabPanel, action: &ToggleSelectedIx, cx: &mut ViewContext<CollabPanel>| {
-    //             if panel.selection.take() != Some(action.ix) {
-    //                 panel.selection = Some(action.ix)
-    //             }
-
-    //             cx.notify();
-    //         },
-    //     );
-
-    //     cx.add_action(
-    //         |panel: &mut CollabPanel, _: &MoveSelected, cx: &mut ViewContext<CollabPanel>| {
-    //             let Some(clipboard) = panel.channel_clipboard.take() else {
-    //                 return;
-    //             };
-    //             let Some(selected_channel) = panel.selected_channel() else {
-    //                 return;
-    //             };
-
-    //             panel
-    //                 .channel_store
-    //                 .update(cx, |channel_store, cx| {
-    //                     channel_store.move_channel(clipboard.channel_id, Some(selected_channel.id), cx)
-    //                 })
-    //                 .detach_and_log_err(cx)
-    //         },
-    //     );
-
-    //     cx.add_action(
-    //         |panel: &mut CollabPanel, action: &MoveChannel, cx: &mut ViewContext<CollabPanel>| {
-    //             if let Some(clipboard) = panel.channel_clipboard.take() {
-    //                 panel.channel_store.update(cx, |channel_store, cx| {
-    //                     channel_store
-    //                         .move_channel(clipboard.channel_id, Some(action.to), cx)
-    //                         .detach_and_log_err(cx)
-    //                 })
-    //             }
-    //         },
-    //     );
 }
 
 #[derive(Debug)]
@@ -317,7 +114,6 @@ pub struct CollabPanel {
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
     workspace: WeakView<Workspace>,
-    // context_menu_on_selected: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -325,13 +121,6 @@ struct SerializedCollabPanel {
     width: Option<Pixels>,
     collapsed_channels: Option<Vec<u64>>,
 }
-
-// #[derive(Debug)]
-// pub enum Event {
-//     DockPositionChanged,
-//     Focus,
-//     Dismissed,
-// }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 enum Section {
@@ -1131,40 +920,6 @@ impl CollabPanel {
         }
     }
 
-    //     fn render_contact_placeholder(
-    //         &self,
-    //         theme: &theme::CollabPanel,
-    //         is_selected: bool,
-    //         cx: &mut ViewContext<Self>,
-    //     ) -> AnyElement<Self> {
-    //         enum AddContacts {}
-    //         MouseEventHandler::new::<AddContacts, _>(0, cx, |state, _| {
-    //             let style = theme.list_empty_state.style_for(is_selected, state);
-    //             Flex::row()
-    //                 .with_child(
-    //                     Svg::new("icons/plus.svg")
-    //                         .with_color(theme.list_empty_icon.color)
-    //                         .constrained()
-    //                         .with_width(theme.list_empty_icon.width)
-    //                         .aligned()
-    //                         .left(),
-    //                 )
-    //                 .with_child(
-    //                     Label::new("Add a contact", style.text.clone())
-    //                         .contained()
-    //                         .with_style(theme.list_empty_label_container),
-    //                 )
-    //                 .align_children_center()
-    //                 .contained()
-    //                 .with_style(style.container)
-    //                 .into_any()
-    //         })
-    //         .on_click(MouseButton::Left, |_, this, cx| {
-    //             this.toggle_contact_finder(cx);
-    //         })
-    //         .into_any()
-    //     }
-
     fn render_channel_notes(
         &self,
         channel_id: ChannelId,
@@ -1751,9 +1506,6 @@ impl CollabPanel {
             .detach();
         }
     }
-
-    //     // Should move to the filter editor if clicking on it
-    //     // Should move selection to the channel editor if activating it
 
     fn remove_contact(&mut self, user_id: u64, github_login: &str, cx: &mut ViewContext<Self>) {
         let user_store = self.user_store.clone();
