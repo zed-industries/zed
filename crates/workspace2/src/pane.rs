@@ -1511,8 +1511,8 @@ impl Pane {
                 },
                 |tab, cx| cx.build_view(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().tab_active_background))
-            .drag_over::<ProjectEntryId>(|tab| tab.bg(gpui::red()))
+            .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().drop_target_background))
+            .drag_over::<ProjectEntryId>(|tab| tab.bg(cx.theme().colors().drop_target_background))
             .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
                 this.drag_split_direction = None;
                 this.handle_tab_drop(dragged_tab, ix, cx)
@@ -1664,9 +1664,11 @@ impl Pane {
                     .h_full()
                     .flex_grow()
                     .drag_over::<DraggedTab>(|bar| {
-                        bar.bg(cx.theme().colors().tab_active_background)
+                        bar.bg(cx.theme().colors().drop_target_background)
                     })
-                    .drag_over::<ProjectEntryId>(|bar| bar.bg(gpui::red()))
+                    .drag_over::<ProjectEntryId>(|bar| {
+                        bar.bg(cx.theme().colors().drop_target_background)
+                    })
                     .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
                         this.drag_split_direction = None;
                         this.handle_tab_drop(dragged_tab, this.items.len(), cx)
