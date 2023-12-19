@@ -990,7 +990,7 @@ impl AssistantPanel {
                 }
             }))
             .icon_size(IconSize::Small)
-            .tooltip(|cx| Tooltip::for_action("Quote Seleciton", &QuoteSelection, cx))
+            .tooltip(|cx| Tooltip::for_action("Quote Selection", &QuoteSelection, cx))
     }
 
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
