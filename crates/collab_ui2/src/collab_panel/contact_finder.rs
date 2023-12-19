@@ -1,9 +1,7 @@
-#![allow(unused)]
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    div, img, svg, AnyElement, AppContext, DismissEvent, Div, Entity, EventEmitter, FocusHandle,
-    FocusableView, Img, IntoElement, Model, ParentElement as _, Render, Styled, Task, View,
-    ViewContext, VisualContext, WeakView,
+    AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    ParentElement as _, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
