@@ -23,7 +23,7 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.build_view(|cx| Picker::new(delegate, cx).modal(false));
 
         Self { picker }
     }
@@ -38,11 +38,16 @@ impl ContactFinder {
 impl Render for ContactFinder {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         v_stack()
+            .elevation_3(cx)
             .child(
                 v_stack()
+                    .px_2()
+                    .py_1()
+                    .bg(cx.theme().colors().element_background)
+                    // HACK: Prevent the background color from overflowing the parent container.
+                    .rounded_t(px(8.))
                     .child(Label::new("Contacts"))
-                    .child(h_stack().child(Label::new("Invite new contacts")))
-                    .bg(cx.theme().colors().element_background),
+                    .child(h_stack().child(Label::new("Invite new contacts"))),
             )
             .child(self.picker.clone())
             .w(rems(34.))

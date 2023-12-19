@@ -2204,14 +2204,9 @@ impl CollabPanel {
                     .into_any_element()
             }),
             Section::Contacts => Some(
-                div()
-                    .border_1()
-                    .border_color(gpui::red())
-                    .child(
-                        IconButton::new("add-contact", Icon::Plus)
-                            .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
-                            .tooltip(|cx| Tooltip::text("Search for new contact", cx)),
-                    )
+                IconButton::new("add-contact", Icon::Plus)
+                    .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
+                    .tooltip(|cx| Tooltip::text("Search for new contact", cx))
                     .into_any_element(),
             ),
             Section::Channels => Some(
