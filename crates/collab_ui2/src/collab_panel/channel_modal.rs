@@ -1,3 +1,4 @@
+#![allow(unused)]
 use channel::{ChannelId, ChannelMembership, ChannelStore};
 use client::{
     proto::{self, ChannelRole, ChannelVisibility},
