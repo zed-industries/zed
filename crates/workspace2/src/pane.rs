@@ -1817,9 +1817,6 @@ impl Render for Pane {
     type Element = Focusable<Div>;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        let mut drag_target_color = cx.theme().colors().text;
-        drag_target_color.a = 0.5;
-
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
@@ -1922,7 +1919,10 @@ impl Render for Pane {
                         div()
                             .invisible()
                             .absolute()
-                            .bg(drag_target_color)
+                            .bg(theme::color_alpha(
+                                cx.theme().colors().drop_target_background,
+                                0.75,
+                            ))
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<ProjectEntryId>("", |style| style.visible())
                             .on_drop(cx.listener(move |this, dragged_tab, cx| {
