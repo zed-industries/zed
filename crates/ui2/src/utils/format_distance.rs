@@ -1,4 +1,23 @@
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Local, NaiveDateTime};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DateTimeType {
+    Naive(NaiveDateTime),
+    Local(DateTime<Local>),
+}
+
+impl DateTimeType {
+    /// Converts the DateTimeType to a NaiveDateTime.
+    ///
+    /// If the DateTimeType is already a NaiveDateTime, it will be returned as is.
+    /// If the DateTimeType is a DateTime<Local>, it will be converted to a NaiveDateTime.
+    pub fn to_naive(&self) -> NaiveDateTime {
+        match self {
+            DateTimeType::Naive(naive) => *naive,
+            DateTimeType::Local(local) => local.naive_local(),
+        }
+    }
+}
 
 /// Calculates the distance in seconds between two NaiveDateTime objects.
 /// It returns a signed integer denoting the difference. If `date` is earlier than `base_date`, the returned value will be negative.
@@ -108,13 +127,13 @@ fn distance_string(distance: i64, include_seconds: bool, add_suffix: bool) -> St
 /// ```
 ///
 /// Output: `"There was about 3 years between the first and last crewed moon landings."`
-pub fn naive_format_distance(
-    date: NaiveDateTime,
+pub fn format_distance(
+    date: DateTimeType,
     base_date: NaiveDateTime,
     include_seconds: bool,
     add_suffix: bool,
 ) -> String {
-    let distance = distance_in_seconds(date, base_date);
+    let distance = distance_in_seconds(date.to_naive(), base_date);
 
     distance_string(distance, include_seconds, add_suffix)
 }
@@ -142,14 +161,14 @@ pub fn naive_format_distance(
 /// ```
 ///
 /// Output: `It's been over 54 years since Apollo 11 first landed on the moon.`
-pub fn naive_format_distance_from_now(
-    datetime: NaiveDateTime,
+pub fn format_distance_from_now(
+    datetime: DateTimeType,
     include_seconds: bool,
     add_suffix: bool,
 ) -> String {
     let now = chrono::offset::Local::now().naive_local();
 
-    naive_format_distance(datetime, now, include_seconds, add_suffix)
+    format_distance(datetime, now, include_seconds, add_suffix)
 }
 
 #[cfg(test)]
@@ -159,38 +178,44 @@ mod tests {
 
     #[test]
     fn test_naive_format_distance() {
-        let date =
-            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date");
-        let base_date =
-            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date");
+        let date = DateTimeType::Naive(
+            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
+        );
+        let base_date = DateTimeType::Naive(
+            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
+        );
 
         assert_eq!(
             "about 2 hours",
-            naive_format_distance(date, base_date, false, false)
+            format_distance(date, base_date.to_naive(), false, false)
         );
     }
 
     #[test]
     fn test_naive_format_distance_with_suffix() {
-        let date =
-            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date");
-        let base_date =
-            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date");
+        let date = DateTimeType::Naive(
+            NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
+        );
+        let base_date = DateTimeType::Naive(
+            NaiveDateTime::from_timestamp_opt(0, 0).expect("Invalid NaiveDateTime for base_date"),
+        );
 
         assert_eq!(
             "about 2 hours from now",
-            naive_format_distance(date, base_date, false, true)
+            format_distance(date, base_date.to_naive(), false, true)
         );
     }
 
     #[test]
     fn test_naive_format_distance_from_now() {
-        let date = NaiveDateTime::parse_from_str("1969-07-20T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
-            .expect("Invalid NaiveDateTime for date");
+        let date = DateTimeType::Naive(
+            NaiveDateTime::parse_from_str("1969-07-20T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
+                .expect("Invalid NaiveDateTime for date"),
+        );
 
         assert_eq!(
             "over 54 years ago",
-            naive_format_distance_from_now(date, false, true)
+            format_distance_from_now(date, false, true)
         );
     }
 
