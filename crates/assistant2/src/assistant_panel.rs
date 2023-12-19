@@ -54,7 +54,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    h_stack, prelude::*, v_stack, Button, ButtonLike, Icon, IconButton, IconElement, Label, Tooltip,
+    h_stack, prelude::*, v_stack, Button, ButtonLike, Icon, IconButton, IconElement, Label, TabBar,
+    Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -939,7 +940,7 @@ impl AssistantPanel {
                     this.set_active_editor_index(this.prev_active_editor_index, cx);
                 }
             }))
-            .tooltip(|cx| Tooltip::text("History", cx))
+            .tooltip(|cx| Tooltip::text("Conversation History", cx))
     }
 
     fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
@@ -955,12 +956,13 @@ impl AssistantPanel {
     }
 
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("split_button", Icon::SplitMessage)
+        IconButton::new("split_button", Icon::Snip)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
                 }
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx))
     }
 
@@ -971,6 +973,7 @@ impl AssistantPanel {
                     active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
                 }
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("Assist", &Assist, cx))
     }
 
@@ -985,6 +988,7 @@ impl AssistantPanel {
                     });
                 }
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("Quote Seleciton", &QuoteSelection, cx))
     }
 
@@ -993,15 +997,19 @@ impl AssistantPanel {
             .on_click(cx.listener(|this, _event, cx| {
                 this.new_conversation(cx);
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("New Conversation", &NewConversation, cx))
     }
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let zoomed = self.zoomed;
-        IconButton::new("zoom_button", Icon::MagnifyingGlass)
+        IconButton::new("zoom_button", Icon::Maximize)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
+            .selected(zoomed)
+            .selected_icon(Icon::Minimize)
+            .icon_size(IconSize::Small)
             .tooltip(move |cx| {
                 Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
             })
@@ -1125,16 +1133,40 @@ impl Render for AssistantPanel {
                 .active_editor()
                 .map(|editor| Label::new(editor.read(cx).title(cx)));
 
-            let mut header = h_stack()
-                .child(Self::render_hamburger_button(cx))
-                .children(title);
+            // let mut header = h_stack()
+            //     .p_1()
+            //     .border_b()
+            //     .border_color(cx.theme().colors().border_variant)
+            //     .bg(cx.theme().colors().toolbar_background)
+            //     .child(div().flex_1());
 
-            if self.focus_handle.contains_focused(cx) {
-                header = header
-                    .children(self.render_editor_tools(cx))
-                    .child(Self::render_plus_button(cx))
-                    .child(self.render_zoom_button(cx));
-            }
+            let header = TabBar::new("assistant_header")
+                .start_child(
+                    h_stack()
+                        .gap_1()
+                        .child(Self::render_hamburger_button(cx))
+                        .children(title),
+                )
+                .end_child(if self.focus_handle.contains_focused(cx) {
+                    h_stack()
+                        .gap_1()
+                        .children(self.render_editor_tools(cx))
+                        .child(Self::render_plus_button(cx))
+                        .child(self.render_zoom_button(cx))
+                } else {
+                    div()
+                });
+
+            // if self.focus_handle.contains_focused(cx) {
+            //     header = header.child(
+            //         div()
+            //             .flex()
+            //             .gap_1()
+            //             .children(self.render_editor_tools(cx))
+            //             .child(Self::render_plus_button(cx))
+            //             .child(self.render_zoom_button(cx)),
+            //     );
+            // }
 
             v_stack()
                 .size_full()
