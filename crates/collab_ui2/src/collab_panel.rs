@@ -804,8 +804,9 @@ impl CollabPanel {
         user: &Arc<User>,
         peer_id: Option<PeerId>,
         is_pending: bool,
+        is_selected: bool,
         cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
+    ) -> ListItem {
         let is_current_user =
             self.user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
         let tooltip = format!("Follow {}", user.github_login);
@@ -813,6 +814,7 @@ impl CollabPanel {
         ListItem::new(SharedString::from(user.github_login.clone()))
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(Label::new(user.github_login.clone()))
+            .selected(is_selected)
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
             } else if is_current_user {
@@ -839,10 +841,8 @@ impl CollabPanel {
         project_id: u64,
         worktree_root_names: &[String],
         host_user_id: u64,
-        //         is_current: bool,
         is_last: bool,
         is_selected: bool,
-        //         theme: &theme::Theme,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let project_name: SharedString = if worktree_root_names.is_empty() {
@@ -917,9 +917,11 @@ impl CollabPanel {
     fn render_channel_notes(
         &self,
         channel_id: ChannelId,
+        is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         ListItem::new("channel-notes")
+            .selected(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.open_channel_notes(channel_id, cx);
             }))
@@ -936,9 +938,11 @@ impl CollabPanel {
     fn render_channel_chat(
         &self,
         channel_id: ChannelId,
+        is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         ListItem::new("channel-chat")
+            .selected(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.join_channel_chat(channel_id, cx);
             }))
@@ -1136,32 +1140,32 @@ impl CollabPanel {
                             self.call(contact.user.id, cx);
                         }
                     }
-                    // ListEntry::ParticipantProject {
-                    //     project_id,
-                    //     host_user_id,
-                    //     ..
-                    // } => {
-                    //     if let Some(workspace) = self.workspace.upgrade(cx) {
-                    //         let app_state = workspace.read(cx).app_state().clone();
-                    //         workspace::join_remote_project(
-                    //             *project_id,
-                    //             *host_user_id,
-                    //             app_state,
-                    //             cx,
-                    //         )
-                    //         .detach_and_log_err(cx);
-                    //     }
-                    // }
-                    // ListEntry::ParticipantScreen { peer_id, .. } => {
-                    //     let Some(peer_id) = peer_id else {
-                    //         return;
-                    //     };
-                    //     if let Some(workspace) = self.workspace.upgrade(cx) {
-                    //         workspace.update(cx, |workspace, cx| {
-                    //             workspace.open_shared_screen(*peer_id, cx)
-                    //         });
-                    //     }
-                    // }
+                    ListEntry::ParticipantProject {
+                        project_id,
+                        host_user_id,
+                        ..
+                    } => {
+                        if let Some(workspace) = self.workspace.upgrade() {
+                            let app_state = workspace.read(cx).app_state().clone();
+                            workspace::join_remote_project(
+                                *project_id,
+                                *host_user_id,
+                                app_state,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }
+                    }
+                    ListEntry::ParticipantScreen { peer_id, .. } => {
+                        let Some(peer_id) = peer_id else {
+                            return;
+                        };
+                        if let Some(workspace) = self.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.open_shared_screen(*peer_id, cx)
+                            });
+                        }
+                    }
                     ListEntry::Channel { channel, .. } => {
                         let is_active = maybe!({
                             let call_channel = ActiveCall::global(cx)
@@ -1180,7 +1184,30 @@ impl CollabPanel {
                         }
                     }
                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
-                    _ => {}
+                    ListEntry::CallParticipant { user, peer_id, .. } => {
+                        if Some(user) == self.user_store.read(cx).current_user().as_ref() {
+                            Self::leave_call(cx);
+                        } else if let Some(peer_id) = peer_id {
+                            self.workspace
+                                .update(cx, |workspace, cx| workspace.follow(*peer_id, cx))
+                                .ok();
+                        }
+                    }
+                    ListEntry::IncomingRequest(user) => {
+                        self.respond_to_contact_request(user.id, true, cx)
+                    }
+                    ListEntry::ChannelInvite(channel) => {
+                        self.respond_to_channel_invite(channel.id, true, cx)
+                    }
+                    ListEntry::ChannelNotes { channel_id } => {
+                        self.open_channel_notes(*channel_id, cx)
+                    }
+                    ListEntry::ChannelChat { channel_id } => {
+                        self.join_channel_chat(*channel_id, cx)
+                    }
+
+                    ListEntry::OutgoingRequest(_) => {}
+                    ListEntry::ChannelEditor { .. } => {}
                 }
             }
         }
@@ -1673,7 +1700,7 @@ impl CollabPanel {
                 peer_id,
                 is_pending,
             } => self
-                .render_call_participant(user, *peer_id, *is_pending, cx)
+                .render_call_participant(user, *peer_id, *is_pending, is_selected, cx)
                 .into_any_element(),
             ListEntry::ParticipantProject {
                 project_id,
@@ -1694,11 +1721,11 @@ impl CollabPanel {
                 .render_participant_screen(*peer_id, *is_last, is_selected, cx)
                 .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
-                .render_channel_notes(*channel_id, cx)
+                .render_channel_notes(*channel_id, is_selected, cx)
                 .into_any_element(),
-            ListEntry::ChannelChat { channel_id } => {
-                self.render_channel_chat(*channel_id, cx).into_any_element()
-            }
+            ListEntry::ChannelChat { channel_id } => self
+                .render_channel_chat(*channel_id, is_selected, cx)
+                .into_any_element(),
         }
     }
 
@@ -1953,7 +1980,7 @@ impl CollabPanel {
         channel: &Arc<Channel>,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
+    ) -> ListItem {
         let channel_id = channel.id;
         let response_is_pending = self
             .channel_store
@@ -2000,7 +2027,7 @@ impl CollabPanel {
         &self,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
+    ) -> ListItem {
         ListItem::new("contact-placeholder")
             .child(IconElement::new(Icon::Plus))
             .child(Label::new("Add a Contact"))
@@ -2087,9 +2114,8 @@ impl CollabPanel {
             }))
             .child(
                 ListItem::new(channel_id as usize)
-                    // Offset the indent depth by one to give us room to show the disclosure.
+                    // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
-                    .indent_step_size(cx.rem_size() * 14.0 / 16.0) // @todo()! @nate this is to  step over the disclosure toggle
                     .selected(is_selected || is_active)
                     .toggle(disclosed)
                     .on_toggle(
@@ -2158,7 +2184,8 @@ impl CollabPanel {
     fn render_channel_editor(&self, depth: usize, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         let item = ListItem::new("channel-editor")
             .inset(false)
-            .indent_level(depth)
+            // Add one level of depth for the disclosure arrow.
+            .indent_level(depth + 1)
             .start_slot(
                 IconElement::new(Icon::Hash)
                     .size(IconSize::Small)
