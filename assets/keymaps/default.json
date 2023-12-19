@@ -502,7 +502,7 @@
     }
   },
   {
-    "context": "Editor",
+    "context": "Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "cmd-f8": "editor::GoToHunk",
