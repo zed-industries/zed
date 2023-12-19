@@ -9719,90 +9719,80 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-// impl Deref for EditorStyle {
-//     type Target = theme::Editor;
-
-//     fn deref(&self) -> &Self::Target {
-//         &self.theme
-//     }
-// }
-
 pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
-    let mut highlighted_lines = Vec::new();
+    let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
 
-    for (index, line) in diagnostic.message.lines().enumerate() {
-        let line = match &diagnostic.source {
-            Some(source) if index == 0 => {
-                let source_highlight = Vec::from_iter(0..source.len());
-                highlight_diagnostic_message(source_highlight, &format!("{source}: {line}"))
-            }
-
-            _ => highlight_diagnostic_message(Vec::new(), line),
-        };
-        highlighted_lines.push(line);
-    }
     Arc::new(move |cx: &mut BlockContext| {
-        let copy_id: SharedString = format!("copy-{}", cx.block_id.clone()).to_string().into();
+        let color = Some(cx.theme().colors().text_accent);
+        let group_id: SharedString = cx.block_id.to_string().into();
         // TODO: Nate: We should tint the background of the block with the severity color
         // We need to extend the theme before we can do this
-        v_stack()
+        h_stack()
             .id(cx.block_id)
+            .group(group_id.clone())
             .relative()
+            .pl(cx.anchor_x)
             .size_full()
-            .bg(gpui::red())
-            .children(highlighted_lines.iter().map(|(line, highlights)| {
-                let group_id = cx.block_id.to_string();
-                h_stack()
-                    .group(group_id.clone())
-                    .gap_2()
-                    .absolute()
-                    .left(cx.anchor_x)
-                    .px_1p5()
-                    .child(HighlightedLabel::new(line.clone(), highlights.clone()))
-                    .child(
-                        div().z_index(1).child(
-                            IconButton::new(copy_id.clone(), Icon::Copy)
-                                .icon_color(Color::Muted)
-                                .size(ButtonSize::Compact)
-                                .style(ButtonStyle::Transparent)
-                                .visible_on_hover(group_id)
-                                .on_click(cx.listener({
-                                    let message = diagnostic.message.clone();
-                                    move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new(message.clone()))
-                                    }
-                                }))
-                                .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
-                        ),
-                    )
-            }))
+            .gap_2()
+            .child(
+                StyledText::new(text_without_backticks.clone()).with_highlights(
+                    &cx.text_style(),
+                    code_ranges.iter().map(|range| {
+                        (
+                            range.clone(),
+                            HighlightStyle {
+                                color,
+                                ..Default::default()
+                            },
+                        )
+                    }),
+                ),
+            )
+            .child(
+                IconButton::new(("copy-block", cx.block_id), Icon::Copy)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Transparent)
+                    .visible_on_hover(group_id)
+                    .on_click(cx.listener({
+                        let message = diagnostic.message.clone();
+                        move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                    }))
+                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+            )
             .into_any_element()
     })
 }
 
-pub fn highlight_diagnostic_message(
-    initial_highlights: Vec<usize>,
-    message: &str,
-) -> (String, Vec<usize>) {
-    let mut message_without_backticks = String::new();
-    let mut prev_offset = 0;
-    let mut inside_block = false;
-    let mut highlights = initial_highlights;
-    for (match_ix, (offset, _)) in message
-        .match_indices('`')
-        .chain([(message.len(), "")])
-        .enumerate()
-    {
-        message_without_backticks.push_str(&message[prev_offset..offset]);
-        if inside_block {
-            highlights.extend(prev_offset - match_ix..offset - match_ix);
-        }
+pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, Vec<Range<usize>>) {
+    let mut text_without_backticks = String::new();
+    let mut code_ranges = Vec::new();
 
-        inside_block = !inside_block;
-        prev_offset = offset + 1;
+    if let Some(source) = &diagnostic.source {
+        text_without_backticks.push_str(&source);
+        code_ranges.push(0..source.len());
+        text_without_backticks.push_str(": ");
     }
 
-    (message_without_backticks, highlights)
+    let mut prev_offset = 0;
+    let mut in_code_block = false;
+    for (ix, _) in diagnostic
+        .message
+        .match_indices('`')
+        .chain([(diagnostic.message.len(), "")])
+    {
+        let prev_len = text_without_backticks.len();
+        text_without_backticks.push_str(&diagnostic.message[prev_offset..ix]);
+        prev_offset = ix + 1;
+        if in_code_block {
+            code_ranges.push(prev_len..text_without_backticks.len());
+            in_code_block = false;
+        } else {
+            in_code_block = true;
+        }
+    }
+
+    (text_without_backticks.into(), code_ranges)
 }
 
 pub fn diagnostic_style(
