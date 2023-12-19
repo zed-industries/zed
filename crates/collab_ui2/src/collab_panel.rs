@@ -2167,13 +2167,13 @@ impl CollabPanel {
 
         let controls = if is_incoming {
             vec![
-                IconButton::new("remove_contact", Icon::Close)
+                IconButton::new("decline-contact", Icon::Close)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
                     .icon_color(color)
                     .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-                IconButton::new("remove_contact", Icon::Check)
+                IconButton::new("accept-contact", Icon::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
@@ -2220,15 +2220,15 @@ impl CollabPanel {
         };
 
         let controls = [
-            IconButton::new("remove_contact", Icon::Close)
+            IconButton::new("reject-invite", Icon::Close)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.respond_to_channel_invite(channel_id, false, cx);
                 }))
                 .icon_color(color)
                 .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-            IconButton::new("remove_contact", Icon::Check)
+            IconButton::new("accept-invite", Icon::Check)
                 .on_click(cx.listener(move |this, _, cx| {
-                    this.respond_to_contact_request(channel_id, true, cx);
+                    this.respond_to_channel_invite(channel_id, true, cx);
                 }))
                 .icon_color(color)
                 .tooltip(|cx| Tooltip::text("Accept invite", cx)),

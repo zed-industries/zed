@@ -239,7 +239,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
         );
 
         div()
-            .key_context("picker")
+            .key_context("Picker")
             .size_full()
             .when_some(self.width, |el, width| {
                 el.w(width)

@@ -2662,13 +2662,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         self.defer(|view, cx| view.focus_handle(cx).focus(cx))
     }
 
-    pub fn dismiss_self(&mut self)
-    where
-        V: ManagedView,
-    {
-        self.defer(|_, cx| cx.emit(DismissEvent))
-    }
-
     pub fn listener<E>(
         &self,
         f: impl Fn(&mut V, &E, &mut ViewContext<V>) + 'static,

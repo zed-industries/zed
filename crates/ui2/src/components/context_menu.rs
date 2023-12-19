@@ -72,11 +72,11 @@ impl ContextMenu {
     pub fn entry(
         mut self,
         label: impl Into<SharedString>,
-        on_click: impl Fn(&mut WindowContext) + 'static,
+        handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
             label: label.into(),
-            handler: Rc::new(on_click),
+            handler: Rc::new(handler),
             icon: None,
             action: None,
         });
@@ -113,6 +113,7 @@ impl ContextMenu {
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent);
         cx.emit(DismissEvent);
     }
 
