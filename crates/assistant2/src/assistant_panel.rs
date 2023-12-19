@@ -53,7 +53,11 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, Tab, TabBar, Tooltip};
+use ui::{
+    prelude::*,
+    utils::{DateTimeType, FormatDistance},
+    ButtonLike, Tab, TabBar, Tooltip,
+};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
@@ -1126,13 +1130,13 @@ impl Render for AssistantPanel {
                 .border()
                 .border_color(gpui::red())
         } else {
-            let header = ui::TabBar::new("assistant_header")
+            let header = TabBar::new("assistant_header")
                 .start_child(
                     h_stack().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
                 )
                 .children(self.active_editor().map(|editor| {
                     h_stack()
-                        .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                        .h(rems(Tab::HEIGHT_IN_REMS))
                         .flex_1()
                         .px_2()
                         .child(Label::new(editor.read(cx).title(cx)).into_element())
@@ -2278,6 +2282,14 @@ impl ConversationEditor {
                                     }
                                     Role::System => Label::new("System").color(Color::Warning),
                                 })
+                                .tooltip(|cx| {
+                                    Tooltip::with_meta(
+                                        "Toggle message role",
+                                        None,
+                                        "Available roles: You (User), Assistant, System",
+                                        cx,
+                                    )
+                                })
                                 .on_click({
                                     let conversation = conversation.clone();
                                     move |_, cx| {
@@ -2292,10 +2304,23 @@ impl ConversationEditor {
 
                             h_stack()
                                 .id(("message_header", message_id.0))
-                                .border()
-                                .border_color(gpui::red())
+                                .h_12()
+                                .gap_1()
+                                .p_1()
+                                .debug_bg_cyan()
                                 .child(sender)
-                                .child(Label::new(message.sent_at.format("%I:%M%P").to_string()))
+                                // TODO: Only show this if the message if the message has been sent
+                                .child(
+                                    Label::new(
+                                        FormatDistance::from_now(DateTimeType::Local(
+                                            message.sent_at,
+                                        ))
+                                        .hide_prefix(true)
+                                        .add_suffix(true)
+                                        .to_string(),
+                                    )
+                                    .color(Color::Muted),
+                                )
                                 .children(
                                     if let MessageStatus::Error(error) = message.status.clone() {
                                         Some(
@@ -2456,6 +2481,7 @@ impl ConversationEditor {
             "current_model",
             self.conversation.read(cx).model.short_name(),
         )
+        .style(ButtonStyle::Filled)
         .tooltip(move |cx| Tooltip::text("Change Model", cx))
         .on_click(cx.listener(|this, _, cx| this.cycle_model(cx)))
     }
@@ -2469,12 +2495,7 @@ impl ConversationEditor {
         } else {
             Color::Default
         };
-        Some(
-            div()
-                .border()
-                .border_color(gpui::red())
-                .child(Label::new(remaining_tokens.to_string()).color(remaining_tokens_color)),
-        )
+        Some(Label::new(remaining_tokens.to_string()).color(remaining_tokens_color))
     }
 }
 
