@@ -177,7 +177,7 @@ mod tests {
     use chrono::NaiveDateTime;
 
     #[test]
-    fn test_naive_format_distance() {
+    fn test_format_distance() {
         let date = DateTimeType::Naive(
             NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
         );
@@ -192,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn test_naive_format_distance_with_suffix() {
+    fn test_format_distance_with_suffix() {
         let date = DateTimeType::Naive(
             NaiveDateTime::from_timestamp_opt(9600, 0).expect("Invalid NaiveDateTime for date"),
         );
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn test_naive_format_distance_from_now() {
+    fn test_format_distance_from_now() {
         let date = DateTimeType::Naive(
             NaiveDateTime::parse_from_str("1969-07-20T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
                 .expect("Invalid NaiveDateTime for date"),
@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn test_naive_format_distance_string() {
+    fn test_format_distance_string() {
         assert_eq!(distance_string(3, false, false), "less than a minute");
         assert_eq!(distance_string(7, false, false), "less than a minute");
         assert_eq!(distance_string(13, false, false), "less than a minute");
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn test_naive_format_distance_string_include_seconds() {
+    fn test_format_distance_string_include_seconds() {
         assert_eq!(distance_string(3, true, false), "less than 5 seconds");
         assert_eq!(distance_string(7, true, false), "less than 10 seconds");
         assert_eq!(distance_string(13, true, false), "less than 20 seconds");
