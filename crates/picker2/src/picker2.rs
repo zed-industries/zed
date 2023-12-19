@@ -1,8 +1,8 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, rems, uniform_list, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, Length, MouseButton, MouseDownEvent, Render, Task,
-    UniformListScrollHandle, View, ViewContext, WindowContext,
+    div, prelude::*, rems, uniform_list, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
+    View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Color, Divider, Label};
@@ -15,6 +15,11 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<Task<()>>,
     confirm_on_update: Option<bool>,
     width: Option<Length>,
+
+    /// Whether the `Picker` is rendered as a self-contained modal.
+    ///
+    /// Set this to `false` when rendering the `Picker` as part of a larger modal.
+    is_modal: bool,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -58,6 +63,7 @@ impl<D: PickerDelegate> Picker<D> {
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
+            is_modal: true,
         };
         this.update_matches("".to_string(), cx);
         this
@@ -65,6 +71,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
         self.width = Some(width.into());
+        self
+    }
+
+    pub fn modal(mut self, modal: bool) -> Self {
+        self.is_modal = modal;
         self
     }
 
@@ -234,7 +245,11 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 el.w(width)
             })
             .overflow_hidden()
-            .elevation_3(cx)
+            // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
+            // as a part of a modal rather than the entire modal.
+            //
+            // We should revisit how the `Picker` is styled to make it more composable.
+            .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_first))
@@ -294,23 +309,4 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 )
             })
     }
-}
-
-pub fn simple_picker_match(
-    selected: bool,
-    cx: &mut WindowContext,
-    children: impl FnOnce(&mut WindowContext) -> AnyElement,
-) -> AnyElement {
-    let colors = cx.theme().colors();
-
-    div()
-        .px_1()
-        .text_color(colors.text)
-        .text_ui()
-        .bg(colors.ghost_element_background)
-        .rounded_md()
-        .when(selected, |this| this.bg(colors.ghost_element_selected))
-        .hover(|this| this.bg(colors.ghost_element_hover))
-        .child((children)(cx))
-        .into_any()
 }

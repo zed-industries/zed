@@ -7,7 +7,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
-use ui::{prelude::*, Avatar};
+use ui::{prelude::*, Avatar, ListItem};
 use util::{ResultExt as _, TryFutureExt};
 use workspace::ModalView;
 
@@ -23,7 +23,7 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.build_view(|cx| Picker::new(delegate, cx).modal(false));
 
         Self { picker }
     }
@@ -37,16 +37,17 @@ impl ContactFinder {
 
 impl Render for ContactFinder {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        fn render_mode_button(text: &'static str) -> AnyElement {
-            Label::new(text).into_any_element()
-        }
-
         v_stack()
+            .elevation_3(cx)
             .child(
                 v_stack()
+                    .px_2()
+                    .py_1()
+                    .bg(cx.theme().colors().element_background)
+                    // HACK: Prevent the background color from overflowing the parent container.
+                    .rounded_t(px(8.))
                     .child(Label::new("Contacts"))
-                    .child(h_stack().children([render_mode_button("Invite new contacts")]))
-                    .bg(cx.theme().colors().element_background),
+                    .child(h_stack().child(Label::new("Invite new contacts"))),
             )
             .child(self.picker.clone())
             .w(rems(34.))
@@ -72,7 +73,8 @@ impl FocusableView for ContactFinder {
 }
 
 impl PickerDelegate for ContactFinderDelegate {
-    type ListItem = Div;
+    type ListItem = ListItem;
+
     fn match_count(&self) -> usize {
         self.potential_contacts.len()
     }
@@ -150,46 +152,14 @@ impl PickerDelegate for ContactFinderDelegate {
             ContactRequestStatus::RequestAccepted => None,
         };
         Some(
-            div()
-                .flex_1()
-                .justify_between()
-                .child(Avatar::new(user.avatar_uri.clone()))
+            ListItem::new(ix)
+                .inset(true)
+                .selected(selected)
+                .start_slot(Avatar::new(user.avatar_uri.clone()))
                 .child(Label::new(user.github_login.clone()))
-                .children(icon_path.map(|icon_path| svg().path(icon_path))),
+                .end_slot::<IconElement>(
+                    icon_path.map(|icon_path| IconElement::from_path(icon_path)),
+                ),
         )
-        // todo!()
-        // Flex::row()
-        //     .with_children(user.avatar.clone().map(|avatar| {
-        //         Image::from_data(avatar)
-        //             .with_style(theme.contact_avatar)
-        //             .aligned()
-        //             .left()
-        //     }))
-        //     .with_child(
-        //         Label::new(user.github_login.clone(), style.label.clone())
-        //             .contained()
-        //             .with_style(theme.contact_username)
-        //             .aligned()
-        //             .left(),
-        //     )
-        //     .with_children(icon_path.map(|icon_path| {
-        //         Svg::new(icon_path)
-        //             .with_color(button_style.color)
-        //             .constrained()
-        //             .with_width(button_style.icon_width)
-        //             .aligned()
-        //             .contained()
-        //             .with_style(button_style.container)
-        //             .constrained()
-        //             .with_width(button_style.button_width)
-        //             .with_height(button_style.button_width)
-        //             .aligned()
-        //             .flex_float()
-        //     }))
-        //     .contained()
-        //     .with_style(style.container)
-        //     .constrained()
-        //     .with_height(tabbed_modal.row_height)
-        //     .into_any()
     }
 }
