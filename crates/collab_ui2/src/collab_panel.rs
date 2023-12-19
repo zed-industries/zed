@@ -199,12 +199,6 @@ impl CollabPanel {
                             .iter()
                             .position(|entry| !matches!(entry, ListEntry::Header(_)));
                     }
-                } else if let editor::EditorEvent::Blurred = event {
-                    let query = this.filter_editor.read(cx).text(cx);
-                    if query.is_empty() {
-                        this.selection.take();
-                        this.update_entries(true, cx);
-                    }
                 }
             })
             .detach();
