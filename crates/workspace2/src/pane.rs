@@ -1493,6 +1493,14 @@ impl Pane {
             .on_click(
                 cx.listener(move |pane: &mut Self, _, cx| pane.activate_item(ix, true, true, cx)),
             )
+            // TODO: This should be a click listener with the middle mouse button instead of a mouse down listener.
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |pane, _event, cx| {
+                    pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                        .detach_and_log_err(cx);
+                }),
+            )
             .on_drag(
                 DraggedTab {
                     pane: cx.view().clone(),

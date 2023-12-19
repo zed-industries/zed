@@ -962,15 +962,12 @@ impl CollabPanel {
             self.entries.push(ListEntry::ContactPlaceholder);
         }
 
-        self.list_state.reset(self.entries.len());
-
         if select_same_item {
             if let Some(prev_selected_entry) = prev_selected_entry {
                 self.selection.take();
                 for (ix, entry) in self.entries.iter().enumerate() {
                     if *entry == prev_selected_entry {
                         self.selection = Some(ix);
-                        self.scroll_to_item(ix);
                         break;
                     }
                 }
@@ -980,49 +977,53 @@ impl CollabPanel {
                 if self.entries.is_empty() {
                     None
                 } else {
-                    let ix = prev_selection.min(self.entries.len() - 1);
-                    self.scroll_to_item(ix);
-                    Some(ix)
+                    Some(prev_selection.min(self.entries.len() - 1))
                 }
             });
         }
 
+        let old_scroll_top = self.list_state.logical_scroll_top();
+        self.list_state.reset(self.entries.len());
+
         if scroll_to_top {
-            self.scroll_to_item(0)
+            self.list_state.scroll_to(ListOffset::default());
         } else {
-            let ListOffset {
-                item_ix: old_index,
-                offset_in_item: old_offset,
-            } = self.list_state.logical_scroll_top();
             // Attempt to maintain the same scroll position.
-            if let Some(old_top_entry) = old_entries.get(old_index) {
-                let (new_index, new_offset) = self
+            if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
+                let new_scroll_top = self
                     .entries
                     .iter()
                     .position(|entry| entry == old_top_entry)
-                    .map(|item_ix| (item_ix, old_offset))
+                    .map(|item_ix| ListOffset {
+                        item_ix,
+                        offset_in_item: old_scroll_top.offset_in_item,
+                    })
                     .or_else(|| {
-                        let entry_after_old_top = old_entries.get(old_index + 1)?;
+                        let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
                         let item_ix = self
                             .entries
                             .iter()
                             .position(|entry| entry == entry_after_old_top)?;
-                        Some((item_ix, px(0.)))
+                        Some(ListOffset {
+                            item_ix,
+                            offset_in_item: Pixels::ZERO,
+                        })
                     })
                     .or_else(|| {
-                        let entry_before_old_top = old_entries.get(old_index.saturating_sub(1))?;
+                        let entry_before_old_top =
+                            old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
                         let item_ix = self
                             .entries
                             .iter()
                             .position(|entry| entry == entry_before_old_top)?;
-                        Some((item_ix, px(0.)))
-                    })
-                    .unwrap_or_else(|| (old_index, old_offset));
+                        Some(ListOffset {
+                            item_ix,
+                            offset_in_item: Pixels::ZERO,
+                        })
+                    });
 
-                self.list_state.scroll_to(ListOffset {
-                    item_ix: new_index,
-                    offset_in_item: new_offset,
-                });
+                self.list_state
+                    .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
             }
         }
 

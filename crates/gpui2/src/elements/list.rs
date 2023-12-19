@@ -293,7 +293,7 @@ impl std::fmt::Debug for ListItem {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ListOffset {
     pub item_ix: usize,
     pub offset_in_item: Pixels,

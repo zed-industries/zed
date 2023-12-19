@@ -567,12 +567,7 @@ impl<'a> VisualTestContext<'a> {
     pub fn window_title(&mut self) -> Option<String> {
         self.cx
             .update_window(self.window, |_, cx| {
-                cx.window
-                    .platform_window
-                    .as_test()
-                    .unwrap()
-                    .window_title
-                    .clone()
+                cx.window.platform_window.as_test().unwrap().title.clone()
             })
             .unwrap()
     }

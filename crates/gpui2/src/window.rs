@@ -773,6 +773,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.set_title(title);
     }
 
+    pub fn set_window_edited(&mut self, edited: bool) {
+        self.window.platform_window.set_edited(edited);
+    }
+
     pub fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform
             .displays()
