@@ -1,4 +1,4 @@
-use gpui::{relative, DefiniteLength};
+use gpui::{relative, DefiniteLength, MouseButton};
 use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
 use smallvec::SmallVec;
 
@@ -372,10 +372,11 @@ impl RenderOnce for ButtonLike {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |event, cx| {
-                        cx.stop_propagation();
-                        (on_click)(event, cx)
-                    })
+                    this.on_mouse_down(MouseButton::Left, |_, cx| cx.prevent_default())
+                        .on_click(move |event, cx| {
+                            cx.stop_propagation();
+                            (on_click)(event, cx)
+                        })
                 },
             )
             .when_some(self.tooltip, |this, tooltip| {

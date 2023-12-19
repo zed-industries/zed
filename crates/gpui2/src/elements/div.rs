@@ -1065,7 +1065,7 @@ impl Interactivity {
                     {
                         cx.focus(&focus_handle);
                         // If there is a parent that is also focusable, prevent it
-                        // from trasferring focus because we already did so.
+                        // from transferring focus because we already did so.
                         cx.prevent_default();
                     }
                 }
