@@ -789,6 +789,7 @@ impl Pane {
             }
 
             self.update_toolbar(cx);
+            self.update_status_bar(cx);
 
             if focus_item {
                 self.focus_active_item(cx);
@@ -1447,6 +1448,22 @@ impl Pane {
             .map(|item| item.as_ref());
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.set_active_item(active_item, cx);
+        });
+    }
+
+    fn update_status_bar(&mut self, cx: &mut ViewContext<Self>) {
+        let Ok(status_bar) = self
+            .workspace
+            .update(cx, |workspace, _| workspace.status_bar.clone())
+        else {
+            return;
+        };
+
+        let pane = cx.view().clone();
+        cx.window_context().defer(move |cx| {
+            status_bar.update(cx, move |status_bar, cx| {
+                status_bar.set_active_pane(&pane, cx);
+            });
         });
     }
 

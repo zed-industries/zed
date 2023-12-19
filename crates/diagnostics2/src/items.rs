@@ -1,13 +1,13 @@
 use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
-    rems, Div, EventEmitter, InteractiveElement, ParentElement, Render, Stateful,
+    rems, Div, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
 use theme::ActiveTheme;
-use ui::{h_stack, Color, Icon, IconElement, Label, Tooltip};
+use ui::{h_stack, Button, Clickable, Color, Icon, IconElement, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::ProjectDiagnosticsEditor;
@@ -43,13 +43,28 @@ impl Render for DiagnosticIndicator {
                 .child(Label::new(warning_count.to_string())),
         };
 
+        let status = if !self.in_progress_checks.is_empty() {
+            Some(Label::new("Checking…").into_any_element())
+        } else if let Some(diagnostic) = &self.current_diagnostic {
+            let message = diagnostic.message.split('\n').next().unwrap().to_string();
+            Some(
+                Button::new("diagnostic_message", message)
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.go_to_next_diagnostic(&GoToDiagnostic, cx);
+                    }))
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
         h_stack()
             .id("diagnostic-indicator")
             .on_action(cx.listener(Self::go_to_next_diagnostic))
             .rounded_md()
             .flex_none()
             .h(rems(1.375))
-            .px_1()
+            .px_6()
             .cursor_pointer()
             .bg(cx.theme().colors().ghost_element_background)
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
@@ -63,6 +78,7 @@ impl Render for DiagnosticIndicator {
                 }
             }))
             .child(diagnostic_indicator)
+            .children(status)
     }
 }
 
