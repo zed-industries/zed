@@ -7,18 +7,21 @@ use crate::{
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, EditorElement, EditorStyle};
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, red, Action, AppContext, ClickEvent, Div, EventEmitter,
-    FocusableView, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render,
-    Styled, Subscription, Task, View, ViewContext, VisualContext as _, WindowContext,
+    actions, div, impl_actions, Action, AppContext, ClickEvent, Div, EventEmitter, FocusableView,
+    FontStyle, FontWeight, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
+    Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
+    WhiteSpace, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
+use settings::Settings;
 use std::{any::Any, sync::Arc};
+use theme::ThemeSettings;
 
-use ui::{h_stack, ButtonCommon, Clickable, Icon, IconButton, IconElement, Tooltip};
+use ui::{h_stack, prelude::*, Icon, IconButton, IconElement, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -61,6 +64,38 @@ pub struct BufferSearchBar {
     search_history: SearchHistory,
     current_mode: SearchMode,
     replace_enabled: bool,
+}
+
+impl BufferSearchBar {
+    fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only() {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        EditorElement::new(
+            &editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
 }
 
 impl EventEmitter<Event> for BufferSearchBar {}
@@ -207,15 +242,16 @@ impl Render for BufferSearchBar {
             .w_full()
             .p_1()
             .child(
-                div()
-                    .flex()
+                h_stack()
                     .flex_1()
+                    .px_2()
+                    .py_1()
+                    .gap_2()
                     .border_1()
-                    .border_color(red())
-                    .rounded_md()
-                    .items_center()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_lg()
                     .child(IconElement::new(Icon::MagnifyingGlass))
-                    .child(self.query_editor.clone())
+                    .child(self.render_text_input(&self.query_editor, cx))
                     .children(supported_options.case.then(|| {
                         self.render_search_option_button(
                             SearchOptions::CASE_SENSITIVE,
