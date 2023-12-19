@@ -21,7 +21,8 @@ pub(crate) struct TestWindowHandlers {
 pub struct TestWindow {
     pub(crate) bounds: WindowBounds,
     display: Rc<dyn PlatformDisplay>,
-    pub(crate) window_title: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) edited: bool,
     pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
     pub(crate) handlers: Arc<Mutex<TestWindowHandlers>>,
     platform: Weak<TestPlatform>,
@@ -41,7 +42,8 @@ impl TestWindow {
             input_handler: None,
             sprite_atlas: Arc::new(TestAtlas::new()),
             handlers: Default::default(),
-            window_title: Default::default(),
+            title: Default::default(),
+            edited: false,
         }
     }
 }
@@ -109,11 +111,11 @@ impl PlatformWindow for TestWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.window_title = Some(title.to_owned());
+        self.title = Some(title.to_owned());
     }
 
-    fn set_edited(&mut self, _edited: bool) {
-        unimplemented!()
+    fn set_edited(&mut self, edited: bool) {
+        self.edited = edited;
     }
 
     fn show_character_palette(&self) {
