@@ -39,24 +39,32 @@ use std::{
         Arc,
     },
 };
-use util::ResultExt;
+use util::{post_inc, ResultExt};
 
 const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Clone, Debug, Ord, PartialOrd, PartialEq, Eq)]
+#[derive(Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
 pub struct StackingOrder {
     #[deref]
     #[deref_mut]
-    z_indices: SmallVec<[u8; 64]>,
+    context_stack: SmallVec<[u8; 64]>,
+    id: u32,
 }
 
-impl Default for StackingOrder {
-    fn default() -> Self {
-        StackingOrder {
-            z_indices: SmallVec::new(),
+impl std::fmt::Debug for StackingOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut stacks = self.context_stack.iter().peekable();
+        write!(f, "[({}): ", self.id)?;
+        while let Some(z_index) = stacks.next() {
+            write!(f, "{z_index}")?;
+            if stacks.peek().is_some() {
+                write!(f, "->")?;
+            }
         }
+        write!(f, "]")?;
+        Ok(())
     }
 }
 
@@ -284,6 +292,7 @@ pub(crate) struct Frame {
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
+    pub(crate) next_stacking_order_id: u32,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
 }
@@ -297,6 +306,7 @@ impl Frame {
             dispatch_tree,
             scene_builder: SceneBuilder::default(),
             z_index_stack: StackingOrder::default(),
+            next_stacking_order_id: 0,
             depth_map: Default::default(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -308,6 +318,7 @@ impl Frame {
         self.mouse_listeners.values_mut().for_each(Vec::clear);
         self.dispatch_tree.clear();
         self.depth_map.clear();
+        self.next_stacking_order_id = 0;
     }
 
     fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -926,15 +937,6 @@ impl<'a> WindowContext<'a> {
 
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
         self.window.requested_cursor_style = Some(style)
-    }
-
-    /// Called during painting to invoke the given closure in a new stacking context. The given
-    /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.next_frame.z_index_stack.push(z_index);
-        let result = f(self);
-        self.window.next_frame.z_index_stack.pop();
-        result
     }
 
     /// Called during painting to track which z-index is on top at each pixel position
@@ -2046,6 +2048,18 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         result
     }
 
+    /// Called during painting to invoke the given closure in a new stacking context. The given
+    /// z-index is interpreted relative to the previous call to `stack`.
+    fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
+        let new_stacking_order_id =
+            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window_mut().next_frame.z_index_stack.push(z_index);
+        let result = f(self);
+        self.window_mut().next_frame.z_index_stack.pop();
+        result
+    }
+
     /// Update the global element offset relative to the current offset. This is used to implement
     /// scrolling.
     fn with_element_offset<R>(
@@ -2267,13 +2281,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Access the underlying window context.
     pub fn window_context(&mut self) -> &mut WindowContext<'a> {
         &mut self.window_cx
-    }
-
-    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.next_frame.z_index_stack.push(z_index);
-        let result = f(self);
-        self.window.next_frame.z_index_stack.pop();
-        result
     }
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)

@@ -105,6 +105,7 @@ impl Render for Toolbar {
         v_stack()
             .p_1()
             .gap_2()
+            .z_index(80) // todo!("z-index")
             .border_b()
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().toolbar_background)

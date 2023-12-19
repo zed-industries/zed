@@ -1,11 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     black, div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
-    Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, Interactivity,
-    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
-    PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement, Styled,
-    TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
+    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
+    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
+    Pixels, PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement,
+    Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
