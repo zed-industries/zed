@@ -564,8 +564,6 @@ impl EditorElement {
                     );
                 }
             }
-
-            cx.stop_propagation();
         } else {
             update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);

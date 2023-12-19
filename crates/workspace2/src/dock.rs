@@ -495,7 +495,8 @@ impl Render for Dock {
                 })
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
                     if e.down.button == MouseButton::Left && e.down.click_count == 2 {
-                        v.resize_active_panel(None, cx)
+                        v.resize_active_panel(None, cx);
+                        cx.stop_propagation();
                     }
                 }))
                 .z_index(1);
