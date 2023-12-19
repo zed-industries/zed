@@ -14,9 +14,9 @@ use editor::{
 use futures::future::try_join_all;
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    Focusable, FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, prelude::*, HighlightedLabel, Icon, IconElement, Label};
+use ui::{h_stack, prelude::*, Icon, IconElement, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -785,8 +785,10 @@ impl Item for ProjectDiagnosticsEditor {
 }
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
-    let (message, highlights) = highlight_diagnostic_message(Vec::new(), &diagnostic.message);
-    Arc::new(move |_| {
+    let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
+    let message: SharedString = message.into();
+    Arc::new(move |cx| {
+        let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_stack()
             .id("diagnostic header")
             .py_2()
@@ -809,7 +811,14 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                     .child(
                         h_stack()
                             .gap_1()
-                            .child(HighlightedLabel::new(message.clone(), highlights.clone()))
+                            .child(
+                                StyledText::new(message.clone()).with_highlights(
+                                    &cx.text_style(),
+                                    code_ranges
+                                        .iter()
+                                        .map(|range| (range.clone(), highlight_style)),
+                                ),
+                            )
                             .when_some(diagnostic.code.as_ref(), |stack, code| {
                                 stack.child(Label::new(format!("({code})")).color(Color::Muted))
                             }),
