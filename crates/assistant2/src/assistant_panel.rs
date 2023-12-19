@@ -1174,8 +1174,6 @@ impl Render for AssistantPanel {
                             .into_any_element()
                         }),
                 )
-                .border()
-                .border_color(gpui::red())
         }
     }
 }
