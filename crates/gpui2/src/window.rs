@@ -946,16 +946,20 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    /// Returns true if the top-most opaque layer painted over this point was part of the
-    /// same layer as the given stacking order.
+    /// Returns true if there is no opaque layer containing the given point
+    /// on top of the given level. Layers whose level is an extension of the
+    /// level are not considered to be on top of the level.
     pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
-        for (stack, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if bounds.contains(point) {
-                return level.starts_with(stack) || stack.starts_with(level);
+        for (opaque_level, bounds) in self.window.rendered_frame.depth_map.iter() {
+            if level >= opaque_level {
+                break;
+            }
+
+            if bounds.contains(point) && !opaque_level.starts_with(level) {
+                return false;
             }
         }
-
-        false
+        true
     }
 
     pub fn was_top_layer_under_active_drag(
@@ -963,16 +967,19 @@ impl<'a> WindowContext<'a> {
         point: &Point<Pixels>,
         level: &StackingOrder,
     ) -> bool {
-        for (stack, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if stack.starts_with(&[ACTIVE_DRAG_Z_INDEX]) {
+        for (opaque_level, bounds) in self.window.rendered_frame.depth_map.iter() {
+            if level >= opaque_level {
+                break;
+            }
+            if opaque_level.starts_with(&[ACTIVE_DRAG_Z_INDEX]) {
                 continue;
             }
-            if bounds.contains(point) {
-                return level.starts_with(stack) || stack.starts_with(level);
+
+            if bounds.contains(point) && !opaque_level.starts_with(level) {
+                return false;
             }
         }
-
-        false
+        true
     }
 
     /// Called during painting to get the current stacking order.
