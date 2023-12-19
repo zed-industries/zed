@@ -1,3 +1,4 @@
+#![allow(unused)]
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
     div, img, svg, AnyElement, AppContext, DismissEvent, Div, Entity, EventEmitter, FocusHandle,

@@ -5,13 +5,13 @@ use client::{
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, AppContext, ClipboardItem, DismissEvent, Div, Entity, EventEmitter,
-    FocusableView, Model, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, div, overlay, AppContext, ClipboardItem, DismissEvent, Div, EventEmitter,
+    FocusableView, Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::prelude::*;
+use ui::{prelude::*, Avatar, Checkbox, ContextMenu, ListItem};
 use util::TryFutureExt;
 use workspace::ModalView;
 
@@ -25,19 +25,10 @@ actions!(
     ]
 );
 
-// pub fn init(cx: &mut AppContext) {
-//     Picker::<ChannelModalDelegate>::init(cx);
-//     cx.add_action(ChannelModal::toggle_mode);
-//     cx.add_action(ChannelModal::toggle_member_admin);
-//     cx.add_action(ChannelModal::remove_member);
-//     cx.add_action(ChannelModal::dismiss);
-// }
-
 pub struct ChannelModal {
     picker: View<Picker<ChannelModalDelegate>>,
     channel_store: Model<ChannelStore>,
     channel_id: ChannelId,
-    has_focus: bool,
 }
 
 impl ChannelModal {
@@ -62,25 +53,19 @@ impl ChannelModal {
                     channel_store: channel_store.clone(),
                     channel_id,
                     match_candidates: Vec::new(),
+                    context_menu: None,
                     members,
                     mode,
-                    // context_menu: cx.add_view(|cx| {
-                    //     let mut menu = ContextMenu::new(cx.view_id(), cx);
-                    //     menu.set_position_mode(OverlayPositionMode::Local);
-                    //     menu
-                    // }),
                 },
                 cx,
             )
+            .modal(false)
         });
-
-        let has_focus = picker.focus_handle(cx).contains_focused(cx);
 
         Self {
             picker,
             channel_store,
             channel_id,
-            has_focus,
         }
     }
 
@@ -126,15 +111,19 @@ impl ChannelModal {
         .detach();
     }
 
-    fn toggle_member_admin(&mut self, _: &ToggleMemberAdmin, cx: &mut ViewContext<Self>) {
-        self.picker.update(cx, |picker, cx| {
-            picker.delegate.toggle_selected_member_admin(cx);
-        })
-    }
-
-    fn remove_member(&mut self, _: &RemoveMember, cx: &mut ViewContext<Self>) {
-        self.picker.update(cx, |picker, cx| {
-            picker.delegate.remove_selected_member(cx);
+    fn set_channel_visiblity(&mut self, selection: &Selection, cx: &mut ViewContext<Self>) {
+        self.channel_store.update(cx, |channel_store, cx| {
+            channel_store
+                .set_channel_visibility(
+                    self.channel_id,
+                    match selection {
+                        Selection::Unselected => ChannelVisibility::Members,
+                        Selection::Selected => ChannelVisibility::Public,
+                        Selection::Indeterminate => return,
+                    },
+                    cx,
+                )
+                .detach_and_log_err(cx)
         });
     }
 
@@ -156,167 +145,87 @@ impl Render for ChannelModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w(rems(34.)).child(self.picker.clone())
-        // let theme = &theme::current(cx).collab_panel.tabbed_modal;
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(self.channel_id) else {
+            return div();
+        };
+        let channel_name = channel.name.clone();
+        let channel_id = channel.id;
+        let visibility = channel.visibility;
+        let mode = self.picker.read(cx).delegate.mode;
 
-        // let mode = self.picker.read(cx).delegate().mode;
-        // let Some(channel) = self.channel_store.read(cx).channel_for_id(self.channel_id) else {
-        //     return Empty::new().into_any();
-        // };
-
-        // enum InviteMembers {}
-        // enum ManageMembers {}
-
-        // fn render_mode_button<T: 'static>(
-        //     mode: Mode,
-        //     text: &'static str,
-        //     current_mode: Mode,
-        //     theme: &theme::TabbedModal,
-        //     cx: &mut ViewContext<ChannelModal>,
-        // ) -> AnyElement<ChannelModal> {
-        //     let active = mode == current_mode;
-        //     MouseEventHandler::new::<T, _>(0, cx, move |state, _| {
-        //         let contained_text = theme.tab_button.style_for(active, state);
-        //         Label::new(text, contained_text.text.clone())
-        //             .contained()
-        //             .with_style(contained_text.container.clone())
-        //     })
-        //     .on_click(MouseButton::Left, move |_, this, cx| {
-        //         if !active {
-        //             this.set_mode(mode, cx);
-        //         }
-        //     })
-        //     .with_cursor_style(CursorStyle::PointingHand)
-        //     .into_any()
-        // }
-
-        // fn render_visibility(
-        //     channel_id: ChannelId,
-        //     visibility: ChannelVisibility,
-        //     theme: &theme::TabbedModal,
-        //     cx: &mut ViewContext<ChannelModal>,
-        // ) -> AnyElement<ChannelModal> {
-        //     enum TogglePublic {}
-
-        //     if visibility == ChannelVisibility::Members {
-        //         return Flex::row()
-        //             .with_child(
-        //                 MouseEventHandler::new::<TogglePublic, _>(0, cx, move |state, _| {
-        //                     let style = theme.visibility_toggle.style_for(state);
-        //                     Label::new(format!("{}", "Public access: OFF"), style.text.clone())
-        //                         .contained()
-        //                         .with_style(style.container.clone())
-        //                 })
-        //                 .on_click(MouseButton::Left, move |_, this, cx| {
-        //                     this.channel_store
-        //                         .update(cx, |channel_store, cx| {
-        //                             channel_store.set_channel_visibility(
-        //                                 channel_id,
-        //                                 ChannelVisibility::Public,
-        //                                 cx,
-        //                             )
-        //                         })
-        //                         .detach_and_log_err(cx);
-        //                 })
-        //                 .with_cursor_style(CursorStyle::PointingHand),
-        //             )
-        //             .into_any();
-        //     }
-
-        //     Flex::row()
-        //         .with_child(
-        //             MouseEventHandler::new::<TogglePublic, _>(0, cx, move |state, _| {
-        //                 let style = theme.visibility_toggle.style_for(state);
-        //                 Label::new(format!("{}", "Public access: ON"), style.text.clone())
-        //                     .contained()
-        //                     .with_style(style.container.clone())
-        //             })
-        //             .on_click(MouseButton::Left, move |_, this, cx| {
-        //                 this.channel_store
-        //                     .update(cx, |channel_store, cx| {
-        //                         channel_store.set_channel_visibility(
-        //                             channel_id,
-        //                             ChannelVisibility::Members,
-        //                             cx,
-        //                         )
-        //                     })
-        //                     .detach_and_log_err(cx);
-        //             })
-        //             .with_cursor_style(CursorStyle::PointingHand),
-        //         )
-        //         .with_spacing(14.0)
-        //         .with_child(
-        //             MouseEventHandler::new::<TogglePublic, _>(1, cx, move |state, _| {
-        //                 let style = theme.channel_link.style_for(state);
-        //                 Label::new(format!("{}", "copy link"), style.text.clone())
-        //                     .contained()
-        //                     .with_style(style.container.clone())
-        //             })
-        //             .on_click(MouseButton::Left, move |_, this, cx| {
-        //                 if let Some(channel) =
-        //                     this.channel_store.read(cx).channel_for_id(channel_id)
-        //                 {
-        //                     let item = ClipboardItem::new(channel.link());
-        //                     cx.write_to_clipboard(item);
-        //                 }
-        //             })
-        //             .with_cursor_style(CursorStyle::PointingHand),
-        //         )
-        //         .into_any()
-        // }
-
-        // Flex::column()
-        //     .with_child(
-        //         Flex::column()
-        //             .with_child(
-        //                 Label::new(format!("#{}", channel.name), theme.title.text.clone())
-        //                     .contained()
-        //                     .with_style(theme.title.container.clone()),
-        //             )
-        //             .with_child(render_visibility(channel.id, channel.visibility, theme, cx))
-        //             .with_child(Flex::row().with_children([
-        //                 render_mode_button::<InviteMembers>(
-        //                     Mode::InviteMembers,
-        //                     "Invite members",
-        //                     mode,
-        //                     theme,
-        //                     cx,
-        //                 ),
-        //                 render_mode_button::<ManageMembers>(
-        //                     Mode::ManageMembers,
-        //                     "Manage members",
-        //                     mode,
-        //                     theme,
-        //                     cx,
-        //                 ),
-        //             ]))
-        //             .expanded()
-        //             .contained()
-        //             .with_style(theme.header),
-        //     )
-        //     .with_child(
-        //         ChildView::new(&self.picker, cx)
-        //             .contained()
-        //             .with_style(theme.body),
-        //     )
-        //     .constrained()
-        //     .with_max_height(theme.max_height)
-        //     .with_max_width(theme.max_width)
-        //     .contained()
-        //     .with_style(theme.modal)
-        //     .into_any()
+        v_stack()
+            .key_context("ChannelModal")
+            .on_action(cx.listener(Self::toggle_mode))
+            .on_action(cx.listener(Self::dismiss))
+            .elevation_3(cx)
+            .w(rems(34.))
+            .child(
+                v_stack()
+                    .px_2()
+                    .py_1()
+                    .rounded_t(px(8.))
+                    .bg(cx.theme().colors().element_background)
+                    .child(IconElement::new(Icon::Hash).size(IconSize::Medium))
+                    .child(Label::new(channel_name))
+                    .child(
+                        h_stack()
+                            .w_full()
+                            .justify_between()
+                            .child(
+                                h_stack()
+                                    .gap_2()
+                                    .child(
+                                        Checkbox::new(
+                                            "is-public",
+                                            if visibility == ChannelVisibility::Public {
+                                                ui::Selection::Selected
+                                            } else {
+                                                ui::Selection::Unselected
+                                            },
+                                        )
+                                        .on_click(cx.listener(Self::set_channel_visiblity)),
+                                    )
+                                    .child(Label::new("Public")),
+                            )
+                            .children(if visibility == ChannelVisibility::Public {
+                                Some(Button::new("copy-link", "Copy Link").on_click(cx.listener(
+                                    move |this, _, cx| {
+                                        if let Some(channel) =
+                                            this.channel_store.read(cx).channel_for_id(channel_id)
+                                        {
+                                            let item = ClipboardItem::new(channel.link());
+                                            cx.write_to_clipboard(item);
+                                        }
+                                    },
+                                )))
+                            } else {
+                                None
+                            }),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_row()
+                            .child(
+                                Button::new("manage-members", "Manage Members")
+                                    .selected(mode == Mode::ManageMembers)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.set_mode(Mode::ManageMembers, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("invite-members", "Invite Members")
+                                    .selected(mode == Mode::InviteMembers)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.set_mode(Mode::InviteMembers, cx);
+                                    })),
+                            ),
+                    ),
+            )
+            .child(self.picker.clone())
     }
-
-    // fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //     self.has_focus = true;
-    //     if cx.is_self_focused() {
-    //         cx.focus(&self.picker)
-    //     }
-    // }
-
-    // fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
-    //     self.has_focus = false;
-    // }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -336,11 +245,11 @@ pub struct ChannelModalDelegate {
     mode: Mode,
     match_candidates: Vec<StringMatchCandidate>,
     members: Vec<ChannelMembership>,
-    // context_menu: ViewHandle<ContextMenu>,
+    context_menu: Option<(View<ContextMenu>, Subscription)>,
 }
 
 impl PickerDelegate for ChannelModalDelegate {
-    type ListItem = Div;
+    type ListItem = ListItem;
 
     fn placeholder_text(&self) -> Arc<str> {
         "Search collaborator by username...".into()
@@ -420,11 +329,11 @@ impl PickerDelegate for ChannelModalDelegate {
         if let Some((selected_user, role)) = self.user_at_index(self.selected_index) {
             match self.mode {
                 Mode::ManageMembers => {
-                    self.show_context_menu(role.unwrap_or(ChannelRole::Member), cx)
+                    self.show_context_menu(selected_user, role.unwrap_or(ChannelRole::Member), cx)
                 }
                 Mode::InviteMembers => match self.member_status(selected_user.id, cx) {
                     Some(proto::channel_member::Kind::Invitee) => {
-                        self.remove_selected_member(cx);
+                        self.remove_member(selected_user.id, cx);
                     }
                     Some(proto::channel_member::Kind::AncestorMember) | None => {
                         self.invite_member(selected_user, cx)
@@ -436,11 +345,13 @@ impl PickerDelegate for ChannelModalDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        self.channel_modal
-            .update(cx, |_, cx| {
-                cx.emit(DismissEvent);
-            })
-            .ok();
+        if self.context_menu.is_none() {
+            self.channel_modal
+                .update(cx, |_, cx| {
+                    cx.emit(DismissEvent);
+                })
+                .ok();
+        }
     }
 
     fn render_match(
@@ -449,129 +360,54 @@ impl PickerDelegate for ChannelModalDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        None
-        //     let full_theme = &theme::current(cx);
-        //     let theme = &full_theme.collab_panel.channel_modal;
-        //     let tabbed_modal = &full_theme.collab_panel.tabbed_modal;
-        //     let (user, role) = self.user_at_index(ix).unwrap();
-        //     let request_status = self.member_status(user.id, cx);
+        let (user, role) = self.user_at_index(ix)?;
+        let request_status = self.member_status(user.id, cx);
 
-        //     let style = tabbed_modal
-        //         .picker
-        //         .item
-        //         .in_state(selected)
-        //         .style_for(mouse_state);
-
-        //     let in_manage = matches!(self.mode, Mode::ManageMembers);
-
-        //     let mut result = Flex::row()
-        //         .with_children(user.avatar.clone().map(|avatar| {
-        //             Image::from_data(avatar)
-        //                 .with_style(theme.contact_avatar)
-        //                 .aligned()
-        //                 .left()
-        //         }))
-        //         .with_child(
-        //             Label::new(user.github_login.clone(), style.label.clone())
-        //                 .contained()
-        //                 .with_style(theme.contact_username)
-        //                 .aligned()
-        //                 .left(),
-        //         )
-        //         .with_children({
-        //             (in_manage && request_status == Some(proto::channel_member::Kind::Invitee)).then(
-        //                 || {
-        //                     Label::new("Invited", theme.member_tag.text.clone())
-        //                         .contained()
-        //                         .with_style(theme.member_tag.container)
-        //                         .aligned()
-        //                         .left()
-        //                 },
-        //             )
-        //         })
-        //         .with_children(if in_manage && role == Some(ChannelRole::Admin) {
-        //             Some(
-        //                 Label::new("Admin", theme.member_tag.text.clone())
-        //                     .contained()
-        //                     .with_style(theme.member_tag.container)
-        //                     .aligned()
-        //                     .left(),
-        //             )
-        //         } else if in_manage && role == Some(ChannelRole::Guest) {
-        //             Some(
-        //                 Label::new("Guest", theme.member_tag.text.clone())
-        //                     .contained()
-        //                     .with_style(theme.member_tag.container)
-        //                     .aligned()
-        //                     .left(),
-        //             )
-        //         } else {
-        //             None
-        //         })
-        //         .with_children({
-        //             let svg = match self.mode {
-        //                 Mode::ManageMembers => Some(
-        //                     Svg::new("icons/ellipsis.svg")
-        //                         .with_color(theme.member_icon.color)
-        //                         .constrained()
-        //                         .with_width(theme.member_icon.icon_width)
-        //                         .aligned()
-        //                         .constrained()
-        //                         .with_width(theme.member_icon.button_width)
-        //                         .with_height(theme.member_icon.button_width)
-        //                         .contained()
-        //                         .with_style(theme.member_icon.container),
-        //                 ),
-        //                 Mode::InviteMembers => match request_status {
-        //                     Some(proto::channel_member::Kind::Member) => Some(
-        //                         Svg::new("icons/check.svg")
-        //                             .with_color(theme.member_icon.color)
-        //                             .constrained()
-        //                             .with_width(theme.member_icon.icon_width)
-        //                             .aligned()
-        //                             .constrained()
-        //                             .with_width(theme.member_icon.button_width)
-        //                             .with_height(theme.member_icon.button_width)
-        //                             .contained()
-        //                             .with_style(theme.member_icon.container),
-        //                     ),
-        //                     Some(proto::channel_member::Kind::Invitee) => Some(
-        //                         Svg::new("icons/check.svg")
-        //                             .with_color(theme.invitee_icon.color)
-        //                             .constrained()
-        //                             .with_width(theme.invitee_icon.icon_width)
-        //                             .aligned()
-        //                             .constrained()
-        //                             .with_width(theme.invitee_icon.button_width)
-        //                             .with_height(theme.invitee_icon.button_width)
-        //                             .contained()
-        //                             .with_style(theme.invitee_icon.container),
-        //                     ),
-        //                     Some(proto::channel_member::Kind::AncestorMember) | None => None,
-        //                 },
-        //             };
-
-        //             svg.map(|svg| svg.aligned().flex_float().into_any())
-        //         })
-        //         .contained()
-        //         .with_style(style.container)
-        //         .constrained()
-        //         .with_height(tabbed_modal.row_height)
-        //         .into_any();
-
-        //     if selected {
-        //         result = Stack::new()
-        //             .with_child(result)
-        //             .with_child(
-        //                 ChildView::new(&self.context_menu, cx)
-        //                     .aligned()
-        //                     .top()
-        //                     .right(),
-        //             )
-        //             .into_any();
-        //     }
-
-        //     result
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .selected(selected)
+                .start_slot(Avatar::new(user.avatar_uri.clone()))
+                .child(Label::new(user.github_login.clone()))
+                .end_slot(h_stack().gap_2().map(|slot| {
+                    match self.mode {
+                        Mode::ManageMembers => slot
+                            .children(
+                                if request_status == Some(proto::channel_member::Kind::Invitee) {
+                                    Some(Label::new("Invited"))
+                                } else {
+                                    None
+                                },
+                            )
+                            .children(match role {
+                                Some(ChannelRole::Admin) => Some(Label::new("Admin")),
+                                Some(ChannelRole::Guest) => Some(Label::new("Guest")),
+                                _ => None,
+                            })
+                            .child(IconButton::new("ellipsis", Icon::Ellipsis))
+                            .children(
+                                if let (Some((menu, _)), true) = (&self.context_menu, selected) {
+                                    Some(
+                                        overlay()
+                                            .anchor(gpui::AnchorCorner::TopLeft)
+                                            .child(menu.clone()),
+                                    )
+                                } else {
+                                    None
+                                },
+                            ),
+                        Mode::InviteMembers => match request_status {
+                            Some(proto::channel_member::Kind::Invitee) => {
+                                slot.children(Some(Label::new("Invited")))
+                            }
+                            Some(proto::channel_member::Kind::Member) => {
+                                slot.children(Some(Label::new("Member")))
+                            }
+                            _ => slot,
+                        },
+                    }
+                })),
+        )
     }
 }
 
@@ -605,21 +441,20 @@ impl ChannelModalDelegate {
         }
     }
 
-    fn toggle_selected_member_admin(&mut self, cx: &mut ViewContext<Picker<Self>>) -> Option<()> {
-        let (user, role) = self.user_at_index(self.selected_index)?;
-        let new_role = if role == Some(ChannelRole::Admin) {
-            ChannelRole::Member
-        } else {
-            ChannelRole::Admin
-        };
+    fn set_user_role(
+        &mut self,
+        user_id: UserId,
+        new_role: ChannelRole,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<()> {
         let update = self.channel_store.update(cx, |store, cx| {
-            store.set_member_role(self.channel_id, user.id, new_role, cx)
+            store.set_member_role(self.channel_id, user_id, new_role, cx)
         });
         cx.spawn(|picker, mut cx| async move {
             update.await?;
             picker.update(&mut cx, |picker, cx| {
                 let this = &mut picker.delegate;
-                if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user.id) {
+                if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user_id) {
                     member.role = new_role;
                 }
                 cx.focus_self();
@@ -630,9 +465,7 @@ impl ChannelModalDelegate {
         Some(())
     }
 
-    fn remove_selected_member(&mut self, cx: &mut ViewContext<Picker<Self>>) -> Option<()> {
-        let (user, _) = self.user_at_index(self.selected_index)?;
-        let user_id = user.id;
+    fn remove_member(&mut self, user_id: UserId, cx: &mut ViewContext<Picker<Self>>) -> Option<()> {
         let update = self.channel_store.update(cx, |store, cx| {
             store.remove_member(self.channel_id, user_id, cx)
         });
@@ -656,7 +489,7 @@ impl ChannelModalDelegate {
                     .selected_index
                     .min(this.matching_member_indices.len().saturating_sub(1));
 
-                cx.focus_self();
+                picker.focus(cx);
                 cx.notify();
             })
         })
@@ -689,24 +522,55 @@ impl ChannelModalDelegate {
         .detach_and_log_err(cx);
     }
 
-    fn show_context_menu(&mut self, role: ChannelRole, cx: &mut ViewContext<Picker<Self>>) {
-        // self.context_menu.update(cx, |context_menu, cx| {
-        //     context_menu.show(
-        //         Default::default(),
-        //         AnchorCorner::TopRight,
-        //         vec![
-        //             ContextMenuItem::action("Remove", RemoveMember),
-        //             ContextMenuItem::action(
-        //                 if role == ChannelRole::Admin {
-        //                     "Make non-admin"
-        //                 } else {
-        //                     "Make admin"
-        //                 },
-        //                 ToggleMemberAdmin,
-        //             ),
-        //         ],
-        //         cx,
-        //     )
-        // })
+    fn show_context_menu(
+        &mut self,
+        user: Arc<User>,
+        role: ChannelRole,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) {
+        let user_id = user.id;
+        let picker = cx.view().clone();
+        let context_menu = ContextMenu::build(cx, |mut menu, _cx| {
+            menu = menu.entry("Remove Member", {
+                let picker = picker.clone();
+                move |cx| {
+                    picker.update(cx, |picker, cx| {
+                        picker.delegate.remove_member(user_id, cx);
+                    })
+                }
+            });
+
+            let picker = picker.clone();
+            match role {
+                ChannelRole::Admin => {
+                    menu = menu.entry("Revoke Admin", move |cx| {
+                        picker.update(cx, |picker, cx| {
+                            picker
+                                .delegate
+                                .set_user_role(user_id, ChannelRole::Member, cx);
+                        })
+                    });
+                }
+                ChannelRole::Member => {
+                    menu = menu.entry("Make Admin", move |cx| {
+                        picker.update(cx, |picker, cx| {
+                            picker
+                                .delegate
+                                .set_user_role(user_id, ChannelRole::Admin, cx);
+                        })
+                    });
+                }
+                _ => {}
+            };
+
+            menu
+        });
+        cx.focus_view(&context_menu);
+        let subscription = cx.subscribe(&context_menu, |picker, _, _: &DismissEvent, cx| {
+            picker.delegate.context_menu = None;
+            picker.focus(cx);
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, subscription));
     }
 }
