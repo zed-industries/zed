@@ -1,4 +1,3 @@
-#![allow(unused)]
 use channel::{ChannelId, ChannelMembership, ChannelStore};
 use client::{
     proto::{self, ChannelRole, ChannelVisibility},
@@ -12,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::prelude::*;
+use ui::{prelude::*, Checkbox};
 use util::TryFutureExt;
 use workspace::ModalView;
 
@@ -157,167 +156,57 @@ impl Render for ChannelModal {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w(rems(34.)).child(self.picker.clone())
-        // let theme = &theme::current(cx).collab_panel.tabbed_modal;
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(self.channel_id) else {
+            return div();
+        };
+        let mode = self.picker.read(cx).delegate.mode;
 
-        // let mode = self.picker.read(cx).delegate().mode;
-        // let Some(channel) = self.channel_store.read(cx).channel_for_id(self.channel_id) else {
-        //     return Empty::new().into_any();
-        // };
-
-        // enum InviteMembers {}
-        // enum ManageMembers {}
-
-        // fn render_mode_button<T: 'static>(
-        //     mode: Mode,
-        //     text: &'static str,
-        //     current_mode: Mode,
-        //     theme: &theme::TabbedModal,
-        //     cx: &mut ViewContext<ChannelModal>,
-        // ) -> AnyElement<ChannelModal> {
-        //     let active = mode == current_mode;
-        //     MouseEventHandler::new::<T, _>(0, cx, move |state, _| {
-        //         let contained_text = theme.tab_button.style_for(active, state);
-        //         Label::new(text, contained_text.text.clone())
-        //             .contained()
-        //             .with_style(contained_text.container.clone())
-        //     })
-        //     .on_click(MouseButton::Left, move |_, this, cx| {
-        //         if !active {
-        //             this.set_mode(mode, cx);
-        //         }
-        //     })
-        //     .with_cursor_style(CursorStyle::PointingHand)
-        //     .into_any()
-        // }
-
-        // fn render_visibility(
-        //     channel_id: ChannelId,
-        //     visibility: ChannelVisibility,
-        //     theme: &theme::TabbedModal,
-        //     cx: &mut ViewContext<ChannelModal>,
-        // ) -> AnyElement<ChannelModal> {
-        //     enum TogglePublic {}
-
-        //     if visibility == ChannelVisibility::Members {
-        //         return Flex::row()
-        //             .with_child(
-        //                 MouseEventHandler::new::<TogglePublic, _>(0, cx, move |state, _| {
-        //                     let style = theme.visibility_toggle.style_for(state);
-        //                     Label::new(format!("{}", "Public access: OFF"), style.text.clone())
-        //                         .contained()
-        //                         .with_style(style.container.clone())
-        //                 })
-        //                 .on_click(MouseButton::Left, move |_, this, cx| {
-        //                     this.channel_store
-        //                         .update(cx, |channel_store, cx| {
-        //                             channel_store.set_channel_visibility(
-        //                                 channel_id,
-        //                                 ChannelVisibility::Public,
-        //                                 cx,
-        //                             )
-        //                         })
-        //                         .detach_and_log_err(cx);
-        //                 })
-        //                 .with_cursor_style(CursorStyle::PointingHand),
-        //             )
-        //             .into_any();
-        //     }
-
-        //     Flex::row()
-        //         .with_child(
-        //             MouseEventHandler::new::<TogglePublic, _>(0, cx, move |state, _| {
-        //                 let style = theme.visibility_toggle.style_for(state);
-        //                 Label::new(format!("{}", "Public access: ON"), style.text.clone())
-        //                     .contained()
-        //                     .with_style(style.container.clone())
-        //             })
-        //             .on_click(MouseButton::Left, move |_, this, cx| {
-        //                 this.channel_store
-        //                     .update(cx, |channel_store, cx| {
-        //                         channel_store.set_channel_visibility(
-        //                             channel_id,
-        //                             ChannelVisibility::Members,
-        //                             cx,
-        //                         )
-        //                     })
-        //                     .detach_and_log_err(cx);
-        //             })
-        //             .with_cursor_style(CursorStyle::PointingHand),
-        //         )
-        //         .with_spacing(14.0)
-        //         .with_child(
-        //             MouseEventHandler::new::<TogglePublic, _>(1, cx, move |state, _| {
-        //                 let style = theme.channel_link.style_for(state);
-        //                 Label::new(format!("{}", "copy link"), style.text.clone())
-        //                     .contained()
-        //                     .with_style(style.container.clone())
-        //             })
-        //             .on_click(MouseButton::Left, move |_, this, cx| {
-        //                 if let Some(channel) =
-        //                     this.channel_store.read(cx).channel_for_id(channel_id)
-        //                 {
-        //                     let item = ClipboardItem::new(channel.link());
-        //                     cx.write_to_clipboard(item);
-        //                 }
-        //             })
-        //             .with_cursor_style(CursorStyle::PointingHand),
-        //         )
-        //         .into_any()
-        // }
-
-        // Flex::column()
-        //     .with_child(
-        //         Flex::column()
-        //             .with_child(
-        //                 Label::new(format!("#{}", channel.name), theme.title.text.clone())
-        //                     .contained()
-        //                     .with_style(theme.title.container.clone()),
-        //             )
-        //             .with_child(render_visibility(channel.id, channel.visibility, theme, cx))
-        //             .with_child(Flex::row().with_children([
-        //                 render_mode_button::<InviteMembers>(
-        //                     Mode::InviteMembers,
-        //                     "Invite members",
-        //                     mode,
-        //                     theme,
-        //                     cx,
-        //                 ),
-        //                 render_mode_button::<ManageMembers>(
-        //                     Mode::ManageMembers,
-        //                     "Manage members",
-        //                     mode,
-        //                     theme,
-        //                     cx,
-        //                 ),
-        //             ]))
-        //             .expanded()
-        //             .contained()
-        //             .with_style(theme.header),
-        //     )
-        //     .with_child(
-        //         ChildView::new(&self.picker, cx)
-        //             .contained()
-        //             .with_style(theme.body),
-        //     )
-        //     .constrained()
-        //     .with_max_height(theme.max_height)
-        //     .with_max_width(theme.max_width)
-        //     .contained()
-        //     .with_style(theme.modal)
-        //     .into_any()
+        v_stack()
+            .bg(cx.theme().colors().elevated_surface_background)
+            .w(rems(34.))
+            .child(Label::new(channel.name.clone()))
+            .child(
+                div()
+                    .w_full()
+                    .flex_row()
+                    .child(Checkbox::new(
+                        "is-public",
+                        if channel.visibility == ChannelVisibility::Public {
+                            ui::Selection::Selected
+                        } else {
+                            ui::Selection::Unselected
+                        },
+                    ))
+                    .child(Label::new("Public")),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex_row()
+                    .child(
+                        Button::new("manage-members", "Manage Members")
+                            .selected(mode == Mode::ManageMembers)
+                            .on_click(cx.listener(|this, _, cx| {
+                                this.picker.update(cx, |picker, _| {
+                                    picker.delegate.mode = Mode::ManageMembers
+                                });
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("invite-members", "Invite Members")
+                            .selected(mode == Mode::InviteMembers)
+                            .on_click(cx.listener(|this, _, cx| {
+                                this.picker.update(cx, |picker, _| {
+                                    picker.delegate.mode = Mode::InviteMembers
+                                });
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(self.picker.clone())
     }
-
-    // fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-    //     self.has_focus = true;
-    //     if cx.is_self_focused() {
-    //         cx.focus(&self.picker)
-    //     }
-    // }
-
-    // fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
-    //     self.has_focus = false;
-    // }
 }
 
 #[derive(Copy, Clone, PartialEq)]
