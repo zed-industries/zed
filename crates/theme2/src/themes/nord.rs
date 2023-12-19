@@ -70,6 +70,7 @@ pub fn nord() -> UserThemeFamily {
                     terminal_ansi_magenta: Some(rgba(0xb48eadff).into()),
                     terminal_ansi_cyan: Some(rgba(0x88c0d0ff).into()),
                     terminal_ansi_white: Some(rgba(0xe5e9f0ff).into()),
+                    link_text_hover: Some(rgba(0x88c0d0ff).into()),
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {

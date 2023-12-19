@@ -54,6 +54,7 @@ pub fn synthwave_84() -> UserThemeFamily {
                     terminal_ansi_blue: Some(rgba(0x03edf9ff).into()),
                     terminal_ansi_magenta: Some(rgba(0xff7edbff).into()),
                     terminal_ansi_cyan: Some(rgba(0x03edf9ff).into()),
+                    link_text_hover: Some(rgba(0xff7edbff).into()),
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {

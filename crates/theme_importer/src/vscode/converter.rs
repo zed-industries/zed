@@ -217,6 +217,10 @@ impl VsCodeThemeConverter {
                 .tab_inactive_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            link_text_hover: vscode_colors
+                .text_link_active_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
             tab_bar_background: vscode_colors
                 .editor_group_header_tabs_background
                 .as_ref()

@@ -70,6 +70,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xb16286ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x689d6aff).into()),
                         terminal_ansi_white: Some(rgba(0xa89984ff).into()),
+                        link_text_hover: Some(rgba(0x458588ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -365,6 +366,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xb16286ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x689d6aff).into()),
                         terminal_ansi_white: Some(rgba(0xa89984ff).into()),
+                        link_text_hover: Some(rgba(0x458588ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -660,6 +662,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xb16286ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x689d6aff).into()),
                         terminal_ansi_white: Some(rgba(0xa89984ff).into()),
+                        link_text_hover: Some(rgba(0x458588ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -955,6 +958,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xb16286ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x689d6aff).into()),
                         terminal_ansi_white: Some(rgba(0x7c6f64ff).into()),
+                        link_text_hover: Some(rgba(0x458588ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -1250,6 +1254,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xb16286ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x689d6aff).into()),
                         terminal_ansi_white: Some(rgba(0x7c6f64ff).into()),
+                        link_text_hover: Some(rgba(0x458588ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -1545,6 +1550,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xb16286ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x689d6aff).into()),
                         terminal_ansi_white: Some(rgba(0x7c6f64ff).into()),
+                        link_text_hover: Some(rgba(0x458588ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {

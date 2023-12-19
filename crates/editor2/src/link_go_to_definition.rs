@@ -491,7 +491,7 @@ pub fn show_link_definition(
                                 thickness: px(1.),
                                 ..Default::default()
                             }),
-                            color: Some(gpui::red()),
+                            color: Some(cx.theme().colors().link_text_hover),
                             ..Default::default()
                         };
                         let highlight_range =
