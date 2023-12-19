@@ -1716,8 +1716,6 @@ impl Render for ProjectSearchBar {
         v_stack()
             .key_context(key_context)
             .flex_grow()
-            .p_1()
-            .m_2()
             .gap_2()
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
