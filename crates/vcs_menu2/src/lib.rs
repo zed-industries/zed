@@ -3,8 +3,8 @@ use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
-    WindowContext,
+    InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -18,31 +18,61 @@ pub fn init(cx: &mut AppContext) {
     // todo!() po
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, action, cx| {
-            ModalBranchList::toggle_modal(workspace, action, cx).log_err();
+            BranchList::toggle_modal(workspace, action, cx).log_err();
         });
     })
     .detach();
 }
-pub type BranchList = Picker<BranchListDelegate>;
 
-pub struct ModalBranchList {
+pub struct BranchList {
     pub picker: View<Picker<BranchListDelegate>>,
+    rem_width: f32,
+    _subscription: Subscription,
 }
 
-impl ModalView for ModalBranchList {}
-impl EventEmitter<DismissEvent> for ModalBranchList {}
+impl BranchList {
+    fn new(delegate: BranchListDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
+        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        Self {
+            picker,
+            rem_width,
+            _subscription,
+        }
+    }
+    fn toggle_modal(
+        workspace: &mut Workspace,
+        _: &OpenRecent,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Result<()> {
+        // Modal branch picker has a longer trailoff than a popover one.
+        let delegate = BranchListDelegate::new(workspace, cx.view().clone(), 70, cx)?;
+        workspace.toggle_modal(cx, |cx| BranchList::new(delegate, 34., cx));
 
-impl FocusableView for ModalBranchList {
+        Ok(())
+    }
+}
+impl ModalView for BranchList {}
+impl EventEmitter<DismissEvent> for BranchList {}
+
+impl FocusableView for BranchList {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
-impl Render for ModalBranchList {
+impl Render for BranchList {
     type Element = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w(rems(34.)).child(self.picker.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack()
+            .w(rems(self.rem_width))
+            .child(self.picker.clone())
+            .on_mouse_down_out(cx.listener(|this, _, cx| {
+                this.picker.update(cx, |this, cx| {
+                    this.cancel(&Default::default(), cx);
+                })
+            }))
     }
 }
 
@@ -53,29 +83,7 @@ pub fn build_branch_list(
     let delegate = workspace.update(cx, |workspace, cx| {
         BranchListDelegate::new(workspace, cx.view().clone(), 29, cx)
     })?;
-
-    Ok(cx.build_view(|cx| Picker::new(delegate, cx)))
-}
-
-impl ModalBranchList {
-    fn toggle_modal(
-        workspace: &mut Workspace,
-        _: &OpenRecent,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Result<()> {
-        // Modal branch picker has a longer trailoff than a popover one.
-        let delegate = BranchListDelegate::new(workspace, cx.view().clone(), 70, cx)?;
-        workspace.toggle_modal(cx, |cx| {
-            let modal = ModalBranchList {
-                picker: cx.build_view(|cx| Picker::new(delegate, cx)),
-            };
-            cx.subscribe(&modal.picker, |_, _, _, cx| cx.emit(DismissEvent))
-                .detach();
-            modal
-        });
-
-        Ok(())
-    }
+    Ok(cx.build_view(move |cx| BranchList::new(delegate, 20., cx)))
 }
 
 pub struct BranchListDelegate {
@@ -116,7 +124,7 @@ impl BranchListDelegate {
         })
     }
 
-    fn display_error_toast(&self, message: String, cx: &mut ViewContext<BranchList>) {
+    fn display_error_toast(&self, message: String, cx: &mut WindowContext<'_>) {
         const GIT_CHECKOUT_FAILURE_ID: usize = 2048;
         self.workspace.update(cx, |model, ctx| {
             model.show_toast(Toast::new(GIT_CHECKOUT_FAILURE_ID, message), ctx)
