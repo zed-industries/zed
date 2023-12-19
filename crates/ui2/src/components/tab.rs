@@ -3,8 +3,6 @@ use gpui::{AnyElement, IntoElement, Stateful};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
-pub const TAB_HEIGHT_IN_REMS: f32 = 30. / 16.;
-
 /// The position of a [`Tab`] within a list of tabs.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TabPosition {
@@ -49,6 +47,8 @@ impl Tab {
             children: SmallVec::new(),
         }
     }
+
+    pub const HEIGHT_IN_REMS: f32 = 30. / 16.;
 
     pub fn position(mut self, position: TabPosition) -> Self {
         self.position = position;
@@ -112,7 +112,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(rems(TAB_HEIGHT_IN_REMS))
+            .h(rems(Self::HEIGHT_IN_REMS))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {

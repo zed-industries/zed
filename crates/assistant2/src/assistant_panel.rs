@@ -53,10 +53,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
-use ui::{
-    h_stack, prelude::*, v_stack, Button, ButtonLike, Icon, IconButton, IconElement, Label, TabBar,
-    Tooltip, TAB_HEIGHT_IN_REMS,
-};
+use ui::{prelude::*, Tab, TabBar, Tooltip};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
@@ -1129,13 +1126,13 @@ impl Render for AssistantPanel {
                 .border()
                 .border_color(gpui::red())
         } else {
-            let header = TabBar::new("assistant_header")
+            let header = ui::TabBar::new("assistant_header")
                 .start_child(
                     h_stack().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
                 )
                 .children(self.active_editor().map(|editor| {
                     h_stack()
-                        .h(rems(TAB_HEIGHT_IN_REMS))
+                        .h(rems(ui::Tab::HEIGHT_IN_REMS))
                         .flex_1()
                         .px_2()
                         .child(Label::new(editor.read(cx).title(cx)).into_element())
