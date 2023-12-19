@@ -42,6 +42,16 @@ impl FormatDistance {
         Self::new(date, DateTimeType::Local(Local::now()))
     }
 
+    pub fn to_string(self) -> String {
+        format_distance(
+            self.date,
+            self.base_date.to_naive(),
+            self.include_seconds,
+            self.add_suffix,
+            self.hide_prefix,
+        )
+    }
+
     pub fn include_seconds(mut self, include_seconds: bool) -> Self {
         self.include_seconds = include_seconds;
         self
