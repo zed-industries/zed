@@ -752,8 +752,7 @@ impl Item for TerminalView {
     ) -> Task<anyhow::Result<View<Self>>> {
         let window = cx.window_handle();
         cx.spawn(|pane, mut cx| async move {
-            let cwd = None;
-            TERMINAL_DB
+            let cwd = TERMINAL_DB
                 .get_working_directory(item_id, workspace_id)
                 .log_err()
                 .flatten()
