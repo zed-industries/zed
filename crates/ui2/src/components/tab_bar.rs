@@ -96,6 +96,7 @@ impl RenderOnce for TabBar {
 
         div()
             .id(self.id)
+            .z_index(120)
             .group("tab_bar")
             .flex()
             .flex_none()

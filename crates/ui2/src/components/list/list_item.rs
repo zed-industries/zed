@@ -129,7 +129,6 @@ impl RenderOnce for ListItem {
     fn render(self, cx: &mut WindowContext) -> Self::Rendered {
         h_stack()
             .id(self.id)
-            .bg(gpui::green())
             .w_full()
             .relative()
             // When an item is inset draw the indent spacing outside of the item
@@ -172,8 +171,8 @@ impl RenderOnce for ListItem {
                             })
                     })
                     .when_some(self.on_click, |this, on_click| {
-                        this.cursor_copy()
-                            .on_click(move |event, cx| on_click(dbg!(event), cx))
+                        this.cursor_pointer()
+                            .on_click(move |event, cx| on_click(event, cx))
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                         this.on_mouse_down(MouseButton::Right, move |event, cx| {

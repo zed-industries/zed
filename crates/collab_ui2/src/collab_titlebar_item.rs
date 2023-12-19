@@ -68,6 +68,7 @@ impl Render for CollabTitlebarItem {
 
         h_stack()
             .id("titlebar")
+            .z_index(160)
             .justify_between()
             .w_full()
             .h(rems(1.75))

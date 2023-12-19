@@ -3,8 +3,8 @@ use crate::{
     ListSeparator, ListSubHeader,
 };
 use gpui::{
-    px, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Render, Subscription, View, VisualContext,
+    px, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, IntoElement, Render, Subscription, View, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{rc::Rc, time::Duration};
@@ -17,6 +17,9 @@ pub enum ContextMenuItem {
         icon: Option<Icon>,
         handler: Rc<dyn Fn(&mut WindowContext)>,
         action: Option<Box<dyn Action>>,
+    },
+    CustomEntry {
+        entry_render: Box<dyn Fn(&mut WindowContext) -> AnyElement>,
     },
 }
 
@@ -79,6 +82,16 @@ impl ContextMenu {
             handler: Rc::new(handler),
             icon: None,
             action: None,
+        });
+        self
+    }
+
+    pub fn custom_entry(
+        mut self,
+        entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::CustomEntry {
+            entry_render: Box::new(entry_render),
         });
         self
     }
@@ -230,9 +243,9 @@ impl Render for ContextMenu {
                     el
                 })
                 .flex_none()
-                .child(
-                    List::new().children(self.items.iter().enumerate().map(
-                        |(ix, item)| match item {
+                .child(List::new().children(self.items.iter_mut().enumerate().map(
+                    |(ix, item)| {
+                        match item {
                             ContextMenuItem::Separator => ListSeparator.into_any_element(),
                             ContextMenuItem::Header(header) => {
                                 ListSubHeader::new(header.clone()).into_any_element()
@@ -255,7 +268,7 @@ impl Render for ContextMenu {
                                     Label::new(label.clone()).into_any_element()
                                 };
 
-                                ListItem::new(label.clone())
+                                ListItem::new(ix)
                                     .inset(true)
                                     .selected(Some(ix) == self.selected_index)
                                     .on_click(move |_, cx| handler(cx))
@@ -271,9 +284,14 @@ impl Render for ContextMenu {
                                     )
                                     .into_any_element()
                             }
-                        },
-                    )),
-                ),
+                            ContextMenuItem::CustomEntry { entry_render } => ListItem::new(ix)
+                                .inset(true)
+                                .selected(Some(ix) == self.selected_index)
+                                .child(entry_render(cx))
+                                .into_any_element(),
+                        }
+                    },
+                ))),
         )
     }
 }
