@@ -2304,10 +2304,9 @@ impl ConversationEditor {
 
                             h_stack()
                                 .id(("message_header", message_id.0))
-                                .h_12()
+                                .h_11()
                                 .gap_1()
                                 .p_1()
-                                .debug_bg_cyan()
                                 .child(sender)
                                 // TODO: Only show this if the message if the message has been sent
                                 .child(
@@ -2507,15 +2506,21 @@ impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .key_context("ConversationEditor")
-            .size_full()
-            .relative()
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
             .capture_action(cx.listener(ConversationEditor::save))
             .capture_action(cx.listener(ConversationEditor::copy))
             .capture_action(cx.listener(ConversationEditor::cycle_message_role))
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
-            .child(self.editor.clone())
+            .size_full()
+            .relative()
+            .child(
+                div()
+                    .size_full()
+                    .pl_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(self.editor.clone()),
+            )
             .child(
                 h_stack()
                     .absolute()
