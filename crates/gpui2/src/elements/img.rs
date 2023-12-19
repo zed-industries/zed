@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    point, size, Bounds, DevicePixels, Element, ImageData, InteractiveElement,
+    point, size, BorrowWindow, Bounds, DevicePixels, Element, ImageData, InteractiveElement,
     InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedString, Size,
     StyleRefinement, Styled, WindowContext,
 };

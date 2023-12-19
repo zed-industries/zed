@@ -39,7 +39,7 @@ use std::{
         Arc,
     },
 };
-use util::ResultExt;
+use util::{post_inc, ResultExt};
 
 const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
@@ -937,21 +937,6 @@ impl<'a> WindowContext<'a> {
 
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
         self.window.requested_cursor_style = Some(style)
-    }
-
-    /// Called during painting to invoke the given closure in a new stacking context. The given
-    /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        let new_stacking_order_id = self.window.next_frame.next_stacking_order_id;
-        let new_next_stacking_order_id = new_stacking_order_id + 1;
-
-        self.window.next_frame.next_stacking_order_id = 0;
-        self.window.next_frame.z_index_stack.id = new_stacking_order_id;
-        self.window.next_frame.z_index_stack.push(z_index);
-        let result = f(self);
-        self.window.next_frame.next_stacking_order_id = new_next_stacking_order_id;
-        self.window.next_frame.z_index_stack.pop();
-        result
     }
 
     /// Called during painting to track which z-index is on top at each pixel position
@@ -2066,14 +2051,11 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        let new_stacking_order_id = self.window_mut().next_frame.next_stacking_order_id;
-        let new_next_stacking_order_id = new_stacking_order_id + 1;
-
-        self.window_mut().next_frame.next_stacking_order_id = 0;
+        let new_stacking_order_id =
+            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
         self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.push(z_index);
         let result = f(self);
-        self.window_mut().next_frame.next_stacking_order_id = new_next_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.pop();
         result
     }

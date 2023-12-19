@@ -171,8 +171,7 @@ impl RenderOnce for ListItem {
                             })
                     })
                     .when_some(self.on_click, |this, on_click| {
-                        this.cursor_pointer()
-                            .on_click(move |event, cx| on_click(event, cx))
+                        this.cursor_pointer().on_click(on_click)
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                         this.on_mouse_down(MouseButton::Right, move |event, cx| {

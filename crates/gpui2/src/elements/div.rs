@@ -1448,14 +1448,15 @@ impl Interactivity {
                     }
 
                     cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-                    if style.background.as_ref().is_some_and(|fill| {
-                        fill.color().is_some_and(|color| !color.is_transparent())
-                    }) {
-                        cx.add_opaque_layer(bounds)
-                    }f(style, scroll_offset.unwrap_or_default(), cx)
-                })
-            },
-        );
+                        if style.background.as_ref().is_some_and(|fill| {
+                            fill.color().is_some_and(|color| !color.is_transparent())
+                        }) {
+                            cx.add_opaque_layer(bounds)
+                        }
+                        f(style, scroll_offset.unwrap_or_default(), cx)
+                    })
+                },
+            );
 
             if let Some(group) = self.group.as_ref() {
                 GroupBounds::pop(group, cx);
