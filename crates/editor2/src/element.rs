@@ -1351,7 +1351,7 @@ impl EditorElement {
             ));
         }
 
-        let mouse_position = cx.mouse_position();
+        let mut mouse_position = cx.mouse_position();
         if track_bounds.contains(&mouse_position) {
             cx.set_cursor_style(CursorStyle::Arrow);
         }
@@ -1377,6 +1377,8 @@ impl EditorElement {
                             }
                             editor.set_scroll_position(position, cx);
                         }
+
+                        mouse_position = event.position;
                         cx.stop_propagation();
                     } else {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
@@ -1392,6 +1394,10 @@ impl EditorElement {
             cx.on_mouse_event({
                 let editor = self.editor.clone();
                 move |event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture {
+                        return;
+                    }
+
                     editor.update(cx, |editor, cx| {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
                         cx.stop_propagation();
@@ -1402,6 +1408,10 @@ impl EditorElement {
             cx.on_mouse_event({
                 let editor = self.editor.clone();
                 move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture {
+                        return;
+                    }
+
                     editor.update(cx, |editor, cx| {
                         if track_bounds.contains(&event.position) {
                             editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
