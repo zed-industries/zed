@@ -103,6 +103,8 @@ impl Render for Toolbar {
         let secondary_item = self.secondary_items().next().map(|item| item.to_any());
 
         v_stack()
+            .p_1()
+            .gap_2()
             .border_b()
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().toolbar_background)
@@ -112,7 +114,6 @@ impl Render for Toolbar {
                     .when(self.left_items().count() > 0, |this| {
                         this.child(
                             h_stack()
-                                .p_1()
                                 .flex_1()
                                 .justify_start()
                                 .children(self.left_items().map(|item| item.to_any())),

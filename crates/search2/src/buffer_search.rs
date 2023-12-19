@@ -240,7 +240,6 @@ impl Render for BufferSearchBar {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
             .w_full()
-            .p_1()
             .child(
                 h_stack()
                     .flex_1()
