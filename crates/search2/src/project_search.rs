@@ -1654,7 +1654,7 @@ impl Render for ProjectSearchBar {
         };
         let actions_column = h_stack()
             .when(search.replace_enabled, |this| {
-                this.children([
+                this.child(
                     IconButton::new("project-search-replace-next", Icon::ReplaceNext)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
@@ -1664,6 +1664,8 @@ impl Render for ProjectSearchBar {
                             }
                         }))
                         .tooltip(|cx| Tooltip::for_action("Replace next match", &ReplaceNext, cx)),
+                )
+                .child(
                     IconButton::new("project-search-replace-all", Icon::ReplaceAll)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
@@ -1673,7 +1675,7 @@ impl Render for ProjectSearchBar {
                             }
                         }))
                         .tooltip(|cx| Tooltip::for_action("Replace all matches", &ReplaceAll, cx)),
-                ])
+                )
             })
             .when_some(search.active_match_index, |mut this, index| {
                 let index = index + 1;
@@ -1684,7 +1686,7 @@ impl Render for ProjectSearchBar {
                 }
                 this
             })
-            .children([
+            .child(
                 IconButton::new("project-search-prev-match", Icon::ChevronLeft)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
@@ -1697,6 +1699,8 @@ impl Render for ProjectSearchBar {
                     .tooltip(|cx| {
                         Tooltip::for_action("Go to previous match", &SelectPrevMatch, cx)
                     }),
+            )
+            .child(
                 IconButton::new("project-search-next-match", Icon::ChevronRight)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
@@ -1707,7 +1711,8 @@ impl Render for ProjectSearchBar {
                         }
                     }))
                     .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
-            ]);
+            );
+
         v_stack()
             .key_context(key_context)
             .flex_grow()
