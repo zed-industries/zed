@@ -10,7 +10,7 @@ pub trait ButtonCommon: Clickable + Disableable {
 
     /// The visual style of the button.
     ///
-    /// Mosty commonly will be [`ButtonStyle::Subtle`], or [`ButtonStyle::Filled`]
+    /// Most commonly will be [`ButtonStyle::Subtle`], or [`ButtonStyle::Filled`]
     /// for an emphasized button.
     fn style(self, style: ButtonStyle) -> Self;
 
