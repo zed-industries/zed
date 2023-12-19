@@ -70,6 +70,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xc4a7e7ff).into()),
                         terminal_ansi_cyan: Some(rgba(0xebbcbaff).into()),
                         terminal_ansi_white: Some(rgba(0xe0def4ff).into()),
+                        link_text_hover: Some(rgba(0xc4a7e7e6).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -332,6 +333,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xc4a7e7ff).into()),
                         terminal_ansi_cyan: Some(rgba(0xea9a97ff).into()),
                         terminal_ansi_white: Some(rgba(0xe0def4ff).into()),
+                        link_text_hover: Some(rgba(0xc4a7e7e6).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -594,6 +596,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0x907aa9ff).into()),
                         terminal_ansi_cyan: Some(rgba(0xd7827eff).into()),
                         terminal_ansi_white: Some(rgba(0x575279ff).into()),
+                        link_text_hover: Some(rgba(0x907aa9e6).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {

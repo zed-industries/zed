@@ -70,6 +70,7 @@ pub fn ayu() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0x9e75c7ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x46ba94ff).into()),
                         terminal_ansi_white: Some(rgba(0xc7c7c7ff).into()),
+                        link_text_hover: Some(rgba(0xffaa33ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -379,6 +380,7 @@ pub fn ayu() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdabafaff).into()),
                         terminal_ansi_cyan: Some(rgba(0x90e1c6ff).into()),
                         terminal_ansi_white: Some(rgba(0xc7c7c7ff).into()),
+                        link_text_hover: Some(rgba(0xffcc66ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -688,6 +690,7 @@ pub fn ayu() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xcda1faff).into()),
                         terminal_ansi_cyan: Some(rgba(0x90e1c6ff).into()),
                         terminal_ansi_white: Some(rgba(0xc7c7c7ff).into()),
+                        link_text_hover: Some(rgba(0xe6b450ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {

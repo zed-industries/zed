@@ -71,6 +71,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf769bff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d6e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xaec3d0ff).into()),
+                        link_text_hover: Some(rgba(0x49ace9ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -351,6 +352,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf769bff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d6e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xb9acb0ff).into()),
+                        link_text_hover: Some(rgba(0xf18eb0ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -631,6 +633,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xff5792ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x00bdd6ff).into()),
                         terminal_ansi_white: Some(rgba(0x8ca6a6ff).into()),
+                        link_text_hover: Some(rgba(0x00c6e0ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -911,6 +914,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xff5792ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x00bdd6ff).into()),
                         terminal_ansi_white: Some(rgba(0x8ca6a6ff).into()),
+                        link_text_hover: Some(rgba(0x00c6e0ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -1191,6 +1195,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xff5792ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x00bdd6ff).into()),
                         terminal_ansi_white: Some(rgba(0x8ca6a6ff).into()),
+                        link_text_hover: Some(rgba(0x00c6e0ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -1471,6 +1476,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xc28097ff).into()),
                         terminal_ansi_cyan: Some(rgba(0x72b7c0ff).into()),
                         terminal_ansi_white: Some(rgba(0xc5cdd3ff).into()),
+                        link_text_hover: Some(rgba(0x5998c0ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -1751,6 +1757,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf769bff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d6e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xb2cacdff).into()),
+                        link_text_hover: Some(rgba(0x40d4e7ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -2031,6 +2038,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf769bff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d6e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xb2cacdff).into()),
+                        link_text_hover: Some(rgba(0x40d4e7ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -2311,6 +2319,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf769bff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d6e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xb2cacdff).into()),
+                        link_text_hover: Some(rgba(0x40d4e7ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -2591,6 +2600,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf769bff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d6e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xb6b3ccff).into()),
+                        link_text_hover: Some(rgba(0x998ef1ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
@@ -2871,6 +2881,7 @@ pub fn noctis() -> UserThemeFamily {
                         terminal_ansi_magenta: Some(rgba(0xdf769bff).into()),
                         terminal_ansi_cyan: Some(rgba(0x49d6e9ff).into()),
                         terminal_ansi_white: Some(rgba(0xbfafcfff).into()),
+                        link_text_hover: Some(rgba(0xbf8ef1ff).into()),
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {

@@ -270,6 +270,16 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
             ("terminal_ansi_magenta", self.0.terminal_ansi_magenta),
             ("terminal_ansi_cyan", self.0.terminal_ansi_cyan),
             ("terminal_ansi_white", self.0.terminal_ansi_white),
+            ("headline", self.0.headline),
+            ("paragraph", self.0.paragraph),
+            ("link_text", self.0.link_text),
+            ("link_text_hover", self.0.link_text_hover),
+            ("link_uri", self.0.link_uri),
+            ("inline_code_background", self.0.inline_code_background),
+            ("inline_code_border", self.0.inline_code_border),
+            ("code_block_background", self.0.code_block_background),
+            ("code_block_border", self.0.code_block_border),
+            ("emphasis", self.0.emphasis),
         ];
 
         f.write_str("ThemeColorsRefinement {")?;
