@@ -54,7 +54,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    h_stack, prelude::*, v_stack, Button, ButtonLike, Icon, IconButton, IconElement, Label, Tooltip,
+    prelude::*,
+    utils::{DateTimeType, FormatDistance},
+    ButtonLike, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -939,7 +941,7 @@ impl AssistantPanel {
                     this.set_active_editor_index(this.prev_active_editor_index, cx);
                 }
             }))
-            .tooltip(|cx| Tooltip::text("History", cx))
+            .tooltip(|cx| Tooltip::text("Conversation History", cx))
     }
 
     fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
@@ -955,12 +957,13 @@ impl AssistantPanel {
     }
 
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("split_button", Icon::SplitMessage)
+        IconButton::new("split_button", Icon::Snip)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
                 }
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx))
     }
 
@@ -971,6 +974,7 @@ impl AssistantPanel {
                     active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
                 }
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("Assist", &Assist, cx))
     }
 
@@ -985,6 +989,7 @@ impl AssistantPanel {
                     });
                 }
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("Quote Seleciton", &QuoteSelection, cx))
     }
 
@@ -993,15 +998,19 @@ impl AssistantPanel {
             .on_click(cx.listener(|this, _event, cx| {
                 this.new_conversation(cx);
             }))
+            .icon_size(IconSize::Small)
             .tooltip(|cx| Tooltip::for_action("New Conversation", &NewConversation, cx))
     }
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let zoomed = self.zoomed;
-        IconButton::new("zoom_button", Icon::MagnifyingGlass)
+        IconButton::new("zoom_button", Icon::Maximize)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
+            .selected(zoomed)
+            .selected_icon(Icon::Minimize)
+            .icon_size(IconSize::Small)
             .tooltip(move |cx| {
                 Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
             })
@@ -1020,10 +1029,19 @@ impl AssistantPanel {
                 this.open_conversation(path.clone(), cx)
                     .detach_and_log_err(cx)
             }))
-            .child(Label::new(
-                conversation.mtime.format("%F %I:%M%p").to_string(),
-            ))
-            .child(Label::new(conversation.title.clone()))
+            .full_width()
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        Label::new(conversation.mtime.format("%F %I:%M%p").to_string())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(Label::new(conversation.title.clone()).size(LabelSize::Small)),
+            )
     }
 
     fn open_conversation(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
@@ -1112,20 +1130,35 @@ impl Render for AssistantPanel {
                 .border()
                 .border_color(gpui::red())
         } else {
-            let title = self
-                .active_editor()
-                .map(|editor| Label::new(editor.read(cx).title(cx)));
-
-            let mut header = h_stack()
-                .child(Self::render_hamburger_button(cx))
-                .children(title);
-
-            if self.focus_handle.contains_focused(cx) {
-                header = header
-                    .children(self.render_editor_tools(cx))
-                    .child(Self::render_plus_button(cx))
-                    .child(self.render_zoom_button(cx));
-            }
+            let header = TabBar::new("assistant_header")
+                .start_child(
+                    h_stack().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
+                )
+                .children(self.active_editor().map(|editor| {
+                    h_stack()
+                        .h(rems(Tab::HEIGHT_IN_REMS))
+                        .flex_1()
+                        .px_2()
+                        .child(Label::new(editor.read(cx).title(cx)).into_element())
+                }))
+                .end_child(if self.focus_handle.contains_focused(cx) {
+                    h_stack()
+                        .gap_2()
+                        .child(h_stack().gap_1().children(self.render_editor_tools(cx)))
+                        .child(
+                            ui::Divider::vertical()
+                                .inset()
+                                .color(ui::DividerColor::Border),
+                        )
+                        .child(
+                            h_stack()
+                                .gap_1()
+                                .child(Self::render_plus_button(cx))
+                                .child(self.render_zoom_button(cx)),
+                        )
+                } else {
+                    div()
+                });
 
             v_stack()
                 .size_full()
@@ -1165,8 +1198,6 @@ impl Render for AssistantPanel {
                             .into_any_element()
                         }),
                 )
-                .border()
-                .border_color(gpui::red())
         }
     }
 }
@@ -2251,6 +2282,14 @@ impl ConversationEditor {
                                     }
                                     Role::System => Label::new("System").color(Color::Warning),
                                 })
+                                .tooltip(|cx| {
+                                    Tooltip::with_meta(
+                                        "Toggle message role",
+                                        None,
+                                        "Available roles: You (User), Assistant, System",
+                                        cx,
+                                    )
+                                })
                                 .on_click({
                                     let conversation = conversation.clone();
                                     move |_, cx| {
@@ -2265,10 +2304,22 @@ impl ConversationEditor {
 
                             h_stack()
                                 .id(("message_header", message_id.0))
-                                .border()
-                                .border_color(gpui::red())
+                                .h_11()
+                                .gap_1()
+                                .p_1()
                                 .child(sender)
-                                .child(Label::new(message.sent_at.format("%I:%M%P").to_string()))
+                                // TODO: Only show this if the message if the message has been sent
+                                .child(
+                                    Label::new(
+                                        FormatDistance::from_now(DateTimeType::Local(
+                                            message.sent_at,
+                                        ))
+                                        .hide_prefix(true)
+                                        .add_suffix(true)
+                                        .to_string(),
+                                    )
+                                    .color(Color::Muted),
+                                )
                                 .children(
                                     if let MessageStatus::Error(error) = message.status.clone() {
                                         Some(
@@ -2429,6 +2480,7 @@ impl ConversationEditor {
             "current_model",
             self.conversation.read(cx).model.short_name(),
         )
+        .style(ButtonStyle::Filled)
         .tooltip(move |cx| Tooltip::text("Change Model", cx))
         .on_click(cx.listener(|this, _, cx| this.cycle_model(cx)))
     }
@@ -2442,12 +2494,7 @@ impl ConversationEditor {
         } else {
             Color::Default
         };
-        Some(
-            div()
-                .border()
-                .border_color(gpui::red())
-                .child(Label::new(remaining_tokens.to_string()).color(remaining_tokens_color)),
-        )
+        Some(Label::new(remaining_tokens.to_string()).color(remaining_tokens_color))
     }
 }
 
@@ -2459,15 +2506,21 @@ impl Render for ConversationEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         div()
             .key_context("ConversationEditor")
-            .size_full()
-            .relative()
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
             .capture_action(cx.listener(ConversationEditor::save))
             .capture_action(cx.listener(ConversationEditor::copy))
             .capture_action(cx.listener(ConversationEditor::cycle_message_role))
             .on_action(cx.listener(ConversationEditor::assist))
             .on_action(cx.listener(ConversationEditor::split))
-            .child(self.editor.clone())
+            .size_full()
+            .relative()
+            .child(
+                div()
+                    .size_full()
+                    .pl_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(self.editor.clone()),
+            )
             .child(
                 h_stack()
                     .absolute()
