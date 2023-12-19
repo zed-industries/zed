@@ -488,6 +488,52 @@ impl EditorElement {
         }
     }
 
+    fn mouse_dragged(
+        editor: &mut Editor,
+        event: &MouseMoveEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if !editor.has_pending_selection() {
+            return;
+        }
+
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
+        let mut scroll_delta = gpui::Point::<f32>::default();
+        let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
+        let top = text_bounds.origin.y + vertical_margin;
+        let bottom = text_bounds.lower_left().y - vertical_margin;
+        if event.position.y < top {
+            scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
+        }
+        if event.position.y > bottom {
+            scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
+        }
+
+        let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
+        let left = text_bounds.origin.x + horizontal_margin;
+        let right = text_bounds.upper_right().x - horizontal_margin;
+        if event.position.x < left {
+            scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
+        }
+        if event.position.x > right {
+            scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
+        }
+
+        editor.select(
+            SelectPhase::Update {
+                position: point_for_position.previous_valid,
+                goal_column: point_for_position.exact_unclipped.column(),
+                scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
+                    .clamp(&gpui::Point::default(), &position_map.scroll_max),
+            },
+            cx,
+        );
+    }
+
     fn mouse_moved(
         editor: &mut Editor,
         event: &MouseMoveEvent,
@@ -498,40 +544,6 @@ impl EditorElement {
         cx: &mut ViewContext<Editor>,
     ) {
         let modifiers = event.modifiers;
-        if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
-            let point_for_position = position_map.point_for_position(text_bounds, event.position);
-            let mut scroll_delta = gpui::Point::<f32>::default();
-            let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
-            let top = text_bounds.origin.y + vertical_margin;
-            let bottom = text_bounds.lower_left().y - vertical_margin;
-            if event.position.y < top {
-                scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
-            }
-            if event.position.y > bottom {
-                scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
-            }
-
-            let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
-            let left = text_bounds.origin.x + horizontal_margin;
-            let right = text_bounds.upper_right().x - horizontal_margin;
-            if event.position.x < left {
-                scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
-            }
-            if event.position.x > right {
-                scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
-            }
-
-            editor.select(
-                SelectPhase::Update {
-                    position: point_for_position.previous_valid,
-                    goal_column: point_for_position.exact_unclipped.column(),
-                    scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                        .clamp(&gpui::Point::default(), &position_map.scroll_max),
-                },
-                cx,
-            );
-        }
-
         let text_hovered = text_bounds.contains(&event.position);
         let gutter_hovered = gutter_bounds.contains(&event.position);
         let was_top = cx.was_top_layer(&event.position, stacking_order);
@@ -2510,19 +2522,33 @@ impl EditorElement {
             let stacking_order = cx.stacking_order().clone();
 
             move |event: &MouseMoveEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
-                {
+                // if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
+
+                if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
-                        Self::mouse_moved(
-                            editor,
-                            event,
-                            &position_map,
-                            text_bounds,
-                            gutter_bounds,
-                            &stacking_order,
-                            cx,
-                        )
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            Self::mouse_dragged(
+                                editor,
+                                event,
+                                &position_map,
+                                text_bounds,
+                                gutter_bounds,
+                                &stacking_order,
+                                cx,
+                            )
+                        }
+
+                        if interactive_bounds.visibly_contains(&event.position, cx) {
+                            Self::mouse_moved(
+                                editor,
+                                event,
+                                &position_map,
+                                text_bounds,
+                                gutter_bounds,
+                                &stacking_order,
+                                cx,
+                            )
+                        }
                     });
                 }
             }
