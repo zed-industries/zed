@@ -1020,10 +1020,11 @@ impl AssistantPanel {
                 this.open_conversation(path.clone(), cx)
                     .detach_and_log_err(cx)
             }))
+            .full_width()
             .child(
                 div()
                     .flex()
-                    .flex_1()
+                    .w_full()
                     .gap_2()
                     .child(
                         Label::new(conversation.mtime.format("%F %I:%M%p").to_string())
