@@ -1020,10 +1020,18 @@ impl AssistantPanel {
                 this.open_conversation(path.clone(), cx)
                     .detach_and_log_err(cx)
             }))
-            .child(Label::new(
-                conversation.mtime.format("%F %I:%M%p").to_string(),
-            ))
-            .child(Label::new(conversation.title.clone()))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .gap_2()
+                    .child(
+                        Label::new(conversation.mtime.format("%F %I:%M%p").to_string())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(Label::new(conversation.title.clone()).size(LabelSize::Small)),
+            )
     }
 
     fn open_conversation(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
