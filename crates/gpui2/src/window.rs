@@ -39,7 +39,7 @@ use std::{
         Arc,
     },
 };
-use util::{post_inc, ResultExt};
+use util::ResultExt;
 
 const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
@@ -49,25 +49,21 @@ const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 pub struct StackingOrder {
     #[deref]
     #[deref_mut]
-    context_stack: SmallVec<[StackingContext; 64]>,
-}
-
-#[derive(Clone, Ord, PartialOrd, PartialEq, Eq)]
-pub struct StackingContext {
-    // TODO kb use u16 and/or try to push the `id` above into the stacking order
-    z_index: u8,
-    id: u16,
+    context_stack: SmallVec<[u8; 64]>,
+    id: u32,
 }
 
 impl std::fmt::Debug for StackingOrder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut stacks = self.context_stack.iter().peekable();
+        write!(f, "[({}): ", self.id)?;
         while let Some(z_index) = stacks.next() {
-            write!(f, "{}.{}", z_index.z_index, z_index.id)?;
+            write!(f, "{z_index}")?;
             if stacks.peek().is_some() {
                 write!(f, "->")?;
             }
         }
+        write!(f, "]")?;
         Ok(())
     }
 }
@@ -296,7 +292,7 @@ pub(crate) struct Frame {
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
-    pub(crate) stacking_context_id_stack: Vec<u16>,
+    pub(crate) next_stacking_order_id: u32,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
 }
@@ -310,7 +306,7 @@ impl Frame {
             dispatch_tree,
             scene_builder: SceneBuilder::default(),
             z_index_stack: StackingOrder::default(),
-            stacking_context_id_stack: vec![0],
+            next_stacking_order_id: 0,
             depth_map: Default::default(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -322,8 +318,7 @@ impl Frame {
         self.mouse_listeners.values_mut().for_each(Vec::clear);
         self.dispatch_tree.clear();
         self.depth_map.clear();
-        self.stacking_context_id_stack.clear();
-        self.stacking_context_id_stack.push(0);
+        self.next_stacking_order_id = 0;
     }
 
     fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -947,20 +942,14 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        let id = post_inc(
-            self.window
-                .next_frame
-                .stacking_context_id_stack
-                .last_mut()
-                .unwrap(),
-        );
-        self.window.next_frame.stacking_context_id_stack.push(0);
-        self.window
-            .next_frame
-            .z_index_stack
-            .push(StackingContext { z_index, id });
+        let new_stacking_order_id = self.window.next_frame.next_stacking_order_id;
+        let new_next_stacking_order_id = new_stacking_order_id + 1;
+
+        self.window.next_frame.next_stacking_order_id = 0;
+        self.window.next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window.next_frame.z_index_stack.push(z_index);
         let result = f(self);
-        self.window.next_frame.stacking_context_id_stack.pop();
+        self.window.next_frame.next_stacking_order_id = new_next_stacking_order_id;
         self.window.next_frame.z_index_stack.pop();
         result
     }
@@ -2077,23 +2066,14 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
     fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        let id = post_inc(
-            self.window_mut()
-                .next_frame
-                .stacking_context_id_stack
-                .last_mut()
-                .unwrap(),
-        );
-        self.window_mut()
-            .next_frame
-            .stacking_context_id_stack
-            .push(0);
-        self.window_mut()
-            .next_frame
-            .z_index_stack
-            .push(StackingContext { z_index, id });
+        let new_stacking_order_id = self.window_mut().next_frame.next_stacking_order_id;
+        let new_next_stacking_order_id = new_stacking_order_id + 1;
+
+        self.window_mut().next_frame.next_stacking_order_id = 0;
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window_mut().next_frame.z_index_stack.push(z_index);
         let result = f(self);
-        self.window_mut().next_frame.stacking_context_id_stack.pop();
+        self.window_mut().next_frame.next_stacking_order_id = new_next_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.pop();
         result
     }
