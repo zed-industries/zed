@@ -134,6 +134,9 @@ impl RenderOnce for TabBar {
                             .z_index(2)
                             .flex_grow()
                             .overflow_x_scroll()
+                            // .on_scroll_wheel(|event, cx| {
+                            //     self.scroll_handle.unwrap().
+                            // })
                             .when_some(self.scroll_handle, |cx, scroll_handle| {
                                 cx.track_scroll(&scroll_handle)
                             })
