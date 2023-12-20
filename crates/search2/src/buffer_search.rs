@@ -289,18 +289,26 @@ impl Render for BufferSearchBar {
                                 .child(self.render_text_input(&self.replacement_editor, cx)),
                         )
                         .when(should_show_replace_input, |this| {
-                            this.child(super::render_replace_button(
-                                ReplaceNext,
-                                ui::Icon::ReplaceNext,
-                                "Replace next",
-                                cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
-                            ))
-                            .child(super::render_replace_button(
-                                ReplaceAll,
-                                ui::Icon::ReplaceAll,
-                                "Replace all",
-                                cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx)),
-                            ))
+                            this.child(
+                                IconButton::new("search-replace-next", ui::Icon::ReplaceNext)
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action("Replace next", &ReplaceNext, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.replace_next(&ReplaceNext, cx)
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("search-replace-all", ui::Icon::ReplaceAll)
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action("Replace all", &ReplaceAll, cx)
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, cx| {
+                                            this.replace_all(&ReplaceAll, cx)
+                                        }),
+                                    ),
+                            )
                         })
                     }),
             )

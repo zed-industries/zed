@@ -5,10 +5,6 @@ pub use mode::SearchMode;
 use project::search::SearchQuery;
 use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, Icon, IconButton};
-//pub use project_search::{ProjectSearchBar, ProjectSearchView};
-// use theme::components::{
-//     action_button::Button, svg::Svg, ComponentExt, IconButtonStyle, ToggleIconButtonStyle,
-// };
 
 pub mod buffer_search;
 mod history;
@@ -120,19 +116,4 @@ fn toggle_replace_button(
         .style(ButtonStyle::Subtle)
         .when(active, |button| button.style(ButtonStyle::Filled))
         .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx))
-}
-
-fn render_replace_button(
-    action: impl Action + 'static + Send + Sync,
-    icon: Icon,
-    tooltip: &'static str,
-    on_click: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
-) -> impl IntoElement {
-    let id: SharedString = format!("search-replace-{}", action.name()).into();
-    IconButton::new(id, icon)
-        .tooltip({
-            let action = action.boxed_clone();
-            move |cx| Tooltip::for_action(tooltip, &*action, cx)
-        })
-        .on_click(on_click)
 }
