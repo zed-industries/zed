@@ -502,7 +502,7 @@ impl Workspace {
 
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(cx);
-                    cx.blur();
+                    cx.disable_focus();
                 }
 
                 project::Event::Closed => {
