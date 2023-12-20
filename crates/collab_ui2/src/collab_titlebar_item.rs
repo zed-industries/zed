@@ -3,10 +3,10 @@ use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
 use gpui::{
-    actions, canvas, div, overlay, point, px, rems, Action, AnyElement, AppContext, DismissEvent,
-    Div, Element, FocusableView, Hsla, InteractiveElement, IntoElement, Model, ParentElement, Path,
-    Render, Stateful, StatefulInteractiveElement, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView, WindowBounds,
+    actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Div, Element, Hsla,
+    InteractiveElement, IntoElement, Model, ParentElement, Path, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    WindowBounds,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
@@ -460,7 +460,11 @@ impl CollabTitlebarItem {
             .log_err();
     }
 
-    pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
+    pub fn toggle_vcs_menu(
+        &mut self,
+        _: &ToggleVcsMenu,
+        cx: &mut ViewContext<Self>,
+    ) -> (View<BranchList>, Subscription) {
         if self.branch_popover.take().is_none() {
             if let Some(workspace) = self.workspace.upgrade() {
                 let Some(view) = build_branch_list(workspace, cx).log_err() else {
