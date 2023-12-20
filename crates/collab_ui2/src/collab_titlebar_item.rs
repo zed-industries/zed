@@ -375,9 +375,9 @@ impl CollabTitlebarItem {
                                 cx,
                             )
                         })
-                        .on_click(
-                            cx.listener(|this, _, cx| this.toggle_vcs_menu(&ToggleVcsMenu, cx)),
-                        ),
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.toggle_vcs_menu(&ToggleVcsMenu, cx);
+                        })),
                 )
                 .when_some(
                     self.branch_popover
@@ -460,11 +460,7 @@ impl CollabTitlebarItem {
             .log_err();
     }
 
-    pub fn toggle_vcs_menu(
-        &mut self,
-        _: &ToggleVcsMenu,
-        cx: &mut ViewContext<Self>,
-    ) -> (View<BranchList>, Subscription) {
+    pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
         if self.branch_popover.take().is_none() {
             if let Some(workspace) = self.workspace.upgrade() {
                 let Some(view) = build_branch_list(workspace, cx).log_err() else {
