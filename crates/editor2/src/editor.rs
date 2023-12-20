@@ -1998,6 +1998,10 @@ impl Editor {
         self.collaboration_hub = Some(hub);
     }
 
+    pub fn placeholder_text(&self) -> Option<&str> {
+        self.placeholder_text.as_deref()
+    }
+
     pub fn set_placeholder_text(
         &mut self,
         placeholder_text: impl Into<Arc<str>>,
