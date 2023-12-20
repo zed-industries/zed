@@ -358,14 +358,13 @@ impl Element for InteractiveText {
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
         if let Some(click_listener) = self.click_listener.take() {
-            if let Some(ix) = state
-                .text_state
-                .index_for_position(bounds, cx.mouse_position())
-            {
+            let mouse_position = cx.mouse_position();
+            if let Some(ix) = state.text_state.index_for_position(bounds, mouse_position) {
                 if self
                     .clickable_ranges
                     .iter()
                     .any(|range| range.contains(&ix))
+                    && cx.was_top_layer(&mouse_position, cx.stacking_order())
                 {
                     cx.set_cursor_style(crate::CursorStyle::PointingHand)
                 }

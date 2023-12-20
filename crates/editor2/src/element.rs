@@ -884,7 +884,11 @@ impl EditorElement {
                 bounds: text_bounds,
             }),
             |cx| {
-                if text_bounds.contains(&cx.mouse_position()) {
+                let interactive_text_bounds = InteractiveBounds {
+                    bounds: text_bounds,
+                    stacking_order: cx.stacking_order().clone(),
+                };
+                if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
                     if self
                         .editor
                         .read(cx)
@@ -1361,8 +1365,12 @@ impl EditorElement {
             ));
         }
 
+        let interactive_track_bounds = InteractiveBounds {
+            bounds: track_bounds,
+            stacking_order: cx.stacking_order().clone(),
+        };
         let mut mouse_position = cx.mouse_position();
-        if track_bounds.contains(&mouse_position) {
+        if interactive_track_bounds.visibly_contains(&mouse_position, cx) {
             cx.set_cursor_style(CursorStyle::Arrow);
         }
 
@@ -1392,7 +1400,7 @@ impl EditorElement {
                         cx.stop_propagation();
                     } else {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
-                        if track_bounds.contains(&event.position) {
+                        if interactive_track_bounds.visibly_contains(&event.position, cx) {
                             editor.scroll_manager.show_scrollbar(cx);
                         }
                     }

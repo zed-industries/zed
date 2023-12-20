@@ -564,9 +564,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, InteractiveBounds,
+        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+        Size, Style, WindowContext,
     };
     use parking_lot::Mutex;
     use smallvec::SmallVec;
@@ -717,7 +717,11 @@ mod element {
             };
 
             cx.with_z_index(3, |cx| {
-                if handle_bounds.contains(&cx.mouse_position()) {
+                let interactive_handle_bounds = InteractiveBounds {
+                    bounds: handle_bounds,
+                    stacking_order: cx.stacking_order().clone(),
+                };
+                if interactive_handle_bounds.visibly_contains(&cx.mouse_position(), cx) {
                     cx.set_cursor_style(match axis {
                         Axis::Vertical => CursorStyle::ResizeUpDown,
                         Axis::Horizontal => CursorStyle::ResizeLeftRight,
