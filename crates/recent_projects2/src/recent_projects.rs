@@ -82,8 +82,6 @@ impl RecentProjects {
                             RecentProjectsDelegate::new(weak_workspace, workspace_locations, true);
 
                         let modal = RecentProjects::new(delegate, 34., cx);
-                        cx.subscribe(&modal.picker, |_, _, _, cx| cx.emit(DismissEvent))
-                            .detach();
                         modal
                     });
                 } else {
@@ -121,8 +119,15 @@ impl FocusableView for RecentProjects {
 impl Render for RecentProjects {
     type Element = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w(rems(self.rem_width)).child(self.picker.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        v_stack()
+            .w(rems(self.rem_width))
+            .child(self.picker.clone())
+            .on_mouse_down_out(cx.listener(|this, _, cx| {
+                this.picker.update(cx, |this, cx| {
+                    this.cancel(&Default::default(), cx);
+                })
+            }))
     }
 }
 
