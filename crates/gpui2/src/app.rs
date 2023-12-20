@@ -17,11 +17,11 @@ use time::UtcOffset;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, ElementId, Entity, EventEmitter, ForegroundExecutor, KeyBinding,
-    Keymap, Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle,
-    TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext, WindowHandle,
-    WindowId,
+    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, GlobalElementId,
+    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MouseDownEvent, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, Point, Render, SharedString, SubscriberSet, Subscription,
+    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{FxHashMap, FxHashSet, VecDeque};
@@ -1100,6 +1100,15 @@ impl AppContext {
             None
         }
     }
+
+    pub fn element_clicked(&self, element_id: &GlobalElementId) -> bool {
+        if let MouseState::Clicked { clicked_id, .. } = &self.mouse_state {
+            if clicked_id == element_id {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl Context for AppContext {
@@ -1250,24 +1259,57 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 pub enum MouseState {
     #[default]
     None,
-    Clicked(ElementId),
+    Clicked {
+        clicked_id: GlobalElementId,
+        event: MouseDownEvent,
+    },
     Dragging(AnyDrag),
 }
 
 impl MouseState {
-    pub fn take_drag(&mut self) -> Option<AnyDrag> {
-        match mem::take(self) {
-            MouseState::None => None,
-            MouseState::Clicked(element_id) => {
-                *self = MouseState::Clicked(element_id);
+    pub fn as_clicked(&self, element_id: &GlobalElementId) -> Option<&MouseDownEvent> {
+        if let MouseState::Clicked {
+            clicked_id: clicked_element_id,
+            event,
+        } = self
+        {
+            if clicked_element_id == element_id {
+                Some(event)
+            } else {
                 None
             }
-            MouseState::Dragging(drag) => Some(drag),
+        } else {
+            None
+        }
+    }
+
+    pub fn take_click(&mut self, element_id: &GlobalElementId) -> Option<MouseDownEvent> {
+        match mem::take(self) {
+            MouseState::None | MouseState::Dragging(_) => None,
+            MouseState::Clicked { clicked_id, event } => {
+                if &clicked_id == element_id {
+                    Some(event)
+                } else {
+                    *self = MouseState::Clicked { clicked_id, event };
+                    None
+                }
+            }
         }
     }
 
     pub fn is_dragging(&self) -> bool {
         matches!(self, Self::Dragging(_))
+    }
+
+    pub fn take_drag(&mut self) -> Option<AnyDrag> {
+        match mem::take(self) {
+            MouseState::None => None,
+            state @ MouseState::Clicked { .. } => {
+                *self = state;
+                None
+            }
+            MouseState::Dragging(drag) => Some(drag),
+        }
     }
 }
 

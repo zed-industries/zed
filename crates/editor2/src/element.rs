@@ -899,7 +899,8 @@ impl EditorElement {
                 }
 
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
-                cx.with_element_id(Some("folds"), |cx| {
+                cx.with_element_id(Some("folds"), |global_element_id, cx| {
+                    let global_element_id = global_element_id.unwrap();
                     let snapshot = &layout.position_map.snapshot;
                     for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
                         let fold_range = fold.range.clone();
@@ -948,7 +949,7 @@ impl EditorElement {
                                     fold_bounds.size,
                                     cx,
                                     |fold_element_state, cx| {
-                                        if fold_element_state.is_active() {
+                                        if cx.element_clicked(&global_element_id) {
                                             cx.theme().colors().ghost_element_active
                                         } else if fold_bounds.contains(&cx.mouse_position()) {
                                             cx.theme().colors().ghost_element_hover
@@ -2016,7 +2017,7 @@ impl EditorElement {
                 .width;
             let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
 
-            let (scroll_width, blocks) = cx.with_element_id(Some("editor_blocks"), |cx| {
+            let (scroll_width, blocks) = cx.with_element_id(Some("editor_blocks"), |_, cx| {
                 self.layout_blocks(
                     start_row..end_row,
                     &snapshot,
@@ -2101,7 +2102,7 @@ impl EditorElement {
                 cx,
             );
 
-            let mut fold_indicators = cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
+            let mut fold_indicators = cx.with_element_id(Some("gutter_fold_indicators"), |_, cx| {
                 editor.render_fold_indicators(
                     fold_statuses,
                     &style,
@@ -2840,7 +2841,7 @@ impl Element for EditorElement {
                     self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
 
                     if !layout.blocks.is_empty() {
-                        cx.with_element_id(Some("editor_blocks"), |cx| {
+                        cx.with_element_id(Some("editor_blocks"), |_, cx| {
                             self.paint_blocks(bounds, &mut layout, cx);
                         });
                     }

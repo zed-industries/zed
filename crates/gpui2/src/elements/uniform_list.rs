@@ -160,9 +160,7 @@ impl Element for UniformList {
         element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
-        let style =
-            self.interactivity
-                .compute_style(Some(bounds), &mut element_state.interactive, cx);
+        let style = self.interactivity.compute_style(Some(bounds), cx);
         let border = style.border_widths.to_pixels(cx.rem_size());
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 

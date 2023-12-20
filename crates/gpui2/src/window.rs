@@ -1799,6 +1799,12 @@ impl<'a> WindowContext<'a> {
             .platform_window
             .on_should_close(Box::new(move || this.update(|_, cx| f(cx)).unwrap_or(true)))
     }
+
+    /// Return the global id of the current identified element. This may not be the current element
+    /// if it is not identified.
+    pub(crate) fn global_element_id(&self) -> &GlobalElementId {
+        &self.window.element_id_stack
+    }
 }
 
 impl Context for WindowContext<'_> {
@@ -1999,17 +2005,18 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     fn with_element_id<R>(
         &mut self,
         id: Option<impl Into<ElementId>>,
-        f: impl FnOnce(&mut Self) -> R,
+        f: impl FnOnce(Option<GlobalElementId>, &mut Self) -> R,
     ) -> R {
         if let Some(id) = id.map(Into::into) {
             let window = self.window_mut();
             window.element_id_stack.push(id.into());
-            let result = f(self);
+            let global_id = window.element_id_stack.clone();
+            let result = f(Some(global_id), self);
             let window: &mut Window = self.borrow_mut();
             window.element_id_stack.pop();
             result
         } else {
-            f(self)
+            f(None, self)
         }
     }
 
@@ -2099,7 +2106,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     where
         S: 'static,
     {
-        self.with_element_id(Some(id), |cx| {
+        self.with_element_id(Some(id), |_, cx| {
             let global_id = cx.window().element_id_stack.clone();
 
             if let Some(any) = cx
