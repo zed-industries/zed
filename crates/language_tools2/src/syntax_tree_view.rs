@@ -2,7 +2,7 @@ use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
     actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div,
     EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled, TextStyle,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayerInfo};
@@ -10,7 +10,7 @@ use settings::Settings;
 use std::{mem, ops::Range};
 use theme::{Theme, ThemeSettings};
 use tree_sitter::{Node, TreeCursor};
-use ui::{h_stack, popover_menu, ButtonLike, ContextMenu, Label, PopoverMenu};
+use ui::{h_stack, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
     item::{Item, ItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -279,63 +279,34 @@ impl SyntaxTreeView {
         cursor: &TreeCursor,
         depth: u32,
         selected: bool,
-        hovered: bool,
-        list_hovered: bool,
-        style: &TextStyle,
         editor_theme: &Theme,
         _cx: &AppContext,
     ) -> Div {
         let editor_colors = editor_theme.colors();
-        let node = cursor.node();
-        let mut range_style = style.clone();
-        range_style.color = editor_colors.editor_line_number;
-
-        let mut anonymous_node_style = style.clone();
-        let string_color = editor_theme
-            .syntax()
-            .highlights
-            .iter()
-            .find_map(|(name, style)| (name == "string").then(|| style.color)?);
-        let property_color = editor_theme
-            .syntax()
-            .highlights
-            .iter()
-            .find_map(|(name, style)| (name == "property").then(|| style.color)?);
-        if let Some(color) = string_color {
-            anonymous_node_style.color = color;
-        }
-
-        let mut row = h_stack().bg(gpui::yellow());
+        let mut row = h_stack();
         if let Some(field_name) = cursor.field_name() {
-            let mut field_style = style.clone();
-            if let Some(color) = property_color {
-                field_style.color = color;
-            }
-
-            row = row.children([Label::new(field_name), Label::new(": ")]);
+            row = row.children([Label::new(field_name).color(Color::Info), Label::new(": ")]);
         }
 
+        let node = cursor.node();
         return row
+            .child(if node.is_named() {
+                Label::new(node.kind()).color(Color::Default)
+            } else {
+                Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+            })
             .child(
-                if node.is_named() {
-                    Label::new(node.kind())
-                } else {
-                    Label::new(format!("\"{}\"", node.kind()))
-                },
+                div()
+                    .child(Label::new(format_node_range(node)).color(Color::Muted))
+                    .pl_1(),
             )
-            .child(Label::new(format_node_range(node)))
             .text_bg(if selected {
                 editor_colors.element_selected
-            } else if hovered && list_hovered {
-                editor_colors.element_active
             } else {
                 Hsla::default()
             })
-            // todo!() does not work
-            // .ml(rems(dbg!(depth) as f32 * 10.0))
-            .pl(rems(dbg!(depth) as f32 * 10.0))
-            // .padding(gutter_padding + depth as f32 * 18.0)
-            ;
+            .pl(rems(depth as f32))
+            .hover(|style| style.bg(editor_colors.element_active));
     }
 }
 
@@ -344,21 +315,11 @@ impl Render for SyntaxTreeView {
 
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
-        let font = settings.buffer_font.clone();
-        let font_size = settings.buffer_font_size(cx);
-
         let editor_theme = settings.active_theme.clone();
         let editor_colors = editor_theme.colors();
-        let style = TextStyle {
-            color: editor_colors.text,
-            font_family: font.family,
-            font_features: font.features,
-            font_weight: font.weight,
-            font_style: font.style,
-            ..Default::default()
-        };
-
-        let line_height = cx.text_style().line_height_in_pixels(font_size);
+        let line_height = cx
+            .text_style()
+            .line_height_in_pixels(settings.buffer_font_size(cx));
         if Some(line_height) != self.line_height {
             self.line_height = Some(line_height);
             self.hover_state_changed(cx);
@@ -374,8 +335,6 @@ impl Render for SyntaxTreeView {
         {
             let layer = layer.clone();
             let theme = editor_theme.clone();
-
-            let list_hovered = false;
             let list = uniform_list(
                 cx.view().clone(),
                 "SyntaxTreeView",
@@ -401,9 +360,6 @@ impl Render for SyntaxTreeView {
                                 &cursor,
                                 depth,
                                 Some(descendant_ix) == this.selected_descendant_ix,
-                                Some(descendant_ix) == this.hovered_descendant_ix,
-                                list_hovered,
-                                &style,
                                 &theme,
                                 cx,
                             ));
