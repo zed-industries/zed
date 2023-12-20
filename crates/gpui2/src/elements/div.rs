@@ -919,6 +919,15 @@ impl Interactivity {
     ) -> (LayoutId, InteractiveElementState) {
         let mut element_state = element_state.unwrap_or_default();
 
+        if cx.has_active_drag() {
+            if let Some(pending_mouse_down) = element_state.pending_mouse_down.as_ref() {
+                *pending_mouse_down.borrow_mut() = None;
+            }
+            if let Some(clicked_state) = element_state.clicked_state.as_ref() {
+                *clicked_state.borrow_mut() = ElementClickedState::default();
+            }
+        }
+
         // Ensure we store a focus handle in our element state if we're focusable.
         // If there's an explicit focus handle we're tracking, use that. Otherwise
         // create a new handle and store it in the element state, which lives for as
@@ -1204,7 +1213,7 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
-                let active_state = element_state
+                let clicked_state = element_state
                     .clicked_state
                     .get_or_insert_with(Default::default)
                     .clone();
@@ -1237,7 +1246,7 @@ impl Interactivity {
                                     > DRAG_THRESHOLD
                             {
                                 if let Some((drag_value, drag_listener)) = drag_listener.take() {
-                                    *active_state.borrow_mut() = ElementClickedState::default();
+                                    *clicked_state.borrow_mut() = ElementClickedState::default();
                                     let cursor_offset = event.position - bounds.origin;
                                     let drag = (drag_listener)(drag_value.as_ref(), cx);
                                     cx.active_drag = Some(AnyDrag {
@@ -1384,14 +1393,14 @@ impl Interactivity {
                 }
             }
 
-            let active_state = element_state
+            let clicked_state = element_state
                 .clicked_state
                 .get_or_insert_with(Default::default)
                 .clone();
-            if active_state.borrow().is_clicked() {
+            if clicked_state.borrow().is_clicked() {
                 cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                     if phase == DispatchPhase::Capture {
-                        *active_state.borrow_mut() = ElementClickedState::default();
+                        *clicked_state.borrow_mut() = ElementClickedState::default();
                         cx.notify();
                     }
                 });
@@ -1407,7 +1416,7 @@ impl Interactivity {
                             .map_or(false, |bounds| bounds.contains(&down.position));
                         let element = interactive_bounds.visibly_contains(&down.position, cx);
                         if group || element {
-                            *active_state.borrow_mut() = ElementClickedState { group, element };
+                            *clicked_state.borrow_mut() = ElementClickedState { group, element };
                             cx.notify();
                         }
                     }
