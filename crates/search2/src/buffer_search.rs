@@ -189,22 +189,6 @@ impl Render for BufferSearchBar {
                 Some(ui::Label::new(message))
             });
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
-        let replace_all = should_show_replace_input.then(|| {
-            super::render_replace_button(
-                ReplaceAll,
-                ui::Icon::ReplaceAll,
-                "Replace all",
-                cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx)),
-            )
-        });
-        let replace_next = should_show_replace_input.then(|| {
-            super::render_replace_button(
-                ReplaceNext,
-                ui::Icon::ReplaceNext,
-                "Replace next",
-                cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
-            )
-        });
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
         let mut key_context = KeyContext::default();
@@ -290,16 +274,47 @@ impl Render for BufferSearchBar {
                     .gap_0p5()
                     .flex_1()
                     .when(self.replace_enabled, |this| {
-                        this.child(self.replacement_editor.clone())
-                            .children(replace_next)
-                            .children(replace_all)
+                        this.child(
+                            h_stack()
+                                .flex_1()
+                                // We're giving this a fixed height to match the height of the search input,
+                                // which has an icon inside that is increasing its height.
+                                .h_8()
+                                .px_2()
+                                .py_1()
+                                .gap_2()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&self.replacement_editor, cx)),
+                        )
+                        .when(should_show_replace_input, |this| {
+                            this.child(super::render_replace_button(
+                                ReplaceNext,
+                                ui::Icon::ReplaceNext,
+                                "Replace next",
+                                cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
+                            ))
+                            .child(super::render_replace_button(
+                                ReplaceAll,
+                                ui::Icon::ReplaceAll,
+                                "Replace all",
+                                cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx)),
+                            ))
+                        })
                     }),
             )
             .child(
                 h_stack()
                     .gap_0p5()
                     .flex_none()
-                    .child(self.render_action_button())
+                    .child(
+                        IconButton::new("select-all", ui::Icon::SelectAll)
+                            .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
+                            .tooltip(|cx| {
+                                Tooltip::for_action("Select all matches", &SelectAllMatches, cx)
+                            }),
+                    )
                     .children(match_count)
                     .child(render_nav_button(
                         ui::Icon::ChevronLeft,
@@ -625,12 +640,6 @@ impl BufferSearchBar {
             cx.notify();
         }
         self.update_matches(cx)
-    }
-
-    fn render_action_button(&self) -> impl IntoElement {
-        IconButton::new("select-all", ui::Icon::SelectAll)
-            .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
-            .tooltip(|cx| Tooltip::for_action("Select all matches", &SelectAllMatches, cx))
     }
 
     fn render_search_option_button(
