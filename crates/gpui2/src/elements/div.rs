@@ -345,6 +345,10 @@ impl Interactivity {
         );
         self.tooltip_builder = Some(Rc::new(build_tooltip));
     }
+
+    pub fn block_mouse(&mut self) {
+        self.block_mouse = true;
+    }
 }
 
 pub trait InteractiveElement: Sized {
@@ -562,6 +566,11 @@ pub trait InteractiveElement: Sized {
 
     fn on_drop<T: 'static>(mut self, listener: impl Fn(&T, &mut WindowContext) + 'static) -> Self {
         self.interactivity().on_drop(listener);
+        self
+    }
+
+    fn block_mouse(mut self) -> Self {
+        self.interactivity().block_mouse();
         self
     }
 }
@@ -888,6 +897,7 @@ pub struct Interactivity {
     pub drag_listener: Option<(Box<dyn Any>, DragListener)>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
     pub tooltip_builder: Option<TooltipBuilder>,
+    pub block_mouse: bool,
 
     #[cfg(debug_assertions)]
     pub location: Option<core::panic::Location<'static>>,
@@ -1076,10 +1086,11 @@ impl Interactivity {
                 });
             }
 
-            if style
-                .background
-                .as_ref()
-                .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
+            if self.block_mouse
+                || style
+                    .background
+                    .as_ref()
+                    .is_some_and(|fill| fill.color().is_some_and(|color| !color.is_transparent()))
             {
                 cx.add_opaque_layer(bounds)
             }
@@ -1642,6 +1653,7 @@ impl Default for Interactivity {
             drag_listener: None,
             hover_listener: None,
             tooltip_builder: None,
+            block_mouse: false,
 
             #[cfg(debug_assertions)]
             location: None,

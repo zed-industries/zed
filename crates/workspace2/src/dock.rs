@@ -499,7 +499,8 @@ impl Render for Dock {
                         cx.stop_propagation();
                     }
                 }))
-                .z_index(1);
+                .z_index(1)
+                .block_mouse();
 
             const HANDLE_SIZE: Pixels = Pixels(6.);
 
