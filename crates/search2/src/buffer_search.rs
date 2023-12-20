@@ -214,6 +214,8 @@ impl Render for BufferSearchBar {
         }
 
         h_stack()
+            .w_full()
+            .gap_2()
             .key_context(key_context)
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
@@ -239,7 +241,6 @@ impl Render for BufferSearchBar {
             .when(self.supported_options().word, |this| {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
-            .w_full()
             .child(
                 h_stack()
                     .flex_1()
@@ -268,6 +269,7 @@ impl Render for BufferSearchBar {
             )
             .child(
                 h_stack()
+                    .gap_2()
                     .flex_none()
                     .child(
                         h_stack()
