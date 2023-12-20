@@ -395,13 +395,13 @@ impl TerminalElement {
         let theme = cx.theme().clone();
 
         let link_style = HighlightStyle {
-            color: Some(gpui::blue()),
+            color: Some(theme.colors().link_text_hover),
             font_weight: None,
             font_style: None,
             background_color: None,
             underline: Some(UnderlineStyle {
                 thickness: px(1.0),
-                color: Some(gpui::red()),
+                color: Some(theme.colors().link_text_hover),
                 wavy: false,
             }),
             fade_out: None,
