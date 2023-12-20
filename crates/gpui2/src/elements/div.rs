@@ -62,6 +62,18 @@ impl Interactivity {
             }));
     }
 
+    pub fn capture_any_mouse_down(
+        &mut self,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_down_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Capture && bounds.visibly_contains(&event.position, cx) {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
     pub fn on_any_mouse_down(
         &mut self,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
@@ -85,6 +97,18 @@ impl Interactivity {
                     && event.button == button
                     && bounds.visibly_contains(&event.position, cx)
                 {
+                    (listener)(event, cx)
+                }
+            }));
+    }
+
+    pub fn capture_any_mouse_up(
+        &mut self,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
+    ) {
+        self.mouse_up_listeners
+            .push(Box::new(move |event, bounds, phase, cx| {
+                if phase == DispatchPhase::Capture && bounds.visibly_contains(&event.position, cx) {
                     (listener)(event, cx)
                 }
             }));
@@ -384,6 +408,14 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    fn capture_any_mouse_down(
+        mut self,
+        listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().capture_any_mouse_down(listener);
+        self
+    }
+
     fn on_any_mouse_down(
         mut self,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
@@ -398,6 +430,14 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_up(button, listener);
+        self
+    }
+
+    fn capture_any_mouse_up(
+        mut self,
+        listener: impl Fn(&MouseUpEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().capture_any_mouse_up(listener);
         self
     }
 
