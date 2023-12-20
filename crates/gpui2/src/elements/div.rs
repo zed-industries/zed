@@ -2,8 +2,8 @@ use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
     BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement,
     KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
-    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    MouseState, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -38,9 +38,7 @@ pub struct DragMoveEvent<T> {
 
 impl<T: 'static> DragMoveEvent<T> {
     pub fn drag<'b>(&self, cx: &'b AppContext) -> &'b T {
-        cx.active_drag
-            .as_ref()
-            .and_then(|drag| drag.value.downcast_ref::<T>())
+        cx.active_drag()
             .expect("DragMoveEvent is only valid when the stored active drag is of the same type.")
     }
 }
@@ -152,19 +150,17 @@ impl Interactivity {
         self.mouse_move_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    if cx
-                        .active_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
-                    {
-                        (listener)(
-                            &DragMoveEvent {
-                                event: event.clone(),
-                                bounds: bounds.bounds,
-                                drag: PhantomData,
-                            },
-                            cx,
-                        );
+                    if let MouseState::Dragging(drag) = &cx.mouse_state {
+                        if drag.value.as_ref().downcast_ref::<T>().is_some() {
+                            (listener)(
+                                &DragMoveEvent {
+                                    event: event.clone(),
+                                    bounds: bounds.bounds,
+                                    drag: PhantomData,
+                                },
+                                cx,
+                            );
+                        }
                     }
                 }
             }));
@@ -1114,7 +1110,7 @@ impl Interactivity {
 
             if self.hover_style.is_some()
                 || self.base_style.mouse_cursor.is_some()
-                || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
+                || cx.mouse_state.is_dragging() && !self.drag_over_styles.is_empty()
             {
                 let bounds = bounds.intersect(&cx.content_mask().bounds);
                 let hovered = bounds.contains(&cx.mouse_position());
@@ -1135,18 +1131,14 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let interactive_bounds = interactive_bounds.clone();
                     move |event: &MouseUpEvent, phase, cx| {
-                        if let Some(drag) = &cx.active_drag {
+                        if let MouseState::Dragging(drag) = &cx.mouse_state {
                             if phase == DispatchPhase::Bubble
                                 && interactive_bounds.drag_target_contains(&event.position, cx)
                             {
                                 let drag_state_type = drag.value.as_ref().type_id();
                                 for (drop_state_type, listener) in &drop_listeners {
                                     if *drop_state_type == drag_state_type {
-                                        let drag = cx
-                                            .active_drag
-                                            .take()
-                                            .expect("checked for type drag state type above");
-
+                                        let drag = cx.mouse_state.take_drag().unwrap();
                                         listener(drag.value.as_ref(), cx);
                                         cx.notify();
                                         cx.stop_propagation();
@@ -1189,7 +1181,7 @@ impl Interactivity {
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
 
                         if let Some(mouse_down) = pending_mouse_down.clone() {
-                            if cx.active_drag.is_some() {
+                            if cx.mouse_state.is_dragging() {
                                 if phase == DispatchPhase::Capture {
                                     cx.notify();
                                 }
@@ -1201,7 +1193,7 @@ impl Interactivity {
                                     *active_state.borrow_mut() = ElementClickedState::default();
                                     let cursor_offset = event.position - bounds.origin;
                                     let drag = (drag_listener)(drag_value.as_ref(), cx);
-                                    cx.active_drag = Some(AnyDrag {
+                                    cx.mouse_state = MouseState::Dragging(AnyDrag {
                                         view: drag,
                                         value: drag_value,
                                         cursor_offset,
@@ -1502,7 +1494,7 @@ impl Interactivity {
                     }
                 }
 
-                if let Some(drag) = cx.active_drag.take() {
+                if let Some(drag) = cx.mouse_state.take_drag() {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
                         if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
                             if *state_type == drag.value.as_ref().type_id()
@@ -1527,7 +1519,7 @@ impl Interactivity {
                         }
                     }
 
-                    cx.active_drag = Some(drag);
+                    cx.mouse_state = MouseState::Dragging(drag);
                 }
             }
 

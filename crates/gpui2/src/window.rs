@@ -6,12 +6,12 @@ use crate::{
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
     FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyBinding, KeyContext,
     KeyDownEvent, KeystrokeEvent, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite,
-    MouseButton, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SceneBuilder,
-    Shadow, SharedString, Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    MouseButton, MouseMoveEvent, MouseState, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel,
+    Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    SceneBuilder, Shadow, SharedString, Size, Style, SubscriberSet, Subscription, Surface,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashMap;
@@ -1324,13 +1324,13 @@ impl<'a> WindowContext<'a> {
             })
         });
 
-        if let Some(active_drag) = self.app.active_drag.take() {
+        if let Some(active_drag) = self.app.mouse_state.take_drag() {
             self.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
                 let offset = cx.mouse_position() - active_drag.cursor_offset;
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
                 active_drag.view.draw(offset, available_space, cx);
             });
-            self.active_drag = Some(active_drag);
+            self.app.mouse_state = MouseState::Dragging(active_drag);
         } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
             self.with_z_index(1, |cx| {
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
@@ -1435,8 +1435,8 @@ impl<'a> WindowContext<'a> {
             InputEvent::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, files } => {
                     self.window.mouse_position = position;
-                    if self.active_drag.is_none() {
-                        self.active_drag = Some(AnyDrag {
+                    if !self.mouse_state.is_dragging() {
+                        self.mouse_state = MouseState::Dragging(AnyDrag {
                             value: Box::new(files.clone()),
                             view: self.build_view(|_| files).into(),
                             cursor_offset: position,
@@ -1515,7 +1515,7 @@ impl<'a> WindowContext<'a> {
             }
 
             if self.app.propagate_event && event.downcast_ref::<MouseUpEvent>().is_some() {
-                self.active_drag = None;
+                self.mouse_state = MouseState::None;
             }
 
             self.window

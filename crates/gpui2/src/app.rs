@@ -17,10 +17,11 @@ use time::UtcOffset;
 use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
+    DispatchPhase, DisplayId, ElementId, Entity, EventEmitter, ForegroundExecutor, KeyBinding,
+    Keymap, Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
+    Render, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext, WindowHandle,
+    WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{FxHashMap, FxHashSet, VecDeque};
@@ -188,7 +189,7 @@ pub struct AppContext {
     flushing_effects: bool,
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
-    pub(crate) active_drag: Option<AnyDrag>,
+    pub(crate) mouse_state: MouseState,
     pub(crate) active_tooltip: Option<AnyTooltip>,
     pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) frame_consumers: FxHashMap<DisplayId, Task<()>>,
@@ -250,7 +251,7 @@ impl AppContext {
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,
-                active_drag: None,
+                mouse_state: MouseState::None,
                 active_tooltip: None,
                 next_frame_callbacks: FxHashMap::default(),
                 frame_consumers: FxHashMap::default(),
@@ -1089,13 +1090,15 @@ impl AppContext {
     }
 
     pub fn has_active_drag(&self) -> bool {
-        self.active_drag.is_some()
+        self.mouse_state.is_dragging()
     }
 
     pub fn active_drag<T: 'static>(&self) -> Option<&T> {
-        self.active_drag
-            .as_ref()
-            .and_then(|drag| drag.value.downcast_ref())
+        if let MouseState::Dragging(drag) = &self.mouse_state {
+            drag.value.downcast_ref()
+        } else {
+            None
+        }
     }
 }
 
@@ -1240,6 +1243,31 @@ impl<G: 'static> Deref for GlobalLease<G> {
 impl<G: 'static> DerefMut for GlobalLease<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.global.downcast_mut().unwrap()
+    }
+}
+
+#[derive(Default)]
+pub enum MouseState {
+    #[default]
+    None,
+    Clicked(ElementId),
+    Dragging(AnyDrag),
+}
+
+impl MouseState {
+    pub fn take_drag(&mut self) -> Option<AnyDrag> {
+        match mem::take(self) {
+            MouseState::None => None,
+            MouseState::Clicked(element_id) => {
+                *self = MouseState::Clicked(element_id);
+                None
+            }
+            MouseState::Dragging(drag) => Some(drag),
+        }
+    }
+
+    pub fn is_dragging(&self) -> bool {
+        matches!(self, Self::Dragging(_))
     }
 }
 
