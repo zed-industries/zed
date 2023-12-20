@@ -7057,6 +7057,7 @@ dependencies = [
  "pretty_assertions",
  "project2",
  "schemars",
+ "search2",
  "serde",
  "serde_derive",
  "serde_json",

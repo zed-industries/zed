@@ -918,6 +918,7 @@ impl ProjectSearchView {
             })
             .unwrap_or(Task::ready(Ok(false)))
     }
+
     pub fn new_search_in_directory(
         workspace: &mut Workspace,
         dir_entry: &Entry,
