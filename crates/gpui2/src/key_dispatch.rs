@@ -35,7 +35,6 @@ pub(crate) struct DispatchNode {
 
 type KeyListener = ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
 
-#[derive(Clone)]
 pub(crate) struct DispatchActionListener {
     pub(crate) action_type: TypeId,
     pub(crate) listener: ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
@@ -265,6 +264,10 @@ impl DispatchTree {
 
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
         &self.nodes[node_id.0]
+    }
+
+    pub fn node_mut(&mut self, node_id: DispatchNodeId) -> &mut DispatchNode {
+        &mut self.nodes[node_id.0]
     }
 
     fn active_node(&mut self) -> &mut DispatchNode {

@@ -98,15 +98,6 @@ pub struct ArenaRef<T: ?Sized> {
     valid: Rc<Cell<bool>>,
 }
 
-impl<T: ?Sized> Clone for ArenaRef<T> {
-    fn clone(&self) -> Self {
-        Self {
-            ptr: self.ptr,
-            valid: self.valid.clone(),
-        }
-    }
-}
-
 impl<T: ?Sized> ArenaRef<T> {
     #[inline(always)]
     pub fn map<U: ?Sized>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaRef<U> {
