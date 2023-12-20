@@ -1311,6 +1311,7 @@ impl Interactivity {
                         return;
                     }
                     let is_hovered = interactive_bounds.visibly_contains(&event.position, cx)
+                        && !cx.has_active_drag()
                         && has_mouse_down.borrow().is_none();
                     let mut was_hovered = was_hovered.borrow_mut();
 
@@ -1538,22 +1539,25 @@ impl Interactivity {
 
             if let Some(bounds) = bounds {
                 let mouse_position = cx.mouse_position();
-                if let Some(group_hover) = self.group_hover_style.as_ref() {
-                    if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
-                        if group_bounds.contains(&mouse_position)
-                            && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                        {
-                            style.refine(&group_hover.style);
+                if !cx.has_active_drag() {
+                    if let Some(group_hover) = self.group_hover_style.as_ref() {
+                        if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
+                            if group_bounds.contains(&mouse_position)
+                                && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                            {
+                                style.refine(&group_hover.style);
+                            }
                         }
                     }
-                }
-                if let Some(hover_style) = self.hover_style.as_ref() {
-                    if bounds
-                        .intersect(&cx.content_mask().bounds)
-                        .contains(&mouse_position)
-                        && cx.was_top_layer(&mouse_position, cx.stacking_order())
-                    {
-                        style.refine(hover_style);
+
+                    if let Some(hover_style) = self.hover_style.as_ref() {
+                        if bounds
+                            .intersect(&cx.content_mask().bounds)
+                            .contains(&mouse_position)
+                            && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                        {
+                            style.refine(hover_style);
+                        }
                     }
                 }
 
