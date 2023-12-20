@@ -1186,14 +1186,13 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
                     move |event: &MouseMoveEvent, phase, cx| {
-                        let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                        if phase == DispatchPhase::Capture {
+                            return;
+                        }
 
+                        let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                         if let Some(mouse_down) = pending_mouse_down.clone() {
-                            if cx.active_drag.is_some() {
-                                if phase == DispatchPhase::Capture {
-                                    cx.notify();
-                                }
-                            } else if phase == DispatchPhase::Bubble
+                            if !cx.has_active_drag()
                                 && (event.position - mouse_down.position).magnitude()
                                     > DRAG_THRESHOLD
                             {
