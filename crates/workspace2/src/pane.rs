@@ -1452,15 +1452,15 @@ impl Pane {
     }
 
     fn update_status_bar(&mut self, cx: &mut ViewContext<Self>) {
-        let Ok(status_bar) = self
-            .workspace
-            .update(cx, |workspace, _| workspace.status_bar.clone())
-        else {
-            return;
-        };
-
+        let workspace = self.workspace.clone();
         let pane = cx.view().clone();
+
         cx.window_context().defer(move |cx| {
+            let Ok(status_bar) = workspace.update(cx, |workspace, _| workspace.status_bar.clone())
+            else {
+                return;
+            };
+
             status_bar.update(cx, move |status_bar, cx| {
                 status_bar.set_active_pane(&pane, cx);
             });
