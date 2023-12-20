@@ -261,12 +261,22 @@ impl Render for BufferSearchBar {
                             .child(search_button_for_mode(SearchMode::Regex)),
                     )
                     .when(supported_options.replacement, |this| {
-                        this.child(super::toggle_replace_button(
-                            self.replace_enabled,
-                            cx.listener(|this, _: &ClickEvent, cx| {
+                        this.child(
+                            IconButton::new(
+                                "buffer-search-bar-toggle-replace-button",
+                                Icon::Replace,
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .when(self.replace_enabled, |button| {
+                                button.style(ButtonStyle::Filled)
+                            })
+                            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                 this.toggle_replace(&ToggleReplace, cx);
+                            }))
+                            .tooltip(|cx| {
+                                Tooltip::for_action("Toggle replace", &ToggleReplace, cx)
                             }),
-                        ))
+                        )
                     }),
             )
             .child(

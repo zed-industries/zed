@@ -4,7 +4,7 @@ use gpui::{actions, Action, AppContext, IntoElement};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 use ui::{prelude::*, Tooltip};
-use ui::{ButtonStyle, Icon, IconButton};
+use ui::{ButtonStyle, IconButton};
 
 pub mod buffer_search;
 mod history;
@@ -104,16 +104,4 @@ impl SearchOptions {
                 move |cx| Tooltip::for_action(label.clone(), &*action, cx)
             })
     }
-}
-
-fn toggle_replace_button(
-    active: bool,
-    action: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
-) -> impl IntoElement {
-    // todo: add toggle_replace button
-    IconButton::new("buffer-search-bar-toggle-replace-button", Icon::Replace)
-        .on_click(action)
-        .style(ButtonStyle::Subtle)
-        .when(active, |button| button.style(ButtonStyle::Filled))
-        .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx))
 }
