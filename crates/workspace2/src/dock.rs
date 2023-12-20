@@ -537,6 +537,7 @@ impl Render for Dock {
             div()
                 .flex()
                 .border_color(cx.theme().colors().border)
+                .overflow_hidden()
                 .map(|this| match self.position().axis() {
                     Axis::Horizontal => this.w(px(size)).h_full().flex_row(),
                     Axis::Vertical => this.h(px(size)).w_full().flex_col(),
