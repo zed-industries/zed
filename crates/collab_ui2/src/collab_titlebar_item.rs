@@ -176,6 +176,7 @@ impl Render for CollabTitlebarItem {
                         let is_shared = self.project.read(cx).is_shared();
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
+                        let is_screen_sharing = room.is_screen_sharing();
 
                         this.child(
                             Button::new(
@@ -225,7 +226,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
-                            .selected(is_deafened.clone())
+                            .selected(is_deafened)
                             .tooltip(move |cx| {
                                 Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
                             })
@@ -234,6 +235,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             IconButton::new("screen-share", ui::Icon::Screen)
                                 .style(ButtonStyle::Subtle)
+                                .selected(is_screen_sharing)
                                 .on_click(move |_, cx| {
                                     crate::toggle_screen_sharing(&Default::default(), cx)
                                 }),
