@@ -122,6 +122,7 @@ impl ContextMenu {
         {
             (handler)(cx)
         }
+
         cx.emit(DismissEvent);
     }
 
@@ -135,13 +136,19 @@ impl ContextMenu {
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+    pub fn select_last(&mut self) -> Option<usize> {
         for (ix, item) in self.items.iter().enumerate().rev() {
             if item.is_selectable() {
                 self.selected_index = Some(ix);
-                cx.notify();
-                break;
+                return Some(ix);
             }
+        }
+        None
+    }
+
+    fn handle_select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+        if self.select_last().is_some() {
+            cx.notify();
         }
     }
 
@@ -169,7 +176,7 @@ impl ContextMenu {
                 }
             }
         } else {
-            self.select_last(&Default::default(), cx);
+            self.handle_select_last(&Default::default(), cx);
         }
     }
 
@@ -195,7 +202,7 @@ impl ContextMenu {
                     .await;
                 this.update(&mut cx, |this, cx| {
                     cx.dispatch_action(action);
-                    this.cancel(&Default::default(), cx)
+                    this.cancel(&menu::Cancel, cx)
                 })
             })
             .detach_and_log_err(cx);
@@ -207,7 +214,7 @@ impl ContextMenu {
 
 impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
-        matches!(self, Self::Entry { .. })
+        matches!(self, Self::Entry { .. } | Self::CustomEntry { .. })
     }
 }
 
@@ -219,10 +226,10 @@ impl Render for ContextMenu {
             v_stack()
                 .min_w(px(200.))
                 .track_focus(&self.focus_handle)
-                .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&Default::default(), cx)))
+                .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
                 .key_context("menu")
                 .on_action(cx.listener(ContextMenu::select_first))
-                .on_action(cx.listener(ContextMenu::select_last))
+                .on_action(cx.listener(ContextMenu::handle_select_last))
                 .on_action(cx.listener(ContextMenu::select_next))
                 .on_action(cx.listener(ContextMenu::select_prev))
                 .on_action(cx.listener(ContextMenu::confirm))

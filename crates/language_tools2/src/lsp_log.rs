@@ -520,6 +520,7 @@ impl LspLogView {
             self.editor_subscription = editor_subscription;
             cx.notify();
         }
+        cx.focus(&self.focus_handle);
     }
 
     fn show_rpc_trace_for_server(
@@ -560,6 +561,8 @@ impl LspLogView {
             self.editor_subscription = editor_subscription;
             cx.notify();
         }
+
+        cx.focus(&self.focus_handle);
     }
 
     fn toggle_rpc_trace_for_server(
@@ -753,6 +756,7 @@ impl Render for LspLogToolbarItemView {
                 let log_toolbar_view = log_toolbar_view.clone();
                 ContextMenu::build(cx, move |mut menu, cx| {
                     for (ix, row) in menu_rows.into_iter().enumerate() {
+                        let server_selected = Some(row.server_id) == current_server_id;
                         menu = menu
                             .header(format!(
                                 "{} ({})",
@@ -761,52 +765,65 @@ impl Render for LspLogToolbarItemView {
                             .entry(
                                 SERVER_LOGS,
                                 cx.handler_for(&log_view, move |view, cx| {
-                                    view.show_logs_for_server(row.server_id, cx)
+                                    view.show_logs_for_server(row.server_id, cx);
                                 }),
-                            )
-                            .custom_entry({
-                                let log_view = log_view.clone();
-                                let log_toolbar_view = log_toolbar_view.clone();
-                                move |cx| {
-                                    h_stack()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(Label::new(RPC_MESSAGES))
-                                        .child(
-                                            Checkbox::new(
-                                                ix,
-                                                if row.rpc_trace_enabled {
-                                                    Selection::Selected
-                                                } else {
-                                                    Selection::Unselected
+                            );
+                        if server_selected && row.logs_selected {
+                            debug_assert_eq!(
+                                Some(ix * 3 + 1),
+                                menu.select_last(),
+                                "Could not scroll to a just added LSP menu item"
+                            );
+                        }
+
+                        menu = menu.custom_entry({
+                            let log_view = log_view.clone();
+                            let log_toolbar_view = log_toolbar_view.clone();
+                            move |cx| {
+                                h_stack()
+                                    .w_full()
+                                    .justify_between()
+                                    .child(Label::new(RPC_MESSAGES))
+                                    .child(
+                                        Checkbox::new(
+                                            ix,
+                                            if row.rpc_trace_enabled {
+                                                Selection::Selected
+                                            } else {
+                                                Selection::Unselected
+                                            },
+                                        )
+                                        .on_click(
+                                            cx.listener_for(
+                                                &log_toolbar_view,
+                                                move |view, selection, cx| {
+                                                    let enabled =
+                                                        matches!(selection, Selection::Selected);
+                                                    view.toggle_logging_for_server(
+                                                        row.server_id,
+                                                        enabled,
+                                                        cx,
+                                                    );
                                                 },
-                                            )
-                                            .on_click(
-                                                cx.listener_for(
-                                                    &log_toolbar_view,
-                                                    move |view, selection, cx| {
-                                                        let enabled = matches!(
-                                                            selection,
-                                                            Selection::Selected
-                                                        );
-                                                        view.toggle_logging_for_server(
-                                                            row.server_id,
-                                                            enabled,
-                                                            cx,
-                                                        );
-                                                    },
-                                                ),
                                             ),
-                                        )
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener_for(&log_view, move |view, _, cx| {
-                                                view.show_rpc_trace_for_server(row.server_id, cx)
-                                            }),
-                                        )
-                                        .into_any_element()
-                                }
-                            })
+                                        ),
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener_for(&log_view, move |view, _, cx| {
+                                            view.show_rpc_trace_for_server(row.server_id, cx);
+                                        }),
+                                    )
+                                    .into_any_element()
+                            }
+                        });
+                        if server_selected && row.rpc_trace_selected {
+                            debug_assert_eq!(
+                                Some(ix * 3 + 2),
+                                menu.select_last(),
+                                "Could not scroll to a just added LSP menu item"
+                            );
+                        }
                     }
                     menu
                 })
@@ -858,6 +875,7 @@ impl LspLogToolbarItemView {
                     log_view.show_logs_for_server(id, cx);
                     cx.notify();
                 }
+                cx.focus(&log_view.focus_handle);
             });
         }
         cx.notify();

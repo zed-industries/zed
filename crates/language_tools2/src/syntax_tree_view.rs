@@ -8,7 +8,7 @@ use gpui::{
 use language::{Buffer, OwnedSyntaxLayerInfo};
 use settings::Settings;
 use std::{mem, ops::Range};
-use theme::{Theme, ThemeSettings};
+use theme::{ActiveTheme, ThemeSettings};
 use tree_sitter::{Node, TreeCursor};
 use ui::{h_stack, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
@@ -275,14 +275,8 @@ impl SyntaxTreeView {
         Some(())
     }
 
-    fn render_node(
-        cursor: &TreeCursor,
-        depth: u32,
-        selected: bool,
-        editor_theme: &Theme,
-        _cx: &AppContext,
-    ) -> Div {
-        let editor_colors = editor_theme.colors();
+    fn render_node(cursor: &TreeCursor, depth: u32, selected: bool, cx: &AppContext) -> Div {
+        let colors = cx.theme().colors();
         let mut row = h_stack();
         if let Some(field_name) = cursor.field_name() {
             row = row.children([Label::new(field_name).color(Color::Info), Label::new(": ")]);
@@ -301,12 +295,12 @@ impl SyntaxTreeView {
                     .pl_1(),
             )
             .text_bg(if selected {
-                editor_colors.element_selected
+                colors.element_selected
             } else {
                 Hsla::default()
             })
             .pl(rems(depth as f32))
-            .hover(|style| style.bg(editor_colors.element_active));
+            .hover(|style| style.bg(colors.element_hover));
     }
 }
 
@@ -315,8 +309,6 @@ impl Render for SyntaxTreeView {
 
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Self::Element {
         let settings = ThemeSettings::get_global(cx);
-        let editor_theme = settings.active_theme.clone();
-        let editor_colors = editor_theme.colors();
         let line_height = cx
             .text_style()
             .line_height_in_pixels(settings.buffer_font_size(cx));
@@ -334,7 +326,6 @@ impl Render for SyntaxTreeView {
             .and_then(|buffer| buffer.active_layer.as_ref())
         {
             let layer = layer.clone();
-            let theme = editor_theme.clone();
             let list = uniform_list(
                 cx.view().clone(),
                 "SyntaxTreeView",
@@ -360,7 +351,6 @@ impl Render for SyntaxTreeView {
                                 &cursor,
                                 depth,
                                 Some(descendant_ix) == this.selected_descendant_ix,
-                                &theme,
                                 cx,
                             ));
                             descendant_ix += 1;
@@ -386,7 +376,7 @@ impl Render for SyntaxTreeView {
                     tree_view.handle_click(event.position.y, cx);
                 }),
             )
-            .text_bg(editor_colors.background);
+            .text_bg(cx.theme().colors().background);
 
             rendered = rendered.child(
                 canvas(move |bounds, cx| {

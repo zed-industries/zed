@@ -127,7 +127,6 @@ impl Element for UniformList {
             .map(|s| s.item_size)
             .unwrap_or_else(|| self.measure_item(None, cx));
 
-        let element_id = self.interactivity.element_id.clone();
         let (layout_id, interactive) =
             self.interactivity
                 .layout(state.map(|s| s.interactive), cx, |style, cx| {
@@ -145,9 +144,6 @@ impl Element for UniformList {
                                         }
                                     });
 
-                            if element_id == Some(ElementId::Name("SyntaxTreeView".into())) {
-                                dbg!(known_dimensions, available_space.height);
-                            }
                             let height = match available_space.height {
                                 AvailableSpace::Definite(height) => desired_height.min(height),
                                 AvailableSpace::MinContent | AvailableSpace::MaxContent => {
