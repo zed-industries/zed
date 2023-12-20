@@ -189,22 +189,6 @@ impl Render for BufferSearchBar {
                 Some(ui::Label::new(message))
             });
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
-        let replace_all = should_show_replace_input.then(|| {
-            super::render_replace_button(
-                ReplaceAll,
-                ui::Icon::ReplaceAll,
-                "Replace all",
-                cx.listener(|this, _, cx| this.replace_all(&ReplaceAll, cx)),
-            )
-        });
-        let replace_next = should_show_replace_input.then(|| {
-            super::render_replace_button(
-                ReplaceNext,
-                ui::Icon::ReplaceNext,
-                "Replace next",
-                cx.listener(|this, _, cx| this.replace_next(&ReplaceNext, cx)),
-            )
-        });
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
         let mut key_context = KeyContext::default();
@@ -214,6 +198,8 @@ impl Render for BufferSearchBar {
         }
 
         h_stack()
+            .w_full()
+            .gap_2()
             .key_context(key_context)
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
@@ -239,7 +225,6 @@ impl Render for BufferSearchBar {
             .when(self.supported_options().word, |this| {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
-            .w_full()
             .child(
                 h_stack()
                     .flex_1()
@@ -268,6 +253,7 @@ impl Render for BufferSearchBar {
             )
             .child(
                 h_stack()
+                    .gap_2()
                     .flex_none()
                     .child(
                         h_stack()
@@ -275,12 +261,22 @@ impl Render for BufferSearchBar {
                             .child(search_button_for_mode(SearchMode::Regex)),
                     )
                     .when(supported_options.replacement, |this| {
-                        this.child(super::toggle_replace_button(
-                            self.replace_enabled,
-                            cx.listener(|this, _: &ClickEvent, cx| {
+                        this.child(
+                            IconButton::new(
+                                "buffer-search-bar-toggle-replace-button",
+                                Icon::Replace,
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .when(self.replace_enabled, |button| {
+                                button.style(ButtonStyle::Filled)
+                            })
+                            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                 this.toggle_replace(&ToggleReplace, cx);
+                            }))
+                            .tooltip(|cx| {
+                                Tooltip::for_action("Toggle replace", &ToggleReplace, cx)
                             }),
-                        ))
+                        )
                     }),
             )
             .child(
@@ -288,16 +284,55 @@ impl Render for BufferSearchBar {
                     .gap_0p5()
                     .flex_1()
                     .when(self.replace_enabled, |this| {
-                        this.child(self.replacement_editor.clone())
-                            .children(replace_next)
-                            .children(replace_all)
+                        this.child(
+                            h_stack()
+                                .flex_1()
+                                // We're giving this a fixed height to match the height of the search input,
+                                // which has an icon inside that is increasing its height.
+                                .h_8()
+                                .px_2()
+                                .py_1()
+                                .gap_2()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_lg()
+                                .child(self.render_text_input(&self.replacement_editor, cx)),
+                        )
+                        .when(should_show_replace_input, |this| {
+                            this.child(
+                                IconButton::new("search-replace-next", ui::Icon::ReplaceNext)
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action("Replace next", &ReplaceNext, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.replace_next(&ReplaceNext, cx)
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("search-replace-all", ui::Icon::ReplaceAll)
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action("Replace all", &ReplaceAll, cx)
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, cx| {
+                                            this.replace_all(&ReplaceAll, cx)
+                                        }),
+                                    ),
+                            )
+                        })
                     }),
             )
             .child(
                 h_stack()
                     .gap_0p5()
                     .flex_none()
-                    .child(self.render_action_button())
+                    .child(
+                        IconButton::new("select-all", ui::Icon::SelectAll)
+                            .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
+                            .tooltip(|cx| {
+                                Tooltip::for_action("Select all matches", &SelectAllMatches, cx)
+                            }),
+                    )
                     .children(match_count)
                     .child(render_nav_button(
                         ui::Icon::ChevronLeft,
@@ -623,12 +658,6 @@ impl BufferSearchBar {
             cx.notify();
         }
         self.update_matches(cx)
-    }
-
-    fn render_action_button(&self) -> impl IntoElement {
-        IconButton::new("select-all", ui::Icon::SelectAll)
-            .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
-            .tooltip(|cx| Tooltip::for_action("Select all matches", &SelectAllMatches, cx))
     }
 
     fn render_search_option_button(
