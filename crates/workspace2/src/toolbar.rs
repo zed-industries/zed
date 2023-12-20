@@ -106,7 +106,7 @@ impl Render for Toolbar {
         let has_right_items = self.right_items().count() > 0;
 
         v_stack()
-            .p_1()
+            .p_2()
             .when(has_left_items || has_right_items, |this| this.gap_2())
             .border_b()
             .border_color(cx.theme().colors().border_variant)
