@@ -9,7 +9,6 @@ path = "src/recent_projects.rs"
 doctest = false
 
 [dependencies]
-db = { path = "../db" }
 editor = { package = "editor2", path = "../editor2" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 gpui = { package = "gpui2", path = "../gpui2" }

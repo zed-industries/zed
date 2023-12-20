@@ -7481,7 +7481,6 @@ dependencies = [
 name = "recent_projects2"
 version = "0.1.0"
 dependencies = [
- "db",
  "editor2",
  "futures 0.3.28",
  "fuzzy2",
