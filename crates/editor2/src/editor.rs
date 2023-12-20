@@ -2003,8 +2003,11 @@ impl Editor {
         placeholder_text: impl Into<Arc<str>>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.placeholder_text = Some(placeholder_text.into());
-        cx.notify();
+        let placeholder_text = Some(placeholder_text.into());
+        if self.placeholder_text != placeholder_text {
+            self.placeholder_text = placeholder_text;
+            cx.notify();
+        }
     }
 
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {

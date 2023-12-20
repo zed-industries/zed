@@ -113,8 +113,9 @@ impl Render for BufferSearchBar {
         }
         let supported_options = self.supported_options();
 
+        let query_focus_handle = self.query_editor.focus_handle(cx);
         let previous_query_keystrokes = cx
-            .bindings_for_action(&PreviousHistoryQuery {})
+            .bindings_for_action_in(&PreviousHistoryQuery {}, &query_focus_handle)
             .into_iter()
             .next()
             .map(|binding| {
@@ -125,7 +126,7 @@ impl Render for BufferSearchBar {
                     .collect::<Vec<_>>()
             });
         let next_query_keystrokes = cx
-            .bindings_for_action(&NextHistoryQuery {})
+            .bindings_for_action_in(&NextHistoryQuery {}, &query_focus_handle)
             .into_iter()
             .next()
             .map(|binding| {
