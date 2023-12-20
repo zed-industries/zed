@@ -20,6 +20,7 @@ enum ContextMenuItem {
     },
     CustomEntry {
         entry_render: Box<dyn Fn(&mut WindowContext) -> AnyElement>,
+        handler: Rc<dyn Fn(&mut WindowContext)>,
     },
 }
 
@@ -89,9 +90,11 @@ impl ContextMenu {
     pub fn custom_entry(
         mut self,
         entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
+        handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
+            handler: Rc::new(handler),
         });
         self
     }
@@ -117,10 +120,12 @@ impl ContextMenu {
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(ContextMenuItem::Entry { handler, .. }) =
-            self.selected_index.and_then(|ix| self.items.get(ix))
-        {
-            (handler)(cx)
+        match self.selected_index.and_then(|ix| self.items.get(ix)) {
+            Some(
+                ContextMenuItem::Entry { handler, .. }
+                | ContextMenuItem::CustomEntry { handler, .. },
+            ) => (handler)(cx),
+            _ => {}
         }
 
         cx.emit(DismissEvent);
@@ -251,51 +256,56 @@ impl Render for ContextMenu {
                 })
                 .flex_none()
                 .child(List::new().children(self.items.iter_mut().enumerate().map(
-                    |(ix, item)| {
-                        match item {
-                            ContextMenuItem::Separator => ListSeparator.into_any_element(),
-                            ContextMenuItem::Header(header) => {
-                                ListSubHeader::new(header.clone()).into_any_element()
-                            }
-                            ContextMenuItem::Entry {
-                                label,
-                                handler,
-                                icon,
-                                action,
-                            } => {
-                                let handler = handler.clone();
+                    |(ix, item)| match item {
+                        ContextMenuItem::Separator => ListSeparator.into_any_element(),
+                        ContextMenuItem::Header(header) => {
+                            ListSubHeader::new(header.clone()).into_any_element()
+                        }
+                        ContextMenuItem::Entry {
+                            label,
+                            handler,
+                            icon,
+                            action,
+                        } => {
+                            let handler = handler.clone();
 
-                                let label_element = if let Some(icon) = icon {
-                                    h_stack()
-                                        .gap_1()
-                                        .child(Label::new(label.clone()))
-                                        .child(IconElement::new(*icon))
-                                        .into_any_element()
-                                } else {
-                                    Label::new(label.clone()).into_any_element()
-                                };
-
-                                ListItem::new(ix)
-                                    .inset(true)
-                                    .selected(Some(ix) == self.selected_index)
-                                    .on_click(move |_, cx| handler(cx))
-                                    .child(
-                                        h_stack()
-                                            .w_full()
-                                            .justify_between()
-                                            .child(label_element)
-                                            .children(action.as_ref().and_then(|action| {
-                                                KeyBinding::for_action(&**action, cx)
-                                                    .map(|binding| div().ml_1().child(binding))
-                                            })),
-                                    )
+                            let label_element = if let Some(icon) = icon {
+                                h_stack()
+                                    .gap_1()
+                                    .child(Label::new(label.clone()))
+                                    .child(IconElement::new(*icon))
                                     .into_any_element()
-                            }
-                            ContextMenuItem::CustomEntry { entry_render } => ListItem::new(ix)
+                            } else {
+                                Label::new(label.clone()).into_any_element()
+                            };
+
+                            ListItem::new(ix)
                                 .inset(true)
                                 .selected(Some(ix) == self.selected_index)
+                                .on_click(move |_, cx| handler(cx))
+                                .child(
+                                    h_stack()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(label_element)
+                                        .children(action.as_ref().and_then(|action| {
+                                            KeyBinding::for_action(&**action, cx)
+                                                .map(|binding| div().ml_1().child(binding))
+                                        })),
+                                )
+                                .into_any_element()
+                        }
+                        ContextMenuItem::CustomEntry {
+                            entry_render,
+                            handler,
+                        } => {
+                            let handler = handler.clone();
+                            ListItem::new(ix)
+                                .inset(true)
+                                .selected(Some(ix) == self.selected_index)
+                                .on_click(move |_, cx| handler(cx))
                                 .child(entry_render(cx))
-                                .into_any_element(),
+                                .into_any_element()
                         }
                     },
                 ))),
