@@ -217,8 +217,7 @@ fn main() {
         // journal2::init(app_state.clone(), cx);
         language_selector::init(cx);
         theme_selector::init(cx);
-        // activity_indicator::init(cx);
-        // language_tools::init(cx);
+        language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);

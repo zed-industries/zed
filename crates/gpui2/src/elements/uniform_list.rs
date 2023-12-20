@@ -91,6 +91,14 @@ impl UniformListScrollHandle {
             }
         }
     }
+
+    pub fn scroll_top(&self) -> Pixels {
+        if let Some(state) = &*self.0.borrow() {
+            -state.scroll_offset.borrow().y
+        } else {
+            Pixels::ZERO
+        }
+    }
 }
 
 impl Styled for UniformList {
@@ -135,6 +143,7 @@ impl Element for UniformList {
                                             item_size.width
                                         }
                                     });
+
                             let height = match available_space.height {
                                 AvailableSpace::Definite(height) => desired_height.min(height),
                                 AvailableSpace::MinContent | AvailableSpace::MaxContent => {

@@ -2057,9 +2057,14 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 size: self.window().viewport_size,
             },
         };
+        let new_stacking_order_id =
+            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
         self.window_mut().next_frame.content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().next_frame.content_mask_stack.pop();
+        self.window_mut().next_frame.z_index_stack = old_stacking_order;
         result
     }
 
@@ -2068,9 +2073,14 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let old_stacking_order_id = mem::replace(
+            &mut self.window_mut().next_frame.z_index_stack.id,
+            new_stacking_order_id,
+        );
         self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.push(z_index);
         let result = f(self);
+        self.window_mut().next_frame.z_index_stack.id = old_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.pop();
         result
     }

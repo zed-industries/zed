@@ -3,13 +3,13 @@ use crate::{
     ListSeparator, ListSubHeader,
 };
 use gpui::{
-    px, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Render, Subscription, View, VisualContext,
+    px, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, IntoElement, Render, Subscription, View, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{rc::Rc, time::Duration};
 
-pub enum ContextMenuItem {
+enum ContextMenuItem {
     Separator,
     Header(SharedString),
     Entry {
@@ -17,6 +17,10 @@ pub enum ContextMenuItem {
         icon: Option<Icon>,
         handler: Rc<dyn Fn(&mut WindowContext)>,
         action: Option<Box<dyn Action>>,
+    },
+    CustomEntry {
+        entry_render: Box<dyn Fn(&mut WindowContext) -> AnyElement>,
+        handler: Rc<dyn Fn(&mut WindowContext)>,
     },
 }
 
@@ -83,6 +87,18 @@ impl ContextMenu {
         self
     }
 
+    pub fn custom_entry(
+        mut self,
+        entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
+        handler: impl Fn(&mut WindowContext) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::CustomEntry {
+            entry_render: Box::new(entry_render),
+            handler: Rc::new(handler),
+        });
+        self
+    }
+
     pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
             label: label.into(),
@@ -104,11 +120,14 @@ impl ContextMenu {
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(ContextMenuItem::Entry { handler, .. }) =
-            self.selected_index.and_then(|ix| self.items.get(ix))
-        {
-            (handler)(cx)
+        match self.selected_index.and_then(|ix| self.items.get(ix)) {
+            Some(
+                ContextMenuItem::Entry { handler, .. }
+                | ContextMenuItem::CustomEntry { handler, .. },
+            ) => (handler)(cx),
+            _ => {}
         }
+
         cx.emit(DismissEvent);
     }
 
@@ -122,13 +141,19 @@ impl ContextMenu {
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+    pub fn select_last(&mut self) -> Option<usize> {
         for (ix, item) in self.items.iter().enumerate().rev() {
             if item.is_selectable() {
                 self.selected_index = Some(ix);
-                cx.notify();
-                break;
+                return Some(ix);
             }
+        }
+        None
+    }
+
+    fn handle_select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+        if self.select_last().is_some() {
+            cx.notify();
         }
     }
 
@@ -156,7 +181,7 @@ impl ContextMenu {
                 }
             }
         } else {
-            self.select_last(&Default::default(), cx);
+            self.handle_select_last(&Default::default(), cx);
         }
     }
 
@@ -182,7 +207,7 @@ impl ContextMenu {
                     .await;
                 this.update(&mut cx, |this, cx| {
                     cx.dispatch_action(action);
-                    this.cancel(&Default::default(), cx)
+                    this.cancel(&menu::Cancel, cx)
                 })
             })
             .detach_and_log_err(cx);
@@ -194,7 +219,7 @@ impl ContextMenu {
 
 impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
-        matches!(self, Self::Entry { .. })
+        matches!(self, Self::Entry { .. } | Self::CustomEntry { .. })
     }
 }
 
@@ -206,10 +231,10 @@ impl Render for ContextMenu {
             v_stack()
                 .min_w(px(200.))
                 .track_focus(&self.focus_handle)
-                .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&Default::default(), cx)))
+                .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
                 .key_context("menu")
                 .on_action(cx.listener(ContextMenu::select_first))
-                .on_action(cx.listener(ContextMenu::select_last))
+                .on_action(cx.listener(ContextMenu::handle_select_last))
                 .on_action(cx.listener(ContextMenu::select_next))
                 .on_action(cx.listener(ContextMenu::select_prev))
                 .on_action(cx.listener(ContextMenu::confirm))
@@ -230,50 +255,60 @@ impl Render for ContextMenu {
                     el
                 })
                 .flex_none()
-                .child(
-                    List::new().children(self.items.iter().enumerate().map(
-                        |(ix, item)| match item {
-                            ContextMenuItem::Separator => ListSeparator.into_any_element(),
-                            ContextMenuItem::Header(header) => {
-                                ListSubHeader::new(header.clone()).into_any_element()
-                            }
-                            ContextMenuItem::Entry {
-                                label,
-                                handler,
-                                icon,
-                                action,
-                            } => {
-                                let handler = handler.clone();
+                .child(List::new().children(self.items.iter_mut().enumerate().map(
+                    |(ix, item)| match item {
+                        ContextMenuItem::Separator => ListSeparator.into_any_element(),
+                        ContextMenuItem::Header(header) => {
+                            ListSubHeader::new(header.clone()).into_any_element()
+                        }
+                        ContextMenuItem::Entry {
+                            label,
+                            handler,
+                            icon,
+                            action,
+                        } => {
+                            let handler = handler.clone();
 
-                                let label_element = if let Some(icon) = icon {
-                                    h_stack()
-                                        .gap_1()
-                                        .child(Label::new(label.clone()))
-                                        .child(IconElement::new(*icon))
-                                        .into_any_element()
-                                } else {
-                                    Label::new(label.clone()).into_any_element()
-                                };
-
-                                ListItem::new(label.clone())
-                                    .inset(true)
-                                    .selected(Some(ix) == self.selected_index)
-                                    .on_click(move |_, cx| handler(cx))
-                                    .child(
-                                        h_stack()
-                                            .w_full()
-                                            .justify_between()
-                                            .child(label_element)
-                                            .children(action.as_ref().and_then(|action| {
-                                                KeyBinding::for_action(&**action, cx)
-                                                    .map(|binding| div().ml_1().child(binding))
-                                            })),
-                                    )
+                            let label_element = if let Some(icon) = icon {
+                                h_stack()
+                                    .gap_1()
+                                    .child(Label::new(label.clone()))
+                                    .child(IconElement::new(*icon))
                                     .into_any_element()
-                            }
-                        },
-                    )),
-                ),
+                            } else {
+                                Label::new(label.clone()).into_any_element()
+                            };
+
+                            ListItem::new(ix)
+                                .inset(true)
+                                .selected(Some(ix) == self.selected_index)
+                                .on_click(move |_, cx| handler(cx))
+                                .child(
+                                    h_stack()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(label_element)
+                                        .children(action.as_ref().and_then(|action| {
+                                            KeyBinding::for_action(&**action, cx)
+                                                .map(|binding| div().ml_1().child(binding))
+                                        })),
+                                )
+                                .into_any_element()
+                        }
+                        ContextMenuItem::CustomEntry {
+                            entry_render,
+                            handler,
+                        } => {
+                            let handler = handler.clone();
+                            ListItem::new(ix)
+                                .inset(true)
+                                .selected(Some(ix) == self.selected_index)
+                                .on_click(move |_, cx| handler(cx))
+                                .child(entry_render(cx))
+                                .into_any_element()
+                        }
+                    },
+                ))),
         )
     }
 }

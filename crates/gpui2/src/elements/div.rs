@@ -1427,7 +1427,6 @@ impl Interactivity {
                 let line_height = cx.line_height();
                 let scroll_max = (content_size - bounds.size).max(&Size::default());
                 let interactive_bounds = interactive_bounds.clone();
-
                 cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble
                         && interactive_bounds.visibly_contains(&event.position, cx)
@@ -1492,6 +1491,7 @@ impl Interactivity {
                         }) {
                             cx.add_opaque_layer(bounds)
                         }
+
                         f(style, scroll_offset.unwrap_or_default(), cx)
                     })
                 },
