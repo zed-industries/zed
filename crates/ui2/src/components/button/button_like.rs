@@ -233,6 +233,7 @@ impl ButtonStyle {
 /// that are consistently sized with buttons.
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonSize {
+    Large,
     #[default]
     Default,
     Compact,
@@ -242,6 +243,7 @@ pub enum ButtonSize {
 impl ButtonSize {
     fn height(self) -> Rems {
         match self {
+            ButtonSize::Large => rems(32. / 16.),
             ButtonSize::Default => rems(22. / 16.),
             ButtonSize::Compact => rems(18. / 16.),
             ButtonSize::None => rems(16. / 16.),
@@ -377,6 +379,7 @@ impl RenderOnce for ButtonLike {
             })
             .gap_1()
             .map(|this| match self.size {
+                ButtonSize::Large => this.px_2(),
                 ButtonSize::Default | ButtonSize::Compact => this.px_1(),
                 ButtonSize::None => this,
             })

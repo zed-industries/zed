@@ -255,6 +255,7 @@ impl Render for BufferSearchBar {
                             .child(
                                 ToggleButton::new("search-mode-text", SearchMode::Text.label())
                                     .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
                                     .selected(self.current_mode == SearchMode::Text)
                                     .on_click(cx.listener(move |_, _event, cx| {
                                         cx.dispatch_action(SearchMode::Text.action())
@@ -271,6 +272,7 @@ impl Render for BufferSearchBar {
                             .child(
                                 ToggleButton::new("search-mode-regex", SearchMode::Regex.label())
                                     .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
                                     .selected(self.current_mode == SearchMode::Regex)
                                     .on_click(cx.listener(move |_, _event, cx| {
                                         cx.dispatch_action(SearchMode::Regex.action())

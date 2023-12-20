@@ -31,21 +31,25 @@ impl Render for ToggleButtonStory {
                         .child(
                             ToggleButton::new(1, "Apple")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .first(),
                         )
                         .child(
                             ToggleButton::new(2, "Banana")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .middle(),
                         )
                         .child(
                             ToggleButton::new(3, "Cherry")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .middle(),
                         )
                         .child(
                             ToggleButton::new(4, "Dragonfruit")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .last(),
                         ),
                 )
@@ -61,22 +65,26 @@ impl Render for ToggleButtonStory {
                         .child(
                             ToggleButton::new(1, "Apple")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .first(),
                         )
                         .child(
                             ToggleButton::new(2, "Banana")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .selected(true)
                                 .middle(),
                         )
                         .child(
                             ToggleButton::new(3, "Cherry")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .middle(),
                         )
                         .child(
                             ToggleButton::new(4, "Dragonfruit")
                                 .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .last(),
                         ),
                 )
