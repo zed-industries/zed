@@ -6,11 +6,11 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, Div, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, div, img, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
+    CursorStyle, DismissEvent, Div, Element, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, IntoElement, ListAlignment, ListScrollEvent, ListState, Model,
+    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -227,63 +227,10 @@ impl NotificationPanel {
         }
 
         Some(
-            div()
+            h_stack()
                 .id(ix)
-                .child(
-                    h_stack()
-                        .children(actor.map(|actor| Avatar::new(actor.avatar_uri.clone())))
-                        .child(
-                            v_stack().child(Label::new(text)).child(
-                                h_stack()
-                                    .child(Label::new(format_timestamp(
-                                        timestamp,
-                                        now,
-                                        self.local_timezone,
-                                    )))
-                                    .children(if let Some(is_accepted) = response {
-                                        Some(div().child(Label::new(if is_accepted {
-                                            "You accepted"
-                                        } else {
-                                            "You declined"
-                                        })))
-                                    } else if needs_response {
-                                        Some(
-                                            h_stack()
-                                                .child(Button::new("decline", "Decline").on_click(
-                                                    {
-                                                        let notification = notification.clone();
-                                                        let view = cx.view().clone();
-                                                        move |_, cx| {
-                                                            view.update(cx, |this, cx| {
-                                                                this.respond_to_notification(
-                                                                    notification.clone(),
-                                                                    false,
-                                                                    cx,
-                                                                )
-                                                            });
-                                                        }
-                                                    },
-                                                ))
-                                                .child(Button::new("accept", "Accept").on_click({
-                                                    let notification = notification.clone();
-                                                    let view = cx.view().clone();
-                                                    move |_, cx| {
-                                                        view.update(cx, |this, cx| {
-                                                            this.respond_to_notification(
-                                                                notification.clone(),
-                                                                true,
-                                                                cx,
-                                                            )
-                                                        });
-                                                    }
-                                                })),
-                                        )
-                                    } else {
-                                        None
-                                    }),
-                            ),
-                        ),
-                )
+                .size_full()
+                .gap_2()
                 .when(can_navigate, |el| {
                     el.cursor(CursorStyle::PointingHand).on_click({
                         let notification = notification.clone();
@@ -292,6 +239,66 @@ impl NotificationPanel {
                         })
                     })
                 })
+                .children(
+                    actor.map(|actor| img(actor.avatar_uri.clone()).w_8().h_8().rounded_full()),
+                )
+                .child(
+                    v_stack()
+                        .gap_1()
+                        .size_full()
+                        .child(Label::new(text.clone()))
+                        .child(
+                            h_stack()
+                                .justify_between()
+                                .child(
+                                    Label::new(format_timestamp(
+                                        timestamp,
+                                        now,
+                                        self.local_timezone,
+                                    ))
+                                    .color(Color::Muted),
+                                )
+                                .children(if let Some(is_accepted) = response {
+                                    Some(div().child(Label::new(if is_accepted {
+                                        "You accepted"
+                                    } else {
+                                        "You declined"
+                                    })))
+                                } else if needs_response {
+                                    Some(
+                                        h_stack()
+                                            .child(Button::new("decline", "Decline").on_click({
+                                                let notification = notification.clone();
+                                                let view = cx.view().clone();
+                                                move |_, cx| {
+                                                    view.update(cx, |this, cx| {
+                                                        this.respond_to_notification(
+                                                            notification.clone(),
+                                                            false,
+                                                            cx,
+                                                        )
+                                                    });
+                                                }
+                                            }))
+                                            .child(Button::new("accept", "Accept").on_click({
+                                                let notification = notification.clone();
+                                                let view = cx.view().clone();
+                                                move |_, cx| {
+                                                    view.update(cx, |this, cx| {
+                                                        this.respond_to_notification(
+                                                            notification.clone(),
+                                                            true,
+                                                            cx,
+                                                        )
+                                                    });
+                                                }
+                                            })),
+                                    )
+                                } else {
+                                    None
+                                }),
+                        ),
+                )
                 .into_any(),
         )
     }
