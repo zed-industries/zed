@@ -169,11 +169,11 @@ osx_url_schemes = ["zed-dev"]
 
 [package.metadata.bundle-nightly]
 icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
-identifier = "dev.zed.Zed-Dev"
+identifier = "dev.zed.Zed-Nightly"
 name = "Zed Nightly"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
-osx_url_schemes = ["zed-dev"]
+osx_url_schemes = ["zed-nightly"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
