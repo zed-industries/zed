@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_stack, v_stack, Avatar, Button, Clickable, Icon, IconButton, IconElement, Label};
+use ui::{h_stack, prelude::*, v_stack, Avatar, Button, Icon, IconButton, IconElement, Label};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -545,16 +545,22 @@ impl NotificationPanel {
 impl Render for NotificationPanel {
     type Element = AnyElement;
 
-    fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement {
         if self.client.user_id().is_none() {
             self.render_sign_in_prompt()
         } else if self.notification_list.item_count() == 0 {
             self.render_empty_state()
         } else {
             v_stack()
-                .bg(gpui::red())
                 .child(
                     h_stack()
+                        .justify_between()
+                        .px_2()
+                        .py_1()
+                        // Match the height of the tab bar so they line up.
+                        .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
                         .child(Label::new("Notifications"))
                         .child(IconElement::new(Icon::Envelope)),
                 )
