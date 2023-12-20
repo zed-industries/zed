@@ -1626,41 +1626,39 @@ impl CollabPanel {
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
-        v_stack().items_center().child(
-            v_stack()
-                .gap_6()
-                .p_4()
-                .child(Label::new(collab_blurb))
-                .child(
-                    v_stack()
-                        .gap_2()
-                        .child(
-                            Button::new("sign_in", "Sign in")
-                                .icon_color(Color::Muted)
-                                .icon(Icon::Github)
-                                .icon_position(IconPosition::Start)
-                                .style(ButtonStyle::Filled)
-                                .full_width()
-                                .on_click(cx.listener(|this, _, cx| {
-                                    let client = this.client.clone();
-                                    cx.spawn(|_, mut cx| async move {
-                                        client
-                                            .authenticate_and_connect(true, &cx)
-                                            .await
-                                            .notify_async_err(&mut cx);
-                                    })
-                                    .detach()
-                                })),
-                        )
-                        .child(
-                            div().flex().w_full().items_center().child(
-                                Label::new("Sign in to enable collaboration.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
+        v_stack()
+            .gap_6()
+            .p_4()
+            .child(Label::new(collab_blurb))
+            .child(
+                v_stack()
+                    .gap_2()
+                    .child(
+                        Button::new("sign_in", "Sign in")
+                            .icon_color(Color::Muted)
+                            .icon(Icon::Github)
+                            .icon_position(IconPosition::Start)
+                            .style(ButtonStyle::Filled)
+                            .full_width()
+                            .on_click(cx.listener(|this, _, cx| {
+                                let client = this.client.clone();
+                                cx.spawn(|_, mut cx| async move {
+                                    client
+                                        .authenticate_and_connect(true, &cx)
+                                        .await
+                                        .notify_async_err(&mut cx);
+                                })
+                                .detach()
+                            })),
+                    )
+                    .child(
+                        div().flex().w_full().items_center().child(
+                            Label::new("Sign in to enable collaboration.")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
                         ),
-                ),
-        )
+                    ),
+            )
     }
 
     fn render_list_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
