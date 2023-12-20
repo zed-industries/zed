@@ -1753,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.31.0"
+version = "0.32.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4991,6 +4991,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_tools2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client2",
+ "collections",
+ "editor2",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "gpui2",
+ "language2",
+ "lsp2",
+ "project2",
+ "serde",
+ "settings2",
+ "theme2",
+ "tree-sitter",
+ "ui2",
+ "unindent",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7457,7 +7481,6 @@ dependencies = [
 name = "recent_projects2"
 version = "0.1.0"
 dependencies = [
- "db",
  "editor2",
  "futures 0.3.28",
  "fuzzy2",
@@ -11988,7 +12011,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.118.0"
+version = "0.119.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -12174,6 +12197,7 @@ dependencies = [
  "journal2",
  "language2",
  "language_selector2",
+ "language_tools2",
  "lazy_static",
  "libc",
  "log",

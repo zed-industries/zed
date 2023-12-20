@@ -104,6 +104,15 @@ impl SceneBuilder {
             );
         }
 
+        for (ix, surface) in self.surfaces.iter().enumerate() {
+            let z = layer_z_values[surface.order as LayerId as usize];
+            self.splitter.add(
+                surface
+                    .bounds
+                    .to_bsp_polygon(z, (PrimitiveKind::Surface, ix)),
+            );
+        }
+
         // Sort all polygons, then reassign the order field of each primitive to `draw_order`
         // We need primitives to be repr(C), hence the weird reuse of the order field for two different types.
         for (draw_order, polygon) in self

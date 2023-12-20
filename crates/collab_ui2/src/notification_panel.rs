@@ -6,11 +6,11 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, Div, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, div, img, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
+    CursorStyle, DismissEvent, Div, Element, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, IntoElement, ListAlignment, ListScrollEvent, ListState, Model,
+    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_stack, v_stack, Avatar, Button, Clickable, Icon, IconButton, IconElement, Label};
+use ui::{h_stack, prelude::*, v_stack, Avatar, Button, Icon, IconButton, IconElement, Label};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -229,61 +229,12 @@ impl NotificationPanel {
         Some(
             div()
                 .id(ix)
-                .child(
-                    h_stack()
-                        .children(actor.map(|actor| Avatar::new(actor.avatar_uri.clone())))
-                        .child(
-                            v_stack().child(Label::new(text)).child(
-                                h_stack()
-                                    .child(Label::new(format_timestamp(
-                                        timestamp,
-                                        now,
-                                        self.local_timezone,
-                                    )))
-                                    .children(if let Some(is_accepted) = response {
-                                        Some(div().child(Label::new(if is_accepted {
-                                            "You accepted"
-                                        } else {
-                                            "You declined"
-                                        })))
-                                    } else if needs_response {
-                                        Some(
-                                            h_stack()
-                                                .child(Button::new("decline", "Decline").on_click(
-                                                    {
-                                                        let notification = notification.clone();
-                                                        let view = cx.view().clone();
-                                                        move |_, cx| {
-                                                            view.update(cx, |this, cx| {
-                                                                this.respond_to_notification(
-                                                                    notification.clone(),
-                                                                    false,
-                                                                    cx,
-                                                                )
-                                                            });
-                                                        }
-                                                    },
-                                                ))
-                                                .child(Button::new("accept", "Accept").on_click({
-                                                    let notification = notification.clone();
-                                                    let view = cx.view().clone();
-                                                    move |_, cx| {
-                                                        view.update(cx, |this, cx| {
-                                                            this.respond_to_notification(
-                                                                notification.clone(),
-                                                                true,
-                                                                cx,
-                                                            )
-                                                        });
-                                                    }
-                                                })),
-                                        )
-                                    } else {
-                                        None
-                                    }),
-                            ),
-                        ),
-                )
+                .flex()
+                .flex_row()
+                .size_full()
+                .px_2()
+                .py_1()
+                .gap_2()
                 .when(can_navigate, |el| {
                     el.cursor(CursorStyle::PointingHand).on_click({
                         let notification = notification.clone();
@@ -292,6 +243,74 @@ impl NotificationPanel {
                         })
                     })
                 })
+                .children(actor.map(|actor| {
+                    img(actor.avatar_uri.clone())
+                        .flex_none()
+                        .w_8()
+                        .h_8()
+                        .rounded_full()
+                }))
+                .child(
+                    v_stack()
+                        .gap_1()
+                        .size_full()
+                        .overflow_hidden()
+                        .child(Label::new(text.clone()))
+                        .child(
+                            h_stack()
+                                .child(
+                                    Label::new(format_timestamp(
+                                        timestamp,
+                                        now,
+                                        self.local_timezone,
+                                    ))
+                                    .color(Color::Muted),
+                                )
+                                .children(if let Some(is_accepted) = response {
+                                    Some(div().flex().flex_grow().justify_end().child(Label::new(
+                                        if is_accepted {
+                                            "You accepted"
+                                        } else {
+                                            "You declined"
+                                        },
+                                    )))
+                                } else if needs_response {
+                                    Some(
+                                        h_stack()
+                                            .flex_grow()
+                                            .justify_end()
+                                            .child(Button::new("decline", "Decline").on_click({
+                                                let notification = notification.clone();
+                                                let view = cx.view().clone();
+                                                move |_, cx| {
+                                                    view.update(cx, |this, cx| {
+                                                        this.respond_to_notification(
+                                                            notification.clone(),
+                                                            false,
+                                                            cx,
+                                                        )
+                                                    });
+                                                }
+                                            }))
+                                            .child(Button::new("accept", "Accept").on_click({
+                                                let notification = notification.clone();
+                                                let view = cx.view().clone();
+                                                move |_, cx| {
+                                                    view.update(cx, |this, cx| {
+                                                        this.respond_to_notification(
+                                                            notification.clone(),
+                                                            true,
+                                                            cx,
+                                                        )
+                                                    });
+                                                }
+                                            })),
+                                    )
+                                } else {
+                                    None
+                                }),
+                        ),
+                )
                 .into_any(),
         )
     }
@@ -439,28 +458,6 @@ impl NotificationPanel {
         false
     }
 
-    fn render_sign_in_prompt(&self) -> AnyElement {
-        Button::new(
-            "sign_in_prompt_button",
-            "Sign in to view your notifications",
-        )
-        .on_click({
-            let client = self.client.clone();
-            move |_, cx| {
-                let client = client.clone();
-                cx.spawn(move |cx| async move {
-                    client.authenticate_and_connect(true, &cx).log_err().await;
-                })
-                .detach()
-            }
-        })
-        .into_any_element()
-    }
-
-    fn render_empty_state(&self) -> AnyElement {
-        Label::new("You have no notifications").into_any_element()
-    }
-
     fn on_notification_event(
         &mut self,
         _: Model<NotificationStore>,
@@ -543,25 +540,72 @@ impl NotificationPanel {
 }
 
 impl Render for NotificationPanel {
-    type Element = AnyElement;
+    type Element = Div;
 
-    fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement {
-        if self.client.user_id().is_none() {
-            self.render_sign_in_prompt()
-        } else if self.notification_list.item_count() == 0 {
-            self.render_empty_state()
-        } else {
-            v_stack()
-                .bg(gpui::red())
-                .child(
-                    h_stack()
-                        .child(Label::new("Notifications"))
-                        .child(IconElement::new(Icon::Envelope)),
-                )
-                .child(list(self.notification_list.clone()).size_full())
-                .size_full()
-                .into_any_element()
-        }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        v_stack()
+            .size_full()
+            .child(
+                h_stack()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    // Match the height of the tab bar so they line up.
+                    .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(Label::new("Notifications"))
+                    .child(IconElement::new(Icon::Envelope)),
+            )
+            .map(|this| {
+                if self.client.user_id().is_none() {
+                    this.child(
+                        v_stack()
+                            .gap_2()
+                            .p_4()
+                            .child(
+                                Button::new("sign_in_prompt_button", "Sign in")
+                                    .icon_color(Color::Muted)
+                                    .icon(Icon::Github)
+                                    .icon_position(IconPosition::Start)
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .on_click({
+                                        let client = self.client.clone();
+                                        move |_, cx| {
+                                            let client = client.clone();
+                                            cx.spawn(move |cx| async move {
+                                                client
+                                                    .authenticate_and_connect(true, &cx)
+                                                    .log_err()
+                                                    .await;
+                                            })
+                                            .detach()
+                                        }
+                                    }),
+                            )
+                            .child(
+                                div().flex().w_full().items_center().child(
+                                    Label::new("Sign in to view notifications.")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                ),
+                            ),
+                    )
+                } else if self.notification_list.item_count() == 0 {
+                    this.child(
+                        v_stack().p_4().child(
+                            div().flex().w_full().items_center().child(
+                                Label::new("You have no notifications.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                        ),
+                    )
+                } else {
+                    this.child(list(self.notification_list.clone()).size_full())
+                }
+            })
     }
 }
 

@@ -1,0 +1,34 @@
+[package]
+name = "language_tools2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/language_tools.rs"
+doctest = false
+
+[dependencies]
+collections = { path = "../collections" }
+editor = { package = "editor2", path = "../editor2" }
+settings = { package = "settings2", path = "../settings2" }
+theme = { package = "theme2", path = "../theme2" }
+language = { package = "language2", path = "../language2" }
+project = { package = "project2", path = "../project2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+ui = { package = "ui2", path = "../ui2" }
+util = { path = "../util" }
+lsp = { package = "lsp2", path = "../lsp2" }
+futures.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+tree-sitter.workspace = true
+
+[dev-dependencies]
+client = { package = "client2", path = "../client2", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+env_logger.workspace = true
+unindent.workspace = true

@@ -83,6 +83,9 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
+        let active_pane_item = self.active_pane.read(cx).active_item();
+        item.set_active_pane_item(active_pane_item.as_deref(), cx);
+
         self.left_items.push(Box::new(item));
         cx.notify();
     }
@@ -119,6 +122,9 @@ impl StatusBar {
     ) where
         T: 'static + StatusItemView,
     {
+        let active_pane_item = self.active_pane.read(cx).active_item();
+        item.set_active_pane_item(active_pane_item.as_deref(), cx);
+
         if position < self.left_items.len() {
             self.left_items.insert(position + 1, Box::new(item))
         } else {
@@ -141,6 +147,9 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
+        let active_pane_item = self.active_pane.read(cx).active_item();
+        item.set_active_pane_item(active_pane_item.as_deref(), cx);
+
         self.right_items.push(Box::new(item));
         cx.notify();
     }

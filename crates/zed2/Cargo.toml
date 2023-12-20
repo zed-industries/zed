@@ -47,7 +47,7 @@ language = { package = "language2", path = "../language2" }
 language_selector = { package = "language_selector2", path = "../language_selector2" }
 lsp = { package = "lsp2", path = "../lsp2" }
 menu = { package = "menu2", path = "../menu2" }
-# language_tools = { path = "../language_tools" }
+language_tools = { package = "language_tools2", path = "../language_tools2" }
 node_runtime = { path = "../node_runtime" }
 notifications = { package = "notifications2", path = "../notifications2" }
 assistant = { package = "assistant2", path = "../assistant2" }

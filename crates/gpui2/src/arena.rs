@@ -2,13 +2,13 @@ use std::{
     alloc,
     cell::Cell,
     ops::{Deref, DerefMut},
-    ptr::{self, NonNull},
+    ptr,
     rc::Rc,
 };
 
 struct ArenaElement {
-    value: NonNull<u8>,
-    drop: unsafe fn(NonNull<u8>),
+    value: *mut u8,
+    drop: unsafe fn(*mut u8),
 }
 
 impl Drop for ArenaElement {
@@ -21,8 +21,9 @@ impl Drop for ArenaElement {
 }
 
 pub struct Arena {
-    start: NonNull<u8>,
-    offset: usize,
+    start: *mut u8,
+    end: *mut u8,
+    offset: *mut u8,
     elements: Vec<ArenaElement>,
     valid: Rc<Cell<bool>>,
 }
@@ -31,10 +32,12 @@ impl Arena {
     pub fn new(size_in_bytes: usize) -> Self {
         unsafe {
             let layout = alloc::Layout::from_size_align(size_in_bytes, 1).unwrap();
-            let ptr = alloc::alloc(layout);
+            let start = alloc::alloc(layout);
+            let end = start.add(size_in_bytes);
             Self {
-                start: NonNull::new_unchecked(ptr),
-                offset: 0,
+                start,
+                end,
+                offset: start,
                 elements: Vec::new(),
                 valid: Rc::new(Cell::new(true)),
             }
@@ -45,7 +48,7 @@ impl Arena {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
         self.elements.clear();
-        self.offset = 0;
+        self.offset = self.start;
     }
 
     #[inline(always)]
@@ -58,24 +61,28 @@ impl Arena {
             ptr::write(ptr, f());
         }
 
-        unsafe fn drop<T>(ptr: NonNull<u8>) {
-            std::ptr::drop_in_place(ptr.cast::<T>().as_ptr());
+        unsafe fn drop<T>(ptr: *mut u8) {
+            std::ptr::drop_in_place(ptr.cast::<T>());
         }
 
         unsafe {
             let layout = alloc::Layout::new::<T>().pad_to_align();
-            let ptr = NonNull::new_unchecked(self.start.as_ptr().add(self.offset).cast::<T>());
-            inner_writer(ptr.as_ptr(), f);
+            let next_offset = self.offset.add(layout.size());
+            assert!(next_offset <= self.end);
 
+            let result = ArenaRef {
+                ptr: self.offset.cast(),
+                valid: self.valid.clone(),
+            };
+
+            inner_writer(result.ptr, f);
             self.elements.push(ArenaElement {
-                value: ptr.cast(),
+                value: self.offset,
                 drop: drop::<T>,
             });
-            self.offset += layout.size();
-            ArenaRef {
-                ptr,
-                valid: self.valid.clone(),
-            }
+            self.offset = next_offset;
+
+            result
         }
     }
 }
@@ -87,24 +94,15 @@ impl Drop for Arena {
 }
 
 pub struct ArenaRef<T: ?Sized> {
-    ptr: NonNull<T>,
+    ptr: *mut T,
     valid: Rc<Cell<bool>>,
-}
-
-impl<T: ?Sized> Clone for ArenaRef<T> {
-    fn clone(&self) -> Self {
-        Self {
-            ptr: self.ptr,
-            valid: self.valid.clone(),
-        }
-    }
 }
 
 impl<T: ?Sized> ArenaRef<T> {
     #[inline(always)]
     pub fn map<U: ?Sized>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaRef<U> {
         ArenaRef {
-            ptr: unsafe { NonNull::new_unchecked(f(&mut *self)) },
+            ptr: f(&mut self),
             valid: self.valid,
         }
     }
@@ -123,7 +121,7 @@ impl<T: ?Sized> Deref for ArenaRef<T> {
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         self.validate();
-        unsafe { self.ptr.as_ref() }
+        unsafe { &*self.ptr }
     }
 }
 
@@ -131,7 +129,7 @@ impl<T: ?Sized> DerefMut for ArenaRef<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.validate();
-        unsafe { self.ptr.as_mut() }
+        unsafe { &mut *self.ptr }
     }
 }
 

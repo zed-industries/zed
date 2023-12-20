@@ -1105,11 +1105,14 @@ impl Interactivity {
                             stacking_order: cx.stacking_order().clone(),
                         };
 
-                        if let Some(mouse_cursor) = style.mouse_cursor {
-                            let mouse_position = &cx.mouse_position();
-                            let hovered = interactive_bounds.visibly_contains(mouse_position, cx);
-                            if hovered {
-                                cx.set_cursor_style(mouse_cursor);
+                        if !cx.has_active_drag() {
+                            if let Some(mouse_cursor) = style.mouse_cursor {
+                                let mouse_position = &cx.mouse_position();
+                                let hovered =
+                                    interactive_bounds.visibly_contains(mouse_position, cx);
+                                if hovered {
+                                    cx.set_cursor_style(mouse_cursor);
+                                }
                             }
                         }
 
@@ -1334,8 +1337,8 @@ impl Interactivity {
                                 }
                                 let is_hovered = interactive_bounds
                                     .visibly_contains(&event.position, cx)
-                                    && !cx.has_active_drag()
-                                    && has_mouse_down.borrow().is_none();
+                                    && has_mouse_down.borrow().is_none()
+                                    && !cx.has_active_drag();
                                 let mut was_hovered = was_hovered.borrow_mut();
 
                                 if is_hovered != was_hovered.clone() {
@@ -1420,14 +1423,14 @@ impl Interactivity {
                             }
                         }
 
-                        let clicked_state = element_state
+                        let active_state = element_state
                             .clicked_state
                             .get_or_insert_with(Default::default)
                             .clone();
-                        if clicked_state.borrow().is_clicked() {
+                        if active_state.borrow().is_clicked() {
                             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                                 if phase == DispatchPhase::Capture {
-                                    *clicked_state.borrow_mut() = ElementClickedState::default();
+                                    *active_state.borrow_mut() = ElementClickedState::default();
                                     cx.notify();
                                 }
                             });
@@ -1444,7 +1447,7 @@ impl Interactivity {
                                     let element =
                                         interactive_bounds.visibly_contains(&down.position, cx);
                                     if group || element {
-                                        *clicked_state.borrow_mut() =
+                                        *active_state.borrow_mut() =
                                             ElementClickedState { group, element };
                                         cx.notify();
                                     }
@@ -1465,7 +1468,6 @@ impl Interactivity {
                             let line_height = cx.line_height();
                             let scroll_max = (content_size - bounds.size).max(&Size::default());
                             let interactive_bounds = interactive_bounds.clone();
-
                             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
                                 if phase == DispatchPhase::Bubble
                                     && interactive_bounds.visibly_contains(&event.position, cx)
@@ -1524,7 +1526,15 @@ impl Interactivity {
                                     cx.on_action(action_type, listener)
                                 }
 
-                                f(&style, scroll_offset.unwrap_or_default(), cx)
+                                cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
+                                    if style.background.as_ref().is_some_and(|fill| {
+                                        fill.color().is_some_and(|color| !color.is_transparent())
+                                    }) {
+                                        cx.add_opaque_layer(bounds)
+                                    }
+
+                                    f(&style, scroll_offset.unwrap_or_default(), cx)
+                                })
                             },
                         );
 

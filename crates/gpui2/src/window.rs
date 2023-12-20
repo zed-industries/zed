@@ -1572,29 +1572,42 @@ impl<'a> WindowContext<'a> {
         self.propagate_event = true;
 
         for node_id in &dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
             if let Some(context) = node.context.clone() {
                 context_stack.push(context);
             }
 
-            for key_listener in node.key_listeners.clone() {
+            let key_listeners = mem::take(&mut node.key_listeners);
+            for key_listener in &key_listeners {
                 key_listener(event, DispatchPhase::Capture, self);
                 if !self.propagate_event {
-                    return;
+                    break;
                 }
+            }
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            node.key_listeners = key_listeners;
+
+            if !self.propagate_event {
+                return;
             }
         }
 
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             // Handle low level key events
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            for key_listener in node.key_listeners.clone() {
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            let key_listeners = mem::take(&mut node.key_listeners);
+            for key_listener in &key_listeners {
                 key_listener(event, DispatchPhase::Bubble, self);
                 if !self.propagate_event {
-                    return;
+                    break;
                 }
+            }
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            node.key_listeners = key_listeners;
+
+            if !self.propagate_event {
+                return;
             }
 
             // Match keystrokes
@@ -1639,37 +1652,51 @@ impl<'a> WindowContext<'a> {
 
         // Capture phase
         for node_id in &dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            let action_listeners = mem::take(&mut node.action_listeners);
             for DispatchActionListener {
                 action_type,
                 listener,
-            } in node.action_listeners.clone()
+            } in &action_listeners
             {
                 let any_action = action.as_any();
-                if action_type == any_action.type_id() {
+                if *action_type == any_action.type_id() {
                     listener(any_action, DispatchPhase::Capture, self);
                     if !self.propagate_event {
-                        return;
+                        break;
                     }
                 }
+            }
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            node.action_listeners = action_listeners;
+
+            if !self.propagate_event {
+                return;
             }
         }
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            let action_listeners = mem::take(&mut node.action_listeners);
             for DispatchActionListener {
                 action_type,
                 listener,
-            } in node.action_listeners.clone()
+            } in &action_listeners
             {
                 let any_action = action.as_any();
-                if action_type == any_action.type_id() {
+                if *action_type == any_action.type_id() {
                     self.propagate_event = false; // Actions stop propagation by default during the bubble phase
                     listener(any_action, DispatchPhase::Bubble, self);
                     if !self.propagate_event {
-                        return;
+                        break;
                     }
                 }
+            }
+
+            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            node.action_listeners = action_listeners;
+            if !self.propagate_event {
+                return;
             }
         }
     }
@@ -2057,9 +2084,14 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 size: self.window().viewport_size,
             },
         };
+        let new_stacking_order_id =
+            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
         self.window_mut().next_frame.content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().next_frame.content_mask_stack.pop();
+        self.window_mut().next_frame.z_index_stack = old_stacking_order;
         result
     }
 
@@ -2068,9 +2100,14 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let old_stacking_order_id = mem::replace(
+            &mut self.window_mut().next_frame.z_index_stack.id,
+            new_stacking_order_id,
+        );
         self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.push(z_index);
         let result = f(self);
+        self.window_mut().next_frame.z_index_stack.id = old_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.pop();
         result
     }
