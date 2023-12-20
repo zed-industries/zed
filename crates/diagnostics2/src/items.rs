@@ -1,16 +1,15 @@
 use collections::HashSet;
-use editor::{Editor, GoToDiagnostic};
+use editor::Editor;
 use gpui::{
-    rems, Div, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, WeakView,
+    rems, Div, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
+    ViewContext, WeakView,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
-use theme::ActiveTheme;
-use ui::{h_stack, Button, Clickable, Color, Icon, IconElement, Label, Tooltip};
+use ui::{h_stack, prelude::*, Button, ButtonLike, Color, Icon, IconElement, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
-use crate::ProjectDiagnosticsEditor;
+use crate::{Deploy, ProjectDiagnosticsEditor};
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
@@ -22,7 +21,7 @@ pub struct DiagnosticIndicator {
 }
 
 impl Render for DiagnosticIndicator {
-    type Element = Stateful<Div>;
+    type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
@@ -49,8 +48,11 @@ impl Render for DiagnosticIndicator {
             let message = diagnostic.message.split('\n').next().unwrap().to_string();
             Some(
                 Button::new("diagnostic_message", message)
+                    .tooltip(|cx| {
+                        Tooltip::for_action("Next Diagnostic", &editor::GoToDiagnostic, cx)
+                    })
                     .on_click(cx.listener(|this, _, cx| {
-                        this.go_to_next_diagnostic(&GoToDiagnostic, cx);
+                        this.go_to_next_diagnostic(cx);
                     }))
                     .into_any_element(),
             )
@@ -59,25 +61,20 @@ impl Render for DiagnosticIndicator {
         };
 
         h_stack()
-            .id("diagnostic-indicator")
-            .on_action(cx.listener(Self::go_to_next_diagnostic))
-            .rounded_md()
-            .flex_none()
             .h(rems(1.375))
-            .px_6()
-            .cursor_pointer()
-            .bg(cx.theme().colors().ghost_element_background)
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-            .tooltip(|cx| Tooltip::text("Project Diagnostics", cx))
-            .on_click(cx.listener(|this, _, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        ProjectDiagnosticsEditor::deploy(workspace, &Default::default(), cx)
-                    })
-                }
-            }))
-            .child(diagnostic_indicator)
+            .gap_2()
+            .child(
+                ButtonLike::new("diagnostic-indicator")
+                    .child(diagnostic_indicator)
+                    .tooltip(|cx| Tooltip::for_action("Project Diagnostics", &Deploy, cx))
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                ProjectDiagnosticsEditor::deploy(workspace, &Default::default(), cx)
+                            })
+                        }
+                    })),
+            )
             .children(status)
     }
 }
@@ -120,7 +117,7 @@ impl DiagnosticIndicator {
         }
     }
 
-    fn go_to_next_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
+    fn go_to_next_diagnostic(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
                 editor.go_to_diagnostic_impl(editor::Direction::Next, cx);
