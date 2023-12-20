@@ -439,28 +439,6 @@ impl NotificationPanel {
         false
     }
 
-    fn render_sign_in_prompt(&self) -> AnyElement {
-        Button::new(
-            "sign_in_prompt_button",
-            "Sign in to view your notifications",
-        )
-        .on_click({
-            let client = self.client.clone();
-            move |_, cx| {
-                let client = client.clone();
-                cx.spawn(move |cx| async move {
-                    client.authenticate_and_connect(true, &cx).log_err().await;
-                })
-                .detach()
-            }
-        })
-        .into_any_element()
-    }
-
-    fn render_empty_state(&self) -> AnyElement {
-        Label::new("You have no notifications").into_any_element()
-    }
-
     fn on_notification_event(
         &mut self,
         _: Model<NotificationStore>,
@@ -543,31 +521,72 @@ impl NotificationPanel {
 }
 
 impl Render for NotificationPanel {
-    type Element = AnyElement;
+    type Element = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement {
-        if self.client.user_id().is_none() {
-            self.render_sign_in_prompt()
-        } else if self.notification_list.item_count() == 0 {
-            self.render_empty_state()
-        } else {
-            v_stack()
-                .child(
-                    h_stack()
-                        .justify_between()
-                        .px_2()
-                        .py_1()
-                        // Match the height of the tab bar so they line up.
-                        .h(rems(ui::Tab::HEIGHT_IN_REMS))
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(Label::new("Notifications"))
-                        .child(IconElement::new(Icon::Envelope)),
-                )
-                .child(list(self.notification_list.clone()).size_full())
-                .size_full()
-                .into_any_element()
-        }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div {
+        v_stack()
+            .size_full()
+            .child(
+                h_stack()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    // Match the height of the tab bar so they line up.
+                    .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(Label::new("Notifications"))
+                    .child(IconElement::new(Icon::Envelope)),
+            )
+            .map(|this| {
+                if self.client.user_id().is_none() {
+                    this.child(
+                        v_stack()
+                            .gap_2()
+                            .p_4()
+                            .child(
+                                Button::new("sign_in_prompt_button", "Sign in")
+                                    .icon_color(Color::Muted)
+                                    .icon(Icon::Github)
+                                    .icon_position(IconPosition::Start)
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .on_click({
+                                        let client = self.client.clone();
+                                        move |_, cx| {
+                                            let client = client.clone();
+                                            cx.spawn(move |cx| async move {
+                                                client
+                                                    .authenticate_and_connect(true, &cx)
+                                                    .log_err()
+                                                    .await;
+                                            })
+                                            .detach()
+                                        }
+                                    }),
+                            )
+                            .child(
+                                div().flex().w_full().items_center().child(
+                                    Label::new("Sign in to view notifications.")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                ),
+                            ),
+                    )
+                } else if self.notification_list.item_count() == 0 {
+                    this.child(
+                        v_stack().p_4().child(
+                            div().flex().w_full().items_center().child(
+                                Label::new("You have no notifications.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                        ),
+                    )
+                } else {
+                    this.child(list(self.notification_list.clone()).size_full())
+                }
+            })
     }
 }
 
