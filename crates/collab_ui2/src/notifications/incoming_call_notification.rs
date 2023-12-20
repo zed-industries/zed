@@ -2,12 +2,14 @@ use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{
-    div, px, red, AppContext, Div, Element, ParentElement, Render, RenderOnce, Styled, ViewContext,
+    img, px, AppContext, Div, ParentElement, Render, RenderOnce, Styled, ViewContext,
     VisualContext as _, WindowHandle,
 };
+use settings::Settings;
 use std::sync::{Arc, Weak};
+use theme::ThemeSettings;
 use ui::prelude::*;
-use ui::{h_stack, v_stack, Avatar, Button, Label};
+use ui::{h_stack, v_stack, Button, Label};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -112,36 +114,52 @@ impl IncomingCallNotification {
             state: Arc::new(IncomingCallNotificationState::new(call, app_state)),
         }
     }
-    fn render_caller(&self, cx: &mut ViewContext<Self>) -> impl Element {
-        h_stack()
-            .child(Avatar::new(self.state.call.calling_user.avatar_uri.clone()))
-            .child(
-                v_stack()
-                    .child(Label::new(format!(
-                        "{} is sharing a project in Zed",
-                        self.state.call.calling_user.github_login
-                    )))
-                    .child(self.render_buttons(cx)),
-            )
-    }
-
-    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> impl Element {
-        h_stack()
-            .child(Button::new("accept", "Accept").render(cx).on_click({
-                let state = self.state.clone();
-                move |_, cx| state.respond(true, cx)
-            }))
-            .child(Button::new("decline", "Decline").render(cx).on_click({
-                let state = self.state.clone();
-                move |_, cx| state.respond(false, cx)
-            }))
-    }
 }
 
 impl Render for IncomingCallNotification {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        div().bg(red()).flex_none().child(self.render_caller(cx))
+        // TODO: Is there a better place for us to initialize the font?
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (
+                theme_settings.ui_font.family.clone(),
+                theme_settings.ui_font_size.clone(),
+            )
+        };
+
+        cx.set_rem_size(ui_font_size);
+
+        h_stack()
+            .font(ui_font)
+            .text_ui()
+            .justify_between()
+            .size_full()
+            .overflow_hidden()
+            .elevation_3(cx)
+            .p_2()
+            .gap_2()
+            .child(
+                img(self.state.call.calling_user.avatar_uri.clone())
+                    .w_12()
+                    .h_12()
+                    .rounded_full(),
+            )
+            .child(v_stack().overflow_hidden().child(Label::new(format!(
+                "{} is sharing a project in Zed",
+                self.state.call.calling_user.github_login
+            ))))
+            .child(
+                v_stack()
+                    .child(Button::new("accept", "Accept").render(cx).on_click({
+                        let state = self.state.clone();
+                        move |_, cx| state.respond(true, cx)
+                    }))
+                    .child(Button::new("decline", "Decline").render(cx).on_click({
+                        let state = self.state.clone();
+                        move |_, cx| state.respond(false, cx)
+                    })),
+            )
     }
 }
