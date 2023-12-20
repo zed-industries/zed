@@ -53,7 +53,7 @@ pub struct CollabTitlebarItem {
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
     branch_popover: Option<(View<BranchList>, Subscription)>,
-    project_popover: Option<recent_projects::RecentProjects>,
+    project_popover: Option<(View<recent_projects::RecentProjects>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -329,9 +329,8 @@ impl CollabTitlebarItem {
         };
 
         let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
-
-        div()
-            .child(
+        popover_menu("project_name_trigger")
+            .trigger(
                 Button::new("project_name_trigger", name)
                     .style(ButtonStyle::Subtle)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx))
@@ -339,16 +338,12 @@ impl CollabTitlebarItem {
                         this.toggle_project_menu(&ToggleProjectMenu, cx);
                     })),
             )
-            .children(self.project_popover.as_ref().map(|popover| {
-                overlay().child(
-                    div()
-                        .min_w_56()
-                        .on_mouse_down_out(cx.listener_for(&popover.picker, |picker, _, cx| {
-                            picker.cancel(&Default::default(), cx)
-                        }))
-                        .child(popover.picker.clone()),
-                )
-            }))
+            .when_some(
+                self.project_popover
+                    .as_ref()
+                    .map(|(project, _)| project.clone()),
+                |this, project| this.menu(move |_| project.clone()),
+            )
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -391,26 +386,6 @@ impl CollabTitlebarItem {
                     |this, branch| this.menu(move |_| branch.clone()),
                 ),
         )
-        // Some(
-        //     div()
-        //         .child(
-        //             Button::new("project_branch_trigger", branch_name)
-        //                 .color(Color::Muted)
-        //                 .style(ButtonStyle::Subtle)
-        //                 .tooltip(move |cx| {
-        //                     Tooltip::with_meta(
-        //                         "Recent Branches",
-        //                         Some(&ToggleVcsMenu),
-        //                         "Local branches only",
-        //                         cx,
-        //                     )
-        //                 })
-        //                 .on_click(
-        //                     cx.listener(|this, _, cx| this.toggle_vcs_menu(&ToggleVcsMenu, cx)),
-        //                 ),
-        //         )
-        //         .children(self.render_branches_popover_host()),
-        // )
     }
 
     fn render_collaborator(
@@ -505,8 +480,8 @@ impl CollabTitlebarItem {
     }
 
     pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
-        let workspace = self.workspace.clone();
         if self.project_popover.take().is_none() {
+            let workspace = self.workspace.clone();
             cx.spawn(|this, mut cx| async move {
                 let workspaces = WORKSPACE_DB
                     .recent_workspaces_on_disk()
@@ -520,15 +495,13 @@ impl CollabTitlebarItem {
                 this.update(&mut cx, move |this, cx| {
                     let view = RecentProjects::open_popover(workspace, workspaces, cx);
 
-                    cx.subscribe(&view.picker, |this, _, _: &DismissEvent, cx| {
-                        this.project_popover = None;
-                        cx.notify();
-                    })
-                    .detach();
                     let focus_handle = view.focus_handle(cx);
                     cx.focus(&focus_handle);
                     this.branch_popover.take();
-                    this.project_popover = Some(view);
+                    let subscription = cx.subscribe(&view, |this, _, _, _| {
+                        this.project_popover.take();
+                    });
+                    this.project_popover = Some((view, subscription));
                     cx.notify();
                 })
                 .log_err();

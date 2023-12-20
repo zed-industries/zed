@@ -3,8 +3,8 @@ mod projects;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Result, Task, View,
-    ViewContext, WeakView,
+    AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Result, Subscription,
+    Task, View, ViewContext, WeakView,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
@@ -23,17 +23,22 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
 }
 
-#[derive(Clone)]
 pub struct RecentProjects {
     pub picker: View<Picker<RecentProjectsDelegate>>,
+    rem_width: f32,
+    _subscription: Subscription,
 }
 
 impl ModalView for RecentProjects {}
 
 impl RecentProjects {
-    fn new(delegate: RecentProjectsDelegate, cx: &mut WindowContext<'_>) -> Self {
+    fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
+        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         Self {
-            picker: cx.build_view(|cx| Picker::new(delegate, cx)),
+            picker,
+            rem_width,
+            _subscription,
         }
     }
 
@@ -76,7 +81,7 @@ impl RecentProjects {
                         let delegate =
                             RecentProjectsDelegate::new(weak_workspace, workspace_locations, true);
 
-                        let modal = RecentProjects::new(delegate, cx);
+                        let modal = RecentProjects::new(delegate, 34., cx);
                         cx.subscribe(&modal.picker, |_, _, _, cx| cx.emit(DismissEvent))
                             .detach();
                         modal
@@ -94,11 +99,14 @@ impl RecentProjects {
         workspace: WeakView<Workspace>,
         workspaces: Vec<WorkspaceLocation>,
         cx: &mut WindowContext<'_>,
-    ) -> Self {
-        Self::new(
-            RecentProjectsDelegate::new(workspace, workspaces, false),
-            cx,
-        )
+    ) -> View<Self> {
+        cx.build_view(|cx| {
+            Self::new(
+                RecentProjectsDelegate::new(workspace, workspaces, false),
+                20.,
+                cx,
+            )
+        })
     }
 }
 
@@ -114,7 +122,7 @@ impl Render for RecentProjects {
     type Element = Div;
 
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        v_stack().w(rems(34.)).child(self.picker.clone())
+        v_stack().w(rems(self.rem_width)).child(self.picker.clone())
     }
 }
 
