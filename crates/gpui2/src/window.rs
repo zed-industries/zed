@@ -1516,14 +1516,23 @@ impl<'a> WindowContext<'a> {
                 }
             }
 
-            if self.app.propagate_event && event.downcast_ref::<MouseUpEvent>().is_some() {
-                self.active_drag = None;
-            }
-
             self.window
                 .rendered_frame
                 .mouse_listeners
                 .insert(event.type_id(), handlers);
+        }
+
+        if self.app.propagate_event && self.has_active_drag() {
+            if event.is::<MouseMoveEvent>() {
+                // If this was a mouse move event, redraw the window so that the
+                // active drag can follow the mouse cursor.
+                self.notify();
+            } else if event.is::<MouseUpEvent>() {
+                // If this was a mouse up event, cancel the active drag and redraw
+                // the window.
+                self.active_drag = None;
+                self.notify();
+            }
         }
     }
 
