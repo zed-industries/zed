@@ -3,6 +3,7 @@ pub use buffer_search::BufferSearchBar;
 use gpui::{actions, Action, AppContext, IntoElement};
 pub use mode::SearchMode;
 use project::search::SearchQuery;
+pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
 
