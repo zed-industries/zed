@@ -227,9 +227,13 @@ impl NotificationPanel {
         }
 
         Some(
-            h_stack()
+            div()
                 .id(ix)
+                .flex()
+                .flex_row()
                 .size_full()
+                .px_2()
+                .py_1()
                 .gap_2()
                 .when(can_navigate, |el| {
                     el.cursor(CursorStyle::PointingHand).on_click({
@@ -239,9 +243,13 @@ impl NotificationPanel {
                         })
                     })
                 })
-                .children(
-                    actor.map(|actor| img(actor.avatar_uri.clone()).w_8().h_8().rounded_full()),
-                )
+                .children(actor.map(|actor| {
+                    img(actor.avatar_uri.clone())
+                        .flex_none()
+                        .w_8()
+                        .h_8()
+                        .rounded_full()
+                }))
                 .child(
                     v_stack()
                         .gap_1()
@@ -249,7 +257,6 @@ impl NotificationPanel {
                         .child(Label::new(text.clone()))
                         .child(
                             h_stack()
-                                .justify_between()
                                 .child(
                                     Label::new(format_timestamp(
                                         timestamp,
@@ -259,14 +266,18 @@ impl NotificationPanel {
                                     .color(Color::Muted),
                                 )
                                 .children(if let Some(is_accepted) = response {
-                                    Some(div().child(Label::new(if is_accepted {
-                                        "You accepted"
-                                    } else {
-                                        "You declined"
-                                    })))
+                                    Some(div().flex().flex_grow().justify_end().child(Label::new(
+                                        if is_accepted {
+                                            "You accepted"
+                                        } else {
+                                            "You declined"
+                                        },
+                                    )))
                                 } else if needs_response {
                                     Some(
                                         h_stack()
+                                            .flex_grow()
+                                            .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
                                                 let view = cx.view().clone();
