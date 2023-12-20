@@ -254,6 +254,7 @@ impl NotificationPanel {
                     v_stack()
                         .gap_1()
                         .size_full()
+                        .overflow_hidden()
                         .child(Label::new(text.clone()))
                         .child(
                             h_stack()
