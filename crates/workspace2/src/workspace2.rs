@@ -25,12 +25,13 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, div, impl_actions, point, size, Action, AnyModel, AnyView, AnyWeakView,
-    AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
-    DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, GlobalPixels,
-    InteractiveElement, KeyContext, ManagedView, Model, ModelContext, ParentElement,
-    PathPromptOptions, Pixels, Point, PromptLevel, Render, Size, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyModel, AnyView,
+    AnyWeakView, AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, BorrowWindow,
+    Bounds, Context, Div, DragMoveEvent, Element, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
+    ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
+    Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -64,6 +65,7 @@ use std::{
 use theme::{ActiveTheme, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
+use ui::Label;
 use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
@@ -502,7 +504,7 @@ impl Workspace {
 
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(cx);
-                    cx.blur();
+                    cx.disable_focus();
                 }
 
                 project::Event::Closed => {
@@ -2519,32 +2521,6 @@ impl Workspace {
         }
     }
 
-    //     fn render_disconnected_overlay(
-    //         &self,
-    //         cx: &mut ViewContext<Workspace>,
-    //     ) -> Option<AnyElement<Workspace>> {
-    //         if self.project.read(cx).is_read_only() {
-    //             enum DisconnectedOverlay {}
-    //             Some(
-    //                 MouseEventHandler::new::<DisconnectedOverlay, _>(0, cx, |_, cx| {
-    //                     let theme = &theme::current(cx);
-    //                     Label::new(
-    //                         "Your connection to the remote project has been lost.",
-    //                         theme.workspace.disconnected_overlay.text.clone(),
-    //                     )
-    //                     .aligned()
-    //                     .contained()
-    //                     .with_style(theme.workspace.disconnected_overlay.container)
-    //                 })
-    //                 .with_cursor_style(CursorStyle::Arrow)
-    //                 .capture_all()
-    //                 .into_any_named("disconnected overlay"),
-    //             )
-    //         } else {
-    //             None
-    //         }
-    //     }
-
     fn render_notifications(&self, _cx: &ViewContext<Self>) -> Option<Div> {
         if self.notifications.is_empty() {
             None
@@ -3661,6 +3637,11 @@ impl Render for Workspace {
                     })),
             )
             .child(self.status_bar.clone())
+            .children(if self.project.read(cx).is_read_only() {
+                Some(DisconnectedOverlay)
+            } else {
+                None
+            })
     }
 }
 
@@ -4282,6 +4263,56 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<GlobalPixels>> {
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
     Some(size((width as f64).into(), (height as f64).into()))
+}
+
+struct DisconnectedOverlay;
+
+impl Element for DisconnectedOverlay {
+    type State = AnyElement;
+
+    fn layout(
+        &mut self,
+        _: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        let mut background = cx.theme().colors().elevated_surface_background;
+        background.fade_out(0.2);
+        let mut overlay = div()
+            .bg(background)
+            .absolute()
+            .left_0()
+            .top_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .capture_any_mouse_down(|_, cx| cx.stop_propagation())
+            .capture_any_mouse_up(|_, cx| cx.stop_propagation())
+            .child(Label::new(
+                "Your connection to the remote project has been lost.",
+            ))
+            .into_any();
+        (overlay.layout(cx), overlay)
+    }
+
+    fn paint(&mut self, bounds: Bounds<Pixels>, overlay: &mut Self::State, cx: &mut WindowContext) {
+        cx.with_z_index(u8::MAX, |cx| {
+            cx.add_opaque_layer(bounds);
+            overlay.paint(cx);
+        })
+    }
+}
+
+impl IntoElement for DisconnectedOverlay {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ui::prelude::ElementId> {
+        None
+    }
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
 }
 
 #[cfg(test)]

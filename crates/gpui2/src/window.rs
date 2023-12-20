@@ -273,6 +273,7 @@ pub struct Window {
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    focus_enabled: bool,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) focus_invalidated: bool,
@@ -420,6 +421,7 @@ impl Window {
             drawing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            focus_enabled: true,
 
             #[cfg(any(test, feature = "test-support"))]
             focus_invalidated: false,
@@ -496,7 +498,7 @@ impl<'a> WindowContext<'a> {
 
     /// Move focus to the element associated with the given `FocusHandle`.
     pub fn focus(&mut self, handle: &FocusHandle) {
-        if self.window.focus == Some(handle.id) {
+        if !self.window.focus_enabled || self.window.focus == Some(handle.id) {
             return;
         }
 
@@ -516,8 +518,17 @@ impl<'a> WindowContext<'a> {
 
     /// Remove focus from all elements within this context's window.
     pub fn blur(&mut self) {
+        if !self.window.focus_enabled {
+            return;
+        }
+
         self.window.focus = None;
         self.notify();
+    }
+
+    pub fn disable_focus(&mut self) {
+        self.blur();
+        self.window.focus_enabled = false;
     }
 
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
