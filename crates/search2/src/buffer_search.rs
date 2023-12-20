@@ -1,7 +1,7 @@
 use crate::{
     history::SearchHistory,
     mode::{next_mode, SearchMode},
-    search_bar::{render_nav_button, render_search_mode_button},
+    search_bar::render_nav_button,
     ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
     ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
@@ -21,7 +21,7 @@ use settings::Settings;
 use std::{any::Any, sync::Arc};
 use theme::ThemeSettings;
 
-use ui::{h_stack, prelude::*, Icon, IconButton, IconElement, Tooltip};
+use ui::{h_stack, prelude::*, Icon, IconButton, IconElement, ToggleButton, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -165,11 +165,6 @@ impl Render for BufferSearchBar {
             editor.set_placeholder_text("Replace with...", cx);
         });
 
-        let search_button_for_mode = |mode| {
-            let is_active = self.current_mode == mode;
-
-            render_search_mode_button(mode, is_active)
-        };
         let match_count = self
             .active_searchable_item
             .as_ref()
@@ -257,8 +252,38 @@ impl Render for BufferSearchBar {
                     .flex_none()
                     .child(
                         h_stack()
-                            .child(search_button_for_mode(SearchMode::Text))
-                            .child(search_button_for_mode(SearchMode::Regex)),
+                            .child(
+                                ToggleButton::new("search-mode-text", SearchMode::Text.label())
+                                    .style(ButtonStyle::Filled)
+                                    .selected(self.current_mode == SearchMode::Text)
+                                    .on_click(cx.listener(move |_, _event, cx| {
+                                        cx.dispatch_action(SearchMode::Text.action())
+                                    }))
+                                    .tooltip(|cx| {
+                                        Tooltip::for_action(
+                                            SearchMode::Text.tooltip(),
+                                            &*SearchMode::Text.action(),
+                                            cx,
+                                        )
+                                    })
+                                    .first(),
+                            )
+                            .child(
+                                ToggleButton::new("search-mode-regex", SearchMode::Regex.label())
+                                    .style(ButtonStyle::Filled)
+                                    .selected(self.current_mode == SearchMode::Regex)
+                                    .on_click(cx.listener(move |_, _event, cx| {
+                                        cx.dispatch_action(SearchMode::Regex.action())
+                                    }))
+                                    .tooltip(|cx| {
+                                        Tooltip::for_action(
+                                            SearchMode::Regex.tooltip(),
+                                            &*SearchMode::Regex.action(),
+                                            cx,
+                                        )
+                                    })
+                                    .last(),
+                            ),
                     )
                     .when(supported_options.replacement, |this| {
                         this.child(
