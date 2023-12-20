@@ -23,7 +23,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         } => {
             let window_size = Size {
                 width: px(400.),
-                height: px(96.),
+                height: px(72.),
             };
 
             for screen in cx.displays() {
@@ -139,35 +139,33 @@ impl Render for ProjectSharedNotification {
             .text_ui()
             .justify_between()
             .size_full()
+            .overflow_hidden()
             .elevation_3(cx)
             .p_2()
             .gap_2()
             .child(
-                h_stack()
-                    .gap_2()
-                    .child(
-                        img(self.owner.avatar_uri.clone())
-                            .w_16()
-                            .h_16()
-                            .rounded_full(),
-                    )
-                    .child(
-                        v_stack()
-                            .child(Label::new(self.owner.github_login.clone()))
-                            .child(Label::new(format!(
-                                "is sharing a project in Zed{}",
-                                if self.worktree_root_names.is_empty() {
-                                    ""
-                                } else {
-                                    ":"
-                                }
-                            )))
-                            .children(if self.worktree_root_names.is_empty() {
-                                None
-                            } else {
-                                Some(Label::new(self.worktree_root_names.join(", ")))
-                            }),
-                    ),
+                img(self.owner.avatar_uri.clone())
+                    .w_12()
+                    .h_12()
+                    .rounded_full(),
+            )
+            .child(
+                v_stack()
+                    .overflow_hidden()
+                    .child(Label::new(self.owner.github_login.clone()))
+                    .child(Label::new(format!(
+                        "is sharing a project in Zed{}",
+                        if self.worktree_root_names.is_empty() {
+                            ""
+                        } else {
+                            ":"
+                        }
+                    )))
+                    .children(if self.worktree_root_names.is_empty() {
+                        None
+                    } else {
+                        Some(Label::new(self.worktree_root_names.join(", ")))
+                    }),
             )
             .child(
                 v_stack()
