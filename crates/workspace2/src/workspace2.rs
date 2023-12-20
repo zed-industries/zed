@@ -600,11 +600,6 @@ impl Workspace {
 
         let modal_layer = cx.build_view(|_| ModalLayer::new());
 
-        // todo!()
-        // cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
-        //     drag_and_drop.register_container(weak_handle.clone());
-        // });
-
         let mut active_call = None;
         if cx.has_global::<Model<ActiveCall>>() {
             let call = cx.global::<Model<ActiveCall>>().clone();

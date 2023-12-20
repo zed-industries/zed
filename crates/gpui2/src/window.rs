@@ -1926,14 +1926,9 @@ impl VisualContext for WindowContext<'_> {
     where
         V: 'static + Render,
     {
-        let slot = self.app.entities.reserve();
-        let view = View {
-            model: slot.clone(),
-        };
-        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
-        let entity = build_view(&mut cx);
-        self.entities.insert(slot, entity);
+        let view = self.build_view(build_view);
         self.window.root_view = Some(view.clone().into());
+        self.notify();
         view
     }
 
