@@ -1467,6 +1467,14 @@ impl Interactivity {
                                 .clone();
                             let line_height = cx.line_height();
                             let scroll_max = (content_size - bounds.size).max(&Size::default());
+                            // Clamp scroll offset in case scroll max is smaller now (e.g., if children
+                            // were removed or the bounds became larger).
+                            {
+                                let mut scroll_offset = scroll_offset.borrow_mut();
+                                scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
+                                scroll_offset.y = scroll_offset.x.clamp(-scroll_max.height, px(0.));
+                            }
+
                             let interactive_bounds = interactive_bounds.clone();
                             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
                                 if phase == DispatchPhase::Bubble
