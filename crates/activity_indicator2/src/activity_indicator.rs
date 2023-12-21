@@ -10,7 +10,7 @@ use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc};
-use ui::{h_stack, Label};
+use ui::prelude::*;
 use util::ResultExt;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -324,7 +324,7 @@ impl Render for ActivityIndicator {
 
         result
             .children(content.icon.map(|icon| svg().path(icon)))
-            .child(Label::new(SharedString::from(content.message)))
+            .child(Label::new(SharedString::from(content.message)).size(LabelSize::Small))
     }
 }
 

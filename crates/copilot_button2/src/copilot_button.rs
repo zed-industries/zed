@@ -18,7 +18,8 @@ use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
     ui::{
-        popover_menu, ButtonCommon, Clickable, ContextMenu, Icon, IconButton, PopoverMenu, Tooltip,
+        popover_menu, ButtonCommon, Clickable, ContextMenu, Icon, IconButton, IconSize,
+        PopoverMenu, Tooltip,
     },
     StatusItemView, Toast, Workspace,
 };
@@ -69,6 +70,7 @@ impl Render for CopilotButton {
         if let Status::Error(e) = status {
             return div().child(
                 IconButton::new("copilot-error", icon)
+                    .icon_size(IconSize::Small)
                     .on_click(cx.listener(move |this, _, cx| {
                         if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
                             workspace.update(cx, |workspace, cx| {

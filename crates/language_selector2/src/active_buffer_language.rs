@@ -3,7 +3,7 @@ use gpui::{
     div, Div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView,
 };
 use std::sync::Arc;
-use ui::{Button, ButtonCommon, Clickable, Tooltip};
+use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::LanguageSelector;
@@ -50,6 +50,7 @@ impl Render for ActiveBufferLanguage {
 
             el.child(
                 Button::new("change-language", active_language_text)
+                    .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
