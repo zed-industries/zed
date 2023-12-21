@@ -25,29 +25,54 @@ impl Render for DiagnosticIndicator {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_stack().child(IconElement::new(Icon::Check).color(Color::Success)),
+            (0, 0) => h_stack().child(
+                IconElement::new(Icon::Check)
+                    .size(IconSize::Small)
+                    .color(Color::Success),
+            ),
             (0, warning_count) => h_stack()
                 .gap_1()
-                .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
-                .child(Label::new(warning_count.to_string())),
+                .child(
+                    IconElement::new(Icon::ExclamationTriangle)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
             (error_count, 0) => h_stack()
                 .gap_1()
-                .child(IconElement::new(Icon::XCircle).color(Color::Error))
-                .child(Label::new(error_count.to_string())),
+                .child(
+                    IconElement::new(Icon::XCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .child(Label::new(error_count.to_string()).size(LabelSize::Small)),
             (error_count, warning_count) => h_stack()
                 .gap_1()
-                .child(IconElement::new(Icon::XCircle).color(Color::Error))
-                .child(Label::new(error_count.to_string()))
-                .child(IconElement::new(Icon::ExclamationTriangle).color(Color::Warning))
-                .child(Label::new(warning_count.to_string())),
+                .child(
+                    IconElement::new(Icon::XCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .child(Label::new(error_count.to_string()).size(LabelSize::Small))
+                .child(
+                    IconElement::new(Icon::ExclamationTriangle)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
         };
 
         let status = if !self.in_progress_checks.is_empty() {
-            Some(Label::new("Checking…").into_any_element())
+            Some(
+                Label::new("Checking…")
+                    .size(LabelSize::Small)
+                    .into_any_element(),
+            )
         } else if let Some(diagnostic) = &self.current_diagnostic {
             let message = diagnostic.message.split('\n').next().unwrap().to_string();
             Some(
                 Button::new("diagnostic_message", message)
+                    .label_size(LabelSize::Small)
                     .tooltip(|cx| {
                         Tooltip::for_action("Next Diagnostic", &editor::GoToDiagnostic, cx)
                     })

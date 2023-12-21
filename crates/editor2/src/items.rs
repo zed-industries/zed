@@ -1200,7 +1200,7 @@ impl Render for CursorPosition {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
             }
 
-            el.child(Label::new(text))
+            el.child(Label::new(text).size(LabelSize::Small))
         })
     }
 }

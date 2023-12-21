@@ -1,6 +1,6 @@
-use gpui::{div, AnyElement, Element, IntoElement, Render, Subscription, ViewContext};
+use gpui::{div, AnyElement, Element, Render, Subscription, ViewContext};
 use settings::SettingsStore;
-use workspace::{item::ItemHandle, ui::Label, StatusItemView};
+use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
 use crate::{state::Mode, Vim};
 
@@ -61,7 +61,7 @@ impl Render for ModeIndicator {
             Mode::VisualLine => "-- VISUAL LINE --",
             Mode::VisualBlock => "-- VISUAL BLOCK --",
         };
-        Label::new(text).into_any_element()
+        Label::new(text).size(LabelSize::Small).into_any_element()
     }
 }
 

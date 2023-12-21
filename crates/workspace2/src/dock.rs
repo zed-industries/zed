@@ -637,6 +637,7 @@ impl Render for PanelButtons {
                         .attach(menu_attach)
                         .trigger(
                             IconButton::new(name, icon)
+                                .icon_size(IconSize::Small)
                                 .selected(is_active_button)
                                 .on_click({
                                     let action = action.boxed_clone();
