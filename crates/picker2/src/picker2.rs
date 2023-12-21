@@ -226,7 +226,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .overflow_hidden()
             .flex_none()
             .h_9()
-            .px_3()
+            .px_4()
             .child(self.editor.clone());
 
         div()
