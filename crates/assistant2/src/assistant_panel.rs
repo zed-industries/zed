@@ -30,9 +30,9 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
-    AsyncWindowContext, ClipboardItem, Context, Div, EventEmitter, FocusHandle, Focusable,
-    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
-    ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Div, EventEmitter, FocusHandle,
+    Focusable, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
+    IntoElement, Model, ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
@@ -1199,9 +1199,10 @@ impl Render for AssistantPanel {
                                     },
                                 )
                                 .track_scroll(scroll_handle)
+                                .into_any_element()
                                 .draw(
                                     bounds.origin,
-                                    bounds.size,
+                                    bounds.size.map(AvailableSpace::Definite),
                                     cx,
                                 );
                             })
