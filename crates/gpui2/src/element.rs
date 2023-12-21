@@ -23,6 +23,17 @@ pub trait IntoElement: Sized {
         self.into_element().into_any()
     }
 
+    fn draw<T>(self, origin: Point<Pixels>, available_space: Size<T>, cx: &mut WindowContext)
+    where
+        T: Clone + Default + Debug + Into<AvailableSpace>,
+    {
+        let element = DrawableElement {
+            element: Some(self.into_element()),
+            phase: ElementDrawPhase::Start,
+        };
+        DrawableElement::draw(element, origin, available_space.map(Into::into), cx);
+    }
+
     fn draw_and_update_state<T, R>(
         self,
         origin: Point<Pixels>,
