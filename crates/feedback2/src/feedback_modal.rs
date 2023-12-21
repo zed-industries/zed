@@ -87,6 +87,8 @@ impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
     fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.update_email_in_store(cx);
+
         if self.dismiss_modal {
             return true;
         }
@@ -214,21 +216,6 @@ impl FeedbackModal {
         cx.spawn(|this, mut cx| async move {
             let answer = answer.await.ok();
             if answer == Some(0) {
-                match email.clone() {
-                    Some(email) => {
-                        KEY_VALUE_STORE
-                            .write_kvp(DATABASE_KEY_NAME.to_string(), email)
-                            .await
-                            .ok();
-                    }
-                    None => {
-                        KEY_VALUE_STORE
-                            .delete_kvp(DATABASE_KEY_NAME.to_string())
-                            .await
-                            .ok();
-                    }
-                };
-
                 this.update(&mut cx, |this, cx| {
                     this.submission_state = Some(SubmissionState::CannotSubmit {
                         reason: CannotSubmitReason::AwaitingSubmission,
@@ -349,6 +336,28 @@ impl FeedbackModal {
                 },
             });
         }
+    }
+
+    fn update_email_in_store(&self, cx: &mut ViewContext<Self>) {
+        let email = self.email_address_editor.read(cx).text_option(cx);
+
+        cx.spawn(|_, _| async move {
+            match email {
+                Some(email) => {
+                    KEY_VALUE_STORE
+                        .write_kvp(DATABASE_KEY_NAME.to_string(), email)
+                        .await
+                        .ok();
+                }
+                None => {
+                    KEY_VALUE_STORE
+                        .delete_kvp(DATABASE_KEY_NAME.to_string())
+                        .await
+                        .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     fn valid_email_address(&self) -> bool {
@@ -508,7 +517,6 @@ impl Render for FeedbackModal {
     }
 }
 
-// TODO: Maybe store email address whenever the modal is closed, versus just on submit, so users can remove it if they want without submitting
 // TODO: Testing of various button states, dismissal prompts, etc.
 
 // #[cfg(test)]
