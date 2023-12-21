@@ -59,6 +59,13 @@ pub enum ButtonStyle {
     Transparent,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub(crate) enum ButtonLikeRounding {
+    All,
+    Left,
+    Right,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ButtonLikeStyles {
     pub background: Hsla,
@@ -226,6 +233,7 @@ impl ButtonStyle {
 /// that are consistently sized with buttons.
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonSize {
+    Large,
     #[default]
     Default,
     Compact,
@@ -235,6 +243,7 @@ pub enum ButtonSize {
 impl ButtonSize {
     fn height(self) -> Rems {
         match self {
+            ButtonSize::Large => rems(32. / 16.),
             ButtonSize::Default => rems(22. / 16.),
             ButtonSize::Compact => rems(18. / 16.),
             ButtonSize::None => rems(16. / 16.),
@@ -256,6 +265,7 @@ pub struct ButtonLike {
     pub(super) selected: bool,
     pub(super) width: Option<DefiniteLength>,
     size: ButtonSize,
+    rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -271,10 +281,16 @@ impl ButtonLike {
             selected: false,
             width: None,
             size: ButtonSize::Default,
+            rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
             children: SmallVec::new(),
             on_click: None,
         }
+    }
+
+    pub(crate) fn rounding(mut self, rounding: impl Into<Option<ButtonLikeRounding>>) -> Self {
+        self.rounding = rounding.into();
+        self
     }
 }
 
@@ -356,9 +372,14 @@ impl RenderOnce for ButtonLike {
             .flex_none()
             .h(self.size.height())
             .when_some(self.width, |this, width| this.w(width).justify_center())
-            .rounded_md()
+            .when_some(self.rounding, |this, rounding| match rounding {
+                ButtonLikeRounding::All => this.rounded_md(),
+                ButtonLikeRounding::Left => this.rounded_l_md(),
+                ButtonLikeRounding::Right => this.rounded_r_md(),
+            })
             .gap_1()
             .map(|this| match self.size {
+                ButtonSize::Large => this.px_2(),
                 ButtonSize::Default | ButtonSize::Compact => this.px_1(),
                 ButtonSize::None => this,
             })
