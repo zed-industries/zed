@@ -4060,7 +4060,6 @@ dependencies = [
  "parking",
  "parking_lot 0.11.2",
  "pathfinder_geometry",
- "plane-split",
  "png",
  "postage",
  "rand 0.8.5",
@@ -6655,17 +6654,6 @@ name = "pkg-config"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
-
-[[package]]
-name = "plane-split"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c1f7d82649829ecdef8e258790b0587acf0a8403f0ce963473d8e918acc1643"
-dependencies = [
- "euclid",
- "log",
- "smallvec",
-]
 
 [[package]]
 name = "plist"
