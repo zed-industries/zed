@@ -1,10 +1,10 @@
 use std::{iter, mem, ops::Range};
 
 use crate::{
-    black, phi, point, quad, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds,
-    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement,
-    Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
+    black, phi, point, quad, rems, AbsoluteLength, BorrowWindow, Bounds, ContentMask, Corners,
+    CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
+    SizeRefinement, Styled, TextRun, WindowContext,
 };
 use collections::HashSet;
 use refineable::{Cascade, Refineable};
