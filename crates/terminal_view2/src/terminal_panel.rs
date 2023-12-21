@@ -58,6 +58,15 @@ impl TerminalPanel {
                 workspace.weak_handle(),
                 workspace.project().clone(),
                 Default::default(),
+                Some(Arc::new(|a, cx| {
+                    if let Some(tab) = a.downcast_ref::<workspace::pane::DraggedTab>() {
+                        if let Some(item) = tab.pane.read(cx).item_for_index(tab.ix) {
+                            return item.downcast::<TerminalView>().is_some();
+                        }
+                    }
+
+                    false
+                })),
                 cx,
             );
             pane.set_can_split(false, cx);

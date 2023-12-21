@@ -542,6 +542,7 @@ impl Workspace {
                 weak_handle.clone(),
                 project.clone(),
                 pane_history_timestamp.clone(),
+                None,
                 cx,
             )
         });
@@ -1724,6 +1725,7 @@ impl Workspace {
                 self.weak_handle(),
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
+                None,
                 cx,
             )
         });
