@@ -1754,6 +1754,10 @@ impl Pane {
     }
 
     fn handle_drag_move<T>(&mut self, event: &DragMoveEvent<T>, cx: &mut ViewContext<Self>) {
+        if !self.can_split {
+            return;
+        }
+
         let edge_width = cx.rem_size() * 8;
         let cursor = event.event.position;
         let direction = if cursor.x < event.bounds.left() + edge_width {
@@ -1767,9 +1771,9 @@ impl Pane {
         } else {
             None
         };
+
         if direction != self.drag_split_direction {
             self.drag_split_direction = direction;
-            cx.notify();
         }
     }
 
