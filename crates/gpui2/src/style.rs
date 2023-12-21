@@ -402,13 +402,65 @@ impl Style {
 
         if self.is_border_visible() {
             cx.with_z_index(3, |cx| {
-                cx.paint_quad(quad(
+                let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
+                let border_widths = self.border_widths.to_pixels(rem_size);
+                let max_border_width = border_widths.max();
+                let max_corner_radius = corner_radii.max();
+
+                let top_bounds = Bounds::from_corners(
+                    bounds.origin,
+                    bounds.upper_right()
+                        + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                );
+                let bottom_bounds = Bounds::from_corners(
+                    bounds.lower_left()
+                        - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                    bounds.lower_right(),
+                );
+                let left_bounds = Bounds::from_corners(
+                    top_bounds.lower_left(),
+                    bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
+                );
+                let right_bounds = Bounds::from_corners(
+                    top_bounds.lower_right() - point(max_border_width, Pixels::ZERO),
+                    bottom_bounds.upper_right(),
+                );
+
+                let quad = quad(
                     bounds,
-                    self.corner_radii.to_pixels(bounds.size, rem_size),
+                    corner_radii,
                     Hsla::transparent_black(),
-                    self.border_widths.to_pixels(rem_size),
+                    border_widths,
                     self.border_color.unwrap_or_default(),
-                ));
+                );
+
+                cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
+                    cx.paint_quad(quad.clone());
+                });
+                cx.with_content_mask(
+                    Some(ContentMask {
+                        bounds: right_bounds,
+                    }),
+                    |cx| {
+                        cx.paint_quad(quad.clone());
+                    },
+                );
+                cx.with_content_mask(
+                    Some(ContentMask {
+                        bounds: bottom_bounds,
+                    }),
+                    |cx| {
+                        cx.paint_quad(quad.clone());
+                    },
+                );
+                cx.with_content_mask(
+                    Some(ContentMask {
+                        bounds: left_bounds,
+                    }),
+                    |cx| {
+                        cx.paint_quad(quad);
+                    },
+                );
             });
         }
 
