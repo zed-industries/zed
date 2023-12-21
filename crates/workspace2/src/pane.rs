@@ -181,7 +181,7 @@ pub struct Pane {
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
-    //     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
+    can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     can_split: bool,
     //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
     _subscriptions: Vec<Subscription>,
@@ -229,7 +229,7 @@ pub struct NavigationEntry {
 }
 
 #[derive(Clone)]
-struct DraggedTab {
+pub struct DraggedTab {
     pub pane: View<Pane>,
     pub ix: usize,
     pub item_id: EntityId,
@@ -325,6 +325,7 @@ impl Pane {
         workspace: WeakView<Workspace>,
         project: Model<Project>,
         next_timestamp: Arc<AtomicUsize>,
+        can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         // todo!("context menu")
@@ -371,7 +372,7 @@ impl Pane {
             // tab_context_menu: cx.build_view(|_| ContextMenu::new(pane_view_id, cx)),
             workspace,
             project,
-            // can_drop: Rc::new(|_, _| true),
+            can_drop_predicate,
             can_split: true,
             // render_tab_bar_buttons: Rc::new(move |pane, cx| {
             //     Flex::row()
@@ -744,6 +745,10 @@ impl Pane {
         self.items
             .iter()
             .position(|i| i.item_id() == item.item_id())
+    }
+
+    pub fn item_for_index(&self, ix: usize) -> Option<&dyn ItemHandle> {
+        self.items.get(ix).map(|i| i.as_ref())
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
@@ -1530,6 +1535,9 @@ impl Pane {
             )
             .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().drop_target_background))
             .drag_over::<ProjectEntryId>(|tab| tab.bg(cx.theme().colors().drop_target_background))
+            .when_some(self.can_drop_predicate.clone(), |this, p| {
+                this.can_drop(move |a, cx| p(a, cx))
+            })
             .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
                 this.drag_split_direction = None;
                 this.handle_tab_drop(dragged_tab, ix, cx)
@@ -1947,6 +1955,9 @@ impl Render for Pane {
                             ))
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<ProjectEntryId>("", |style| style.visible())
+                            .when_some(self.can_drop_predicate.clone(), |this, p| {
+                                this.can_drop(move |a, cx| p(a, cx))
+                            })
                             .on_drop(cx.listener(move |this, dragged_tab, cx| {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))

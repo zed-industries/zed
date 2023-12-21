@@ -297,6 +297,10 @@ impl Interactivity {
         ));
     }
 
+    pub fn can_drop(&mut self, predicate: impl Fn(&dyn Any, &mut WindowContext) -> bool + 'static) {
+        self.can_drop_predicate = Some(Box::new(predicate));
+    }
+
     pub fn on_click(&mut self, listener: impl Fn(&ClickEvent, &mut WindowContext) + 'static)
     where
         Self: Sized,
@@ -569,6 +573,14 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    fn can_drop(
+        mut self,
+        predicate: impl Fn(&dyn Any, &mut WindowContext) -> bool + 'static,
+    ) -> Self {
+        self.interactivity().can_drop(predicate);
+        self
+    }
+
     fn block_mouse(mut self) -> Self {
         self.interactivity().block_mouse();
         self
@@ -698,6 +710,8 @@ pub type ClickListener = Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>;
 pub type DragListener = Box<dyn Fn(&dyn Any, &mut WindowContext) -> AnyView + 'static>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut WindowContext) + 'static>;
+
+type CanDropPredicate = Box<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>;
 
 pub type TooltipBuilder = Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>;
 
@@ -887,6 +901,7 @@ pub struct Interactivity {
     pub key_up_listeners: Vec<KeyUpListener>,
     pub action_listeners: Vec<(TypeId, ActionListener)>,
     pub drop_listeners: Vec<(TypeId, DropListener)>,
+    pub can_drop_predicate: Option<CanDropPredicate>,
     pub click_listeners: Vec<ClickListener>,
     pub drag_listener: Option<(Box<dyn Any>, DragListener)>,
     pub hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
@@ -1198,6 +1213,7 @@ impl Interactivity {
                         let mut drag_listener = mem::take(&mut self.drag_listener);
                         let drop_listeners = mem::take(&mut self.drop_listeners);
                         let click_listeners = mem::take(&mut self.click_listeners);
+                        let can_drop_predicate = mem::take(&mut self.can_drop_predicate);
 
                         if !drop_listeners.is_empty() {
                             cx.on_mouse_event({
@@ -1215,9 +1231,17 @@ impl Interactivity {
                                                         "checked for type drag state type above",
                                                     );
 
-                                                    listener(drag.value.as_ref(), cx);
-                                                    cx.notify();
-                                                    cx.stop_propagation();
+                                                    let mut can_drop = true;
+                                                    if let Some(predicate) = &can_drop_predicate {
+                                                        can_drop =
+                                                            predicate(drag.value.as_ref(), cx);
+                                                    }
+
+                                                    if can_drop {
+                                                        listener(drag.value.as_ref(), cx);
+                                                        cx.notify();
+                                                        cx.stop_propagation();
+                                                    }
                                                 }
                                             }
                                         }
@@ -1596,27 +1620,36 @@ impl Interactivity {
                 }
 
                 if let Some(drag) = cx.active_drag.take() {
-                    for (state_type, group_drag_style) in &self.group_drag_over_styles {
-                        if let Some(group_bounds) = GroupBounds::get(&group_drag_style.group, cx) {
-                            if *state_type == drag.value.as_ref().type_id()
-                                && group_bounds.contains(&mouse_position)
-                            {
-                                style.refine(&group_drag_style.style);
-                            }
-                        }
+                    let mut can_drop = true;
+                    if let Some(can_drop_predicate) = &self.can_drop_predicate {
+                        can_drop = can_drop_predicate(drag.value.as_ref(), cx);
                     }
 
-                    for (state_type, drag_over_style) in &self.drag_over_styles {
-                        if *state_type == drag.value.as_ref().type_id()
-                            && bounds
-                                .intersect(&cx.content_mask().bounds)
-                                .contains(&mouse_position)
-                            && cx.was_top_layer_under_active_drag(
-                                &mouse_position,
-                                cx.stacking_order(),
-                            )
-                        {
-                            style.refine(drag_over_style);
+                    if can_drop {
+                        for (state_type, group_drag_style) in &self.group_drag_over_styles {
+                            if let Some(group_bounds) =
+                                GroupBounds::get(&group_drag_style.group, cx)
+                            {
+                                if *state_type == drag.value.as_ref().type_id()
+                                    && group_bounds.contains(&mouse_position)
+                                {
+                                    style.refine(&group_drag_style.style);
+                                }
+                            }
+                        }
+
+                        for (state_type, drag_over_style) in &self.drag_over_styles {
+                            if *state_type == drag.value.as_ref().type_id()
+                                && bounds
+                                    .intersect(&cx.content_mask().bounds)
+                                    .contains(&mouse_position)
+                                && cx.was_top_layer_under_active_drag(
+                                    &mouse_position,
+                                    cx.stacking_order(),
+                                )
+                            {
+                                style.refine(drag_over_style);
+                            }
                         }
                     }
 
@@ -1672,6 +1705,7 @@ impl Default for Interactivity {
             key_up_listeners: Vec::new(),
             action_listeners: Vec::new(),
             drop_listeners: Vec::new(),
+            can_drop_predicate: None,
             click_listeners: Vec::new(),
             drag_listener: None,
             hover_listener: None,
