@@ -134,7 +134,7 @@ impl RenderOnce for ListItem {
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
-                    .px_1()
+                    .px_2()
             })
             .when(!self.inset, |this| {
                 this
