@@ -354,15 +354,10 @@ impl FileFinderDelegate {
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                PathMatchCandidateSet {
-                    snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
-                    include_root_name,
-                }
+            .map(|worktree| PathMatchCandidateSet {
+                snapshot: worktree.read(cx).snapshot(),
+                include_ignored: true,
+                include_root_name,
             })
             .collect::<Vec<_>>();
 
@@ -1038,7 +1033,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_ignored_files(cx: &mut TestAppContext) {
+    async fn test_ignored_root(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state
             .fs
@@ -1081,7 +1076,94 @@ mod tests {
                 picker.delegate.spawn_search(test_path_like("hi"), cx)
             })
             .await;
-        picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 7));
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                collect_search_results(picker),
+                vec![
+                    PathBuf::from("ignored-root/happiness"),
+                    PathBuf::from("ignored-root/height"),
+                    PathBuf::from("ignored-root/hi"),
+                    PathBuf::from("ignored-root/hiccup"),
+                    PathBuf::from("tracked-root/happiness"),
+                    PathBuf::from("tracked-root/height"),
+                    PathBuf::from("tracked-root/hi"),
+                    PathBuf::from("tracked-root/hiccup"),
+                ],
+                "All files in all roots (including gitignored) should be searched"
+            )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ignored_files(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    ".git": {},
+                    ".gitignore": "ignored_a\n.env\n",
+                    "a": {
+                        "banana_env": "11",
+                        "bandana_env": "12",
+                    },
+                    "ignored_a": {
+                        "ignored_banana_env": "21",
+                        "ignored_bandana_env": "22",
+                        "ignored_nested": {
+                            "ignored_nested_banana_env": "31",
+                            "ignored_nested_bandana_env": "32",
+                        },
+                    },
+                    ".env": "something",
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+
+        let (picker, workspace, cx) = build_find_picker(project, cx);
+
+        cx.simulate_input("env");
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                collect_search_results(picker),
+                vec![
+                    PathBuf::from(".env"),
+                    PathBuf::from("a/banana_env"),
+                    PathBuf::from("a/bandana_env"),
+                ],
+                "Root gitignored files and all non-gitignored files should be searched"
+            )
+        });
+
+        let _ = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from("/root/ignored_a/ignored_banana_env"),
+                    true,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_input("env");
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                collect_search_results(picker),
+                vec![
+                    PathBuf::from(".env"),
+                    PathBuf::from("a/banana_env"),
+                    PathBuf::from("a/bandana_env"),
+                    PathBuf::from("ignored_a/ignored_banana_env"),
+                    PathBuf::from("ignored_a/ignored_bandana_env"),
+                ],
+                "Root gitignored dir got listed and its entries got into worktree, but all gitignored dirs below it were not listed. Old entries + new listed gitignored entries should be searched"
+            )
+        });
     }
 
     #[gpui::test]
@@ -1845,5 +1927,21 @@ mod tests {
                 .picker
                 .clone()
         })
+    }
+
+    fn collect_search_results(picker: &Picker<FileFinderDelegate>) -> Vec<PathBuf> {
+        let matches = &picker.delegate.matches;
+        assert!(
+            matches.history.is_empty(),
+            "Should have no history matches, but got: {:?}",
+            matches.history
+        );
+        let mut results = matches
+            .search
+            .iter()
+            .map(|path_match| Path::new(path_match.path_prefix.as_ref()).join(&path_match.path))
+            .collect::<Vec<_>>();
+        results.sort();
+        results
     }
 }
