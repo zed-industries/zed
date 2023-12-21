@@ -3074,7 +3074,6 @@ impl From<(&'static str, u64)> for ElementId {
 }
 
 /// A rectangle, to be rendered on the screen by GPUI at the given position and size.
-#[derive(Clone)]
 pub struct PaintQuad {
     bounds: Bounds<Pixels>,
     corner_radii: Corners<Pixels>,

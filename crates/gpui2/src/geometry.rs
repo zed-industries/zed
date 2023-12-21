@@ -1590,15 +1590,6 @@ impl Edges<Pixels> {
             left: self.left.scale(factor),
         }
     }
-
-    /// Returns the maximum value of any edge.
-    ///
-    /// # Returns
-    ///
-    /// The maximum `Pixels` value among all four edges.
-    pub fn max(&self) -> Pixels {
-        self.top.max(self.right).max(self.bottom).max(self.left)
-    }
 }
 
 impl Into<Edges<Pixels>> for f32 {
@@ -1748,18 +1739,6 @@ impl Corners<Pixels> {
             bottom_right: self.bottom_right.scale(factor),
             bottom_left: self.bottom_left.scale(factor),
         }
-    }
-
-    /// Returns the maximum value of any corner.
-    ///
-    /// # Returns
-    ///
-    /// The maximum `Pixels` value among all four corners.
-    pub fn max(&self) -> Pixels {
-        self.top_left
-            .max(self.top_right)
-            .max(self.bottom_right)
-            .max(self.bottom_left)
     }
 }
 

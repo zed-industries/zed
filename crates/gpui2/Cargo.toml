@@ -56,6 +56,7 @@ uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
 slotmap = "1.0.6"
 schemars.workspace = true
+plane-split = "0.18.0"
 bitflags = "2.4.0"
 
 [dev-dependencies]

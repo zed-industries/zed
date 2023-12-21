@@ -3,6 +3,8 @@ use crate::{
     ScaledPixels, StackingOrder,
 };
 use collections::BTreeMap;
+use etagere::euclid::{Point3D, Vector3D};
+use plane_split::{BspSplitter, Polygon as BspPolygon};
 use std::{fmt::Debug, iter::Peekable, mem, slice};
 
 // Exported to metal
@@ -17,6 +19,7 @@ pub type DrawOrder = u32;
 pub(crate) struct SceneBuilder {
     last_order: Option<(StackingOrder, LayerId)>,
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
+    splitter: BspSplitter<(PrimitiveKind, usize)>,
     shadows: Vec<Shadow>,
     quads: Vec<Quad>,
     paths: Vec<Path<ScaledPixels>>,
@@ -31,6 +34,7 @@ impl Default for SceneBuilder {
         SceneBuilder {
             last_order: None,
             layers_by_order: BTreeMap::new(),
+            splitter: BspSplitter::new(),
             shadows: Vec::new(),
             quads: Vec::new(),
             paths: Vec::new(),
@@ -44,47 +48,103 @@ impl Default for SceneBuilder {
 
 impl SceneBuilder {
     pub fn build(&mut self) -> Scene {
-        let mut orders = vec![0; self.layers_by_order.len()];
+        // Map each layer id to a float between 0. and 1., with 1. closer to the viewer.
+        let mut layer_z_values = vec![0.; self.layers_by_order.len()];
         for (ix, layer_id) in self.layers_by_order.values().enumerate() {
-            orders[*layer_id as usize] = ix as u32;
+            layer_z_values[*layer_id as usize] = ix as f32 / self.layers_by_order.len() as f32;
         }
         self.layers_by_order.clear();
         self.last_order = None;
 
-        for shadow in &mut self.shadows {
-            shadow.order = orders[shadow.order as usize];
-        }
-        self.shadows.sort_by_key(|shadow| shadow.order);
+        // Add all primitives to the BSP splitter to determine draw order
+        self.splitter.reset();
 
-        for quad in &mut self.quads {
-            quad.order = orders[quad.order as usize];
+        for (ix, shadow) in self.shadows.iter().enumerate() {
+            let z = layer_z_values[shadow.order as LayerId as usize];
+            self.splitter
+                .add(shadow.bounds.to_bsp_polygon(z, (PrimitiveKind::Shadow, ix)));
         }
-        self.quads.sort_by_key(|quad| quad.order);
 
-        for path in &mut self.paths {
-            path.order = orders[path.order as usize];
+        for (ix, quad) in self.quads.iter().enumerate() {
+            let z = layer_z_values[quad.order as LayerId as usize];
+            self.splitter
+                .add(quad.bounds.to_bsp_polygon(z, (PrimitiveKind::Quad, ix)));
         }
-        self.paths.sort_by_key(|path| path.order);
 
-        for underline in &mut self.underlines {
-            underline.order = orders[underline.order as usize];
+        for (ix, path) in self.paths.iter().enumerate() {
+            let z = layer_z_values[path.order as LayerId as usize];
+            self.splitter
+                .add(path.bounds.to_bsp_polygon(z, (PrimitiveKind::Path, ix)));
         }
-        self.underlines.sort_by_key(|underline| underline.order);
 
-        for monochrome_sprite in &mut self.monochrome_sprites {
-            monochrome_sprite.order = orders[monochrome_sprite.order as usize];
+        for (ix, underline) in self.underlines.iter().enumerate() {
+            let z = layer_z_values[underline.order as LayerId as usize];
+            self.splitter.add(
+                underline
+                    .bounds
+                    .to_bsp_polygon(z, (PrimitiveKind::Underline, ix)),
+            );
         }
-        self.monochrome_sprites.sort_by_key(|sprite| sprite.order);
 
-        for polychrome_sprite in &mut self.polychrome_sprites {
-            polychrome_sprite.order = orders[polychrome_sprite.order as usize];
+        for (ix, monochrome_sprite) in self.monochrome_sprites.iter().enumerate() {
+            let z = layer_z_values[monochrome_sprite.order as LayerId as usize];
+            self.splitter.add(
+                monochrome_sprite
+                    .bounds
+                    .to_bsp_polygon(z, (PrimitiveKind::MonochromeSprite, ix)),
+            );
         }
-        self.polychrome_sprites.sort_by_key(|sprite| sprite.order);
 
-        for surface in &mut self.surfaces {
-            surface.order = orders[surface.order as usize];
+        for (ix, polychrome_sprite) in self.polychrome_sprites.iter().enumerate() {
+            let z = layer_z_values[polychrome_sprite.order as LayerId as usize];
+            self.splitter.add(
+                polychrome_sprite
+                    .bounds
+                    .to_bsp_polygon(z, (PrimitiveKind::PolychromeSprite, ix)),
+            );
         }
-        self.surfaces.sort_by_key(|surface| surface.order);
+
+        for (ix, surface) in self.surfaces.iter().enumerate() {
+            let z = layer_z_values[surface.order as LayerId as usize];
+            self.splitter.add(
+                surface
+                    .bounds
+                    .to_bsp_polygon(z, (PrimitiveKind::Surface, ix)),
+            );
+        }
+
+        // Sort all polygons, then reassign the order field of each primitive to `draw_order`
+        // We need primitives to be repr(C), hence the weird reuse of the order field for two different types.
+        for (draw_order, polygon) in self
+            .splitter
+            .sort(Vector3D::new(0., 0., 1.))
+            .iter()
+            .enumerate()
+        {
+            match polygon.anchor {
+                (PrimitiveKind::Shadow, ix) => self.shadows[ix].order = draw_order as DrawOrder,
+                (PrimitiveKind::Quad, ix) => self.quads[ix].order = draw_order as DrawOrder,
+                (PrimitiveKind::Path, ix) => self.paths[ix].order = draw_order as DrawOrder,
+                (PrimitiveKind::Underline, ix) => {
+                    self.underlines[ix].order = draw_order as DrawOrder
+                }
+                (PrimitiveKind::MonochromeSprite, ix) => {
+                    self.monochrome_sprites[ix].order = draw_order as DrawOrder
+                }
+                (PrimitiveKind::PolychromeSprite, ix) => {
+                    self.polychrome_sprites[ix].order = draw_order as DrawOrder
+                }
+                (PrimitiveKind::Surface, ix) => self.surfaces[ix].order = draw_order as DrawOrder,
+            }
+        }
+
+        self.shadows.sort_unstable();
+        self.quads.sort_unstable();
+        self.paths.sort_unstable();
+        self.underlines.sort_unstable();
+        self.monochrome_sprites.sort_unstable();
+        self.polychrome_sprites.sort_unstable();
+        self.surfaces.sort_unstable();
 
         Scene {
             shadows: mem::take(&mut self.shadows),
@@ -785,3 +845,23 @@ impl PathVertex<Pixels> {
 
 #[derive(Copy, Clone, Debug)]
 pub struct AtlasId(pub(crate) usize);
+
+impl Bounds<ScaledPixels> {
+    fn to_bsp_polygon<A: Copy>(&self, z: f32, anchor: A) -> BspPolygon<A> {
+        let upper_left = self.origin;
+        let upper_right = self.upper_right();
+        let lower_right = self.lower_right();
+        let lower_left = self.lower_left();
+
+        BspPolygon::from_points(
+            [
+                Point3D::new(upper_left.x.into(), upper_left.y.into(), z as f64),
+                Point3D::new(upper_right.x.into(), upper_right.y.into(), z as f64),
+                Point3D::new(lower_right.x.into(), lower_right.y.into(), z as f64),
+                Point3D::new(lower_left.x.into(), lower_left.y.into(), z as f64),
+            ],
+            anchor,
+        )
+        .expect("Polygon should not be empty")
+    }
+}
