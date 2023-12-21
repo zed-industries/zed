@@ -1938,6 +1938,7 @@ impl Render for Pane {
                     .child(
                         // drag target
                         div()
+                            .z_index(1)
                             .invisible()
                             .absolute()
                             .bg(theme::color_alpha(
