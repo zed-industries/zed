@@ -1472,7 +1472,7 @@ impl Interactivity {
                             {
                                 let mut scroll_offset = scroll_offset.borrow_mut();
                                 scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
-                                scroll_offset.y = scroll_offset.x.clamp(-scroll_max.height, px(0.));
+                                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
                             }
 
                             let interactive_bounds = interactive_bounds.clone();

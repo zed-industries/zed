@@ -4,8 +4,8 @@ use gpui::{
     BorrowWindow, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
     FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
     Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
-    Pixels, PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement,
-    Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
+    Pixels, PlatformInputHandler, Point, Rgba, ShapedLine, StatefulInteractiveElement, Styled,
+    TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -855,9 +855,7 @@ impl Element for TerminalElement {
             }
 
             if let Some(mut element) = layout.hyperlink_tooltip.take() {
-                let width: AvailableSpace = bounds.size.width.into();
-                let height: AvailableSpace = bounds.size.height.into();
-                element.draw(origin, Size { width, height }, cx)
+                element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
             }
         });
     }
