@@ -499,7 +499,8 @@ impl Render for Dock {
                         cx.stop_propagation();
                     }
                 }))
-                .z_index(1);
+                .z_index(1)
+                .block_mouse();
 
             const HANDLE_SIZE: Pixels = Pixels(6.);
 
@@ -536,6 +537,7 @@ impl Render for Dock {
             div()
                 .flex()
                 .border_color(cx.theme().colors().border)
+                .overflow_hidden()
                 .map(|this| match self.position().axis() {
                     Axis::Horizontal => this.w(px(size)).h_full().flex_row(),
                     Axis::Vertical => this.h(px(size)).w_full().flex_col(),

@@ -258,16 +258,30 @@ impl Style {
         }
     }
 
-    pub fn overflow_mask(&self, bounds: Bounds<Pixels>) -> Option<ContentMask<Pixels>> {
+    pub fn overflow_mask(
+        &self,
+        bounds: Bounds<Pixels>,
+        rem_size: Pixels,
+    ) -> Option<ContentMask<Pixels>> {
         match self.overflow {
             Point {
                 x: Overflow::Visible,
                 y: Overflow::Visible,
             } => None,
             _ => {
-                let current_mask = bounds;
-                let min = current_mask.origin;
-                let max = current_mask.lower_right();
+                let mut min = bounds.origin;
+                let mut max = bounds.lower_right();
+
+                if self
+                    .border_color
+                    .map_or(false, |color| !color.is_transparent())
+                {
+                    min.x += self.border_widths.left.to_pixels(rem_size);
+                    max.x -= self.border_widths.right.to_pixels(rem_size);
+                    min.y += self.border_widths.top.to_pixels(rem_size);
+                    max.y -= self.border_widths.bottom.to_pixels(rem_size);
+                }
+
                 let bounds = match (
                     self.overflow.x == Overflow::Visible,
                     self.overflow.y == Overflow::Visible,
@@ -285,61 +299,62 @@ impl Style {
                         point(bounds.lower_right().x, max.y),
                     ),
                     // both hidden
-                    (false, false) => bounds,
+                    (false, false) => Bounds::from_corners(min, max),
                 };
+
                 Some(ContentMask { bounds })
             }
         }
     }
 
-    pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
-    where
-        C: BorrowAppContext,
-        F: FnOnce(&mut C) -> R,
-    {
-        if self.text.is_some() {
-            cx.with_text_style(Some(self.text.clone()), f)
-        } else {
-            f(cx)
-        }
-    }
+    // pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
+    // where
+    //     C: BorrowAppContext,
+    //     F: FnOnce(&mut C) -> R,
+    // {
+    //     if self.text.is_some() {
+    //         cx.with_text_style(Some(self.text.clone()), f)
+    //     } else {
+    //         f(cx)
+    //     }
+    // }
 
-    /// Apply overflow to content mask
-    pub fn apply_overflow<C, F, R>(&self, bounds: Bounds<Pixels>, cx: &mut C, f: F) -> R
-    where
-        C: BorrowWindow,
-        F: FnOnce(&mut C) -> R,
-    {
-        let current_mask = cx.content_mask();
+    // /// Apply overflow to content mask
+    // pub fn apply_overflow<C, F, R>(&self, bounds: Bounds<Pixels>, cx: &mut C, f: F) -> R
+    // where
+    //     C: BorrowWindow,
+    //     F: FnOnce(&mut C) -> R,
+    // {
+    //     let current_mask = cx.content_mask();
 
-        let min = current_mask.bounds.origin;
-        let max = current_mask.bounds.lower_right();
+    //     let min = current_mask.bounds.origin;
+    //     let max = current_mask.bounds.lower_right();
 
-        let mask_bounds = match (
-            self.overflow.x == Overflow::Visible,
-            self.overflow.y == Overflow::Visible,
-        ) {
-            // x and y both visible
-            (true, true) => return f(cx),
-            // x visible, y hidden
-            (true, false) => Bounds::from_corners(
-                point(min.x, bounds.origin.y),
-                point(max.x, bounds.lower_right().y),
-            ),
-            // x hidden, y visible
-            (false, true) => Bounds::from_corners(
-                point(bounds.origin.x, min.y),
-                point(bounds.lower_right().x, max.y),
-            ),
-            // both hidden
-            (false, false) => bounds,
-        };
-        let mask = ContentMask {
-            bounds: mask_bounds,
-        };
+    //     let mask_bounds = match (
+    //         self.overflow.x == Overflow::Visible,
+    //         self.overflow.y == Overflow::Visible,
+    //     ) {
+    //         // x and y both visible
+    //         (true, true) => return f(cx),
+    //         // x visible, y hidden
+    //         (true, false) => Bounds::from_corners(
+    //             point(min.x, bounds.origin.y),
+    //             point(max.x, bounds.lower_right().y),
+    //         ),
+    //         // x hidden, y visible
+    //         (false, true) => Bounds::from_corners(
+    //             point(bounds.origin.x, min.y),
+    //             point(bounds.lower_right().x, max.y),
+    //         ),
+    //         // both hidden
+    //         (false, false) => bounds,
+    //     };
+    //     let mask = ContentMask {
+    //         bounds: mask_bounds,
+    //     };
 
-        cx.with_content_mask(Some(mask), f)
-    }
+    //     cx.with_content_mask(Some(mask), f)
+    // }
 
     /// Paints the background of an element styled with this style.
     pub fn paint(
@@ -369,14 +384,14 @@ impl Style {
         });
 
         let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.is_some() || self.is_border_visible() {
+        if background_color.is_some() {
             cx.with_z_index(1, |cx| {
                 cx.paint_quad(quad(
                     bounds,
                     self.corner_radii.to_pixels(bounds.size, rem_size),
                     background_color.unwrap_or_default(),
-                    self.border_widths.to_pixels(rem_size),
-                    self.border_color.unwrap_or_default(),
+                    Edges::default(),
+                    Hsla::transparent_black(),
                 ));
             });
         }
@@ -384,6 +399,18 @@ impl Style {
         cx.with_z_index(2, |cx| {
             continuation(cx);
         });
+
+        if self.is_border_visible() {
+            cx.with_z_index(3, |cx| {
+                cx.paint_quad(quad(
+                    bounds,
+                    self.corner_radii.to_pixels(bounds.size, rem_size),
+                    Hsla::transparent_black(),
+                    self.border_widths.to_pixels(rem_size),
+                    self.border_color.unwrap_or_default(),
+                ));
+            });
+        }
 
         #[cfg(debug_assertions)]
         if self.debug_below {
