@@ -19,11 +19,6 @@ impl KeystrokeMatcher {
         }
     }
 
-    // todo!("replace with a function that calls an FnMut for every binding matching the action")
-    // pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &Binding> {
-    //     self.keymap.lock().bindings_for_action(action_id)
-    // }
-
     pub fn clear_pending(&mut self) {
         self.pending_keystrokes.clear();
     }

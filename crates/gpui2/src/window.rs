@@ -572,6 +572,17 @@ impl<'a> WindowContext<'a> {
             });
     }
 
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
+        self.window
+            .rendered_frame
+            .dispatch_tree
+            .clear_pending_keystrokes();
+        self.window
+            .next_frame
+            .dispatch_tree
+            .clear_pending_keystrokes();
+    }
+
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
     pub fn defer(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
@@ -1624,6 +1635,10 @@ impl<'a> WindowContext<'a> {
 
                 context_stack.pop();
             }
+        }
+
+        if !actions.is_empty() {
+            self.clear_pending_keystrokes();
         }
 
         for action in actions {
