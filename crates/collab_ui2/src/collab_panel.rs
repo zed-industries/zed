@@ -178,8 +178,6 @@ enum ListEntry {
 impl CollabPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         cx.build_view(|cx| {
-            let view = cx.view().clone();
-
             let filter_editor = cx.build_view(|cx| {
                 let mut editor = Editor::single_line(cx);
                 editor.set_placeholder_text("Filter...", cx);
@@ -219,9 +217,14 @@ impl CollabPanel {
             })
             .detach();
 
+            let view = cx.view().downgrade();
             let list_state =
                 ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
-                    view.update(cx, |view, cx| view.render_list_entry(ix, cx))
+                    if let Some(view) = view.upgrade() {
+                        view.update(cx, |view, cx| view.render_list_entry(ix, cx))
+                    } else {
+                        div().into_any()
+                    }
                 });
 
             let mut this = Self {

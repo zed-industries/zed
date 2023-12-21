@@ -88,8 +88,6 @@ impl NotificationPanel {
         let workspace_handle = workspace.weak_handle();
 
         cx.build_view(|cx: &mut ViewContext<Self>| {
-            let view = cx.view().clone();
-
             let mut status = client.status();
             cx.spawn(|this, mut cx| async move {
                 while let Some(_) = status.next().await {
@@ -105,12 +103,14 @@ impl NotificationPanel {
             })
             .detach();
 
+            let view = cx.view().downgrade();
             let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, cx| {
-                    view.update(cx, |this, cx| {
-                        this.render_notification(ix, cx)
-                            .unwrap_or_else(|| div().into_any())
-                    })
+                    view.upgrade()
+                        .and_then(|view| {
+                            view.update(cx, |this, cx| this.render_notification(ix, cx))
+                        })
+                        .unwrap_or_else(|| div().into_any())
                 });
             notification_list.set_scroll_handler(cx.listener(
                 |this, event: &ListScrollEvent, cx| {

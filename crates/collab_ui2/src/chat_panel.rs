@@ -92,11 +92,15 @@ impl ChatPanel {
 
         let workspace_handle = workspace.weak_handle();
 
-        cx.build_view(|cx| {
-            let view: View<ChatPanel> = cx.view().clone();
+        cx.build_view(|cx: &mut ViewContext<Self>| {
+            let view = cx.view().downgrade();
             let message_list =
                 ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {
-                    view.update(cx, |view, cx| view.render_message(ix, cx))
+                    if let Some(view) = view.upgrade() {
+                        view.update(cx, |view, cx| view.render_message(ix, cx))
+                    } else {
+                        div().into_any()
+                    }
                 });
 
             message_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, cx| {
