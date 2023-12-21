@@ -253,7 +253,7 @@ pub async fn handle_cli_connection(
                                         let (done_tx, done_rx) = oneshot::channel();
                                         let _subscription =
                                             workspace.update(&mut cx, |workspace, cx| {
-                                                cx.on_release(move |_, _| {
+                                                cx.on_release(move |_, _, _| {
                                                     let _ = done_tx.send(());
                                                 })
                                             });

@@ -2422,16 +2422,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
+    /// Register a callback to be invoked when the view is released.
+    ///
+    /// The callback receives a handle to the view's window. This handle may be
+    /// invalid, if the window was closed before the view was released.
     pub fn on_release(
         &mut self,
-        on_release: impl FnOnce(&mut V, &mut WindowContext) + 'static,
+        on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let (subscription, activate) = self.app.release_listeners.insert(
             self.view.model.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
-                let _ = window_handle.update(cx, |_, cx| on_release(this, cx));
+                on_release(this, window_handle, cx)
             }),
         );
         activate();

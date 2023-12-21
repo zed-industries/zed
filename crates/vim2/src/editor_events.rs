@@ -13,7 +13,7 @@ pub fn init(cx: &mut AppContext) {
         .detach();
 
         let id = cx.view().entity_id();
-        cx.on_release(move |_, cx| released(id, cx)).detach();
+        cx.on_release(move |_, _, cx| released(id, cx)).detach();
     })
     .detach();
 }
@@ -51,8 +51,8 @@ fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
     });
 }
 
-fn released(entity_id: EntityId, cx: &mut WindowContext) {
-    Vim::update(cx, |vim, _| {
+fn released(entity_id: EntityId, cx: &mut AppContext) {
+    cx.update_global(|vim: &mut Vim, _| {
         if vim
             .active_editor
             .as_ref()

@@ -642,7 +642,7 @@ impl Workspace {
                 this.serialize_workspace(cx);
                 cx.notify();
             }),
-            cx.on_release(|this, cx| {
+            cx.on_release(|this, _, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     store.workspaces.remove(&this.window_self);
                 })
