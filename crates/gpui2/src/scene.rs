@@ -44,7 +44,6 @@ impl Default for SceneBuilder {
 
 impl SceneBuilder {
     pub fn build(&mut self) -> Scene {
-        // Map each layer id to a float between 0. and 1., with 1. closer to the viewer.
         let mut orders = vec![0; self.layers_by_order.len()];
         for (ix, layer_id) in self.layers_by_order.values().enumerate() {
             orders[*layer_id as usize] = ix as u32;
