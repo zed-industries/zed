@@ -1,5 +1,5 @@
 use crate::{
-    ArenaRef, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size,
+    ArenaBox, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size,
     ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
@@ -405,7 +405,7 @@ where
     }
 }
 
-pub struct AnyElement(ArenaRef<dyn ElementObject>);
+pub struct AnyElement(ArenaBox<dyn ElementObject>);
 
 impl AnyElement {
     pub fn new<E>(element: E) -> Self

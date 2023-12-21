@@ -1,17 +1,15 @@
 use crate::{
-    arena::{Arena, ArenaRef},
-    key_dispatch::DispatchActionListener,
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, AsyncWindowContext,
-    AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputEvent, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeystrokeEvent, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite,
-    MouseButton, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SceneBuilder,
-    Shadow, SharedString, Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, ArenaBox, ArenaRef,
+    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
+    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
+    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
+    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
+    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashMap;
@@ -96,7 +94,7 @@ impl DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyMouseListener = ArenaRef<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
+type AnyMouseListener = ArenaBox<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 struct FocusEvent {
@@ -906,7 +904,10 @@ impl<'a> WindowContext<'a> {
                 }
             })
             .map(|handler| handler as _);
-        self.window.next_frame.dispatch_tree.on_key_event(listener);
+        self.window
+            .next_frame
+            .dispatch_tree
+            .on_key_event(ArenaRef::from(listener));
     }
 
     /// Register an action listener on the window for the next frame. The type of action
@@ -928,7 +929,7 @@ impl<'a> WindowContext<'a> {
         self.window
             .next_frame
             .dispatch_tree
-            .on_action(action_type, listener);
+            .on_action(action_type, ArenaRef::from(listener));
     }
 
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
@@ -1339,7 +1340,7 @@ impl<'a> WindowContext<'a> {
                         cx.window
                             .next_frame
                             .dispatch_tree
-                            .on_action(*action_type, listener)
+                            .on_action(*action_type, ArenaRef::from(listener))
                     }
                 }
 
@@ -1583,42 +1584,29 @@ impl<'a> WindowContext<'a> {
         self.propagate_event = true;
 
         for node_id in &dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+
             if let Some(context) = node.context.clone() {
                 context_stack.push(context);
             }
 
-            let key_listeners = mem::take(&mut node.key_listeners);
-            for key_listener in &key_listeners {
+            for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Capture, self);
                 if !self.propagate_event {
-                    break;
+                    return;
                 }
-            }
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
-            node.key_listeners = key_listeners;
-
-            if !self.propagate_event {
-                return;
             }
         }
 
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             // Handle low level key events
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
-            let key_listeners = mem::take(&mut node.key_listeners);
-            for key_listener in &key_listeners {
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
+            for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Bubble, self);
                 if !self.propagate_event {
-                    break;
+                    return;
                 }
-            }
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
-            node.key_listeners = key_listeners;
-
-            if !self.propagate_event {
-                return;
             }
 
             // Match keystrokes
@@ -1667,51 +1655,37 @@ impl<'a> WindowContext<'a> {
 
         // Capture phase
         for node_id in &dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
-            let action_listeners = mem::take(&mut node.action_listeners);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
                 listener,
-            } in &action_listeners
+            } in node.action_listeners.clone()
             {
                 let any_action = action.as_any();
-                if *action_type == any_action.type_id() {
+                if action_type == any_action.type_id() {
                     listener(any_action, DispatchPhase::Capture, self);
                     if !self.propagate_event {
-                        break;
+                        return;
                     }
                 }
-            }
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
-            node.action_listeners = action_listeners;
-
-            if !self.propagate_event {
-                return;
             }
         }
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
-            let action_listeners = mem::take(&mut node.action_listeners);
+            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for DispatchActionListener {
                 action_type,
                 listener,
-            } in &action_listeners
+            } in node.action_listeners.clone()
             {
                 let any_action = action.as_any();
-                if *action_type == any_action.type_id() {
+                if action_type == any_action.type_id() {
                     self.propagate_event = false; // Actions stop propagation by default during the bubble phase
                     listener(any_action, DispatchPhase::Bubble, self);
                     if !self.propagate_event {
-                        break;
+                        return;
                     }
                 }
-            }
-
-            let node = self.window.rendered_frame.dispatch_tree.node_mut(*node_id);
-            node.action_listeners = action_listeners;
-            if !self.propagate_event {
-                return;
             }
         }
     }

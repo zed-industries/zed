@@ -52,7 +52,7 @@ impl Arena {
     }
 
     #[inline(always)]
-    pub fn alloc<T>(&mut self, f: impl FnOnce() -> T) -> ArenaRef<T> {
+    pub fn alloc<T>(&mut self, f: impl FnOnce() -> T) -> ArenaBox<T> {
         #[inline(always)]
         unsafe fn inner_writer<T, F>(ptr: *mut T, f: F)
         where
@@ -70,7 +70,7 @@ impl Arena {
             let next_offset = self.offset.add(layout.size());
             assert!(next_offset <= self.end);
 
-            let result = ArenaRef {
+            let result = ArenaBox {
                 ptr: self.offset.cast(),
                 valid: self.valid.clone(),
             };
@@ -93,15 +93,15 @@ impl Drop for Arena {
     }
 }
 
-pub struct ArenaRef<T: ?Sized> {
+pub struct ArenaBox<T: ?Sized> {
     ptr: *mut T,
     valid: Rc<Cell<bool>>,
 }
 
-impl<T: ?Sized> ArenaRef<T> {
+impl<T: ?Sized> ArenaBox<T> {
     #[inline(always)]
-    pub fn map<U: ?Sized>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaRef<U> {
-        ArenaRef {
+    pub fn map<U: ?Sized>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaBox<U> {
+        ArenaBox {
             ptr: f(&mut self),
             valid: self.valid,
         }
@@ -115,7 +115,7 @@ impl<T: ?Sized> ArenaRef<T> {
     }
 }
 
-impl<T: ?Sized> Deref for ArenaRef<T> {
+impl<T: ?Sized> Deref for ArenaBox<T> {
     type Target = T;
 
     #[inline(always)]
@@ -125,11 +125,37 @@ impl<T: ?Sized> Deref for ArenaRef<T> {
     }
 }
 
-impl<T: ?Sized> DerefMut for ArenaRef<T> {
+impl<T: ?Sized> DerefMut for ArenaBox<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.validate();
         unsafe { &mut *self.ptr }
+    }
+}
+
+pub struct ArenaRef<T: ?Sized>(ArenaBox<T>);
+
+impl<T: ?Sized> From<ArenaBox<T>> for ArenaRef<T> {
+    fn from(value: ArenaBox<T>) -> Self {
+        ArenaRef(value)
+    }
+}
+
+impl<T: ?Sized> Clone for ArenaRef<T> {
+    fn clone(&self) -> Self {
+        Self(ArenaBox {
+            ptr: self.0.ptr,
+            valid: self.0.valid.clone(),
+        })
+    }
+}
+
+impl<T: ?Sized> Deref for ArenaRef<T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
     }
 }
 
