@@ -8,7 +8,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{v_stack, HighlightedLabel, ListItem, Selectable};
+use ui::{v_stack, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
 use util::ResultExt;
 use workspace::{ModalView, Toast, Workspace};
 
@@ -134,6 +134,7 @@ impl BranchListDelegate {
 
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Select branch...".into()
     }
@@ -281,8 +282,10 @@ impl PickerDelegate for BranchListDelegate {
             .collect();
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
-                .start_slot(HighlightedLabel::new(shortened_branch_name, highlights))
-                .selected(selected),
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .start_slot(HighlightedLabel::new(shortened_branch_name, highlights)),
         )
     }
     // fn render_header(

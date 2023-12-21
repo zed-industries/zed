@@ -5,7 +5,7 @@ use gpui::{
     View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem};
+use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
@@ -293,6 +293,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 el.child(
                     ListItem::new("empty_state")
                         .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
                         .disabled(true)
                         .child(Label::new("No matches").color(Color::Muted)),
                 )

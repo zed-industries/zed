@@ -12,7 +12,7 @@ use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use std::sync::Arc;
-use ui::{prelude::*, HighlightedLabel, ListItem};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -226,6 +226,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         Some(
             ListItem::new(ix)
                 .inset(true)
+                .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(HighlightedLabel::new(label, mat.positions.clone())),
         )

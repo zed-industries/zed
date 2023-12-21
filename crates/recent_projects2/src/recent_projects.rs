@@ -10,7 +10,7 @@ use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::paths::PathExt;
 use workspace::{
     notifications::simple_message_notification::MessageNotification, ModalView, Workspace,
@@ -251,13 +251,17 @@ impl PickerDelegate for RecentProjectsDelegate {
         );
 
         Some(
-            ListItem::new(ix).inset(true).selected(selected).child(
-                v_stack()
-                    .child(highlighted_location.names)
-                    .when(self.render_paths, |this| {
-                        this.children(highlighted_location.paths)
-                    }),
-            ),
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(
+                    v_stack()
+                        .child(highlighted_location.names)
+                        .when(self.render_paths, |this| {
+                            this.children(highlighted_location.paths)
+                        }),
+                ),
         )
     }
 }

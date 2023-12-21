@@ -11,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 
-use ui::{h_stack, prelude::*, v_stack, HighlightedLabel, KeyBinding, ListItem};
+use ui::{h_stack, prelude::*, v_stack, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -308,20 +308,24 @@ impl PickerDelegate for CommandPaletteDelegate {
         let r#match = self.matches.get(ix)?;
         let command = self.commands.get(r#match.candidate_id)?;
         Some(
-            ListItem::new(ix).inset(true).selected(selected).child(
-                h_stack()
-                    .w_full()
-                    .justify_between()
-                    .child(HighlightedLabel::new(
-                        command.name.clone(),
-                        r#match.positions.clone(),
-                    ))
-                    .children(KeyBinding::for_action_in(
-                        &*command.action,
-                        &self.previous_focus_handle,
-                        cx,
-                    )),
-            ),
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(
+                    h_stack()
+                        .w_full()
+                        .justify_between()
+                        .child(HighlightedLabel::new(
+                            command.name.clone(),
+                            r#match.positions.clone(),
+                        ))
+                        .children(KeyBinding::for_action_in(
+                            &*command.action,
+                            &self.previous_focus_handle,
+                            cx,
+                        )),
+                ),
         )
     }
 }

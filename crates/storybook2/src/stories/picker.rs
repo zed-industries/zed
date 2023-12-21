@@ -4,7 +4,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::prelude::*;
+use ui::{prelude::*, ListItemSpacing};
 use ui::{Label, ListItem};
 
 pub struct PickerStory {
@@ -62,6 +62,7 @@ impl PickerDelegate for Delegate {
         Some(
             ListItem::new(ix)
                 .inset(true)
+                .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(Label::new(candidate)),
         )

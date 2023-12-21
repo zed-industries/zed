@@ -5,11 +5,19 @@ use smallvec::SmallVec;
 
 use crate::{prelude::*, Disclosure};
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum ListItemSpacing {
+    #[default]
+    Dense,
+    Sparse,
+}
+
 #[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
     disabled: bool,
     selected: bool,
+    spacing: ListItemSpacing,
     indent_level: usize,
     indent_step_size: Pixels,
     /// A slot for content that appears before the children, like an icon or avatar.
@@ -35,6 +43,7 @@ impl ListItem {
             id: id.into(),
             disabled: false,
             selected: false,
+            spacing: ListItemSpacing::Dense,
             indent_level: 0,
             indent_step_size: px(12.),
             start_slot: None,
@@ -48,6 +57,11 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
         }
+    }
+
+    pub fn spacing(mut self, spacing: ListItemSpacing) -> Self {
+        self.spacing = spacing;
+        self
     }
 
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
@@ -165,6 +179,10 @@ impl RenderOnce for ListItem {
                     .relative()
                     .gap_1()
                     .px_2()
+                    .map(|this| match self.spacing {
+                        ListItemSpacing::Dense => this,
+                        ListItemSpacing::Sparse => this.py_1(),
+                    })
                     .group("list_item")
                     .when(self.inset && !self.disabled, |this| {
                         this

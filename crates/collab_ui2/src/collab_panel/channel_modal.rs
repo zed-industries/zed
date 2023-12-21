@@ -11,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Avatar, Checkbox, ContextMenu, ListItem};
+use ui::{prelude::*, Avatar, Checkbox, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
 use workspace::ModalView;
 
@@ -366,6 +366,7 @@ impl PickerDelegate for ChannelModalDelegate {
         Some(
             ListItem::new(ix)
                 .inset(true)
+                .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
                 .child(Label::new(user.github_login.clone()))
