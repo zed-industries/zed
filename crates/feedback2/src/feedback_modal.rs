@@ -447,66 +447,61 @@ impl Render for FeedbackModal {
                     .child(self.feedback_editor.clone()),
             )
             .child(
-                div()
+                h_stack()
+                    .bg(cx.theme().colors().editor_background)
+                    .p_2()
+                    .border()
+                    .rounded_md()
+                    .border_color(if self.valid_email_address() {
+                        cx.theme().colors().border
+                    } else {
+                        red()
+                    })
+                    .child(self.email_address_editor.clone()),
+            )
+            .child(
+                h_stack()
+                    .justify_between()
+                    .gap_1()
                     .child(
-                        h_stack()
-                            .bg(cx.theme().colors().editor_background)
-                            .p_2()
-                            .border()
-                            .rounded_md()
-                            .border_color(if self.valid_email_address() {
-                                cx.theme().colors().border
-                            } else {
-                                red()
-                            })
-                            .child(self.email_address_editor.clone()),
+                        Button::new("community_repository", "Community Repository")
+                            .style(ButtonStyle::Transparent)
+                            .icon(Icon::ExternalLink)
+                            .icon_position(IconPosition::End)
+                            .icon_size(IconSize::Small)
+                            .on_click(open_community_repo),
                     )
                     .child(
                         h_stack()
-                            .justify_between()
                             .gap_1()
                             .child(
-                                Button::new("community_repo", "Community Repo")
-                                    .style(ButtonStyle::Transparent)
-                                    .icon(Icon::ExternalLink)
-                                    .icon_position(IconPosition::End)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(open_community_repo),
+                                Button::new("cancel_feedback", "Cancel")
+                                    .style(ButtonStyle::Subtle)
+                                    .color(Color::Muted)
+                                    .on_click(cx.listener(move |_, _, cx| {
+                                        cx.spawn(|this, mut cx| async move {
+                                            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))
+                                                .ok();
+                                        })
+                                        .detach();
+                                    })),
                             )
                             .child(
-                                h_stack()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("cancel_feedback", "Cancel")
-                                            .style(ButtonStyle::Subtle)
-                                            .color(Color::Muted)
-                                            .on_click(cx.listener(move |_, _, cx| {
-                                                cx.spawn(|this, mut cx| async move {
-                                                    this.update(&mut cx, |_, cx| {
-                                                        cx.emit(DismissEvent)
-                                                    })
-                                                    .ok();
-                                                })
-                                                .detach();
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("submit_feedback", submit_button_text)
-                                            .color(Color::Accent)
-                                            .style(ButtonStyle::Filled)
-                                            .on_click(cx.listener(|this, _, cx| {
-                                                this.submit(cx).detach();
-                                            }))
-                                            .tooltip(move |cx| {
-                                                Tooltip::with_meta(
-                                                    "Submit feedback to the Zed team.",
-                                                    None,
-                                                    provide_an_email_address,
-                                                    cx,
-                                                )
-                                            })
-                                            .when(!self.can_submit(), |this| this.disabled(true)),
-                                    ),
+                                Button::new("submit_feedback", submit_button_text)
+                                    .color(Color::Accent)
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.submit(cx).detach();
+                                    }))
+                                    .tooltip(move |cx| {
+                                        Tooltip::with_meta(
+                                            "Submit feedback to the Zed team.",
+                                            None,
+                                            provide_an_email_address,
+                                            cx,
+                                        )
+                                    })
+                                    .when(!self.can_submit(), |this| this.disabled(true)),
                             ),
                     ),
             )
