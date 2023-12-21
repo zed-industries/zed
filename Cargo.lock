@@ -10510,7 +10510,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-nu"
 version = "0.0.1"
-source = "git+https://github.com/nushell/tree-sitter-nu?rev=786689b0562b9799ce53e824cb45a1a2a04dc673#786689b0562b9799ce53e824cb45a1a2a04dc673"
+source = "git+https://github.com/nushell/tree-sitter-nu?rev=a0b80b2e21e5e39571252dc799e19eb89f1fc912#a0b80b2e21e5e39571252dc799e19eb89f1fc912"
 dependencies = [
  "cc",
  "tree-sitter",
