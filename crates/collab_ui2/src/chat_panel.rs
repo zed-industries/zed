@@ -21,7 +21,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, Tooltip};
+use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, TabBar, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -263,30 +263,30 @@ impl ChatPanel {
             .full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_stack()
-                    .w_full()
-                    .h_7()
-                    .justify_between()
-                    .z_index(1)
-                    .bg(cx.theme().colors().background)
-                    .child(Label::new(
-                        self.active_chat
-                            .as_ref()
-                            .and_then(|c| Some(format!("#{}", c.0.read(cx).channel(cx)?.name)))
-                            .unwrap_or_default(),
-                    ))
+                TabBar::new("chat_header")
                     .child(
                         h_stack()
-                            .child(
-                                IconButton::new("notes", Icon::File)
-                                    .on_click(cx.listener(Self::open_notes))
-                                    .tooltip(|cx| Tooltip::text("Open notes", cx)),
-                            )
-                            .child(
-                                IconButton::new("call", Icon::AudioOn)
-                                    .on_click(cx.listener(Self::join_call))
-                                    .tooltip(|cx| Tooltip::text("Join call", cx)),
-                            ),
+                            .w_full()
+                            .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                            .px_2()
+                            .child(Label::new(
+                                self.active_chat
+                                    .as_ref()
+                                    .and_then(|c| {
+                                        Some(format!("#{}", c.0.read(cx).channel(cx)?.name))
+                                    })
+                                    .unwrap_or_default(),
+                            )),
+                    )
+                    .end_child(
+                        IconButton::new("notes", Icon::File)
+                            .on_click(cx.listener(Self::open_notes))
+                            .tooltip(|cx| Tooltip::text("Open notes", cx)),
+                    )
+                    .end_child(
+                        IconButton::new("call", Icon::AudioOn)
+                            .on_click(cx.listener(Self::join_call))
+                            .tooltip(|cx| Tooltip::text("Join call", cx)),
                     ),
             )
             .child(
