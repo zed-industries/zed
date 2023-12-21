@@ -8,7 +8,7 @@ use picker::{Picker, PickerDelegate};
 use project::Fs;
 use settings::{update_settings_file, Settings};
 use std::sync::Arc;
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
@@ -198,8 +198,9 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
 
         Some(
             ListItem::new(ix)
-                .selected(selected)
                 .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
                 .child(HighlightedLabel::new(
                     keymap_match.string.clone(),
                     keymap_match.positions.clone(),

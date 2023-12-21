@@ -9,7 +9,7 @@ use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, v_stack, ListItem};
+use ui::{prelude::*, v_stack, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
@@ -276,6 +276,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         Some(
             ListItem::new(ix)
                 .inset(true)
+                .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(HighlightedLabel::new(
                     theme_match.string.clone(),

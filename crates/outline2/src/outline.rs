@@ -18,7 +18,7 @@ use std::{
 };
 
 use theme::{color_alpha, ActiveTheme, ThemeSettings};
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::ModalView;
 
@@ -296,12 +296,16 @@ impl PickerDelegate for OutlineViewDelegate {
             StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights);
 
         Some(
-            ListItem::new(ix).inset(true).selected(selected).child(
-                div()
-                    .text_ui()
-                    .pl(rems(outline_item.depth as f32))
-                    .child(styled_text),
-            ),
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(
+                    div()
+                        .text_ui()
+                        .pl(rems(outline_item.depth as f32))
+                        .child(styled_text),
+                ),
         )
     }
 }

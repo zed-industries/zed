@@ -15,7 +15,7 @@ use std::{
     },
 };
 use text::Point;
-use ui::{prelude::*, HighlightedLabel, ListItem};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::{ModalView, Workspace};
 
@@ -714,13 +714,18 @@ impl PickerDelegate for FileFinderDelegate {
             self.labels_for_match(path_match, cx, ix);
 
         Some(
-            ListItem::new(ix).inset(true).selected(selected).child(
-                v_stack()
-                    .child(HighlightedLabel::new(file_name, file_name_positions))
-                    .child(
-                        HighlightedLabel::new(full_path, full_path_positions).color(Color::Muted),
-                    ),
-            ),
+            ListItem::new(ix)
+                .spacing(ListItemSpacing::Sparse)
+                .inset(true)
+                .selected(selected)
+                .child(
+                    v_stack()
+                        .child(HighlightedLabel::new(file_name, file_name_positions))
+                        .child(
+                            HighlightedLabel::new(full_path, full_path_positions)
+                                .color(Color::Muted),
+                        ),
+                ),
         )
     }
 }

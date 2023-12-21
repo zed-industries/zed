@@ -11,7 +11,7 @@ use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use theme::ActiveTheme;
 use util::ResultExt;
 use workspace::{
-    ui::{v_stack, Color, Label, LabelCommon, LabelLike, ListItem, Selectable},
+    ui::{v_stack, Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Selectable},
     Workspace,
 };
 
@@ -237,17 +237,21 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         );
 
         Some(
-            ListItem::new(ix).inset(true).selected(selected).child(
-                // todo!() combine_syntax_and_fuzzy_match_highlights()
-                v_stack()
-                    .child(
-                        LabelLike::new().child(
-                            StyledText::new(label)
-                                .with_highlights(&cx.text_style().clone(), highlights),
-                        ),
-                    )
-                    .child(Label::new(path).color(Color::Muted)),
-            ),
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(
+                    // todo!() combine_syntax_and_fuzzy_match_highlights()
+                    v_stack()
+                        .child(
+                            LabelLike::new().child(
+                                StyledText::new(label)
+                                    .with_highlights(&cx.text_style().clone(), highlights),
+                            ),
+                        )
+                        .child(Label::new(path).color(Color::Muted)),
+                ),
         )
     }
 }
