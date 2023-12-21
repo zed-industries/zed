@@ -21,7 +21,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, Tooltip};
+use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, TabBar, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -97,7 +97,9 @@ impl ChatPanel {
             let message_list =
                 ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
-                        view.update(cx, |view, cx| view.render_message(ix, cx))
+                        view.update(cx, |view, cx| {
+                            view.render_message(ix, cx).into_any_element()
+                        })
                     } else {
                         div().into_any()
                     }
@@ -263,37 +265,41 @@ impl ChatPanel {
             .full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_stack()
-                    .w_full()
-                    .h_7()
-                    .justify_between()
-                    .z_index(1)
-                    .bg(cx.theme().colors().background)
-                    .child(Label::new(
-                        self.active_chat
-                            .as_ref()
-                            .and_then(|c| Some(format!("#{}", c.0.read(cx).channel(cx)?.name)))
-                            .unwrap_or_default(),
-                    ))
-                    .child(
-                        h_stack()
-                            .child(
-                                IconButton::new("notes", Icon::File)
-                                    .on_click(cx.listener(Self::open_notes))
-                                    .tooltip(|cx| Tooltip::text("Open notes", cx)),
-                            )
-                            .child(
-                                IconButton::new("call", Icon::AudioOn)
-                                    .on_click(cx.listener(Self::join_call))
-                                    .tooltip(|cx| Tooltip::text("Join call", cx)),
-                            ),
-                    ),
+                h_stack().z_index(1).child(
+                    TabBar::new("chat_header")
+                        .child(
+                            h_stack()
+                                .w_full()
+                                .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                                .px_2()
+                                .child(Label::new(
+                                    self.active_chat
+                                        .as_ref()
+                                        .and_then(|c| {
+                                            Some(format!("#{}", c.0.read(cx).channel(cx)?.name))
+                                        })
+                                        .unwrap_or_default(),
+                                )),
+                        )
+                        .end_child(
+                            IconButton::new("notes", Icon::File)
+                                .on_click(cx.listener(Self::open_notes))
+                                .tooltip(|cx| Tooltip::text("Open notes", cx)),
+                        )
+                        .end_child(
+                            IconButton::new("call", Icon::AudioOn)
+                                .on_click(cx.listener(Self::join_call))
+                                .tooltip(|cx| Tooltip::text("Join call", cx)),
+                        ),
+                ),
             )
-            .child(
-                div()
-                    .flex_grow()
-                    .child(self.render_active_channel_messages(cx)),
-            )
+            .child(div().flex_grow().px_2().py_1().map(|this| {
+                if self.active_chat.is_some() {
+                    this.child(list(self.message_list.clone()).full())
+                } else {
+                    this
+                }
+            }))
             .child(
                 div()
                     .z_index(1)
@@ -304,39 +310,42 @@ impl ChatPanel {
             .into_any()
     }
 
-    fn render_active_channel_messages(&self, _cx: &mut ViewContext<Self>) -> AnyElement {
-        if self.active_chat.is_some() {
-            list(self.message_list.clone()).full().into_any_element()
-        } else {
-            div().into_any_element()
-        }
-    }
-
-    fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let active_chat = &self.active_chat.as_ref().unwrap().0;
-        let (message, is_continuation, is_admin) = active_chat.update(cx, |active_chat, cx| {
-            let is_admin = self
-                .channel_store
-                .read(cx)
-                .is_channel_admin(active_chat.channel_id);
+        let (message, is_continuation_from_previous, is_continuation_to_next, is_admin) =
+            active_chat.update(cx, |active_chat, cx| {
+                let is_admin = self
+                    .channel_store
+                    .read(cx)
+                    .is_channel_admin(active_chat.channel_id);
 
-            let last_message = active_chat.message(ix.saturating_sub(1));
-            let this_message = active_chat.message(ix).clone();
-            let is_continuation = last_message.id != this_message.id
-                && this_message.sender.id == last_message.sender.id;
+                let last_message = active_chat.message(ix.saturating_sub(1));
+                let this_message = active_chat.message(ix).clone();
+                let next_message =
+                    active_chat.message(ix.saturating_add(1).min(active_chat.message_count() - 1));
 
-            if let ChannelMessageId::Saved(id) = this_message.id {
-                if this_message
-                    .mentions
-                    .iter()
-                    .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
-                {
-                    active_chat.acknowledge_message(id);
+                let is_continuation_from_previous = last_message.id != this_message.id
+                    && last_message.sender.id == this_message.sender.id;
+                let is_continuation_to_next = this_message.id != next_message.id
+                    && this_message.sender.id == next_message.sender.id;
+
+                if let ChannelMessageId::Saved(id) = this_message.id {
+                    if this_message
+                        .mentions
+                        .iter()
+                        .any(|(_, user_id)| Some(*user_id) == self.client.user_id())
+                    {
+                        active_chat.acknowledge_message(id);
+                    }
                 }
-            }
 
-            (this_message, is_continuation, is_admin)
-        });
+                (
+                    this_message,
+                    is_continuation_from_previous,
+                    is_continuation_to_next,
+                    is_admin,
+                )
+            });
 
         let _is_pending = message.is_pending();
         let text = self.markdown_data.entry(message.id).or_insert_with(|| {
@@ -359,27 +368,31 @@ impl ChatPanel {
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
 
-        let mut result = v_stack()
+        v_stack()
             .w_full()
             .id(element_id)
             .relative()
+            .overflow_hidden()
             .group("")
-            .mb_1();
-
-        if !is_continuation {
-            result = result.child(
-                h_stack()
-                    .child(Avatar::new(message.sender.avatar_uri.clone()))
-                    .child(Label::new(message.sender.github_login.clone()))
-                    .child(Label::new(format_timestamp(
-                        message.timestamp,
-                        now,
-                        self.local_timezone,
-                    ))),
-            );
-        }
-
-        result
+            .when(!is_continuation_from_previous, |this| {
+                this.child(
+                    h_stack()
+                        .gap_2()
+                        .child(Avatar::new(message.sender.avatar_uri.clone()))
+                        .child(Label::new(message.sender.github_login.clone()))
+                        .child(
+                            Label::new(format_timestamp(
+                                message.timestamp,
+                                now,
+                                self.local_timezone,
+                            ))
+                            .color(Color::Muted),
+                        ),
+                )
+            })
+            .when(!is_continuation_to_next, |this|
+                // HACK: This should really be a margin, but margins seem to get collapsed.
+                this.pb_2())
             .child(text.element("body".into(), cx))
             .child(
                 div()
@@ -396,7 +409,6 @@ impl ChatPanel {
                         )
                     })),
             )
-            .into_any()
     }
 
     fn render_markdown_with_mentions(

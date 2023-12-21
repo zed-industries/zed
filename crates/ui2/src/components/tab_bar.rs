@@ -102,16 +102,18 @@ impl RenderOnce for TabBar {
             .w_full()
             .h(rems(HEIGHT_IN_REMS))
             .bg(cx.theme().colors().tab_bar_background)
-            .child(
-                h_stack()
-                    .flex_none()
-                    .gap_1()
-                    .px_1()
-                    .border_b()
-                    .border_r()
-                    .border_color(cx.theme().colors().border)
-                    .children(self.start_children),
-            )
+            .when(!self.start_children.is_empty(), |this| {
+                this.child(
+                    h_stack()
+                        .flex_none()
+                        .gap_1()
+                        .px_1()
+                        .border_b()
+                        .border_r()
+                        .border_color(cx.theme().colors().border)
+                        .children(self.start_children),
+                )
+            })
             .child(
                 div()
                     .relative()
@@ -140,15 +142,17 @@ impl RenderOnce for TabBar {
                             .children(self.children),
                     ),
             )
-            .child(
-                h_stack()
-                    .flex_none()
-                    .gap_1()
-                    .px_1()
-                    .border_b()
-                    .border_l()
-                    .border_color(cx.theme().colors().border)
-                    .children(self.end_children),
-            )
+            .when(!self.end_children.is_empty(), |this| {
+                this.child(
+                    h_stack()
+                        .flex_none()
+                        .gap_1()
+                        .px_1()
+                        .border_b()
+                        .border_l()
+                        .border_color(cx.theme().colors().border)
+                        .children(self.end_children),
+                )
+            })
     }
 }
