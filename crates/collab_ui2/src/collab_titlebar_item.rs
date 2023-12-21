@@ -334,6 +334,7 @@ impl CollabTitlebarItem {
             .trigger(
                 Button::new("project_name_trigger", name)
                     .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx))
                     .on_click(cx.listener(|this, _, cx| {
                         this.toggle_project_menu(&ToggleProjectMenu, cx);
@@ -368,6 +369,7 @@ impl CollabTitlebarItem {
                     Button::new("project_branch_trigger", branch_name)
                         .color(Color::Muted)
                         .style(ButtonStyle::Subtle)
+                        .label_size(LabelSize::Small)
                         .tooltip(move |cx| {
                             Tooltip::with_meta(
                                 "Recent Branches",

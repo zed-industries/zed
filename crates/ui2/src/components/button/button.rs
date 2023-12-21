@@ -12,6 +12,7 @@ pub struct Button {
     base: ButtonLike,
     label: SharedString,
     label_color: Option<Color>,
+    label_size: Option<LabelSize>,
     selected_label: Option<SharedString>,
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
@@ -26,6 +27,7 @@ impl Button {
             base: ButtonLike::new(id),
             label: label.into(),
             label_color: None,
+            label_size: None,
             selected_label: None,
             icon: None,
             icon_position: None,
@@ -37,6 +39,11 @@ impl Button {
 
     pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
         self.label_color = label_color.into();
+        self
+    }
+
+    pub fn label_size(mut self, label_size: impl Into<Option<LabelSize>>) -> Self {
+        self.label_size = label_size.into();
         self
     }
 
@@ -164,6 +171,7 @@ impl RenderOnce for Button {
                 .child(
                     Label::new(label)
                         .color(label_color)
+                        .size(self.label_size.unwrap_or_default())
                         .line_height_style(LineHeightStyle::UILabel),
                 )
                 .when(!self.icon_position.is_some(), |this| {
