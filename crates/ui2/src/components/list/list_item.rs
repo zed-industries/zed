@@ -8,6 +8,7 @@ use crate::{prelude::*, Disclosure};
 #[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
+    disabled: bool,
     selected: bool,
     indent_level: usize,
     indent_step_size: Pixels,
@@ -32,6 +33,7 @@ impl ListItem {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
+            disabled: false,
             selected: false,
             indent_level: 0,
             indent_step_size: px(12.),
@@ -110,6 +112,13 @@ impl ListItem {
     }
 }
 
+impl Disableable for ListItem {
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+}
+
 impl Selectable for ListItem {
     fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
@@ -157,7 +166,7 @@ impl RenderOnce for ListItem {
                     .gap_1()
                     .px_2()
                     .group("list_item")
-                    .when(self.inset, |this| {
+                    .when(self.inset && !self.disabled, |this| {
                         this
                             // TODO: Add focus state
                             // .when(self.state == InteractionState::Focused, |this| {

@@ -1,11 +1,11 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, rems, uniform_list, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
+    div, prelude::*, uniform_list, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
     FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
     View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Color, Divider, Label};
+use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem};
 use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
@@ -229,21 +229,10 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .px_3()
             .child(self.editor.clone());
 
-        let empty_state = div().p_1().child(
-            h_stack()
-                // TODO: This number matches the height of the uniform list items.
-                // Align these two with a less magic number.
-                .h(rems(1.4375))
-                .px_2()
-                .child(Label::new("No matches").color(Color::Muted)),
-        );
-
         div()
             .key_context("Picker")
             .size_full()
-            .when_some(self.width, |el, width| {
-                el.w(width)
-            })
+            .when_some(self.width, |el, width| el.w(width))
             .overflow_hidden()
             // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
             // as a part of a modal rather than the entire modal.
@@ -257,9 +246,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
-            .child(
-                picker_editor
-            )
+            .child(picker_editor)
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
@@ -272,7 +259,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                 self.delegate.match_count(),
                                 {
                                     let selected_index = self.delegate.selected_index();
-
                                     move |picker, visible_range, cx| {
                                         visible_range
                                             .map(|ix| {
@@ -305,7 +291,10 @@ impl<D: PickerDelegate> Render for Picker<D> {
             })
             .when(self.delegate.match_count() == 0, |el| {
                 el.child(
-                    empty_state
+                    ListItem::new("empty_state")
+                        .inset(true)
+                        .disabled(true)
+                        .child(Label::new("No matches").color(Color::Muted)),
                 )
             })
     }
