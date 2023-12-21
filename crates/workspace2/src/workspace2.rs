@@ -4023,7 +4023,23 @@ pub fn join_channel(
     })
 }
 
-pub fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<AnyWindowHandle> {
+pub async fn get_any_active_workspace(
+    app_state: Arc<AppState>,
+    mut cx: AsyncAppContext,
+) -> anyhow::Result<WindowHandle<Workspace>> {
+    // find an existing workspace to focus and show call controls
+    let active_window = activate_any_workspace_window(&mut cx);
+    if active_window.is_none() {
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, cx))?
+            .await?;
+    }
+    activate_any_workspace_window(&mut cx)
+        .context("could not open zed")?
+        .downcast::<Workspace>()
+        .context("could not open zed workspace window")
+}
+
+fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<AnyWindowHandle> {
     cx.update(|cx| {
         for window in cx.windows() {
             let is_workspace = window.downcast::<Workspace>().is_some();
