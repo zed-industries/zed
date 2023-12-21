@@ -430,7 +430,6 @@ pub enum Event {
 }
 
 pub struct Workspace {
-    window_self: WindowHandle<Self>,
     weak_self: WeakView<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
@@ -642,9 +641,10 @@ impl Workspace {
                 this.serialize_workspace(cx);
                 cx.notify();
             }),
-            cx.on_release(|this, cx| {
+            cx.on_release(|this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
-                    store.workspaces.remove(&this.window_self);
+                    let window = window.downcast::<Self>().unwrap();
+                    debug_assert!(store.workspaces.remove(&window));
                 })
             }),
         ];
@@ -665,7 +665,6 @@ impl Workspace {
             // });
         });
         Workspace {
-            window_self: window_handle,
             weak_self: weak_handle.clone(),
             zoomed: None,
             zoomed_position: None,
@@ -3708,7 +3707,7 @@ impl WorkspaceStore {
             let active_project = ActiveCall::global(cx).read(cx).location().cloned();
 
             let mut response = proto::FollowResponse::default();
-            for workspace in &this.workspaces {
+            this.workspaces.retain(|workspace| {
                 workspace
                     .update(cx, |workspace, cx| {
                         let handler_response = workspace.handle_follow(follower.project_id, cx);
@@ -3726,8 +3725,8 @@ impl WorkspaceStore {
                             }
                         }
                     })
-                    .ok();
-            }
+                    .is_ok()
+            });
 
             if let Err(ix) = this.followers.binary_search(&follower) {
                 this.followers.insert(ix, follower);
@@ -3765,15 +3764,17 @@ impl WorkspaceStore {
         let update = envelope.payload;
 
         this.update(&mut cx, |this, cx| {
-            for workspace in &this.workspaces {
-                workspace.update(cx, |workspace, cx| {
-                    let project_id = workspace.project.read(cx).remote_id();
-                    if update.project_id != project_id && update.project_id.is_some() {
-                        return;
-                    }
-                    workspace.handle_update_followers(leader_id, update.clone(), cx);
-                })?;
-            }
+            this.workspaces.retain(|workspace| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let project_id = workspace.project.read(cx).remote_id();
+                        if update.project_id != project_id && update.project_id.is_some() {
+                            return;
+                        }
+                        workspace.handle_update_followers(leader_id, update.clone(), cx);
+                    })
+                    .is_ok()
+            });
             Ok(())
         })?
     }

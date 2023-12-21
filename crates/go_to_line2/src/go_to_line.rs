@@ -1,8 +1,8 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, prelude::*, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
-    WindowContext,
+    actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, Div, EventEmitter,
+    FocusHandle, FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext,
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -74,15 +74,19 @@ impl GoToLine {
         }
     }
 
-    fn release(&mut self, cx: &mut WindowContext) {
-        let scroll_position = self.prev_scroll_position.take();
-        self.active_editor.update(cx, |editor, cx| {
-            editor.highlight_rows(None);
-            if let Some(scroll_position) = scroll_position {
-                editor.set_scroll_position(scroll_position, cx);
-            }
-            cx.notify();
-        })
+    fn release(&mut self, window: AnyWindowHandle, cx: &mut AppContext) {
+        window
+            .update(cx, |_, cx| {
+                let scroll_position = self.prev_scroll_position.take();
+                self.active_editor.update(cx, |editor, cx| {
+                    editor.highlight_rows(None);
+                    if let Some(scroll_position) = scroll_position {
+                        editor.set_scroll_position(scroll_position, cx);
+                    }
+                    cx.notify();
+                })
+            })
+            .ok();
     }
 
     fn on_line_editor_event(
