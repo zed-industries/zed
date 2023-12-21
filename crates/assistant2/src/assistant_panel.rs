@@ -30,9 +30,9 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
-    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    AsyncWindowContext, ClipboardItem, Context, Div, EventEmitter, FocusHandle, Focusable,
+    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };

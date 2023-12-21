@@ -1,11 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    black, div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
-    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
-    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
-    Pixels, PlatformInputHandler, Point, Rgba, ShapedLine, Size, StatefulInteractiveElement,
-    Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
+    black, div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, BorrowWindow,
+    Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState, Interactivity,
+    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, Pixels,
+    PlatformInputHandler, Point, Rgba, ShapedLine, StatefulInteractiveElement, Styled, TextRun,
+    TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -854,10 +854,8 @@ impl Element for TerminalElement {
                 });
             }
 
-            if let Some(mut element) = layout.hyperlink_tooltip.take() {
-                let width: AvailableSpace = bounds.size.width.into();
-                let height: AvailableSpace = bounds.size.height.into();
-                element.draw(origin, Size { width, height }, cx)
+            if let Some(element) = layout.hyperlink_tooltip.take() {
+                element.draw(origin, bounds.size, cx)
             }
         });
     }
