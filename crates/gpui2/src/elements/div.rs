@@ -1092,18 +1092,18 @@ impl Interactivity {
                             });
                         }
 
+                        let interactive_bounds = InteractiveBounds {
+                            bounds: bounds.intersect(&cx.content_mask().bounds),
+                            stacking_order: cx.stacking_order().clone(),
+                        };
+
                         if self.block_mouse
                             || style.background.as_ref().is_some_and(|fill| {
                                 fill.color().is_some_and(|color| !color.is_transparent())
                             })
                         {
-                            cx.add_opaque_layer(bounds)
+                            cx.add_opaque_layer(interactive_bounds.bounds);
                         }
-
-                        let interactive_bounds = InteractiveBounds {
-                            bounds: bounds.intersect(&cx.content_mask().bounds),
-                            stacking_order: cx.stacking_order().clone(),
-                        };
 
                         if !cx.has_active_drag() {
                             if let Some(mouse_cursor) = style.mouse_cursor {
@@ -1534,15 +1534,7 @@ impl Interactivity {
                                     cx.on_action(action_type, listener)
                                 }
 
-                                cx.with_z_index(style.z_index.unwrap_or(0), |cx| {
-                                    if style.background.as_ref().is_some_and(|fill| {
-                                        fill.color().is_some_and(|color| !color.is_transparent())
-                                    }) {
-                                        cx.add_opaque_layer(bounds)
-                                    }
-
-                                    f(&style, scroll_offset.unwrap_or_default(), cx)
-                                })
+                                f(&style, scroll_offset.unwrap_or_default(), cx)
                             },
                         );
 
