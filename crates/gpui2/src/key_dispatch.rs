@@ -103,6 +103,8 @@ impl DispatchTree {
                     .keystroke_matchers
                     .remove_entry(self.context_stack.as_slice())
                 {
+                    dbg!("preserve matcher", matcher.has_pending_keystrokes());
+
                     self.keystroke_matchers.insert(context_stack, matcher);
                 }
             }
