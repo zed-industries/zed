@@ -102,65 +102,57 @@ impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
     type Element = Div;
+
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        // let query_container_style = if self.query_contains_error {
-        //     theme.search.invalid_editor
-        // } else {
-        //     theme.search.editor.input.container
-        // };
         if self.dismissed {
             return div();
         }
+
         let supported_options = self.supported_options();
 
-        let previous_query_keystrokes = cx
-            .bindings_for_action(&PreviousHistoryQuery {})
-            .into_iter()
-            .next()
-            .map(|binding| {
-                binding
-                    .keystrokes()
-                    .iter()
-                    .map(|k| k.to_string())
-                    .collect::<Vec<_>>()
-            });
-        let next_query_keystrokes = cx
-            .bindings_for_action(&NextHistoryQuery {})
-            .into_iter()
-            .next()
-            .map(|binding| {
-                binding
-                    .keystrokes()
-                    .iter()
-                    .map(|k| k.to_string())
-                    .collect::<Vec<_>>()
-            });
-        let new_placeholder_text = match (previous_query_keystrokes, next_query_keystrokes) {
-            (Some(previous_query_keystrokes), Some(next_query_keystrokes)) => {
-                format!(
-                    "Search ({}/{} for previous/next query)",
-                    previous_query_keystrokes.join(" "),
-                    next_query_keystrokes.join(" ")
-                )
+        if self.query_editor.read(cx).placeholder_text().is_none() {
+            let query_focus_handle = self.query_editor.focus_handle(cx);
+            let up_keystrokes = cx
+                .bindings_for_action_in(&PreviousHistoryQuery {}, &query_focus_handle)
+                .into_iter()
+                .next()
+                .map(|binding| {
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<_>>()
+                });
+            let down_keystrokes = cx
+                .bindings_for_action_in(&NextHistoryQuery {}, &query_focus_handle)
+                .into_iter()
+                .next()
+                .map(|binding| {
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<_>>()
+                });
+
+            let placeholder_text =
+                up_keystrokes
+                    .zip(down_keystrokes)
+                    .map(|(up_keystrokes, down_keystrokes)| {
+                        Arc::from(format!(
+                            "Search ({}/{} for previous/next query)",
+                            up_keystrokes.join(" "),
+                            down_keystrokes.join(" ")
+                        ))
+                    });
+
+            if let Some(placeholder_text) = placeholder_text {
+                self.query_editor.update(cx, |editor, cx| {
+                    editor.set_placeholder_text(placeholder_text, cx);
+                });
             }
-            (None, Some(next_query_keystrokes)) => {
-                format!(
-                    "Search ({} for next query)",
-                    next_query_keystrokes.join(" ")
-                )
-            }
-            (Some(previous_query_keystrokes), None) => {
-                format!(
-                    "Search ({} for previous query)",
-                    previous_query_keystrokes.join(" ")
-                )
-            }
-            (None, None) => String::new(),
-        };
-        let new_placeholder_text = Arc::from(new_placeholder_text);
-        self.query_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(new_placeholder_text, cx);
-        });
+        }
+
         self.replacement_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text("Replace with...", cx);
         });

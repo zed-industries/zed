@@ -1995,13 +1995,20 @@ impl Editor {
         self.collaboration_hub = Some(hub);
     }
 
+    pub fn placeholder_text(&self) -> Option<&str> {
+        self.placeholder_text.as_deref()
+    }
+
     pub fn set_placeholder_text(
         &mut self,
         placeholder_text: impl Into<Arc<str>>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.placeholder_text = Some(placeholder_text.into());
-        cx.notify();
+        let placeholder_text = Some(placeholder_text.into());
+        if self.placeholder_text != placeholder_text {
+            self.placeholder_text = placeholder_text;
+            cx.notify();
+        }
     }
 
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {

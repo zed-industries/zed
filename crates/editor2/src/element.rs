@@ -1722,11 +1722,12 @@ impl EditorElement {
             return Vec::new();
         }
 
-        // When the editor is empty and unfocused, then show the placeholder.
+        // Show the placeholder when the editor is empty
         if snapshot.is_empty() {
             let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
             let placeholder_color = cx.theme().styles.colors.text_placeholder;
             let placeholder_text = snapshot.placeholder_text();
+
             let placeholder_lines = placeholder_text
                 .as_ref()
                 .map_or("", AsRef::as_ref)
