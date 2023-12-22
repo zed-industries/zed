@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
-    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AppContext,
+    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
     AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, FocusHandle,
     Focusable, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
     Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView,
@@ -21,6 +21,7 @@ use std::{
     any::Any,
     cmp, fmt, mem,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -183,7 +184,7 @@ pub struct Pane {
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     can_split: bool,
-    //     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
+    render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
 }
@@ -374,63 +375,66 @@ impl Pane {
             project,
             can_drop_predicate,
             can_split: true,
-            // render_tab_bar_buttons: Rc::new(move |pane, cx| {
-            //     Flex::row()
-            //         // New menu
-            //         .with_child(Self::render_tab_bar_button(
-            //             0,
-            //             "icons/plus.svg",
-            //             false,
-            //             Some(("New...".into(), None)),
-            //             cx,
-            //             |pane, cx| pane.deploy_new_menu(cx),
-            //             |pane, cx| {
-            //                 pane.tab_bar_context_menu
-            //                     .handle
-            //                     .update(cx, |menu, _| menu.delay_cancel())
-            //             },
-            //             pane.tab_bar_context_menu
-            //                 .handle_if_kind(TabBarContextMenuKind::New),
-            //         ))
-            //         .with_child(Self::render_tab_bar_button(
-            //             1,
-            //             "icons/split.svg",
-            //             false,
-            //             Some(("Split Pane".into(), None)),
-            //             cx,
-            //             |pane, cx| pane.deploy_split_menu(cx),
-            //             |pane, cx| {
-            //                 pane.tab_bar_context_menu
-            //                     .handle
-            //                     .update(cx, |menu, _| menu.delay_cancel())
-            //             },
-            //             pane.tab_bar_context_menu
-            //                 .handle_if_kind(TabBarContextMenuKind::Split),
-            //         ))
-            //         .with_child({
-            //             let icon_path;
-            //             let tooltip_label;
-            //             if pane.is_zoomed() {
-            //                 icon_path = "icons/minimize.svg";
-            //                 tooltip_label = "Zoom In";
-            //             } else {
-            //                 icon_path = "icons/maximize.svg";
-            //                 tooltip_label = "Zoom In";
-            //             }
-
-            //             Pane::render_tab_bar_button(
-            //                 2,
-            //                 icon_path,
-            //                 pane.is_zoomed(),
-            //                 Some((tooltip_label, Some(Box::new(ToggleZoom)))),
-            //                 cx,
-            //                 move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-            //                 move |_, _| {},
-            //                 None,
-            //             )
-            //         })
-            //         .into_any()
-            // }),
+            render_tab_bar_buttons: Rc::new(move |pane, cx| {
+                h_stack()
+                    .child(
+                        IconButton::new("plus", Icon::Plus)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.action("New File", NewFile.boxed_clone())
+                                        .action("New Terminal", NewCenterTerminal.boxed_clone())
+                                        .action("New Search", NewSearch.boxed_clone())
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
+                                    pane.focus(cx);
+                                    pane.new_item_menu = None;
+                                })
+                                .detach();
+                                pane.new_item_menu = Some(menu);
+                            }))
+                            .tooltip(|cx| Tooltip::text("New...", cx)),
+                    )
+                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
+                        el.child(Self::render_menu_overlay(new_item_menu))
+                    })
+                    .child(
+                        IconButton::new("split", Icon::Split)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.action("Split Right", SplitRight.boxed_clone())
+                                        .action("Split Left", SplitLeft.boxed_clone())
+                                        .action("Split Up", SplitUp.boxed_clone())
+                                        .action("Split Down", SplitDown.boxed_clone())
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
+                                    pane.focus(cx);
+                                    pane.split_item_menu = None;
+                                })
+                                .detach();
+                                pane.split_item_menu = Some(menu);
+                            }))
+                            .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                    )
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        IconButton::new("toggle_zoom", Icon::Maximize)
+                            .icon_size(IconSize::Small)
+                            .selected(zoomed)
+                            .selected_icon(Icon::Minimize)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                pane.toggle_zoom(&crate::ToggleZoom, cx);
+                            }))
+                            .tooltip(move |cx| {
+                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                            })
+                    })
+                    .when_some(pane.split_item_menu.as_ref(), |el, split_item_menu| {
+                        el.child(Self::render_menu_overlay(split_item_menu))
+                    })
+                    .into_any_element()
+            }),
             _subscriptions: subscriptions,
         }
     }
@@ -510,13 +514,13 @@ impl Pane {
         cx.notify();
     }
 
-    //     pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
-    //     where
-    //         F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>,
-    //     {
-    //         self.render_tab_bar_buttons = Rc::new(render);
-    //         cx.notify();
-    //     }
+    pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
+    where
+        F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement,
+    {
+        self.render_tab_bar_buttons = Rc::new(render);
+        cx.notify();
+    }
 
     pub fn nav_history_for_item<T: Item>(&self, item: &View<T>) -> ItemNavHistory {
         ItemNavHistory {
@@ -1672,55 +1676,10 @@ impl Pane {
                     .disabled(!self.can_navigate_forward())
                     .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
             )
-            .end_child(
-                div()
-                    .child(
-                        IconButton::new("plus", Icon::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|this, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action("New File", NewFile.boxed_clone())
-                                        .action("New Terminal", NewCenterTerminal.boxed_clone())
-                                        .action("New Search", NewSearch.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
-                                    this.focus(cx);
-                                    this.new_item_menu = None;
-                                })
-                                .detach();
-                                this.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
-                    )
-                    .when_some(self.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Self::render_menu_overlay(new_item_menu))
-                    }),
-            )
-            .end_child(
-                div()
-                    .child(
-                        IconButton::new("split", Icon::Split)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|this, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action("Split Right", SplitRight.boxed_clone())
-                                        .action("Split Left", SplitLeft.boxed_clone())
-                                        .action("Split Up", SplitUp.boxed_clone())
-                                        .action("Split Down", SplitDown.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
-                                    this.focus(cx);
-                                    this.split_item_menu = None;
-                                })
-                                .detach();
-                                this.split_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("Split Pane", cx)),
-                    )
-                    .when_some(self.split_item_menu.as_ref(), |el, split_item_menu| {
-                        el.child(Self::render_menu_overlay(split_item_menu))
-                    }),
-            )
+            .end_child({
+                let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                render_tab_buttons(self, cx)
+            })
             .children(
                 self.items
                     .iter()

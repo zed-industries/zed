@@ -4,13 +4,14 @@ use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, ParentElement, Render, Styled, Subscription, Task,
-    View, ViewContext, VisualContext, WeakView, WindowContext,
+    ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Render, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
+use ui::{h_stack, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -51,9 +52,8 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let _weak_self = cx.view().downgrade();
+        let terminal_panel = cx.view().clone();
         let pane = cx.build_view(|cx| {
-            let _window = cx.window_handle();
             let mut pane = Pane::new(
                 workspace.weak_handle(),
                 workspace.project().clone(),
@@ -74,45 +74,31 @@ impl TerminalPanel {
             );
             pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
-            // todo!()
-            // pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-            //     let this = weak_self.clone();
-            //     Flex::row()
-            //         .with_child(Pane::render_tab_bar_button(
-            //             0,
-            //             "icons/plus.svg",
-            //             false,
-            //             Some(("New Terminal", Some(Box::new(workspace::NewTerminal)))),
-            //             cx,
-            //             move |_, cx| {
-            //                 let this = this.clone();
-            //                 cx.window_context().defer(move |cx| {
-            //                     if let Some(this) = this.upgrade() {
-            //                         this.update(cx, |this, cx| {
-            //                             this.add_terminal(None, cx);
-            //                         });
-            //                     }
-            //                 })
-            //             },
-            //             |_, _| {},
-            //             None,
-            //         ))
-            //         .with_child(Pane::render_tab_bar_button(
-            //             1,
-            //             if pane.is_zoomed() {
-            //                 "icons/minimize.svg"
-            //             } else {
-            //                 "icons/maximize.svg"
-            //             },
-            //             pane.is_zoomed(),
-            //             Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
-            //             cx,
-            //             move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-            //             |_, _| {},
-            //             None,
-            //         ))
-            //         .into_any()
-            // });
+            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                h_stack()
+                    .child(
+                        IconButton::new("plus", Icon::Plus)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener_for(&terminal_panel, |terminal_panel, _, cx| {
+                                terminal_panel.add_terminal(None, cx);
+                            }))
+                            .tooltip(|cx| Tooltip::text("New Terminal", cx)),
+                    )
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        IconButton::new("toggle_zoom", Icon::Maximize)
+                            .icon_size(IconSize::Small)
+                            .selected(zoomed)
+                            .selected_icon(Icon::Minimize)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                pane.toggle_zoom(&workspace::ToggleZoom, cx);
+                            }))
+                            .tooltip(move |cx| {
+                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                            })
+                    })
+                    .into_any_element()
+            });
             // let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
             // pane.toolbar()
             //     .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
