@@ -292,11 +292,13 @@ impl<D: PickerDelegate> Render for Picker<D> {
             })
             .when(self.delegate.match_count() == 0, |el| {
                 el.child(
-                    ListItem::new("empty_state")
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
-                        .disabled(true)
-                        .child(Label::new("No matches").color(Color::Muted)),
+                    v_stack().flex_grow().py_2().child(
+                        ListItem::new("empty_state")
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .disabled(true)
+                            .child(Label::new("No matches").color(Color::Muted)),
+                    ),
                 )
             })
     }
