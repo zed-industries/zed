@@ -9,8 +9,8 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
 use ui::{
-    h_stack, v_stack, Button, Clickable, HighlightedLabel, Label, LabelCommon, LabelSize, ListItem,
-    ListItemSpacing, Selectable,
+    h_stack, v_stack, Button, ButtonCommon, Clickable, HighlightedLabel, Label, LabelCommon,
+    LabelSize, ListItem, ListItemSpacing, Selectable,
 };
 use util::ResultExt;
 use workspace::{ModalView, Toast, Workspace};
@@ -354,7 +354,7 @@ impl PickerDelegate for BranchListDelegate {
 
                     }).detach_and_log_err(cx);
                 }),
-            )).into_any_element(),
+            ).style(ui::ButtonStyle::Filled)).into_any_element(),
         )
     }
 }
