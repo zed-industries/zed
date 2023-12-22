@@ -187,10 +187,11 @@ impl Telemetry {
             // Avoiding calling `refresh_all()`, just update what we need
             system.refresh_specifics(refresh_kind);
 
+            // Waiting some amount of time before the first query is important to get a reasonable value
+            // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
+            const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(4 * 60);
+
             loop {
-                // Waiting some amount of time before the first query is important to get a reasonable value
-                // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
-                const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(60);
                 smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
 
                 system.refresh_specifics(refresh_kind);
