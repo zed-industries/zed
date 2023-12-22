@@ -269,10 +269,11 @@ impl<'a> Iterator for BatchIterator<'a> {
         match batch_kind {
             PrimitiveKind::Shadow => {
                 let shadows_start = self.shadows_start;
-                let mut shadows_end = shadows_start;
+                let mut shadows_end = shadows_start + 1;
+                self.shadows_iter.next();
                 while self
                     .shadows_iter
-                    .next_if(|shadow| shadow.order <= max_order)
+                    .next_if(|shadow| shadow.order < max_order)
                     .is_some()
                 {
                     shadows_end += 1;
@@ -284,10 +285,11 @@ impl<'a> Iterator for BatchIterator<'a> {
             }
             PrimitiveKind::Quad => {
                 let quads_start = self.quads_start;
-                let mut quads_end = quads_start;
+                let mut quads_end = quads_start + 1;
+                self.quads_iter.next();
                 while self
                     .quads_iter
-                    .next_if(|quad| quad.order <= max_order)
+                    .next_if(|quad| quad.order < max_order)
                     .is_some()
                 {
                     quads_end += 1;
@@ -297,10 +299,11 @@ impl<'a> Iterator for BatchIterator<'a> {
             }
             PrimitiveKind::Path => {
                 let paths_start = self.paths_start;
-                let mut paths_end = paths_start;
+                let mut paths_end = paths_start + 1;
+                self.paths_iter.next();
                 while self
                     .paths_iter
-                    .next_if(|path| path.order <= max_order)
+                    .next_if(|path| path.order < max_order)
                     .is_some()
                 {
                     paths_end += 1;
@@ -310,10 +313,11 @@ impl<'a> Iterator for BatchIterator<'a> {
             }
             PrimitiveKind::Underline => {
                 let underlines_start = self.underlines_start;
-                let mut underlines_end = underlines_start;
+                let mut underlines_end = underlines_start + 1;
+                self.underlines_iter.next();
                 while self
                     .underlines_iter
-                    .next_if(|underline| underline.order <= max_order)
+                    .next_if(|underline| underline.order < max_order)
                     .is_some()
                 {
                     underlines_end += 1;
@@ -326,11 +330,12 @@ impl<'a> Iterator for BatchIterator<'a> {
             PrimitiveKind::MonochromeSprite => {
                 let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
                 let sprites_start = self.monochrome_sprites_start;
-                let mut sprites_end = sprites_start;
+                let mut sprites_end = sprites_start + 1;
+                self.monochrome_sprites_iter.next();
                 while self
                     .monochrome_sprites_iter
                     .next_if(|sprite| {
-                        sprite.order <= max_order && sprite.tile.texture_id == texture_id
+                        sprite.order < max_order && sprite.tile.texture_id == texture_id
                     })
                     .is_some()
                 {
@@ -345,11 +350,12 @@ impl<'a> Iterator for BatchIterator<'a> {
             PrimitiveKind::PolychromeSprite => {
                 let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
                 let sprites_start = self.polychrome_sprites_start;
-                let mut sprites_end = self.polychrome_sprites_start;
+                let mut sprites_end = self.polychrome_sprites_start + 1;
+                self.polychrome_sprites_iter.next();
                 while self
                     .polychrome_sprites_iter
                     .next_if(|sprite| {
-                        sprite.order <= max_order && sprite.tile.texture_id == texture_id
+                        sprite.order < max_order && sprite.tile.texture_id == texture_id
                     })
                     .is_some()
                 {
@@ -363,10 +369,11 @@ impl<'a> Iterator for BatchIterator<'a> {
             }
             PrimitiveKind::Surface => {
                 let surfaces_start = self.surfaces_start;
-                let mut surfaces_end = surfaces_start;
+                let mut surfaces_end = surfaces_start + 1;
+                self.surfaces_iter.next();
                 while self
                     .surfaces_iter
-                    .next_if(|surface| surface.order <= max_order)
+                    .next_if(|surface| surface.order < max_order)
                     .is_some()
                 {
                     surfaces_end += 1;
