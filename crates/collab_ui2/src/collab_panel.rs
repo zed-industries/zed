@@ -1871,6 +1871,8 @@ impl CollabPanel {
         let github_login = SharedString::from(contact.user.github_login.clone());
         let item =
             ListItem::new(github_login.clone())
+                .indent_level(1)
+                .indent_step_size(px(20.))
                 .selected(is_selected)
                 .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
                 .child(
@@ -1968,6 +1970,8 @@ impl CollabPanel {
         };
 
         ListItem::new(github_login.clone())
+            .indent_level(1)
+            .indent_step_size(px(20.))
             .selected(is_selected)
             .child(
                 h_stack()
