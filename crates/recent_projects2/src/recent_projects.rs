@@ -32,6 +32,8 @@ impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
         let picker = cx.build_view(|cx| Picker::new(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        // We do not want to block the UI on a potentially lenghty call to DB, so we're gonna swap
+        // out workspace locations once the future runs to completion.
         cx.spawn(|this, mut cx| async move {
             let workspaces = WORKSPACE_DB
                 .recent_workspaces_on_disk()
