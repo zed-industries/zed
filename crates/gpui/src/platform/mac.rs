@@ -25,7 +25,7 @@ use window::MacWindow;
 
 use crate::executor;
 
-pub(crate) fn platform() -> Arc<dyn super::Platform> {
+pub fn platform() -> Arc<dyn super::Platform> {
     Arc::new(MacPlatform::new())
 }
 

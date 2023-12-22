@@ -29,16 +29,16 @@ use crate::UserThemeFamily;
 
 pub(crate) fn all_user_themes() -> Vec<UserThemeFamily> {
     vec![
-        rose_pine(),
-        night_owl(),
         andromeda(),
-        synthwave_84(),
-        palenight(),
-        dracula(),
-        solarized(),
-        nord(),
-        noctis(),
         ayu(),
+        dracula(),
         gruvbox(),
+        night_owl(),
+        noctis(),
+        nord(),
+        palenight(),
+        rose_pine(),
+        solarized(),
+        synthwave_84(),
     ]
 }

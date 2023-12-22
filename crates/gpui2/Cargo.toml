@@ -9,6 +9,12 @@ publish = false
 [features]
 test-support = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
 
+# Suppress a panic when both GPUI1 and GPUI2 are loaded.
+#
+# This is used in the `theme_importer` where we need to depend on both
+# GPUI1 and GPUI2 in order to convert Zed1 themes to Zed2 themes.
+allow-multiple-gpui-versions = ["util/allow-multiple-gpui-versions"]
+
 [lib]
 path = "src/gpui2.rs"
 doctest = false

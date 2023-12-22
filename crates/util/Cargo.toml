@@ -11,6 +11,12 @@ doctest = true
 [features]
 test-support = ["tempdir", "git2"]
 
+# Suppress a panic when both GPUI1 and GPUI2 are loaded.
+#
+# This is used in the `theme_importer` where we need to depend on both
+# GPUI1 and GPUI2 in order to convert Zed1 themes to Zed2 themes.
+allow-multiple-gpui-versions = []
+
 [dependencies]
 anyhow.workspace = true
 backtrace = "0.3"

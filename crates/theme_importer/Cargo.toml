@@ -4,14 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 any_ascii = "0.3.2"
 anyhow.workspace = true
 clap = { version = "4.4", features = ["derive"] }
 convert_case = "0.6.0"
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { package = "gpui2", path = "../gpui2", features = ["allow-multiple-gpui-versions"] }
+gpui1 = { package = "gpui", path = "../gpui" }
 indexmap = { version = "1.6.2", features = ["serde"] }
 json_comments = "0.2.2"
 log.workspace = true
@@ -21,4 +20,5 @@ serde.workspace = true
 simplelog = "0.9"
 strum = { version = "0.25.0", features = ["derive"] }
 theme = { package = "theme2", path = "../theme2", features = ["importing-themes"] }
+theme1 = { package = "theme", path = "../theme" }
 uuid.workspace = true

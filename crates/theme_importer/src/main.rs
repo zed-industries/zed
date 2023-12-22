@@ -1,29 +1,36 @@
+mod assets;
 mod color;
 mod theme_printer;
 mod util;
 mod vscode;
+mod zed1;
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use any_ascii::any_ascii;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use convert_case::{Case, Casing};
-use gpui::serde_json;
+use gpui::{serde_json, AssetSource};
 use indexmap::IndexMap;
 use json_comments::StripComments;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
-use theme::{Appearance, UserThemeFamily};
+use theme::{Appearance, UserTheme, UserThemeFamily};
+use theme1::Theme as Zed1Theme;
 
+use crate::assets::Assets;
 use crate::theme_printer::UserThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
+use crate::zed1::Zed1ThemeConverter;
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
@@ -66,6 +73,10 @@ pub struct ThemeMetadata {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Whether to import Zed1 themes.
+    #[arg(long)]
+    zed1: bool,
+
     /// Whether to warn when values are missing from the theme.
     #[arg(long)]
     warn_on_missing: bool,
@@ -176,6 +187,102 @@ fn main() -> Result<()> {
         theme_families.push(theme_family);
     }
 
+    if args.zed1 {
+        let zed1_themes_path = PathBuf::from_str("assets/themes")?;
+
+        let zed1_theme_familes = [
+            "Andromeda",
+            "Atelier",
+            "Ayu",
+            "Gruvbox",
+            "One",
+            "Rosé Pine",
+            "Sandcastle",
+            "Solarized",
+            "Summercamp",
+        ];
+
+        let mut zed1_themes_by_family: HashMap<String, Vec<UserTheme>> = HashMap::from_iter(
+            zed1_theme_familes
+                .into_iter()
+                .map(|family| (family.to_string(), Vec::new())),
+        );
+
+        let platform = gpui1::platform::current::platform();
+        let zed1_font_cache = Arc::new(gpui1::FontCache::new(platform.fonts()));
+
+        let mut embedded_fonts = Vec::new();
+        for font_path in Assets.list("fonts")? {
+            if font_path.ends_with(".ttf") {
+                let font_bytes = Assets.load(&font_path)?.to_vec();
+                embedded_fonts.push(Arc::from(font_bytes));
+            }
+        }
+
+        platform.fonts().add_fonts(&embedded_fonts)?;
+
+        for entry in fs::read_dir(&zed1_themes_path)? {
+            let entry = entry?;
+
+            if entry.file_type()?.is_dir() {
+                continue;
+            }
+
+            match entry.path().extension() {
+                None => continue,
+                Some(extension) => {
+                    if extension != "json" {
+                        continue;
+                    }
+                }
+            }
+
+            let theme_file_path = entry.path();
+
+            let theme_file = match File::open(&theme_file_path) {
+                Ok(file) => file,
+                Err(_) => {
+                    log::info!("Failed to open file at path: {:?}", theme_file_path);
+                    continue;
+                }
+            };
+
+            let theme_without_comments = StripComments::new(theme_file);
+
+            let zed1_theme: Zed1Theme =
+                gpui1::fonts::with_font_cache(zed1_font_cache.clone(), || {
+                    serde_json::from_reader(theme_without_comments)
+                        .context(format!("failed to parse theme {theme_file_path:?}"))
+                })?;
+
+            let theme_name = zed1_theme.meta.name.clone();
+
+            let converter = Zed1ThemeConverter::new(zed1_theme);
+
+            let theme = converter.convert()?;
+
+            let Some((_, themes_for_family)) = zed1_themes_by_family
+                .iter_mut()
+                .find(|(family, _)| theme_name.starts_with(*family))
+            else {
+                log::warn!("No theme family found for '{}'.", theme_name);
+                continue;
+            };
+
+            themes_for_family.push(theme);
+        }
+
+        for (family, themes) in zed1_themes_by_family {
+            let theme_family = UserThemeFamily {
+                name: format!("{family} (Zed1)"),
+                author: "Zed Industries".to_string(),
+                themes,
+            };
+
+            theme_families.push(theme_family);
+        }
+    }
+
     let themes_output_path = PathBuf::from_str(OUT_PATH)?;
 
     if !themes_output_path.exists() {
@@ -188,7 +295,10 @@ fn main() -> Result<()> {
     let mut theme_modules = Vec::new();
 
     for theme_family in theme_families {
-        let theme_family_slug = any_ascii(&theme_family.name).to_case(Case::Snake);
+        let theme_family_slug = any_ascii(&theme_family.name)
+            .replace("(", "")
+            .replace(")", "")
+            .to_case(Case::Snake);
 
         let mut output_file =
             File::create(themes_output_path.join(format!("{theme_family_slug}.rs")))?;
@@ -221,6 +331,8 @@ fn main() -> Result<()> {
 
         theme_modules.push(theme_family_slug);
     }
+
+    theme_modules.sort();
 
     let themes_vector_contents = format!(
         r#"
