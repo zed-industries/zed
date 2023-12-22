@@ -35,7 +35,7 @@ impl ThemeRegistry {
     }
 
     #[allow(unused)]
-    fn insert_user_theme_familes(&mut self, families: impl IntoIterator<Item = UserThemeFamily>) {
+    fn insert_user_theme_families(&mut self, families: impl IntoIterator<Item = UserThemeFamily>) {
         for family in families.into_iter() {
             self.insert_user_themes(family.themes);
         }
@@ -118,14 +118,22 @@ impl ThemeRegistry {
 
     pub fn load_user_themes(&mut self) {
         #[cfg(not(feature = "importing-themes"))]
-        self.insert_user_theme_familes(crate::all_user_themes());
+        self.insert_user_theme_families(crate::all_user_themes());
     }
 }
 
 impl Default for ThemeRegistry {
     fn default() -> Self {
-        Self {
+        let mut registry = Self {
             themes: HashMap::default(),
-        }
+        };
+
+        #[cfg(feature = "importing-themes")]
+        registry.insert_user_theme_families([]);
+
+        #[cfg(not(feature = "importing-themes"))]
+        registry.insert_user_theme_families([crate::themes::one()]);
+
+        registry
     }
 }
