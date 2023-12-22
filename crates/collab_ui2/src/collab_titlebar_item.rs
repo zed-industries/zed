@@ -52,7 +52,6 @@ pub struct CollabTitlebarItem {
     user_store: Model<UserStore>,
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
-    branch_popover: Option<(View<BranchList>, Subscription)>,
     project_popover: Option<(View<recent_projects::RecentProjects>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
@@ -291,7 +290,6 @@ impl CollabTitlebarItem {
             project,
             user_store,
             client,
-            branch_popover: None,
             project_popover: None,
             _subscriptions: subscriptions,
         }
@@ -357,7 +355,7 @@ impl CollabTitlebarItem {
 
             names_and_branches.next().flatten()
         };
-
+        let workspace = self.workspace.upgrade()?;
         let branch_name = entry
             .as_ref()
             .and_then(RepositoryEntry::branch)
@@ -376,17 +374,9 @@ impl CollabTitlebarItem {
                                 "Local branches only",
                                 cx,
                             )
-                        })
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.toggle_vcs_menu(&ToggleVcsMenu, cx);
-                        })),
+                        }),
                 )
-                .when_some(
-                    self.branch_popover
-                        .as_ref()
-                        .map(|(branch, _)| branch.clone()),
-                    |this, branch| this.menu(move |_| branch.clone()),
-                ),
+                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), &ToggleVcsMenu, cx)),
         )
     }
 
@@ -462,23 +452,19 @@ impl CollabTitlebarItem {
             .log_err();
     }
 
-    pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
-        if self.branch_popover.take().is_none() {
-            if let Some(workspace) = self.workspace.upgrade() {
-                let Some(view) = build_branch_list(workspace, cx).log_err() else {
-                    return;
-                };
-                self.project_popover.take();
-                let focus_handle = view.focus_handle(cx);
-                cx.focus(&focus_handle);
-                let subscription = cx.subscribe(&view, |this, _, _, _| {
-                    this.branch_popover.take();
-                });
-                self.branch_popover = Some((view, subscription));
-            }
-        }
-
-        cx.notify();
+    pub fn render_vcs_popover(
+        workspace: View<Workspace>,
+        _: &ToggleVcsMenu,
+        cx: &mut WindowContext<'_>,
+    ) -> View<BranchList> {
+        let view = build_branch_list(workspace, cx).log_err().unwrap();
+        // self.project_popover.take();
+        let focus_handle = view.focus_handle(cx);
+        cx.focus(&focus_handle);
+        // let subscription = cx.subscribe(&view, |this, _, _, _| {
+        //     this.branch_popover.take();
+        // });
+        view
     }
 
     pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
@@ -499,7 +485,7 @@ impl CollabTitlebarItem {
 
                     let focus_handle = view.focus_handle(cx);
                     cx.focus(&focus_handle);
-                    this.branch_popover.take();
+                    //this.branch_popover.take();
                     let subscription = cx.subscribe(&view, |this, _, _, _| {
                         this.project_popover.take();
                     });
