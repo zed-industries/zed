@@ -11,6 +11,8 @@ use std::sync::Arc;
 use ui::{h_stack, ContextMenu, IconButton, Tooltip};
 use ui::{prelude::*, right_click_menu};
 
+const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
+
 pub enum PanelEvent {
     ChangePosition,
     ZoomIn,
@@ -25,8 +27,8 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
-    fn size(&self, cx: &WindowContext) -> f32;
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>);
+    fn size(&self, cx: &WindowContext) -> Pixels;
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
     // todo!("We should have a icon tooltip method, rather than using persistant_name")
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
     fn toggle_action(&self) -> Box<dyn Action>;
@@ -49,8 +51,8 @@ pub trait PanelHandle: Send + Sync {
     fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn set_active(&self, active: bool, cx: &mut WindowContext);
-    fn size(&self, cx: &WindowContext) -> f32;
-    fn set_size(&self, size: Option<f32>, cx: &mut WindowContext);
+    fn size(&self, cx: &WindowContext) -> Pixels;
+    fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -94,11 +96,11 @@ where
         self.update(cx, |this, cx| this.set_active(active, cx))
     }
 
-    fn size(&self, cx: &WindowContext) -> f32 {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.read(cx).size(cx)
     }
 
-    fn set_size(&self, size: Option<f32>, cx: &mut WindowContext) {
+    fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
@@ -446,14 +448,14 @@ impl Dock {
         }
     }
 
-    pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<f32> {
+    pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<Pixels> {
         self.panel_entries
             .iter()
             .find(|entry| entry.panel.panel_id() == panel.panel_id())
             .map(|entry| entry.panel.size(cx))
     }
 
-    pub fn active_panel_size(&self, cx: &WindowContext) -> Option<f32> {
+    pub fn active_panel_size(&self, cx: &WindowContext) -> Option<Pixels> {
         if self.is_open {
             self.panel_entries
                 .get(self.active_panel_index)
@@ -463,7 +465,7 @@ impl Dock {
         }
     }
 
-    pub fn resize_active_panel(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+    pub fn resize_active_panel(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
             entry.panel.set_size(size, cx);
             cx.notify();
@@ -502,8 +504,6 @@ impl Render for Dock {
                 .z_index(1)
                 .block_mouse();
 
-            const HANDLE_SIZE: Pixels = Pixels(6.);
-
             match self.position() {
                 DockPosition::Left => {
                     handle = handle
@@ -511,7 +511,7 @@ impl Render for Dock {
                         .right(px(0.))
                         .top(px(0.))
                         .h_full()
-                        .w(HANDLE_SIZE)
+                        .w(RESIZE_HANDLE_SIZE)
                         .cursor_col_resize();
                 }
                 DockPosition::Bottom => {
@@ -520,7 +520,7 @@ impl Render for Dock {
                         .top(px(0.))
                         .left(px(0.))
                         .w_full()
-                        .h(HANDLE_SIZE)
+                        .h(RESIZE_HANDLE_SIZE)
                         .cursor_row_resize();
                 }
                 DockPosition::Right => {
@@ -529,7 +529,7 @@ impl Render for Dock {
                         .top(px(0.))
                         .left(px(0.))
                         .h_full()
-                        .w(HANDLE_SIZE)
+                        .w(RESIZE_HANDLE_SIZE)
                         .cursor_col_resize();
                 }
             }
@@ -539,8 +539,8 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this.w(px(size)).h_full().flex_row(),
-                    Axis::Vertical => this.h(px(size)).w_full().flex_col(),
+                    Axis::Horizontal => this.w(size).h_full().flex_row(),
+                    Axis::Vertical => this.h(size).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r(),
@@ -550,8 +550,8 @@ impl Render for Dock {
                 .child(
                     div()
                         .map(|this| match self.position().axis() {
-                            Axis::Horizontal => this.min_w(px(size)).h_full(),
-                            Axis::Vertical => this.min_h(px(size)).w_full(),
+                            Axis::Horizontal => this.min_w(size).h_full(),
+                            Axis::Vertical => this.min_h(size).w_full(),
                         })
                         .child(entry.panel.to_any()),
                 )
@@ -674,7 +674,7 @@ pub mod test {
         pub zoomed: bool,
         pub active: bool,
         pub focus_handle: FocusHandle,
-        pub size: f32,
+        pub size: Pixels,
     }
     actions!(test, [ToggleTestPanel]);
 
@@ -687,7 +687,7 @@ pub mod test {
                 zoomed: false,
                 active: false,
                 focus_handle: cx.focus_handle(),
-                size: 300.,
+                size: px(300.),
             }
         }
     }
@@ -718,12 +718,12 @@ pub mod test {
             cx.emit(PanelEvent::ChangePosition);
         }
 
-        fn size(&self, _: &WindowContext) -> f32 {
+        fn size(&self, _: &WindowContext) -> Pixels {
             self.size
         }
 
-        fn set_size(&mut self, size: Option<f32>, _: &mut ViewContext<Self>) {
-            self.size = size.unwrap_or(300.);
+        fn set_size(&mut self, size: Option<Pixels>, _: &mut ViewContext<Self>) {
+            self.size = size.unwrap_or(px(300.));
         }
 
         fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {

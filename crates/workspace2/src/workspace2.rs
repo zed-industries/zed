@@ -3549,19 +3549,19 @@ impl Render for Workspace {
                                 DockPosition::Left => {
                                     let size = workspace.bounds.left() + e.event.position.x;
                                     workspace.left_dock.update(cx, |left_dock, cx| {
-                                        left_dock.resize_active_panel(Some(size.0), cx);
+                                        left_dock.resize_active_panel(Some(size), cx);
                                     });
                                 }
                                 DockPosition::Right => {
                                     let size = workspace.bounds.right() - e.event.position.x;
                                     workspace.right_dock.update(cx, |right_dock, cx| {
-                                        right_dock.resize_active_panel(Some(size.0), cx);
+                                        right_dock.resize_active_panel(Some(size), cx);
                                     });
                                 }
                                 DockPosition::Bottom => {
                                     let size = workspace.bounds.bottom() - e.event.position.y;
                                     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-                                        bottom_dock.resize_active_panel(Some(size.0), cx);
+                                        bottom_dock.resize_active_panel(Some(size), cx);
                                     });
                                 }
                             }

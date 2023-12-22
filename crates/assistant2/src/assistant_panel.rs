@@ -84,8 +84,8 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
-    width: Option<f32>,
-    height: Option<f32>,
+    width: Option<Pixels>,
+    height: Option<Pixels>,
     active_editor_index: Option<usize>,
     prev_active_editor_index: Option<usize>,
     editors: Vec<View<ConversationEditor>>,
@@ -1242,7 +1242,7 @@ impl Panel for AssistantPanel {
         });
     }
 
-    fn size(&self, cx: &WindowContext) -> f32 {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         let settings = AssistantSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
@@ -1252,7 +1252,7 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,

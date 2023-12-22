@@ -1,4 +1,5 @@
 use anyhow;
+use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -51,8 +52,8 @@ pub enum AssistantDockPosition {
 pub struct AssistantSettings {
     pub button: bool,
     pub dock: AssistantDockPosition,
-    pub default_width: f32,
-    pub default_height: f32,
+    pub default_width: Pixels,
+    pub default_height: Pixels,
     pub default_open_ai_model: OpenAIModel,
 }
 

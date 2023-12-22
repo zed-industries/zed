@@ -51,7 +51,7 @@ pub struct ChatPanel {
     input_editor: View<MessageEditor>,
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
-    width: Option<f32>,
+    width: Option<Pixels>,
     active: bool,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
@@ -62,7 +62,7 @@ pub struct ChatPanel {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedChatPanel {
-    width: Option<f32>,
+    width: Option<Pixels>,
 }
 
 #[derive(Debug)]
@@ -584,12 +584,12 @@ impl Panel for ChatPanel {
         });
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> f32 {
+    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| ChatPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         self.width = size;
         self.serialize(cx);
         cx.notify();

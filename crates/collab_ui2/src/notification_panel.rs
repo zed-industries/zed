@@ -37,7 +37,7 @@ pub struct NotificationPanel {
     channel_store: Model<ChannelStore>,
     notification_store: Model<NotificationStore>,
     fs: Arc<dyn Fs>,
-    width: Option<f32>,
+    width: Option<Pixels>,
     active: bool,
     notification_list: ListState,
     pending_serialization: Task<Option<()>>,
@@ -51,7 +51,7 @@ pub struct NotificationPanel {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedNotificationPanel {
-    width: Option<f32>,
+    width: Option<Pixels>,
 }
 
 #[derive(Debug)]
@@ -639,12 +639,12 @@ impl Panel for NotificationPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> f32 {
+    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         self.width = size;
         self.serialize(cx);
         cx.notify();
