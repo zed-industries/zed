@@ -27,6 +27,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     element_selected: Some(rgba(0x57535380).into()),
                     text: Some(rgba(0xa69782ff).into()),
                     text_muted: Some(rgba(0x645b54ff).into()),
+                    text_accent: Some(rgba(0x528b8bff).into()),
                     status_bar_background: Some(rgba(0x333944ff).into()),
                     title_bar_background: Some(rgba(0x333944ff).into()),
                     toolbar_background: Some(rgba(0x282c34ff).into()),

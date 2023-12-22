@@ -87,6 +87,7 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
+        let status_bar = &self.theme.workspace.status_bar;
         let tab_bar = &self.theme.workspace.tab_bar;
         let active_tab = &self.theme.workspace.tab_bar.tab_style(true, true);
         let inactive_tab = &self.theme.workspace.tab_bar.tab_style(true, false);
@@ -133,6 +134,7 @@ impl Zed1ThemeConverter {
                 .map(zed1_color_to_hsla),
             text: convert(self.theme.project_panel.entry.default_style().text.color),
             text_muted: convert(active_tab.description.text.color),
+            text_accent: convert(status_bar.panel_buttons.button.active_state().icon_color),
             element_hover: self
                 .theme
                 .picker
