@@ -2,13 +2,16 @@ use anyhow::{anyhow, bail, Result};
 use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WindowContext,
+    actions, rems, AnyElement, AppContext, DismissEvent, Div, Element, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
-use std::sync::Arc;
-use ui::{v_stack, HighlightedLabel, ListItem, ListItemSpacing, Selectable};
+use std::{ops::Not, sync::Arc};
+use ui::{
+    h_stack, v_stack, Button, ButtonCommon, Clickable, HighlightedLabel, Label, LabelCommon,
+    LabelSize, ListItem, ListItemSpacing, Selectable,
+};
 use util::ResultExt;
 use workspace::{ModalView, Toast, Workspace};
 
@@ -288,88 +291,70 @@ impl PickerDelegate for BranchListDelegate {
                 .start_slot(HighlightedLabel::new(shortened_branch_name, highlights)),
         )
     }
-    // fn render_header(
-    //     &self,
-    //     cx: &mut ViewContext<Picker<Self>>,
-    // ) -> Option<AnyElement<Picker<Self>>> {
-    //     let theme = &theme::current(cx);
-    //     let style = theme.picker.header.clone();
-    //     let label = if self.last_query.is_empty() {
-    //         Flex::row()
-    //             .with_child(Label::new("Recent branches", style.label.clone()))
-    //             .contained()
-    //             .with_style(style.container)
-    //     } else {
-    //         Flex::row()
-    //             .with_child(Label::new("Branches", style.label.clone()))
-    //             .with_children(self.matches.is_empty().not().then(|| {
-    //                 let suffix = if self.matches.len() == 1 { "" } else { "es" };
-    //                 Label::new(
-    //                     format!("{} match{}", self.matches.len(), suffix),
-    //                     style.label,
-    //                 )
-    //                 .flex_float()
-    //             }))
-    //             .contained()
-    //             .with_style(style.container)
-    //     };
-    //     Some(label.into_any())
-    // }
-    // fn render_footer(
-    //     &self,
-    //     cx: &mut ViewContext<Picker<Self>>,
-    // ) -> Option<AnyElement<Picker<Self>>> {
-    //     if !self.last_query.is_empty() {
-    //         let theme = &theme::current(cx);
-    //         let style = theme.picker.footer.clone();
-    //         enum BranchCreateButton {}
-    //         Some(
-    //             Flex::row().with_child(MouseEventHandler::new::<BranchCreateButton, _>(0, cx, |state, _| {
-    //                 let style = style.style_for(state);
-    //                 Label::new("Create branch", style.label.clone())
-    //                     .contained()
-    //                     .with_style(style.container)
-    //             })
-    //             .with_cursor_style(CursorStyle::PointingHand)
-    //             .on_down(MouseButton::Left, |_, _, cx| {
-    //                 cx.spawn(|picker, mut cx| async move {
-    //                     picker.update(&mut cx, |this, cx| {
-    //                         let project = this.delegate().workspace.read(cx).project().read(cx);
-    //                         let current_pick = &this.delegate().last_query;
-    //                         let mut cwd = project
-    //                         .visible_worktrees(cx)
-    //                         .next()
-    //                         .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
-    //                         .read(cx)
-    //                         .abs_path()
-    //                         .to_path_buf();
-    //                         cwd.push(".git");
-    //                         let repo = project
-    //                             .fs()
-    //                             .open_repo(&cwd)
-    //                             .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
-    //                         let repo = repo
-    //                             .lock();
-    //                         let status = repo
-    //                             .create_branch(&current_pick);
-    //                         if status.is_err() {
-    //                             this.delegate().display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
-    //                             status?;
-    //                         }
-    //                         let status = repo.change_branch(&current_pick);
-    //                         if status.is_err() {
-    //                             this.delegate().display_error_toast(format!("Failed to chec branch '{current_pick}', check for conflicts or unstashed files"), cx);
-    //                             status?;
-    //                         }
-    //                         cx.emit(PickerEvent::Dismiss);
-    //                         Ok::<(), anyhow::Error>(())
-    //             })
-    //                 }).detach();
-    //             })).aligned().right()
-    //             .into_any(),
-    //         )
-    //     } else {
-    //         None
-    //     }
-    // }
+    fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        let label = if self.last_query.is_empty() {
+            h_stack()
+                .ml_3()
+                .child(Label::new("Recent branches").size(LabelSize::Small))
+        } else {
+            let match_label = self.matches.is_empty().not().then(|| {
+                let suffix = if self.matches.len() == 1 { "" } else { "es" };
+                Label::new(format!("{} match{}", self.matches.len(), suffix)).size(LabelSize::Small)
+            });
+            h_stack()
+                .px_3()
+                .h_full()
+                .justify_between()
+                .child(Label::new("Branches").size(LabelSize::Small))
+                .children(match_label)
+        };
+        Some(label.into_any())
+    }
+    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        if self.last_query.is_empty() {
+            return None;
+        }
+
+        Some(
+            h_stack().mr_3().pb_2().child(h_stack().w_full()).child(
+            Button::new("branch-picker-create-branch-button", "Create branch").on_click(
+                cx.listener(|_, _, cx| {
+                    cx.spawn(|picker, mut cx| async move {
+                                        picker.update(&mut cx, |this, cx| {
+                                            let project = this.delegate.workspace.read(cx).project().read(cx);
+                                            let current_pick = &this.delegate.last_query;
+                                            let mut cwd = project
+                                            .visible_worktrees(cx)
+                                            .next()
+                                            .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
+                                            .read(cx)
+                                            .abs_path()
+                                            .to_path_buf();
+                                            cwd.push(".git");
+                                            let repo = project
+                                                .fs()
+                                                .open_repo(&cwd)
+                                                .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
+                                            let repo = repo
+                                                .lock();
+                                            let status = repo
+                                                .create_branch(&current_pick);
+                                            if status.is_err() {
+                                                this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                                status?;
+                                            }
+                                            let status = repo.change_branch(&current_pick);
+                                            if status.is_err() {
+                                                this.delegate.display_error_toast(format!("Failed to chec branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                                status?;
+                                            }
+                                            this.cancel(&Default::default(), cx);
+                                            Ok::<(), anyhow::Error>(())
+                                })
+
+                    }).detach_and_log_err(cx);
+                }),
+            ).style(ui::ButtonStyle::Filled)).into_any_element(),
+        )
+    }
 }
