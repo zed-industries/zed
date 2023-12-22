@@ -438,13 +438,15 @@ static GPUI_LOADED: AtomicU32 = AtomicU32::new(0);
 
 pub fn gpui2_loaded() {
     if GPUI_LOADED.fetch_add(2, std::sync::atomic::Ordering::SeqCst) != 0 {
-        panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
+        // TODO: Temporarily commenting these out so we can run the `theme_importer` to import Zed1 themes.
+        // panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
     }
 }
 
 pub fn gpui1_loaded() {
     if GPUI_LOADED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) != 0 {
-        panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
+        // TODO: Temporarily commenting these out so we can run the `theme_importer` to import Zed1 themes.
+        // panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
     }
 }
 
