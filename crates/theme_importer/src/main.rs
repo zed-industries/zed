@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 
+use any_ascii::any_ascii;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use convert_case::{Case, Casing};
@@ -187,7 +188,7 @@ fn main() -> Result<()> {
     let mut theme_modules = Vec::new();
 
     for theme_family in theme_families {
-        let theme_family_slug = theme_family.name.to_string().to_case(Case::Snake);
+        let theme_family_slug = any_ascii(&theme_family.name).to_case(Case::Snake);
 
         let mut output_file =
             File::create(themes_output_path.join(format!("{theme_family_slug}.rs")))?;

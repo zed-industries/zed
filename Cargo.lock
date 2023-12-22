@@ -307,6 +307,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "any_ascii"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea50b14b7a4b9343f8c627a7a53c52076482bd4bdad0a24fd3ec533ed616cc2c"
+
+[[package]]
 name = "anyhow"
 version = "1.0.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9836,6 +9842,7 @@ dependencies = [
 name = "theme_importer"
 version = "0.1.0"
 dependencies = [
+ "any_ascii",
  "anyhow",
  "clap 4.4.4",
  "convert_case 0.6.0",

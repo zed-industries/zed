@@ -11,11 +11,11 @@ use crate::{
 
 pub fn rose_pine() -> UserThemeFamily {
     UserThemeFamily {
-        name: "Rose Pine".into(),
+        name: "Rosé Pine".into(),
         author: "Rosé Pine".into(),
         themes: vec![
             UserTheme {
-                name: "Rose Pine".into(),
+                name: "Rosé Pine".into(),
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
@@ -278,7 +278,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 },
             },
             UserTheme {
-                name: "Rose Pine Moon".into(),
+                name: "Rosé Pine Moon".into(),
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
@@ -541,7 +541,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 },
             },
             UserTheme {
-                name: "Rose Pine Dawn".into(),
+                name: "Rosé Pine Dawn".into(),
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
