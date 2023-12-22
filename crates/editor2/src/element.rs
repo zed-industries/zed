@@ -1806,23 +1806,22 @@ impl EditorElement {
 
             let text_width = bounds.size.width - gutter_width;
             let overscroll = size(em_width, px(0.));
-            // todo!()
-            // let snapshot = {
-            //     editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
+            let _snapshot = {
+                editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
 
-            //     let editor_width = text_width - gutter_margin - overscroll.width - em_width;
-            //     let wrap_width = match editor.soft_wrap_mode(cx) {
-            //         SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
-            //         SoftWrap::EditorWidth => editor_width,
-            //         SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
-            //     };
+                let editor_width = text_width - gutter_margin - overscroll.width - em_width;
+                let wrap_width = match editor.soft_wrap_mode(cx) {
+                    SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
+                    SoftWrap::EditorWidth => editor_width,
+                    SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
+                };
 
-            //     if editor.set_wrap_width(Some(wrap_width), cx) {
-            //         editor.snapshot(cx)
-            //     } else {
-            //         snapshot
-            //     }
-            // };
+                if editor.set_wrap_width(Some(wrap_width), cx) {
+                    editor.snapshot(cx)
+                } else {
+                    snapshot
+                }
+            };
 
             let wrap_guides = editor
                 .wrap_guides(cx)
