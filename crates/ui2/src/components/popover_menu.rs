@@ -18,19 +18,19 @@ pub struct PopoverMenu<M: ManagedView> {
         Box<
             dyn FnOnce(
                     Rc<RefCell<Option<View<M>>>>,
-                    Option<Rc<dyn Fn(&mut WindowContext) -> View<M> + 'static>>,
+                    Option<Rc<dyn Fn(&mut WindowContext) -> Option<View<M>> + 'static>>,
                 ) -> AnyElement
                 + 'static,
         >,
     >,
-    menu_builder: Option<Rc<dyn Fn(&mut WindowContext) -> View<M> + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut WindowContext) -> Option<View<M>> + 'static>>,
     anchor: AnchorCorner,
     attach: Option<AnchorCorner>,
     offset: Option<Point<Pixels>>,
 }
 
 impl<M: ManagedView> PopoverMenu<M> {
-    pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> View<M> + 'static) -> Self {
+    pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> Option<View<M>> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
     }
@@ -42,7 +42,9 @@ impl<M: ManagedView> PopoverMenu<M> {
                 .when_some(builder, |el, builder| {
                     el.on_click({
                         move |_, cx| {
-                            let new_menu = (builder)(cx);
+                            let Some(new_menu) = (builder)(cx) else {
+                                return;
+                            };
                             let menu2 = menu.clone();
                             let previous_focus_handle = cx.focused();
 

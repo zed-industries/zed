@@ -102,8 +102,10 @@ impl Render for CopilotButton {
         div().child(
             popover_menu("copilot")
                 .menu(move |cx| match status {
-                    Status::Authorized => this.update(cx, |this, cx| this.build_copilot_menu(cx)),
-                    _ => this.update(cx, |this, cx| this.build_copilot_start_menu(cx)),
+                    Status::Authorized => {
+                        Some(this.update(cx, |this, cx| this.build_copilot_menu(cx)))
+                    }
+                    _ => Some(this.update(cx, |this, cx| this.build_copilot_start_menu(cx))),
                 })
                 .anchor(AnchorCorner::BottomRight)
                 .trigger(

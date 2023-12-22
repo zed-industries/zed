@@ -333,7 +333,7 @@ impl CollabTitlebarItem {
                     .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
             )
-            .menu(move |cx| Self::render_project_popover(workspace.clone(), cx))
+            .menu(move |cx| Some(Self::render_project_popover(workspace.clone(), cx)))
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -367,7 +367,7 @@ impl CollabTitlebarItem {
                             )
                         }),
                 )
-                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), &ToggleVcsMenu, cx)),
+                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), cx)),
         )
     }
 
@@ -445,17 +445,12 @@ impl CollabTitlebarItem {
 
     pub fn render_vcs_popover(
         workspace: View<Workspace>,
-        _: &ToggleVcsMenu,
         cx: &mut WindowContext<'_>,
-    ) -> View<BranchList> {
-        let view = build_branch_list(workspace, cx).log_err().unwrap();
-        // self.project_popover.take();
+    ) -> Option<View<BranchList>> {
+        let view = build_branch_list(workspace, cx).log_err()?;
         let focus_handle = view.focus_handle(cx);
         cx.focus(&focus_handle);
-        // let subscription = cx.subscribe(&view, |this, _, _, _| {
-        //     this.branch_popover.take();
-        // });
-        view
+        Some(view)
     }
 
     pub fn render_project_popover(
@@ -552,6 +547,7 @@ impl CollabTitlebarItem {
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
+                    .into()
                 })
                 .trigger(
                     ButtonLike::new("user-menu")
@@ -574,6 +570,7 @@ impl CollabTitlebarItem {
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                     })
+                    .into()
                 })
                 .trigger(
                     ButtonLike::new("user-menu")

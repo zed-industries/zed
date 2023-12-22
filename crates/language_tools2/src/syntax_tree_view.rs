@@ -467,6 +467,7 @@ impl SyntaxTreeToolbarItemView {
                         }
                         menu
                     })
+                    .into()
                 }),
         )
     }
