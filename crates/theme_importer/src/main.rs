@@ -184,7 +184,7 @@ fn main() -> Result<()> {
             themes,
         };
 
-        theme_families.push(theme_family);
+        // theme_families.push(theme_family);
     }
 
     if args.zed1 {
@@ -274,7 +274,7 @@ fn main() -> Result<()> {
 
         for (family, themes) in zed1_themes_by_family {
             let theme_family = UserThemeFamily {
-                name: format!("{family} (Zed1)"),
+                name: format!("{family}"),
                 author: "Zed Industries".to_string(),
                 themes,
             };
