@@ -21,7 +21,9 @@ pub fn sandcastle() -> UserThemeFamily {
                     border: Some(rgba(0x3d4350ff).into()),
                     border_variant: Some(rgba(0x3d4350ff).into()),
                     background: Some(rgba(0x333944ff).into()),
-                    text: Some(rgba(0xfdf4c1ff).into()),
+                    panel_background: Some(rgba(0x2b3039ff).into()),
+                    text: Some(rgba(0xa69782ff).into()),
+                    status_bar_background: Some(rgba(0x333944ff).into()),
                     title_bar_background: Some(rgba(0x333944ff).into()),
                     toolbar_background: Some(rgba(0x282c34ff).into()),
                     tab_bar_background: Some(rgba(0x2b3039ff).into()),
@@ -60,7 +62,10 @@ pub fn sandcastle() -> UserThemeFamily {
                 status: StatusColorsRefinement {
                     created: Some(rgba(0x83a598ff).into()),
                     deleted: Some(rgba(0x8d4f61ff).into()),
+                    error: Some(rgba(0xb4637aff).into()),
                     modified: Some(rgba(0xa07e3bff).into()),
+                    success: Some(rgba(0xfdf4c1ff).into()),
+                    warning: Some(rgba(0xa07e3bff).into()),
                     ..Default::default()
                 },
                 syntax: Some(UserSyntaxTheme {

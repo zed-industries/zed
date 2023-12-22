@@ -22,7 +22,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x969585ff).into()),
                         border_variant: Some(rgba(0x969585ff).into()),
                         background: Some(rgba(0xc5c4b9ff).into()),
-                        text: Some(rgba(0x302f27ff).into()),
+                        panel_background: Some(rgba(0xebeae3ff).into()),
+                        text: Some(rgba(0x61604fff).into()),
+                        status_bar_background: Some(rgba(0xc5c4b9ff).into()),
                         title_bar_background: Some(rgba(0xc5c4b9ff).into()),
                         toolbar_background: Some(rgba(0xf4f3ecff).into()),
                         tab_bar_background: Some(rgba(0xebeae3ff).into()),
@@ -61,7 +63,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x98ab54ff).into()),
                         deleted: Some(rgba(0xba6337ff).into()),
+                        error: Some(rgba(0xba6337ff).into()),
                         modified: Some(rgba(0xa59810ff).into()),
+                        success: Some(rgba(0x22221bff).into()),
+                        warning: Some(rgba(0xa59810ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -370,7 +375,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x665f5cff).into()),
                         border_variant: Some(rgba(0x665f5cff).into()),
                         background: Some(rgba(0x443c39ff).into()),
-                        text: Some(rgba(0xe6e2e0ff).into()),
+                        panel_background: Some(rgba(0x27211eff).into()),
+                        text: Some(rgba(0xa79f9dff).into()),
+                        status_bar_background: Some(rgba(0x443c39ff).into()),
                         title_bar_background: Some(rgba(0x443c39ff).into()),
                         toolbar_background: Some(rgba(0x1b1918ff).into()),
                         tab_bar_background: Some(rgba(0x27211eff).into()),
@@ -409,7 +416,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x7b9727ff).into()),
                         deleted: Some(rgba(0xc82234ff).into()),
+                        error: Some(rgba(0xf22d40ff).into()),
                         modified: Some(rgba(0xc38419ff).into()),
+                        success: Some(rgba(0xf1efeeff).into()),
+                        warning: Some(rgba(0xc38419ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -718,7 +728,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x8b968eff).into()),
                         border_variant: Some(rgba(0x8b968eff).into()),
                         background: Some(rgba(0xbcc5bfff).into()),
-                        text: Some(rgba(0x232a25ff).into()),
+                        panel_background: Some(rgba(0xe3ebe6ff).into()),
+                        text: Some(rgba(0x546259ff).into()),
+                        status_bar_background: Some(rgba(0xbcc5bfff).into()),
                         title_bar_background: Some(rgba(0xbcc5bfff).into()),
                         toolbar_background: Some(rgba(0xecf4eeff).into()),
                         tab_bar_background: Some(rgba(0xe3ebe6ff).into()),
@@ -757,7 +769,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x6fae80ff).into()),
                         deleted: Some(rgba(0xb1623aff).into()),
+                        error: Some(rgba(0xb1623aff).into()),
                         modified: Some(rgba(0xa07e3cff).into()),
+                        success: Some(rgba(0x171c19ff).into()),
+                        warning: Some(rgba(0xa07e3cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1066,7 +1081,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x56505eff).into()),
                         border_variant: Some(rgba(0x56505eff).into()),
                         background: Some(rgba(0x3a353fff).into()),
-                        text: Some(rgba(0xe2dfe7ff).into()),
+                        panel_background: Some(rgba(0x221f26ff).into()),
+                        text: Some(rgba(0x898591ff).into()),
+                        status_bar_background: Some(rgba(0x3a353fff).into()),
                         title_bar_background: Some(rgba(0x3a353fff).into()),
                         toolbar_background: Some(rgba(0x19171cff).into()),
                         tab_bar_background: Some(rgba(0x221f26ff).into()),
@@ -1105,7 +1122,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x2c9292ff).into()),
                         deleted: Some(rgba(0x953a5fff).into()),
+                        error: Some(rgba(0xbe4678ff).into()),
                         modified: Some(rgba(0xa06e3bff).into()),
+                        success: Some(rgba(0xefecf4ff).into()),
+                        warning: Some(rgba(0xa06e3bff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1414,7 +1434,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x5d5c4cff).into()),
                         border_variant: Some(rgba(0x5d5c4cff).into()),
                         background: Some(rgba(0x424136ff).into()),
-                        text: Some(rgba(0xe7e6dfff).into()),
+                        panel_background: Some(rgba(0x2c2b23ff).into()),
+                        text: Some(rgba(0x91907fff).into()),
+                        status_bar_background: Some(rgba(0x424136ff).into()),
                         title_bar_background: Some(rgba(0x424136ff).into()),
                         toolbar_background: Some(rgba(0x22221bff).into()),
                         tab_bar_background: Some(rgba(0x2c2b23ff).into()),
@@ -1453,7 +1475,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x7d9727ff).into()),
                         deleted: Some(rgba(0x934e2dff).into()),
+                        error: Some(rgba(0xba6237ff).into()),
                         modified: Some(rgba(0xa59810ff).into()),
+                        success: Some(rgba(0xf4f3ecff).into()),
+                        warning: Some(rgba(0xa59810ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1762,7 +1787,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x5c6485ff).into()),
                         border_variant: Some(rgba(0x5c6485ff).into()),
                         background: Some(rgba(0x3e4769ff).into()),
-                        text: Some(rgba(0xdfe2f1ff).into()),
+                        panel_background: Some(rgba(0x262f51ff).into()),
+                        text: Some(rgba(0x959bb2ff).into()),
+                        status_bar_background: Some(rgba(0x3e4769ff).into()),
                         title_bar_background: Some(rgba(0x3e4769ff).into()),
                         toolbar_background: Some(rgba(0x202746ff).into()),
                         tab_bar_background: Some(rgba(0x262f51ff).into()),
@@ -1801,7 +1828,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xac973aff).into()),
                         deleted: Some(rgba(0xa33a1eff).into()),
+                        error: Some(rgba(0xc94923ff).into()),
                         modified: Some(rgba(0xc08b31ff).into()),
+                        success: Some(rgba(0xf5f7ffff).into()),
+                        warning: Some(rgba(0xc08b31ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -2110,7 +2140,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x9a9fb6ff).into()),
                         border_variant: Some(rgba(0x9a9fb6ff).into()),
                         background: Some(rgba(0xc2c6d9ff).into()),
-                        text: Some(rgba(0x293256ff).into()),
+                        panel_background: Some(rgba(0xe5e8f5ff).into()),
+                        text: Some(rgba(0x606889ff).into()),
+                        status_bar_background: Some(rgba(0xc2c6d9ff).into()),
                         title_bar_background: Some(rgba(0xc2c6d9ff).into()),
                         toolbar_background: Some(rgba(0xf5f7ffff).into()),
                         tab_bar_background: Some(rgba(0xe5e8f5ff).into()),
@@ -2149,7 +2181,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xbfab61ff).into()),
                         deleted: Some(rgba(0xc94a23ff).into()),
+                        error: Some(rgba(0xc94a23ff).into()),
                         modified: Some(rgba(0xc08b31ff).into()),
+                        success: Some(rgba(0x202746ff).into()),
+                        warning: Some(rgba(0xc08b31ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -2458,7 +2493,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x6c695cff).into()),
                         border_variant: Some(rgba(0x6c695cff).into()),
                         background: Some(rgba(0x45433bff).into()),
-                        text: Some(rgba(0xe8e4cfff).into()),
+                        panel_background: Some(rgba(0x262622ff).into()),
+                        text: Some(rgba(0xa4a08bff).into()),
+                        status_bar_background: Some(rgba(0x45433bff).into()),
                         title_bar_background: Some(rgba(0x45433bff).into()),
                         toolbar_background: Some(rgba(0x20201dff).into()),
                         tab_bar_background: Some(rgba(0x262622ff).into()),
@@ -2497,7 +2534,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x60ac3aff).into()),
                         deleted: Some(rgba(0xaf2c2eff).into()),
+                        error: Some(rgba(0xd73837ff).into()),
                         modified: Some(rgba(0xae9515ff).into()),
+                        success: Some(rgba(0xfefbecff).into()),
+                        warning: Some(rgba(0xae9515ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -2806,7 +2846,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x5c6c5cff).into()),
                         border_variant: Some(rgba(0x5c6c5cff).into()),
                         background: Some(rgba(0x3b453bff).into()),
-                        text: Some(rgba(0xcfe8cfff).into()),
+                        panel_background: Some(rgba(0x1f231fff).into()),
+                        text: Some(rgba(0x8ba48bff).into()),
+                        status_bar_background: Some(rgba(0x3b453bff).into()),
                         title_bar_background: Some(rgba(0x3b453bff).into()),
                         toolbar_background: Some(rgba(0x131513ff).into()),
                         tab_bar_background: Some(rgba(0x1f231fff).into()),
@@ -2845,7 +2887,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x2ba32aff).into()),
                         deleted: Some(rgba(0xbd1331ff).into()),
+                        error: Some(rgba(0xe61c3cff).into()),
                         modified: Some(rgba(0x98981cff).into()),
+                        success: Some(rgba(0xf4fbf4ff).into()),
+                        warning: Some(rgba(0x98981cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -3154,7 +3199,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x8f8b96ff).into()),
                         border_variant: Some(rgba(0x8f8b96ff).into()),
                         background: Some(rgba(0xbfbcc5ff).into()),
-                        text: Some(rgba(0x26232aff).into()),
+                        panel_background: Some(rgba(0xe6e3ebff).into()),
+                        text: Some(rgba(0x5a5462ff).into()),
+                        status_bar_background: Some(rgba(0xbfbcc5ff).into()),
                         title_bar_background: Some(rgba(0xbfbcc5ff).into()),
                         toolbar_background: Some(rgba(0xefecf4ff).into()),
                         tab_bar_background: Some(rgba(0xe6e3ebff).into()),
@@ -3193,7 +3240,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x5fa8a7ff).into()),
                         deleted: Some(rgba(0xbe4778ff).into()),
+                        error: Some(rgba(0xbe4778ff).into()),
                         modified: Some(rgba(0xa06e3cff).into()),
+                        success: Some(rgba(0x19171cff).into()),
+                        warning: Some(rgba(0xa06e3cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -3502,7 +3552,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x564e4eff).into()),
                         border_variant: Some(rgba(0x564e4eff).into()),
                         background: Some(rgba(0x3b3535ff).into()),
-                        text: Some(rgba(0xe7dfdfff).into()),
+                        panel_background: Some(rgba(0x252020ff).into()),
+                        text: Some(rgba(0x898383ff).into()),
+                        status_bar_background: Some(rgba(0x3b3535ff).into()),
                         title_bar_background: Some(rgba(0x3b3535ff).into()),
                         toolbar_background: Some(rgba(0x1b1818ff).into()),
                         tab_bar_background: Some(rgba(0x252020ff).into()),
@@ -3541,7 +3593,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x4b8b8bff).into()),
                         deleted: Some(rgba(0xa23b3bff).into()),
+                        error: Some(rgba(0xca4949ff).into()),
                         modified: Some(rgba(0xa06e3bff).into()),
+                        success: Some(rgba(0xf4ececff).into()),
+                        warning: Some(rgba(0xa06e3bff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -3850,7 +3905,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x675b67ff).into()),
                         border_variant: Some(rgba(0x675b67ff).into()),
                         background: Some(rgba(0x433a43ff).into()),
-                        text: Some(rgba(0xd8cad8ff).into()),
+                        panel_background: Some(rgba(0x252025ff).into()),
+                        text: Some(rgba(0xa99aa9ff).into()),
+                        status_bar_background: Some(rgba(0x433a43ff).into()),
                         title_bar_background: Some(rgba(0x433a43ff).into()),
                         toolbar_background: Some(rgba(0x1b181bff).into()),
                         tab_bar_background: Some(rgba(0x252025ff).into()),
@@ -3889,7 +3946,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x918b3bff).into()),
                         deleted: Some(rgba(0xa43424ff).into()),
+                        error: Some(rgba(0xca402cff).into()),
                         modified: Some(rgba(0xbb8a36ff).into()),
+                        success: Some(rgba(0xf7f3f7ff).into()),
+                        warning: Some(rgba(0xbb8a36ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -4198,7 +4258,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x4f6b78ff).into()),
                         border_variant: Some(rgba(0x4f6b78ff).into()),
                         background: Some(rgba(0x33444dff).into()),
-                        text: Some(rgba(0xc1e4f6ff).into()),
+                        panel_background: Some(rgba(0x1c2529ff).into()),
+                        text: Some(rgba(0x7ca0b3ff).into()),
+                        status_bar_background: Some(rgba(0x33444dff).into()),
                         title_bar_background: Some(rgba(0x33444dff).into()),
                         toolbar_background: Some(rgba(0x161b1dff).into()),
                         tab_bar_background: Some(rgba(0x1c2529ff).into()),
@@ -4237,7 +4299,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x568c3bff).into()),
                         deleted: Some(rgba(0xa9275aff).into()),
+                        error: Some(rgba(0xd22e72ff).into()),
                         modified: Some(rgba(0x8a8a11ff).into()),
+                        success: Some(rgba(0xebf8ffff).into()),
+                        warning: Some(rgba(0x8a8a11ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -4546,7 +4611,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0xaaa3a1ff).into()),
                         border_variant: Some(rgba(0xaaa3a1ff).into()),
                         background: Some(rgba(0xcdc8c6ff).into()),
-                        text: Some(rgba(0x2c2421ff).into()),
+                        panel_background: Some(rgba(0xe9e6e4ff).into()),
+                        text: Some(rgba(0x6a6360ff).into()),
+                        status_bar_background: Some(rgba(0xcdc8c6ff).into()),
                         title_bar_background: Some(rgba(0xcdc8c6ff).into()),
                         toolbar_background: Some(rgba(0xf1efeeff).into()),
                         tab_bar_background: Some(rgba(0xe9e6e4ff).into()),
@@ -4585,7 +4652,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x97ab54ff).into()),
                         deleted: Some(rgba(0xf22e41ff).into()),
+                        error: Some(rgba(0xf22e41ff).into()),
                         modified: Some(rgba(0xc3841aff).into()),
+                        success: Some(rgba(0x1b1918ff).into()),
+                        warning: Some(rgba(0xc3841aff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -4894,7 +4964,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0xa8a48eff).into()),
                         border_variant: Some(rgba(0xa8a48eff).into()),
                         background: Some(rgba(0xcecab4ff).into()),
-                        text: Some(rgba(0x292824ff).into()),
+                        panel_background: Some(rgba(0xeeebd7ff).into()),
+                        text: Some(rgba(0x706d5fff).into()),
+                        status_bar_background: Some(rgba(0xcecab4ff).into()),
                         title_bar_background: Some(rgba(0xcecab4ff).into()),
                         toolbar_background: Some(rgba(0xfefbecff).into()),
                         tab_bar_background: Some(rgba(0xeeebd7ff).into()),
@@ -4933,7 +5005,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x83bd62ff).into()),
                         deleted: Some(rgba(0xd73838ff).into()),
+                        error: Some(rgba(0xd73838ff).into()),
                         modified: Some(rgba(0xae9515ff).into()),
+                        success: Some(rgba(0x20201dff).into()),
+                        warning: Some(rgba(0xae9515ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -5242,7 +5317,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x8e8989ff).into()),
                         border_variant: Some(rgba(0x8e8989ff).into()),
                         background: Some(rgba(0xc1bbbbff).into()),
-                        text: Some(rgba(0x292424ff).into()),
+                        panel_background: Some(rgba(0xebe3e3ff).into()),
+                        text: Some(rgba(0x5a5252ff).into()),
+                        status_bar_background: Some(rgba(0xc1bbbbff).into()),
                         title_bar_background: Some(rgba(0xc1bbbbff).into()),
                         toolbar_background: Some(rgba(0xf4ececff).into()),
                         tab_bar_background: Some(rgba(0xebe3e3ff).into()),
@@ -5281,7 +5358,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x70a2a1ff).into()),
                         deleted: Some(rgba(0xca4a4aff).into()),
+                        error: Some(rgba(0xca4a4aff).into()),
                         modified: Some(rgba(0xa06e3cff).into()),
+                        success: Some(rgba(0x1b1818ff).into()),
+                        warning: Some(rgba(0xa06e3cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -5590,7 +5670,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x8ea88eff).into()),
                         border_variant: Some(rgba(0x8ea88eff).into()),
                         background: Some(rgba(0xb4ceb4ff).into()),
-                        text: Some(rgba(0x242924ff).into()),
+                        panel_background: Some(rgba(0xdaeedaff).into()),
+                        text: Some(rgba(0x5f705fff).into()),
+                        status_bar_background: Some(rgba(0xb4ceb4ff).into()),
                         title_bar_background: Some(rgba(0xb4ceb4ff).into()),
                         toolbar_background: Some(rgba(0xf4fbf4ff).into()),
                         tab_bar_background: Some(rgba(0xdaeedaff).into()),
@@ -5629,7 +5711,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x61b656ff).into()),
                         deleted: Some(rgba(0xe61c3dff).into()),
+                        error: Some(rgba(0xe61c3dff).into()),
                         modified: Some(rgba(0x98981dff).into()),
+                        success: Some(rgba(0x131513ff).into()),
+                        warning: Some(rgba(0x98981dff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -5938,7 +6023,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x505e55ff).into()),
                         border_variant: Some(rgba(0x505e55ff).into()),
                         background: Some(rgba(0x353f39ff).into()),
-                        text: Some(rgba(0xdfe7e2ff).into()),
+                        panel_background: Some(rgba(0x1f2621ff).into()),
+                        text: Some(rgba(0x859188ff).into()),
+                        status_bar_background: Some(rgba(0x353f39ff).into()),
                         title_bar_background: Some(rgba(0x353f39ff).into()),
                         toolbar_background: Some(rgba(0x171c19ff).into()),
                         tab_bar_background: Some(rgba(0x1f2621ff).into()),
@@ -5977,7 +6064,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x489963ff).into()),
                         deleted: Some(rgba(0x8b4d2fff).into()),
+                        error: Some(rgba(0xb16139ff).into()),
                         modified: Some(rgba(0xa07e3bff).into()),
+                        success: Some(rgba(0xecf4eeff).into()),
+                        warning: Some(rgba(0xa07e3bff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -6286,7 +6376,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0xad9dadff).into()),
                         border_variant: Some(rgba(0xad9dadff).into()),
                         background: Some(rgba(0xc6b8c6ff).into()),
-                        text: Some(rgba(0x292329ff).into()),
+                        panel_background: Some(rgba(0xe1d6e1ff).into()),
+                        text: Some(rgba(0x6b5e6bff).into()),
+                        status_bar_background: Some(rgba(0xc6b8c6ff).into()),
                         title_bar_background: Some(rgba(0xc6b8c6ff).into()),
                         toolbar_background: Some(rgba(0xf7f3f7ff).into()),
                         tab_bar_background: Some(rgba(0xe1d6e1ff).into()),
@@ -6325,7 +6417,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xa8a161ff).into()),
                         deleted: Some(rgba(0xca412cff).into()),
+                        error: Some(rgba(0xca412cff).into()),
                         modified: Some(rgba(0xbb8a36ff).into()),
+                        success: Some(rgba(0x1b181bff).into()),
+                        warning: Some(rgba(0xbb8a36ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -6634,7 +6729,9 @@ pub fn atelier() -> UserThemeFamily {
                         border: Some(rgba(0x80a4b6ff).into()),
                         border_variant: Some(rgba(0x80a4b6ff).into()),
                         background: Some(rgba(0xa6cadcff).into()),
-                        text: Some(rgba(0x1f292eff).into()),
+                        panel_background: Some(rgba(0xcdeaf9ff).into()),
+                        text: Some(rgba(0x526f7dff).into()),
+                        status_bar_background: Some(rgba(0xa6cadcff).into()),
                         title_bar_background: Some(rgba(0xa6cadcff).into()),
                         toolbar_background: Some(rgba(0xebf8ffff).into()),
                         tab_bar_background: Some(rgba(0xcdeaf9ff).into()),
@@ -6673,7 +6770,10 @@ pub fn atelier() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x78a361ff).into()),
                         deleted: Some(rgba(0xd22f72ff).into()),
+                        error: Some(rgba(0xd22f72ff).into()),
                         modified: Some(rgba(0x8a8a11ff).into()),
+                        success: Some(rgba(0x161b1dff).into()),
+                        warning: Some(rgba(0x8a8a11ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

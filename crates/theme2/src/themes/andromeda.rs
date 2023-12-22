@@ -21,7 +21,9 @@ pub fn andromeda() -> UserThemeFamily {
                     border: Some(rgba(0x2b2f39ff).into()),
                     border_variant: Some(rgba(0x2b2f39ff).into()),
                     background: Some(rgba(0x262a33ff).into()),
-                    text: Some(rgba(0xf7f7f8ff).into()),
+                    panel_background: Some(rgba(0x21242bff).into()),
+                    text: Some(rgba(0xaca8aeff).into()),
+                    status_bar_background: Some(rgba(0x262a33ff).into()),
                     title_bar_background: Some(rgba(0x262a33ff).into()),
                     toolbar_background: Some(rgba(0x1e2025ff).into()),
                     tab_bar_background: Some(rgba(0x21242bff).into()),
@@ -60,7 +62,10 @@ pub fn andromeda() -> UserThemeFamily {
                 status: StatusColorsRefinement {
                     created: Some(rgba(0x96df72ff).into()),
                     deleted: Some(rgba(0xcd1d5aff).into()),
+                    error: Some(rgba(0xf82872ff).into()),
                     modified: Some(rgba(0xfee56dff).into()),
+                    success: Some(rgba(0xf7f7f8ff).into()),
+                    warning: Some(rgba(0xfee56dff).into()),
                     ..Default::default()
                 },
                 syntax: Some(UserSyntaxTheme {

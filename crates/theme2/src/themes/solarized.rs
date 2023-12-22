@@ -22,7 +22,9 @@ pub fn solarized() -> UserThemeFamily {
                         border: Some(rgba(0x9faaa8ff).into()),
                         border_variant: Some(rgba(0x9faaa8ff).into()),
                         background: Some(rgba(0xcfd0c4ff).into()),
-                        text: Some(rgba(0x002b36ff).into()),
+                        panel_background: Some(rgba(0xf3eddaff).into()),
+                        text: Some(rgba(0x34555eff).into()),
+                        status_bar_background: Some(rgba(0xcfd0c4ff).into()),
                         title_bar_background: Some(rgba(0xcfd0c4ff).into()),
                         toolbar_background: Some(rgba(0xfdf6e3ff).into()),
                         tab_bar_background: Some(rgba(0xf3eddaff).into()),
@@ -61,7 +63,10 @@ pub fn solarized() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xa0ad46ff).into()),
                         deleted: Some(rgba(0xdc3330ff).into()),
+                        error: Some(rgba(0xdc3330ff).into()),
                         modified: Some(rgba(0xb58904ff).into()),
+                        success: Some(rgba(0x002b36ff).into()),
+                        warning: Some(rgba(0xb58904ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -349,7 +354,9 @@ pub fn solarized() -> UserThemeFamily {
                         border: Some(rgba(0x2b4f58ff).into()),
                         border_variant: Some(rgba(0x2b4f58ff).into()),
                         background: Some(rgba(0x083743ff).into()),
-                        text: Some(rgba(0xfdf6e3ff).into()),
+                        panel_background: Some(rgba(0x04313cff).into()),
+                        text: Some(rgba(0x93a1a1ff).into()),
+                        status_bar_background: Some(rgba(0x083743ff).into()),
                         title_bar_background: Some(rgba(0x083743ff).into()),
                         toolbar_background: Some(rgba(0x002b36ff).into()),
                         tab_bar_background: Some(rgba(0x04313cff).into()),
@@ -388,7 +395,10 @@ pub fn solarized() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x859904ff).into()),
                         deleted: Some(rgba(0xb52727ff).into()),
+                        error: Some(rgba(0xdc3330ff).into()),
                         modified: Some(rgba(0xb58903ff).into()),
+                        success: Some(rgba(0xfdf6e3ff).into()),
+                        warning: Some(rgba(0xb58903ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

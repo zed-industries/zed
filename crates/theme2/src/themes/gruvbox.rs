@@ -22,7 +22,9 @@ pub fn gruvbox() -> UserThemeFamily {
                         border: Some(rgba(0xc9b99aff).into()),
                         border_variant: Some(rgba(0xc9b99aff).into()),
                         background: Some(rgba(0xd9c8a4ff).into()),
-                        text: Some(rgba(0x282828ff).into()),
+                        panel_background: Some(rgba(0xecddb5ff).into()),
+                        text: Some(rgba(0x5f5650ff).into()),
+                        status_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         title_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         toolbar_background: Some(rgba(0xf9f5d7ff).into()),
                         tab_bar_background: Some(rgba(0xecddb5ff).into()),
@@ -61,7 +63,10 @@ pub fn gruvbox() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x958e43ff).into()),
                         deleted: Some(rgba(0x9d0408ff).into()),
+                        error: Some(rgba(0x9d0408ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
+                        success: Some(rgba(0x282828ff).into()),
+                        warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -356,7 +361,9 @@ pub fn gruvbox() -> UserThemeFamily {
                         border: Some(rgba(0x5b534dff).into()),
                         border_variant: Some(rgba(0x5b534dff).into()),
                         background: Some(rgba(0x4c4642ff).into()),
-                        text: Some(rgba(0xebdbb2ff).into()),
+                        panel_background: Some(rgba(0x3b3735ff).into()),
+                        text: Some(rgba(0xc5b597ff).into()),
+                        status_bar_background: Some(rgba(0x4c4642ff).into()),
                         title_bar_background: Some(rgba(0x4c4642ff).into()),
                         toolbar_background: Some(rgba(0x32302fff).into()),
                         tab_bar_background: Some(rgba(0x3b3735ff).into()),
@@ -395,7 +402,10 @@ pub fn gruvbox() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xb8bb27ff).into()),
                         deleted: Some(rgba(0xd0382bff).into()),
+                        error: Some(rgba(0xfb4a35ff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
+                        success: Some(rgba(0xfbf1c7ff).into()),
+                        warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -690,7 +700,9 @@ pub fn gruvbox() -> UserThemeFamily {
                         border: Some(rgba(0xc9b99aff).into()),
                         border_variant: Some(rgba(0xc9b99aff).into()),
                         background: Some(rgba(0xd9c8a4ff).into()),
-                        text: Some(rgba(0x282828ff).into()),
+                        panel_background: Some(rgba(0xecddb4ff).into()),
+                        text: Some(rgba(0x5f5650ff).into()),
+                        status_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         title_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         toolbar_background: Some(rgba(0xfbf1c7ff).into()),
                         tab_bar_background: Some(rgba(0xecddb4ff).into()),
@@ -729,7 +741,10 @@ pub fn gruvbox() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x958e43ff).into()),
                         deleted: Some(rgba(0x9d0408ff).into()),
+                        error: Some(rgba(0x9d0408ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
+                        success: Some(rgba(0x282828ff).into()),
+                        warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1024,7 +1039,9 @@ pub fn gruvbox() -> UserThemeFamily {
                         border: Some(rgba(0x5b534dff).into()),
                         border_variant: Some(rgba(0x5b534dff).into()),
                         background: Some(rgba(0x4c4642ff).into()),
-                        text: Some(rgba(0xebdbb2ff).into()),
+                        panel_background: Some(rgba(0x3a3735ff).into()),
+                        text: Some(rgba(0xc5b597ff).into()),
+                        status_bar_background: Some(rgba(0x4c4642ff).into()),
                         title_bar_background: Some(rgba(0x4c4642ff).into()),
                         toolbar_background: Some(rgba(0x282828ff).into()),
                         tab_bar_background: Some(rgba(0x3a3735ff).into()),
@@ -1063,7 +1080,10 @@ pub fn gruvbox() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xb8bb27ff).into()),
                         deleted: Some(rgba(0xd0382bff).into()),
+                        error: Some(rgba(0xfb4a35ff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
+                        success: Some(rgba(0xfbf1c7ff).into()),
+                        warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1358,7 +1378,9 @@ pub fn gruvbox() -> UserThemeFamily {
                         border: Some(rgba(0xc9b99aff).into()),
                         border_variant: Some(rgba(0xc9b99aff).into()),
                         background: Some(rgba(0xd9c8a4ff).into()),
-                        text: Some(rgba(0x282828ff).into()),
+                        panel_background: Some(rgba(0xecdcb3ff).into()),
+                        text: Some(rgba(0x5f5650ff).into()),
+                        status_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         title_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         toolbar_background: Some(rgba(0xf2e5bcff).into()),
                         tab_bar_background: Some(rgba(0xecdcb3ff).into()),
@@ -1397,7 +1419,10 @@ pub fn gruvbox() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x958e43ff).into()),
                         deleted: Some(rgba(0x9d0408ff).into()),
+                        error: Some(rgba(0x9d0408ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
+                        success: Some(rgba(0x282828ff).into()),
+                        warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1692,7 +1717,9 @@ pub fn gruvbox() -> UserThemeFamily {
                         border: Some(rgba(0x5b534dff).into()),
                         border_variant: Some(rgba(0x5b534dff).into()),
                         background: Some(rgba(0x4c4642ff).into()),
-                        text: Some(rgba(0xebdbb2ff).into()),
+                        panel_background: Some(rgba(0x393634ff).into()),
+                        text: Some(rgba(0xc5b597ff).into()),
+                        status_bar_background: Some(rgba(0x4c4642ff).into()),
                         title_bar_background: Some(rgba(0x4c4642ff).into()),
                         toolbar_background: Some(rgba(0x1d2021ff).into()),
                         tab_bar_background: Some(rgba(0x393634ff).into()),
@@ -1731,7 +1758,10 @@ pub fn gruvbox() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xb8bb27ff).into()),
                         deleted: Some(rgba(0xd0382bff).into()),
+                        error: Some(rgba(0xfb4a35ff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
+                        success: Some(rgba(0xfbf1c7ff).into()),
+                        warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

@@ -22,7 +22,9 @@ pub fn one() -> UserThemeFamily {
                         border: Some(rgba(0xc9c9caff).into()),
                         border_variant: Some(rgba(0xc9c9caff).into()),
                         background: Some(rgba(0xdcdcddff).into()),
-                        text: Some(rgba(0x383a41ff).into()),
+                        panel_background: Some(rgba(0xebebecff).into()),
+                        text: Some(rgba(0x7f8188ff).into()),
+                        status_bar_background: Some(rgba(0xdcdcddff).into()),
                         title_bar_background: Some(rgba(0xdcdcddff).into()),
                         toolbar_background: Some(rgba(0xfafafaff).into()),
                         tab_bar_background: Some(rgba(0xebebecff).into()),
@@ -61,7 +63,10 @@ pub fn one() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x84b278ff).into()),
                         deleted: Some(rgba(0xd36151ff).into()),
+                        error: Some(rgba(0xd36151ff).into()),
                         modified: Some(rgba(0xdec184ff).into()),
+                        success: Some(rgba(0x383a41ff).into()),
+                        warning: Some(rgba(0xdec184ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -356,7 +361,9 @@ pub fn one() -> UserThemeFamily {
                         border: Some(rgba(0x464b57ff).into()),
                         border_variant: Some(rgba(0x464b57ff).into()),
                         background: Some(rgba(0x3b414dff).into()),
-                        text: Some(rgba(0xacb2beff).into()),
+                        panel_background: Some(rgba(0x2f343eff).into()),
+                        text: Some(rgba(0x838994ff).into()),
+                        status_bar_background: Some(rgba(0x3b414dff).into()),
                         title_bar_background: Some(rgba(0x3b414dff).into()),
                         toolbar_background: Some(rgba(0x282c34ff).into()),
                         tab_bar_background: Some(rgba(0x2f343eff).into()),
@@ -395,7 +402,10 @@ pub fn one() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xa1c181ff).into()),
                         deleted: Some(rgba(0xa45a5eff).into()),
+                        error: Some(rgba(0xd07277ff).into()),
                         modified: Some(rgba(0xdec184ff).into()),
+                        success: Some(rgba(0xc8ccd4ff).into()),
+                        warning: Some(rgba(0xdec184ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

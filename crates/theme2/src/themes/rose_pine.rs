@@ -22,7 +22,9 @@ pub fn rose_pine() -> UserThemeFamily {
                         border: Some(rgba(0xdcd6d5ff).into()),
                         border_variant: Some(rgba(0xdcd6d5ff).into()),
                         background: Some(rgba(0xdcd8d8ff).into()),
-                        text: Some(rgba(0x575279ff).into()),
+                        panel_background: Some(rgba(0xfef9f2ff).into()),
+                        text: Some(rgba(0x706c8cff).into()),
+                        status_bar_background: Some(rgba(0xdcd8d8ff).into()),
                         title_bar_background: Some(rgba(0xdcd8d8ff).into()),
                         toolbar_background: Some(rgba(0xfaf4edff).into()),
                         tab_bar_background: Some(rgba(0xfef9f2ff).into()),
@@ -61,7 +63,10 @@ pub fn rose_pine() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x6bbca3ff).into()),
                         deleted: Some(rgba(0xb4647aff).into()),
+                        error: Some(rgba(0xb4647aff).into()),
                         modified: Some(rgba(0xe99d35ff).into()),
+                        success: Some(rgba(0x575279ff).into()),
+                        warning: Some(rgba(0xe99d35ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -363,7 +368,9 @@ pub fn rose_pine() -> UserThemeFamily {
                         border: Some(rgba(0x504c68ff).into()),
                         border_variant: Some(rgba(0x504c68ff).into()),
                         background: Some(rgba(0x38354eff).into()),
-                        text: Some(rgba(0xe0def4ff).into()),
+                        panel_background: Some(rgba(0x28253cff).into()),
+                        text: Some(rgba(0x85819eff).into()),
+                        status_bar_background: Some(rgba(0x38354eff).into()),
                         title_bar_background: Some(rgba(0x38354eff).into()),
                         toolbar_background: Some(rgba(0x232136ff).into()),
                         tab_bar_background: Some(rgba(0x28253cff).into()),
@@ -402,7 +409,10 @@ pub fn rose_pine() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x5dc2a3ff).into()),
                         deleted: Some(rgba(0xbe5773ff).into()),
+                        error: Some(rgba(0xea6f92ff).into()),
                         modified: Some(rgba(0xf5c177ff).into()),
+                        success: Some(rgba(0xe0def4ff).into()),
+                        warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -704,7 +714,9 @@ pub fn rose_pine() -> UserThemeFamily {
                         border: Some(rgba(0x423f55ff).into()),
                         border_variant: Some(rgba(0x423f55ff).into()),
                         background: Some(rgba(0x292739ff).into()),
-                        text: Some(rgba(0xe0def4ff).into()),
+                        panel_background: Some(rgba(0x1d1b2aff).into()),
+                        text: Some(rgba(0x75718eff).into()),
+                        status_bar_background: Some(rgba(0x292739ff).into()),
                         title_bar_background: Some(rgba(0x292739ff).into()),
                         toolbar_background: Some(rgba(0x191724ff).into()),
                         tab_bar_background: Some(rgba(0x1d1b2aff).into()),
@@ -743,7 +755,10 @@ pub fn rose_pine() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0x5dc2a3ff).into()),
                         deleted: Some(rgba(0xbe5773ff).into()),
+                        error: Some(rgba(0xea6f92ff).into()),
                         modified: Some(rgba(0xf5c177ff).into()),
+                        success: Some(rgba(0xe0def4ff).into()),
+                        warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

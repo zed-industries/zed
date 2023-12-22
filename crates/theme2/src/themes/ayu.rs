@@ -22,7 +22,9 @@ pub fn ayu() -> UserThemeFamily {
                         border: Some(rgba(0x3f4043ff).into()),
                         border_variant: Some(rgba(0x3f4043ff).into()),
                         background: Some(rgba(0x313337ff).into()),
-                        text: Some(rgba(0xbfbdb6ff).into()),
+                        panel_background: Some(rgba(0x1f2127ff).into()),
+                        text: Some(rgba(0x8a8986ff).into()),
+                        status_bar_background: Some(rgba(0x313337ff).into()),
                         title_bar_background: Some(rgba(0x313337ff).into()),
                         toolbar_background: Some(rgba(0x0d1017ff).into()),
                         tab_bar_background: Some(rgba(0x1f2127ff).into()),
@@ -61,7 +63,10 @@ pub fn ayu() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xaad84cff).into()),
                         deleted: Some(rgba(0xc3595fff).into()),
+                        error: Some(rgba(0xef7178ff).into()),
                         modified: Some(rgba(0xfeb454ff).into()),
+                        success: Some(rgba(0xbfbdb6ff).into()),
+                        warning: Some(rgba(0xfeb454ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -349,7 +354,9 @@ pub fn ayu() -> UserThemeFamily {
                         border: Some(rgba(0xcfd1d2ff).into()),
                         border_variant: Some(rgba(0xcfd1d2ff).into()),
                         background: Some(rgba(0xdcdddeff).into()),
-                        text: Some(rgba(0x5c6166ff).into()),
+                        panel_background: Some(rgba(0xececedff).into()),
+                        text: Some(rgba(0x8c8f93ff).into()),
+                        status_bar_background: Some(rgba(0xdcdddeff).into()),
                         title_bar_background: Some(rgba(0xdcdddeff).into()),
                         toolbar_background: Some(rgba(0xfcfcfcff).into()),
                         tab_bar_background: Some(rgba(0xececedff).into()),
@@ -388,7 +395,10 @@ pub fn ayu() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xa1c24bff).into()),
                         deleted: Some(rgba(0xef7271ff).into()),
+                        error: Some(rgba(0xef7271ff).into()),
                         modified: Some(rgba(0xf1ae4aff).into()),
+                        success: Some(rgba(0x5c6166ff).into()),
+                        warning: Some(rgba(0xf1ae4aff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -676,7 +686,9 @@ pub fn ayu() -> UserThemeFamily {
                         border: Some(rgba(0x53565dff).into()),
                         border_variant: Some(rgba(0x53565dff).into()),
                         background: Some(rgba(0x464a52ff).into()),
-                        text: Some(rgba(0xcccac2ff).into()),
+                        panel_background: Some(rgba(0x353944ff).into()),
+                        text: Some(rgba(0x9a9a98ff).into()),
+                        status_bar_background: Some(rgba(0x464a52ff).into()),
                         title_bar_background: Some(rgba(0x464a52ff).into()),
                         toolbar_background: Some(rgba(0x242936ff).into()),
                         tab_bar_background: Some(rgba(0x353944ff).into()),
@@ -715,7 +727,10 @@ pub fn ayu() -> UserThemeFamily {
                     status: StatusColorsRefinement {
                         created: Some(rgba(0xd5fe80ff).into()),
                         deleted: Some(rgba(0xc46a60ff).into()),
+                        error: Some(rgba(0xf18779ff).into()),
                         modified: Some(rgba(0xfed073ff).into()),
+                        success: Some(rgba(0xcccac2ff).into()),
+                        warning: Some(rgba(0xfed073ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

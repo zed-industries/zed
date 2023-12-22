@@ -74,6 +74,27 @@ impl Zed1ThemeConverter {
             created: convert(diff_style.inserted),
             modified: convert(diff_style.modified),
             deleted: convert(diff_style.deleted),
+            success: convert(
+                self.theme
+                    .workspace
+                    .status_bar
+                    .diagnostic_summary
+                    .icon_color_ok,
+            ),
+            warning: convert(
+                self.theme
+                    .workspace
+                    .status_bar
+                    .diagnostic_summary
+                    .icon_color_warning,
+            ),
+            error: convert(
+                self.theme
+                    .workspace
+                    .status_bar
+                    .diagnostic_summary
+                    .icon_color_error,
+            ),
             ..Default::default()
         })
     }
@@ -107,8 +128,21 @@ impl Zed1ThemeConverter {
                 .status_bar
                 .container
                 .background_color
+                .map(zed1_color_to_hsla)
+                .or_else(|| {
+                    self.theme
+                        .titlebar
+                        .container
+                        .background_color
+                        .map(zed1_color_to_hsla)
+                }),
+            panel_background: self
+                .theme
+                .project_panel
+                .container
+                .background_color
                 .map(zed1_color_to_hsla),
-            text: convert(self.theme.editor.text_color),
+            text: convert(self.theme.project_panel.entry.default_style().text.color),
             tab_bar_background: tab_bar.container.background_color.map(zed1_color_to_hsla),
             tab_active_background: active_tab
                 .container

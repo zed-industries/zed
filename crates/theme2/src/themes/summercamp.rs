@@ -21,7 +21,9 @@ pub fn summercamp() -> UserThemeFamily {
                     border: Some(rgba(0x312d21ff).into()),
                     border_variant: Some(rgba(0x312d21ff).into()),
                     background: Some(rgba(0x2a261cff).into()),
-                    text: Some(rgba(0xf8f5deff).into()),
+                    panel_background: Some(rgba(0x231f16ff).into()),
+                    text: Some(rgba(0x736e55ff).into()),
+                    status_bar_background: Some(rgba(0x2a261cff).into()),
                     title_bar_background: Some(rgba(0x2a261cff).into()),
                     toolbar_background: Some(rgba(0x1c1810ff).into()),
                     tab_bar_background: Some(rgba(0x231f16ff).into()),
@@ -60,7 +62,10 @@ pub fn summercamp() -> UserThemeFamily {
                 status: StatusColorsRefinement {
                     created: Some(rgba(0x5dea5aff).into()),
                     deleted: Some(rgba(0xb93f36ff).into()),
+                    error: Some(rgba(0xe35142ff).into()),
                     modified: Some(rgba(0xf1fe29ff).into()),
+                    success: Some(rgba(0xf8f5deff).into()),
+                    warning: Some(rgba(0xf1fe29ff).into()),
                     ..Default::default()
                 },
                 syntax: Some(UserSyntaxTheme {
