@@ -252,6 +252,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 el.child(
                     v_stack()
                         .flex_grow()
+                        .py_2()
                         .child(
                             uniform_list(
                                 cx.view().clone(),
