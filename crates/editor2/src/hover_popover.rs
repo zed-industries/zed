@@ -6,12 +6,12 @@ use crate::{
 };
 use futures::FutureExt;
 use gpui::{
-    actions, div, px, AnyElement, AppContext, CursorStyle, InteractiveElement, IntoElement, Model,
+    actions, div, px, AnyElement, CursorStyle, InteractiveElement, IntoElement, Model,
     MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
     Task, ViewContext, WeakView,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
-use lsp::DiagnosticSeverity;
+
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};

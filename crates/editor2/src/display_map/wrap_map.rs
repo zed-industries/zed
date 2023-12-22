@@ -197,7 +197,8 @@ impl WrapMap {
                             this.background_task = None;
                             this.flush_edits(cx);
                             cx.notify();
-                        });
+                        })
+                        .ok();
                     }));
                 }
             }
@@ -277,7 +278,8 @@ impl WrapMap {
                                 this.background_task = None;
                                 this.flush_edits(cx);
                                 cx.notify();
-                            });
+                            })
+                            .ok();
                         }));
                     }
                 }

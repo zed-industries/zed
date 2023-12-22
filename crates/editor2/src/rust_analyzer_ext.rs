@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use gpui::{Context, Model, View, ViewContext, VisualContext, WindowContext};
+use gpui::{Context, View, ViewContext, VisualContext, WindowContext};
 use language::Language;
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
@@ -91,7 +91,7 @@ pub fn expand_macro_recursively(
             cx,
         )
     });
-    cx.spawn(|editor, mut cx| async move {
+    cx.spawn(|_editor, mut cx| async move {
         let macro_expansion = expand_macro_task.await.context("expand macro")?;
         if macro_expansion.is_empty() {
             log::info!("Empty macro expansion for position {position:?}");

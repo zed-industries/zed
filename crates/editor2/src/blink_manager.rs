@@ -67,7 +67,8 @@ impl BlinkManager {
                 cx.spawn(|this, mut cx| async move {
                     Timer::after(interval).await;
                     if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
+                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
+                            .ok();
                     }
                 })
                 .detach();

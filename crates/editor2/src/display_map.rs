@@ -13,8 +13,7 @@ pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
-    Font, FontId, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, ShapedLine,
-    TextRun, UnderlineStyle, WrappedLine,
+    Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
 use inlay_map::InlayMap;
 use language::{
@@ -24,7 +23,7 @@ use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use theme::{StatusColors, SyntaxTheme, Theme};
+
 use wrap_map::WrapMap;
 
 pub use block_map::{

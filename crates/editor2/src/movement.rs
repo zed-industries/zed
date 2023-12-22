@@ -2,7 +2,7 @@ use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
 use gpui::{px, Pixels, TextSystem};
 use language::Point;
-use serde::de::IntoDeserializer;
+
 use std::{ops::Range, sync::Arc};
 
 #[derive(Debug, PartialEq)]

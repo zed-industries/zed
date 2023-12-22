@@ -61,7 +61,7 @@ impl Editor {
             display_map.max_point().row() as f32
         };
         if scroll_position.y > max_scroll_top {
-            scroll_position.y = (max_scroll_top);
+            scroll_position.y = max_scroll_top;
             self.set_scroll_position(scroll_position, cx);
         }
 
@@ -143,24 +143,24 @@ impl Editor {
                 let needs_scroll_down = target_bottom >= end_row;
 
                 if needs_scroll_up && !needs_scroll_down {
-                    scroll_position.y = (target_top);
+                    scroll_position.y = target_top;
                     self.set_scroll_position_internal(scroll_position, local, true, cx);
                 }
                 if !needs_scroll_up && needs_scroll_down {
-                    scroll_position.y = (target_bottom - visible_lines);
+                    scroll_position.y = target_bottom - visible_lines;
                     self.set_scroll_position_internal(scroll_position, local, true, cx);
                 }
             }
             AutoscrollStrategy::Center => {
-                scroll_position.y = ((target_top - margin).max(0.0));
+                scroll_position.y = (target_top - margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {
-                scroll_position.y = ((target_top).max(0.0));
+                scroll_position.y = (target_top).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Bottom => {
-                scroll_position.y = ((target_bottom - visible_lines).max(0.0));
+                scroll_position.y = (target_bottom - visible_lines).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
         }

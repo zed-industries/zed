@@ -36,7 +36,7 @@ pub fn deploy_context_menu(
         s.set_pending_display_range(point..point, SelectMode::Character);
     });
 
-    let context_menu = ui::ContextMenu::build(cx, |menu, cx| {
+    let context_menu = ui::ContextMenu::build(cx, |menu, _cx| {
         menu.action("Rename Symbol", Box::new(Rename))
             .action("Go to Definition", Box::new(GoToDefinition))
             .action("Go to Type Definition", Box::new(GoToTypeDefinition))
@@ -53,7 +53,7 @@ pub fn deploy_context_menu(
     let context_menu_focus = context_menu.focus_handle(cx);
     cx.focus(&context_menu_focus);
 
-    let _subscription = cx.subscribe(&context_menu, move |this, _, event: &DismissEvent, cx| {
+    let _subscription = cx.subscribe(&context_menu, move |this, _, _event: &DismissEvent, cx| {
         this.mouse_context_menu.take();
         if context_menu_focus.contains_focused(cx) {
             this.focus(cx);

@@ -9,7 +9,7 @@ use crate::{
     Anchor, DisplayPoint, Editor, EditorEvent, EditorMode, InlayHintRefreshReason,
     MultiBufferSnapshot, ToPoint,
 };
-use gpui::{point, px, AppContext, Entity, Pixels, Styled, Task, ViewContext};
+use gpui::{point, px, AppContext, Entity, Pixels, Task, ViewContext};
 use language::{Bias, Point};
 use std::{
     cmp::Ordering,
