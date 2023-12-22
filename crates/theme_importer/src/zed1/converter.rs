@@ -120,6 +120,12 @@ impl Zed1ThemeConverter {
             text_muted: convert(active_tab.description.text.color),
             text_accent: convert(status_bar.panel_buttons.button.active_state().icon_color),
             text_disabled: convert(status_bar.panel_buttons.button.disabled_style().icon_color),
+            text_placeholder: picker
+                .empty_input_editor
+                .placeholder_text
+                .as_ref()
+                .map(|placeholder_text| placeholder_text.color)
+                .map(zed1_color_to_hsla),
             element_hover: picker
                 .item
                 .hovered

@@ -27,6 +27,7 @@ pub fn summercamp() -> UserThemeFamily {
                     element_selected: Some(rgba(0x39342780).into()),
                     text: Some(rgba(0x736e55ff).into()),
                     text_muted: Some(rgba(0x3d382aff).into()),
+                    text_placeholder: Some(rgba(0x3d382aff).into()),
                     text_disabled: Some(rgba(0xf8f5deff).into()),
                     text_accent: Some(rgba(0x499befff).into()),
                     status_bar_background: Some(rgba(0x2a261cff).into()),

@@ -27,6 +27,7 @@ pub fn andromeda() -> UserThemeFamily {
                     element_selected: Some(rgba(0x383b4580).into()),
                     text: Some(rgba(0xaca8aeff).into()),
                     text_muted: Some(rgba(0x474a53ff).into()),
+                    text_placeholder: Some(rgba(0x474a53ff).into()),
                     text_disabled: Some(rgba(0xf7f7f8ff).into()),
                     text_accent: Some(rgba(0x11a793ff).into()),
                     status_bar_background: Some(rgba(0x262a33ff).into()),
