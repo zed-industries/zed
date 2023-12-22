@@ -169,27 +169,31 @@ impl Render for CollabTitlebarItem {
                     .pr_1()
                     .when_some(room, |this, room| {
                         let room = room.read(cx);
-                        let is_shared = self.project.read(cx).is_shared();
+                        let project = self.project.read(cx);
+                        let is_local = project.is_local();
+                        let is_shared = is_local && project.is_shared();
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
 
-                        this.child(
-                            Button::new(
-                                "toggle_sharing",
-                                if is_shared { "Unshare" } else { "Share" },
+                        this.when(is_local, |this| {
+                            this.child(
+                                Button::new(
+                                    "toggle_sharing",
+                                    if is_shared { "Unshare" } else { "Share" },
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .on_click(cx.listener(
+                                    move |this, _, cx| {
+                                        if is_shared {
+                                            this.unshare_project(&Default::default(), cx);
+                                        } else {
+                                            this.share_project(&Default::default(), cx);
+                                        }
+                                    },
+                                )),
                             )
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(
-                                move |this, _, cx| {
-                                    if is_shared {
-                                        this.unshare_project(&Default::default(), cx);
-                                    } else {
-                                        this.share_project(&Default::default(), cx);
-                                    }
-                                },
-                            )),
-                        )
+                        })
                         .child(
                             IconButton::new("leave-call", ui::Icon::Exit)
                                 .style(ButtonStyle::Subtle)
