@@ -2,6 +2,7 @@ mod color;
 mod theme_printer;
 mod util;
 mod vscode;
+mod zed1;
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -174,6 +175,18 @@ fn main() -> Result<()> {
         };
 
         theme_families.push(theme_family);
+    }
+
+    let zed1_themes_path = PathBuf::from_str("assets/themes")?;
+
+    for entry in fs::read_dir(&zed1_themes_path)? {
+        let entry = entry?;
+
+        if entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        dbg!(entry);
     }
 
     let themes_output_path = PathBuf::from_str(OUT_PATH)?;

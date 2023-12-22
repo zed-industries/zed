@@ -9834,6 +9834,7 @@ dependencies = [
  "anyhow",
  "clap 4.4.4",
  "convert_case 0.6.0",
+ "gpui",
  "gpui2",
  "indexmap 1.9.3",
  "json_comments",
@@ -9843,6 +9844,7 @@ dependencies = [
  "serde",
  "simplelog",
  "strum",
+ "theme",
  "theme2",
  "uuid 1.4.1",
 ]
