@@ -2120,6 +2120,7 @@ impl CollabPanel {
                 ListItem::new(channel_id as usize)
                     // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
+                    .indent_step_size(px(20.))
                     .selected(is_selected || is_active)
                     .toggle(disclosed)
                     .on_toggle(
@@ -2190,6 +2191,7 @@ impl CollabPanel {
             .inset(false)
             // Add one level of depth for the disclosure arrow.
             .indent_level(depth + 1)
+            .indent_step_size(px(20.))
             .start_slot(
                 IconElement::new(Icon::Hash)
                     .size(IconSize::Small)
