@@ -577,7 +577,7 @@ pub fn noctis() -> UserThemeFamily {
                 },
             },
             UserTheme {
-                name: "Noctus Hibernus".into(),
+                name: "Noctis Hibernus".into(),
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
