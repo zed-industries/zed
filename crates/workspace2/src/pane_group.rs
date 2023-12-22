@@ -242,6 +242,7 @@ impl Member {
 
                 div()
                     .relative()
+                    .flex_1()
                     .size_full()
                     .child(pane.clone())
                     .when_some(leader_border, |this, color| {
@@ -778,6 +779,9 @@ mod element {
             cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::State) {
             let mut style = Style::default();
+            style.flex_grow = 1.;
+            style.flex_shrink = 1.;
+            style.flex_basis = relative(0.).into();
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
             let layout_id = cx.request_layout(&style, None);
