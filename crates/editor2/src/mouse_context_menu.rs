@@ -97,7 +97,7 @@ mod tests {
                 do_wˇork();
             }
         "});
-        cx.editor(|editor, app| assert!(editor.mouse_context_menu.is_none()));
+        cx.editor(|editor, _app| assert!(editor.mouse_context_menu.is_none()));
         cx.update_editor(|editor, cx| deploy_context_menu(editor, Default::default(), point, cx));
 
         cx.assert_editor_state(indoc! {"
@@ -105,6 +105,6 @@ mod tests {
                 do_wˇork();
             }
         "});
-        cx.editor(|editor, app| assert!(editor.mouse_context_menu.is_some()));
+        cx.editor(|editor, _app| assert!(editor.mouse_context_menu.is_some()));
     }
 }

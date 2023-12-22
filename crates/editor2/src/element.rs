@@ -3254,7 +3254,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
-    use gpui::{EmptyView, TestAppContext};
+    use gpui::TestAppContext;
     use language::language_settings;
     use log::info;
     use std::{num::NonZeroU32, sync::Arc};
@@ -3435,7 +3435,7 @@ mod tests {
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         let mut element = EditorElement::new(&editor, style);
-        let state = window.update(cx, |editor, cx| {
+        let _state = window.update(cx, |editor, cx| {
             editor.cursor_shape = CursorShape::Block;
             editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([
@@ -3507,7 +3507,7 @@ mod tests {
             .unwrap();
 
         let mut element = EditorElement::new(&editor, style);
-        let mut state = cx
+        let state = cx
             .update_window(window.into(), |_, cx| {
                 element.compute_layout(
                     Bounds {

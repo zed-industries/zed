@@ -869,7 +869,7 @@ mod tests {
 
         let editor = cx.add_window(|cx| Editor::single_line(cx));
         editor
-            .update(cx, |editor, cx| {
+            .update(cx, |editor, _cx| {
                 let style = editor.style.clone().unwrap();
 
                 struct Row {
