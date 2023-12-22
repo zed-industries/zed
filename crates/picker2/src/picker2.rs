@@ -1,8 +1,8 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
-    View, ViewContext, WindowContext,
+    div, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
+    FocusHandle, FocusableView, Length, MouseButton, MouseDownEvent, Render, Task,
+    UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing};
@@ -40,6 +40,12 @@ pub trait PickerDelegate: Sized + 'static {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem>;
+    fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        None
+    }
+    fn render_footer(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        None
+    }
 }
 
 impl<D: PickerDelegate> FocusableView for Picker<D> {
@@ -253,6 +259,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     v_stack()
                         .flex_grow()
                         .py_2()
+                        .children(self.delegate.render_header(cx))
                         .child(
                             uniform_list(
                                 cx.view().clone(),
@@ -286,6 +293,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             )
                             .track_scroll(self.scroll_handle.clone())
                         )
+
                         .max_h_72()
                         .overflow_hidden(),
                 )
@@ -301,5 +309,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     ),
                 )
             })
+            .children(self.delegate.render_footer(cx))
     }
 }
