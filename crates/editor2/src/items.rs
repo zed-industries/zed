@@ -603,7 +603,11 @@ impl Item for Editor {
                 Color::Muted
             }))
             .when_some(description, |this, description| {
-                this.child(Label::new(description).color(Color::Muted))
+                this.child(
+                    Label::new(description)
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
             })
             .into_any_element()
     }

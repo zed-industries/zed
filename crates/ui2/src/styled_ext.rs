@@ -3,7 +3,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 
 use crate::prelude::*;
-use crate::{ElevationIndex, UITextSize};
+use crate::{ElevationIndex, UiTextSize};
 
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
@@ -44,10 +44,8 @@ pub trait StyledExt: Styled + Sized {
         self.flex().flex_col()
     }
 
-    fn text_ui_size(self, size: UITextSize) -> Self {
-        let size = size.rems();
-
-        self.text_size(size)
+    fn text_ui_size(self, size: UiTextSize) -> Self {
+        self.text_size(size.rems())
     }
 
     /// The default size for UI text.
@@ -58,9 +56,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Use [`text_ui_sm`] for regular-sized text.
     fn text_ui(self) -> Self {
-        let size = UITextSize::default().rems();
-
-        self.text_size(size)
+        self.text_size(UiTextSize::default().rems())
     }
 
     /// The small size for UI text.
@@ -71,9 +67,18 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Use [`text_ui`] for regular-sized text.
     fn text_ui_sm(self) -> Self {
-        let size = UITextSize::Small.rems();
+        self.text_size(UiTextSize::Small.rems())
+    }
 
-        self.text_size(size)
+    /// The extra small size for UI text.
+    ///
+    /// `0.625rem` or `10px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
+    ///
+    /// Use [`text_ui`] for regular-sized text.
+    fn text_ui_xs(self) -> Self {
+        self.text_size(UiTextSize::XSmall.rems())
     }
 
     /// The font size for buffer text.

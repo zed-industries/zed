@@ -8,14 +8,15 @@ pub enum LabelSize {
     #[default]
     Default,
     Small,
+    XSmall,
 }
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LineHeightStyle {
     #[default]
     TextLabel,
-    /// Sets the line height to 1
-    UILabel,
+    /// Sets the line height to 1.
+    UiLabel,
 }
 
 pub trait LabelCommon {
@@ -92,8 +93,9 @@ impl RenderOnce for LabelLike {
             .map(|this| match self.size {
                 LabelSize::Default => this.text_ui(),
                 LabelSize::Small => this.text_ui_sm(),
+                LabelSize::XSmall => this.text_ui_xs(),
             })
-            .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
+            .when(self.line_height_style == LineHeightStyle::UiLabel, |this| {
                 this.line_height(relative(1.))
             })
             .text_color(self.color.color(cx))
