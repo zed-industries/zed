@@ -83,6 +83,10 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
+        let tab_bar = self.theme.workspace.tab_bar.clone();
+        let active_tab = self.theme.workspace.tab_bar.tab_style(true, true).clone();
+        let inactive_tab = self.theme.workspace.tab_bar.tab_style(true, false).clone();
+        let toolbar = self.theme.workspace.toolbar.clone();
         let scrollbar = self.theme.editor.scrollbar.clone();
 
         let zed1_titlebar_border = convert(self.theme.titlebar.container.border.color);
@@ -105,11 +109,32 @@ impl Zed1ThemeConverter {
                 .background_color
                 .map(zed1_color_to_hsla),
             text: convert(self.theme.editor.text_color),
+            tab_bar_background: tab_bar.container.background_color.map(zed1_color_to_hsla),
+            tab_active_background: active_tab
+                .container
+                .background_color
+                .map(zed1_color_to_hsla),
+            tab_inactive_background: inactive_tab
+                .container
+                .background_color
+                .map(zed1_color_to_hsla),
+            toolbar_background: toolbar.container.background_color.map(zed1_color_to_hsla),
             editor_foreground: convert(self.theme.editor.text_color),
             editor_background: convert(self.theme.editor.background),
+            editor_gutter_background: convert(self.theme.editor.gutter_background),
+            editor_line_number: convert(self.theme.editor.line_number),
+            editor_active_line_number: convert(self.theme.editor.line_number_active),
+            editor_wrap_guide: convert(self.theme.editor.wrap_guide),
+            editor_active_wrap_guide: convert(self.theme.editor.active_wrap_guide),
             scrollbar_track_background: scrollbar.track.background_color.map(zed1_color_to_hsla),
             scrollbar_track_border: convert(scrollbar.track.border.color),
             scrollbar_thumb_background: scrollbar.thumb.background_color.map(zed1_color_to_hsla),
+            scrollbar_thumb_border: convert(scrollbar.thumb.border.color),
+            scrollbar_thumb_hover_background: scrollbar
+                .thumb
+                .background_color
+                .map(zed1_color_to_hsla),
+            terminal_background: convert(self.theme.terminal.background),
             terminal_ansi_bright_black: convert(self.theme.terminal.bright_black),
             terminal_ansi_bright_red: convert(self.theme.terminal.bright_red),
             terminal_ansi_bright_green: convert(self.theme.terminal.bright_green),

@@ -59,13 +59,13 @@ pub(crate) fn all_user_themes() -> Vec<UserThemeFamily> {
         ayu(),
         gruvbox(),
         rose_pine_zed_1(),
-        summercamp_zed_1(),
         atelier_zed_1(),
-        andromeda_zed_1(),
-        one_zed_1(),
         sandcastle_zed_1(),
-        ayu_zed_1(),
         gruvbox_zed_1(),
         solarized_zed_1(),
+        andromeda_zed_1(),
+        ayu_zed_1(),
+        one_zed_1(),
+        summercamp_zed_1(),
     ]
 }
