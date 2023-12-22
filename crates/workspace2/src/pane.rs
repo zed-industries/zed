@@ -1571,78 +1571,80 @@ impl Pane {
             }
         };
 
-        let pane = cx.view().clone();
+        let pane = cx.view().downgrade();
         right_click_menu(ix).trigger(tab).menu(move |cx| {
             let pane = pane.clone();
-            ContextMenu::build(cx, move |menu, cx| {
-                let menu = menu
-                    .entry(
-                        "Close",
-                        Some(Box::new(CloseActiveItem { save_intent: None })),
-                        cx.handler_for(&pane, move |pane, cx| {
-                            pane.close_item_by_id(item_id, SaveIntent::Close, cx)
-                                .detach_and_log_err(cx);
-                        }),
-                    )
-                    .entry(
-                        "Close Others",
-                        Some(Box::new(CloseInactiveItems)),
-                        cx.handler_for(&pane, move |pane, cx| {
-                            pane.close_items(cx, SaveIntent::Close, |id| id != item_id)
-                                .detach_and_log_err(cx);
-                        }),
-                    )
-                    .separator()
-                    .entry(
-                        "Close Left",
-                        Some(Box::new(CloseItemsToTheLeft)),
-                        cx.handler_for(&pane, move |pane, cx| {
-                            pane.close_items_to_the_left_by_id(item_id, cx)
-                                .detach_and_log_err(cx);
-                        }),
-                    )
-                    .entry(
-                        "Close Right",
-                        Some(Box::new(CloseItemsToTheRight)),
-                        cx.handler_for(&pane, move |pane, cx| {
-                            pane.close_items_to_the_right_by_id(item_id, cx)
-                                .detach_and_log_err(cx);
-                        }),
-                    )
-                    .separator()
-                    .entry(
-                        "Close Clean",
-                        Some(Box::new(CloseCleanItems)),
-                        cx.handler_for(&pane, move |pane, cx| {
-                            pane.close_clean_items(&CloseCleanItems, cx)
-                                .map(|task| task.detach_and_log_err(cx));
-                        }),
-                    )
-                    .entry(
-                        "Close All",
-                        Some(Box::new(CloseAllItems { save_intent: None })),
-                        cx.handler_for(&pane, |pane, cx| {
-                            pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
-                                .map(|task| task.detach_and_log_err(cx));
-                        }),
-                    );
+            ContextMenu::build(cx, move |mut menu, cx| {
+                if let Some(pane) = pane.upgrade() {
+                    menu = menu
+                        .entry(
+                            "Close",
+                            Some(Box::new(CloseActiveItem { save_intent: None })),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                    .detach_and_log_err(cx);
+                            }),
+                        )
+                        .entry(
+                            "Close Others",
+                            Some(Box::new(CloseInactiveItems)),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.close_items(cx, SaveIntent::Close, |id| id != item_id)
+                                    .detach_and_log_err(cx);
+                            }),
+                        )
+                        .separator()
+                        .entry(
+                            "Close Left",
+                            Some(Box::new(CloseItemsToTheLeft)),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.close_items_to_the_left_by_id(item_id, cx)
+                                    .detach_and_log_err(cx);
+                            }),
+                        )
+                        .entry(
+                            "Close Right",
+                            Some(Box::new(CloseItemsToTheRight)),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.close_items_to_the_right_by_id(item_id, cx)
+                                    .detach_and_log_err(cx);
+                            }),
+                        )
+                        .separator()
+                        .entry(
+                            "Close Clean",
+                            Some(Box::new(CloseCleanItems)),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.close_clean_items(&CloseCleanItems, cx)
+                                    .map(|task| task.detach_and_log_err(cx));
+                            }),
+                        )
+                        .entry(
+                            "Close All",
+                            Some(Box::new(CloseAllItems { save_intent: None })),
+                            cx.handler_for(&pane, |pane, cx| {
+                                pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+                                    .map(|task| task.detach_and_log_err(cx));
+                            }),
+                        );
 
-                if let Some(entry) = single_entry_to_resolve {
-                    let entry_id = entry.to_proto();
-                    menu.separator().entry(
-                        "Reveal In Project Panel",
-                        Some(Box::new(RevealInProjectPanel { entry_id })),
-                        cx.handler_for(&pane, move |pane, cx| {
-                            pane.project.update(cx, |_, cx| {
-                                cx.emit(project::Event::RevealInProjectPanel(
-                                    ProjectEntryId::from_proto(entry_id),
-                                ))
-                            });
-                        }),
-                    )
-                } else {
-                    menu
+                    if let Some(entry) = single_entry_to_resolve {
+                        let entry_id = entry.to_proto();
+                        menu = menu.separator().entry(
+                            "Reveal In Project Panel",
+                            Some(Box::new(RevealInProjectPanel { entry_id })),
+                            cx.handler_for(&pane, move |pane, cx| {
+                                pane.project.update(cx, |_, cx| {
+                                    cx.emit(project::Event::RevealInProjectPanel(
+                                        ProjectEntryId::from_proto(entry_id),
+                                    ))
+                                });
+                            }),
+                        );
+                    }
                 }
+
+                menu
             })
         })
     }

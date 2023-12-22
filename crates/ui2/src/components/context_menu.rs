@@ -29,6 +29,7 @@ pub struct ContextMenu {
     focus_handle: FocusHandle,
     selected_index: Option<usize>,
     delayed: bool,
+    clicked: bool,
     _on_blur_subscription: Subscription,
 }
 
@@ -56,6 +57,7 @@ impl ContextMenu {
                     focus_handle,
                     selected_index: None,
                     delayed: false,
+                    clicked: false,
                     _on_blur_subscription,
                 },
                 cx,
@@ -187,6 +189,11 @@ impl ContextMenu {
     }
 
     pub fn on_action_dispatch(&mut self, dispatched: &Box<dyn Action>, cx: &mut ViewContext<Self>) {
+        if self.clicked {
+            cx.propagate();
+            return;
+        }
+
         if let Some(ix) = self.items.iter().position(|item| {
             if let ContextMenuItem::Entry {
                 action: Some(action),
@@ -269,6 +276,7 @@ impl Render for ContextMenu {
                             action,
                         } => {
                             let handler = handler.clone();
+                            let menu = cx.view().downgrade();
 
                             let label_element = if let Some(icon) = icon {
                                 h_stack()
@@ -283,10 +291,14 @@ impl Render for ContextMenu {
                             ListItem::new(ix)
                                 .inset(true)
                                 .selected(Some(ix) == self.selected_index)
-                                .on_click(cx.listener(move |_, _, cx| {
+                                .on_click(move |_, cx| {
                                     handler(cx);
-                                    cx.emit(DismissEvent);
-                                }))
+                                    menu.update(cx, |menu, cx| {
+                                        menu.clicked = true;
+                                        cx.emit(DismissEvent);
+                                    })
+                                    .ok();
+                                })
                                 .child(
                                     h_stack()
                                         .w_full()
@@ -304,13 +316,18 @@ impl Render for ContextMenu {
                             handler,
                         } => {
                             let handler = handler.clone();
+                            let menu = cx.view().downgrade();
                             ListItem::new(ix)
                                 .inset(true)
                                 .selected(Some(ix) == self.selected_index)
-                                .on_click(cx.listener(move |_, _, cx| {
+                                .on_click(move |_, cx| {
                                     handler(cx);
-                                    cx.emit(DismissEvent);
-                                }))
+                                    menu.update(cx, |menu, cx| {
+                                        menu.clicked = true;
+                                        cx.emit(DismissEvent);
+                                    })
+                                    .ok();
+                                })
                                 .child(entry_render(cx))
                                 .into_any_element()
                         }
