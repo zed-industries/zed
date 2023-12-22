@@ -21,7 +21,6 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
-    #[allow(unused)]
     fn insert_theme_families(&mut self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);
@@ -128,11 +127,12 @@ impl Default for ThemeRegistry {
             themes: HashMap::default(),
         };
 
-        #[cfg(feature = "importing-themes")]
-        registry.insert_user_theme_families([]);
-
-        #[cfg(not(feature = "importing-themes"))]
-        registry.insert_user_theme_families([crate::themes::one()]);
+        // We're loading our new versions of the One themes by default, as
+        // we need them to be loaded for tests.
+        //
+        // These themes will get overwritten when `load_user_themes` is called
+        // when Zed starts, so the One variants used will be the ones ported from Zed1.
+        registry.insert_theme_families([crate::one_themes::one_family()]);
 
         registry
     }
