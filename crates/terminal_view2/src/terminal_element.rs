@@ -4,8 +4,9 @@ use gpui::{
     BorrowWindow, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
     FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
     Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
-    Pixels, PlatformInputHandler, Point, Rgba, ShapedLine, StatefulInteractiveElement, Styled,
-    TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
+    Pixels, PlatformInputHandler, Point, Rgba, ShapedLine, StatefulInteractiveElement,
+    StyleRefinement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace,
+    WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -24,7 +25,7 @@ use terminal::{
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::Tooltip;
 
-use std::mem;
+use std::{any::TypeId, mem};
 use std::{fmt::Debug, ops::RangeInclusive};
 
 ///The information generated during layout that is necessary for painting
@@ -689,6 +690,10 @@ impl TerminalElement {
             }
         });
 
+        self.interactivity.drag_over_styles.push((
+            TypeId::of::<ExternalPaths>(),
+            StyleRefinement::default().bg(cx.theme().colors().drop_target_background),
+        ));
         self.interactivity.on_drop::<ExternalPaths>({
             let focus = focus.clone();
             let terminal = terminal.clone();
@@ -787,8 +792,6 @@ impl Element for TerminalElement {
     ) {
         let mut layout = self.compute_layout(bounds, cx);
 
-        let theme = cx.theme();
-
         cx.paint_quad(fill(bounds, layout.background_color));
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
@@ -801,15 +804,7 @@ impl Element for TerminalElement {
                 .map(|cursor| cursor.bounding_rect(origin)),
         };
 
-        let terminal_focus_handle = self.focus.clone();
-        let terminal_handle = self.terminal.clone();
         self.register_mouse_listeners(origin, layout.mode, bounds, cx);
-
-        // todo!(change this to work in terms of on_drag_move or some such)
-        // .drag_over::<ExternalPaths>(|style| {
-        //     // todo!() why does not it work? z-index of elements?
-        //     style.bg(cx.theme().colors().ghost_element_hover)
-        // })
 
         let mut interactivity = mem::take(&mut self.interactivity);
         interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {

@@ -4,8 +4,8 @@ use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
-    FocusHandle, FocusableView, ParentElement, Render, Styled, Subscription, Task, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    ExternalPaths, FocusHandle, FocusableView, ParentElement, Render, Styled, Subscription, Task,
+    View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,9 @@ impl TerminalPanel {
                             return item.downcast::<TerminalView>().is_some();
                         }
                     }
+                    if a.downcast_ref::<ExternalPaths>().is_some() {
+                        return true;
+                    }
 
                     false
                 })),
@@ -72,13 +75,6 @@ impl TerminalPanel {
             pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
             // todo!()
-            // pane.on_can_drop(move |drag_and_drop, cx| {
-            //     drag_and_drop
-            //         .currently_dragged::<DraggedItem>(window)
-            //         .map_or(false, |(_, item)| {
-            //             item.handle.act_as::<TerminalView>(cx).is_some()
-            //         })
-            // });
             // pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
             //     let this = weak_self.clone();
             //     Flex::row()
