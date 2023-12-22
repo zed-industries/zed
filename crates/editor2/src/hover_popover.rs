@@ -6,9 +6,9 @@ use crate::{
 };
 use futures::FutureExt;
 use gpui::{
-    actions, div, px, AnyElement, CursorStyle, InteractiveElement, IntoElement, Model,
-    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
-    Task, ViewContext, WeakView,
+    actions, div, px, AnyElement, CursorStyle, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
+    ViewContext, WeakView,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 

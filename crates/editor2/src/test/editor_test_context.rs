@@ -4,8 +4,7 @@ use crate::{
 use collections::BTreeMap;
 use futures::Future;
 use gpui::{
-    AnyWindowHandle, AppContext, Keystroke, ModelContext, View, ViewContext,
-    VisualTestContext,
+    AnyWindowHandle, AppContext, Keystroke, ModelContext, View, ViewContext, VisualTestContext,
 };
 use indoc::indoc;
 use itertools::Itertools;
