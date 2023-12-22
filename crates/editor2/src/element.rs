@@ -2290,46 +2290,55 @@ impl EditorElement {
                                 .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
-                        div().id("path header container").size_full().p_1p5().child(
-                            h_stack()
-                                .id("path header block")
-                                .py_1p5()
-                                .pl_3()
-                                .pr_2()
-                                .rounded_lg()
-                                .shadow_md()
-                                .border()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_subheader_background)
-                                .justify_between()
-                                .cursor_pointer()
-                                .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                .child(
-                                    h_stack().gap_3().child(
-                                        h_stack()
-                                            .gap_2()
-                                            .child(Label::new(
-                                                filename
-                                                    .map(SharedString::from)
-                                                    .unwrap_or_else(|| "untitled".into()),
-                                            ))
-                                            .when_some(parent_path, |then, path| {
-                                                then.child(Label::new(path).color(Color::Muted))
-                                            }),
-                                    ),
-                                )
-                                .children(jump_handler.map(|jump_handler| {
-                                    IconButton::new(block_id, Icon::ArrowUpRight)
-                                        .style(ButtonStyle::Subtle)
-                                        .on_click(jump_handler)
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
-                                        })
-                                })), // .p_x(gutter_padding)
-                        )
+                        div()
+                            .id(("path header container", block_id))
+                            .size_full()
+                            .p_1p5()
+                            .child(
+                                h_stack()
+                                    .id("path header block")
+                                    .py_1p5()
+                                    .pl_3()
+                                    .pr_2()
+                                    .rounded_lg()
+                                    .shadow_md()
+                                    .border()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_subheader_background)
+                                    .justify_between()
+                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        h_stack().gap_3().child(
+                                            h_stack()
+                                                .gap_2()
+                                                .child(Label::new(
+                                                    filename
+                                                        .map(SharedString::from)
+                                                        .unwrap_or_else(|| "untitled".into()),
+                                                ))
+                                                .when_some(parent_path, |then, path| {
+                                                    then.child(Label::new(path).color(Color::Muted))
+                                                }),
+                                        ),
+                                    )
+                                    .when_some(jump_handler, |this, jump_handler| {
+                                        this.cursor_pointer()
+                                            .tooltip(|cx| {
+                                                Tooltip::for_action(
+                                                    "Jump to Buffer",
+                                                    &OpenExcerpts,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_mouse_down(MouseButton::Left, |_, cx| {
+                                                cx.stop_propagation()
+                                            })
+                                            .on_click(jump_handler)
+                                    }),
+                            )
                     } else {
                         h_stack()
-                            .id("collapsed context")
+                            .id(("collapsed context", block_id))
                             .size_full()
                             .gap(gutter_padding)
                             .child(
@@ -2834,17 +2843,19 @@ impl Element for EditorElement {
 
                 cx.with_z_index(0, |cx| {
                     self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
-
-                    if !layout.blocks.is_empty() {
-                        cx.with_element_id(Some("editor_blocks"), |cx| {
-                            self.paint_blocks(bounds, &mut layout, cx);
-                        });
-                    }
                 });
 
                 cx.with_z_index(1, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
 
-                cx.with_z_index(2, |cx| {
+                if !layout.blocks.is_empty() {
+                    cx.with_z_index(2, |cx| {
+                        cx.with_element_id(Some("editor_blocks"), |cx| {
+                            self.paint_blocks(bounds, &mut layout, cx);
+                        });
+                    })
+                }
+
+                cx.with_z_index(3, |cx| {
                     self.paint_overlays(text_bounds, &mut layout, cx);
                 });
             });
