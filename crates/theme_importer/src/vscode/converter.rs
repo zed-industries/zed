@@ -56,7 +56,7 @@ impl VsCodeThemeConverter {
         let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(UserTheme {
-            name: self.theme_metadata.name.into(),
+            name: self.theme_metadata.name,
             appearance,
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinements,

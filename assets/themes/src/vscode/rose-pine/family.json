@@ -1,19 +1,19 @@
 {
-  "name": "Rose Pine",
+  "name": "Rosé Pine",
   "author": "Rosé Pine",
   "themes": [
     {
-      "name": "Rose Pine",
+      "name": "Rosé Pine",
       "file_name": "rose-pine.json",
       "appearance": "dark"
     },
     {
-      "name": "Rose Pine Moon",
+      "name": "Rosé Pine Moon",
       "file_name": "rose-pine-moon.json",
       "appearance": "dark"
     },
     {
-      "name": "Rose Pine Dawn",
+      "name": "Rosé Pine Dawn",
       "file_name": "rose-pine-dawn.json",
       "appearance": "light"
     }
