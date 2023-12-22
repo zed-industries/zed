@@ -467,6 +467,7 @@ impl Dock {
 
     pub fn resize_active_panel(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
+            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE));
             entry.panel.set_size(size, cx);
             cx.notify();
         }
