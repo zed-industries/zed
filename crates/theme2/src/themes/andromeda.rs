@@ -20,6 +20,7 @@ pub fn andromeda() -> UserThemeFamily {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0x2b2f39ff).into()),
                     border_variant: Some(rgba(0x2b2f39ff).into()),
+                    elevated_surface_background: Some(rgba(0x262a33ff).into()),
                     background: Some(rgba(0x262a33ff).into()),
                     panel_background: Some(rgba(0x21242bff).into()),
                     text: Some(rgba(0xaca8aeff).into()),

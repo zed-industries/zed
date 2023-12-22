@@ -99,6 +99,12 @@ impl Zed1ThemeConverter {
             border: zed1_titlebar_border,
             border_variant: zed1_titlebar_border,
             background: convert(self.theme.workspace.background),
+            elevated_surface_background: self
+                .theme
+                .picker
+                .container
+                .background_color
+                .map(zed1_color_to_hsla),
             title_bar_background: self
                 .theme
                 .titlebar

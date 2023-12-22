@@ -21,6 +21,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x3f4043ff).into()),
                         border_variant: Some(rgba(0x3f4043ff).into()),
+                        elevated_surface_background: Some(rgba(0x313337ff).into()),
                         background: Some(rgba(0x313337ff).into()),
                         panel_background: Some(rgba(0x1f2127ff).into()),
                         text: Some(rgba(0x8a8986ff).into()),
@@ -353,6 +354,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xcfd1d2ff).into()),
                         border_variant: Some(rgba(0xcfd1d2ff).into()),
+                        elevated_surface_background: Some(rgba(0xdcdddeff).into()),
                         background: Some(rgba(0xdcdddeff).into()),
                         panel_background: Some(rgba(0xececedff).into()),
                         text: Some(rgba(0x8c8f93ff).into()),
@@ -685,6 +687,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x53565dff).into()),
                         border_variant: Some(rgba(0x53565dff).into()),
+                        elevated_surface_background: Some(rgba(0x464a52ff).into()),
                         background: Some(rgba(0x464a52ff).into()),
                         panel_background: Some(rgba(0x353944ff).into()),
                         text: Some(rgba(0x9a9a98ff).into()),

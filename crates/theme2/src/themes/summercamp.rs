@@ -20,6 +20,7 @@ pub fn summercamp() -> UserThemeFamily {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0x312d21ff).into()),
                     border_variant: Some(rgba(0x312d21ff).into()),
+                    elevated_surface_background: Some(rgba(0x2a261cff).into()),
                     background: Some(rgba(0x2a261cff).into()),
                     panel_background: Some(rgba(0x231f16ff).into()),
                     text: Some(rgba(0x736e55ff).into()),

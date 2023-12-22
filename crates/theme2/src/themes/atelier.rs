@@ -21,6 +21,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x969585ff).into()),
                         border_variant: Some(rgba(0x969585ff).into()),
+                        elevated_surface_background: Some(rgba(0xc5c4b9ff).into()),
                         background: Some(rgba(0xc5c4b9ff).into()),
                         panel_background: Some(rgba(0xebeae3ff).into()),
                         text: Some(rgba(0x61604fff).into()),
@@ -374,6 +375,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x665f5cff).into()),
                         border_variant: Some(rgba(0x665f5cff).into()),
+                        elevated_surface_background: Some(rgba(0x443c39ff).into()),
                         background: Some(rgba(0x443c39ff).into()),
                         panel_background: Some(rgba(0x27211eff).into()),
                         text: Some(rgba(0xa79f9dff).into()),
@@ -727,6 +729,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8b968eff).into()),
                         border_variant: Some(rgba(0x8b968eff).into()),
+                        elevated_surface_background: Some(rgba(0xbcc5bfff).into()),
                         background: Some(rgba(0xbcc5bfff).into()),
                         panel_background: Some(rgba(0xe3ebe6ff).into()),
                         text: Some(rgba(0x546259ff).into()),
@@ -1080,6 +1083,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x56505eff).into()),
                         border_variant: Some(rgba(0x56505eff).into()),
+                        elevated_surface_background: Some(rgba(0x3a353fff).into()),
                         background: Some(rgba(0x3a353fff).into()),
                         panel_background: Some(rgba(0x221f26ff).into()),
                         text: Some(rgba(0x898591ff).into()),
@@ -1433,6 +1437,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5d5c4cff).into()),
                         border_variant: Some(rgba(0x5d5c4cff).into()),
+                        elevated_surface_background: Some(rgba(0x424136ff).into()),
                         background: Some(rgba(0x424136ff).into()),
                         panel_background: Some(rgba(0x2c2b23ff).into()),
                         text: Some(rgba(0x91907fff).into()),
@@ -1786,6 +1791,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5c6485ff).into()),
                         border_variant: Some(rgba(0x5c6485ff).into()),
+                        elevated_surface_background: Some(rgba(0x3e4769ff).into()),
                         background: Some(rgba(0x3e4769ff).into()),
                         panel_background: Some(rgba(0x262f51ff).into()),
                         text: Some(rgba(0x959bb2ff).into()),
@@ -2139,6 +2145,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x9a9fb6ff).into()),
                         border_variant: Some(rgba(0x9a9fb6ff).into()),
+                        elevated_surface_background: Some(rgba(0xc2c6d9ff).into()),
                         background: Some(rgba(0xc2c6d9ff).into()),
                         panel_background: Some(rgba(0xe5e8f5ff).into()),
                         text: Some(rgba(0x606889ff).into()),
@@ -2492,6 +2499,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x6c695cff).into()),
                         border_variant: Some(rgba(0x6c695cff).into()),
+                        elevated_surface_background: Some(rgba(0x45433bff).into()),
                         background: Some(rgba(0x45433bff).into()),
                         panel_background: Some(rgba(0x262622ff).into()),
                         text: Some(rgba(0xa4a08bff).into()),
@@ -2845,6 +2853,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5c6c5cff).into()),
                         border_variant: Some(rgba(0x5c6c5cff).into()),
+                        elevated_surface_background: Some(rgba(0x3b453bff).into()),
                         background: Some(rgba(0x3b453bff).into()),
                         panel_background: Some(rgba(0x1f231fff).into()),
                         text: Some(rgba(0x8ba48bff).into()),
@@ -3198,6 +3207,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8f8b96ff).into()),
                         border_variant: Some(rgba(0x8f8b96ff).into()),
+                        elevated_surface_background: Some(rgba(0xbfbcc5ff).into()),
                         background: Some(rgba(0xbfbcc5ff).into()),
                         panel_background: Some(rgba(0xe6e3ebff).into()),
                         text: Some(rgba(0x5a5462ff).into()),
@@ -3551,6 +3561,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x564e4eff).into()),
                         border_variant: Some(rgba(0x564e4eff).into()),
+                        elevated_surface_background: Some(rgba(0x3b3535ff).into()),
                         background: Some(rgba(0x3b3535ff).into()),
                         panel_background: Some(rgba(0x252020ff).into()),
                         text: Some(rgba(0x898383ff).into()),
@@ -3904,6 +3915,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x675b67ff).into()),
                         border_variant: Some(rgba(0x675b67ff).into()),
+                        elevated_surface_background: Some(rgba(0x433a43ff).into()),
                         background: Some(rgba(0x433a43ff).into()),
                         panel_background: Some(rgba(0x252025ff).into()),
                         text: Some(rgba(0xa99aa9ff).into()),
@@ -4257,6 +4269,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x4f6b78ff).into()),
                         border_variant: Some(rgba(0x4f6b78ff).into()),
+                        elevated_surface_background: Some(rgba(0x33444dff).into()),
                         background: Some(rgba(0x33444dff).into()),
                         panel_background: Some(rgba(0x1c2529ff).into()),
                         text: Some(rgba(0x7ca0b3ff).into()),
@@ -4610,6 +4623,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xaaa3a1ff).into()),
                         border_variant: Some(rgba(0xaaa3a1ff).into()),
+                        elevated_surface_background: Some(rgba(0xcdc8c6ff).into()),
                         background: Some(rgba(0xcdc8c6ff).into()),
                         panel_background: Some(rgba(0xe9e6e4ff).into()),
                         text: Some(rgba(0x6a6360ff).into()),
@@ -4963,6 +4977,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xa8a48eff).into()),
                         border_variant: Some(rgba(0xa8a48eff).into()),
+                        elevated_surface_background: Some(rgba(0xcecab4ff).into()),
                         background: Some(rgba(0xcecab4ff).into()),
                         panel_background: Some(rgba(0xeeebd7ff).into()),
                         text: Some(rgba(0x706d5fff).into()),
@@ -5316,6 +5331,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8e8989ff).into()),
                         border_variant: Some(rgba(0x8e8989ff).into()),
+                        elevated_surface_background: Some(rgba(0xc1bbbbff).into()),
                         background: Some(rgba(0xc1bbbbff).into()),
                         panel_background: Some(rgba(0xebe3e3ff).into()),
                         text: Some(rgba(0x5a5252ff).into()),
@@ -5669,6 +5685,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8ea88eff).into()),
                         border_variant: Some(rgba(0x8ea88eff).into()),
+                        elevated_surface_background: Some(rgba(0xb4ceb4ff).into()),
                         background: Some(rgba(0xb4ceb4ff).into()),
                         panel_background: Some(rgba(0xdaeedaff).into()),
                         text: Some(rgba(0x5f705fff).into()),
@@ -6022,6 +6039,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x505e55ff).into()),
                         border_variant: Some(rgba(0x505e55ff).into()),
+                        elevated_surface_background: Some(rgba(0x353f39ff).into()),
                         background: Some(rgba(0x353f39ff).into()),
                         panel_background: Some(rgba(0x1f2621ff).into()),
                         text: Some(rgba(0x859188ff).into()),
@@ -6375,6 +6393,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xad9dadff).into()),
                         border_variant: Some(rgba(0xad9dadff).into()),
+                        elevated_surface_background: Some(rgba(0xc6b8c6ff).into()),
                         background: Some(rgba(0xc6b8c6ff).into()),
                         panel_background: Some(rgba(0xe1d6e1ff).into()),
                         text: Some(rgba(0x6b5e6bff).into()),
@@ -6728,6 +6747,7 @@ pub fn atelier() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x80a4b6ff).into()),
                         border_variant: Some(rgba(0x80a4b6ff).into()),
+                        elevated_surface_background: Some(rgba(0xa6cadcff).into()),
                         background: Some(rgba(0xa6cadcff).into()),
                         panel_background: Some(rgba(0xcdeaf9ff).into()),
                         text: Some(rgba(0x526f7dff).into()),

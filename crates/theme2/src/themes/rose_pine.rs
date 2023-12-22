@@ -21,6 +21,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xdcd6d5ff).into()),
                         border_variant: Some(rgba(0xdcd6d5ff).into()),
+                        elevated_surface_background: Some(rgba(0xdcd8d8ff).into()),
                         background: Some(rgba(0xdcd8d8ff).into()),
                         panel_background: Some(rgba(0xfef9f2ff).into()),
                         text: Some(rgba(0x706c8cff).into()),
@@ -367,6 +368,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x504c68ff).into()),
                         border_variant: Some(rgba(0x504c68ff).into()),
+                        elevated_surface_background: Some(rgba(0x38354eff).into()),
                         background: Some(rgba(0x38354eff).into()),
                         panel_background: Some(rgba(0x28253cff).into()),
                         text: Some(rgba(0x85819eff).into()),
@@ -713,6 +715,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x423f55ff).into()),
                         border_variant: Some(rgba(0x423f55ff).into()),
+                        elevated_surface_background: Some(rgba(0x292739ff).into()),
                         background: Some(rgba(0x292739ff).into()),
                         panel_background: Some(rgba(0x1d1b2aff).into()),
                         text: Some(rgba(0x75718eff).into()),
