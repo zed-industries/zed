@@ -1730,12 +1730,15 @@ impl Render for ProjectSearchBar {
             .on_action(cx.listener(|this, _: &ActivateSemanticMode, cx| {
                 this.activate_search_mode(SearchMode::Semantic, cx)
             }))
-            .on_action(cx.listener(|this, action, cx| {
+            .capture_action(cx.listener(|this, action, cx| {
                 this.tab(action, cx);
+                cx.stop_propagation();
             }))
-            .on_action(cx.listener(|this, action, cx| {
+            .capture_action(cx.listener(|this, action, cx| {
                 this.tab_previous(action, cx);
+                cx.stop_propagation();
             }))
+            .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
             .on_action(cx.listener(|this, action, cx| {
                 this.cycle_mode(action, cx);
             }))
