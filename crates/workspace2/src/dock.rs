@@ -537,6 +537,7 @@ impl Render for Dock {
 
             div()
                 .flex()
+                .bg(cx.theme().colors().panel_background)
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {

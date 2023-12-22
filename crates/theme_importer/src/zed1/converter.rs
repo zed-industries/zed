@@ -53,7 +53,7 @@ impl Zed1ThemeConverter {
         let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(UserTheme {
-            name: format!("{} (Zed1)", self.theme.meta.name),
+            name: self.theme.meta.name,
             appearance,
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinement,
@@ -68,12 +68,16 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
-        let diff_style = self.theme.editor.diff.clone();
+        let diff_style = &self.theme.editor.diff;
+        let diagnostic_summary = &self.theme.workspace.status_bar.diagnostic_summary;
 
         Ok(StatusColorsRefinement {
             created: convert(diff_style.inserted),
             modified: convert(diff_style.modified),
             deleted: convert(diff_style.deleted),
+            success: convert(diagnostic_summary.icon_color_ok),
+            warning: convert(diagnostic_summary.icon_color_warning),
+            error: convert(diagnostic_summary.icon_color_error),
             ..Default::default()
         })
     }
@@ -83,11 +87,11 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
-        let tab_bar = self.theme.workspace.tab_bar.clone();
-        let active_tab = self.theme.workspace.tab_bar.tab_style(true, true).clone();
-        let inactive_tab = self.theme.workspace.tab_bar.tab_style(true, false).clone();
-        let toolbar = self.theme.workspace.toolbar.clone();
-        let scrollbar = self.theme.editor.scrollbar.clone();
+        let tab_bar = &self.theme.workspace.tab_bar;
+        let active_tab = &self.theme.workspace.tab_bar.tab_style(true, true);
+        let inactive_tab = &self.theme.workspace.tab_bar.tab_style(true, false);
+        let toolbar = &self.theme.workspace.toolbar;
+        let scrollbar = &self.theme.editor.scrollbar;
 
         let zed1_titlebar_border = convert(self.theme.titlebar.container.border.color);
 
@@ -95,6 +99,12 @@ impl Zed1ThemeConverter {
             border: zed1_titlebar_border,
             border_variant: zed1_titlebar_border,
             background: convert(self.theme.workspace.background),
+            elevated_surface_background: self
+                .theme
+                .picker
+                .container
+                .background_color
+                .map(zed1_color_to_hsla),
             title_bar_background: self
                 .theme
                 .titlebar
@@ -107,8 +117,38 @@ impl Zed1ThemeConverter {
                 .status_bar
                 .container
                 .background_color
+                .map(zed1_color_to_hsla)
+                .or_else(|| {
+                    self.theme
+                        .titlebar
+                        .container
+                        .background_color
+                        .map(zed1_color_to_hsla)
+                }),
+            panel_background: self
+                .theme
+                .project_panel
+                .container
+                .background_color
                 .map(zed1_color_to_hsla),
-            text: convert(self.theme.editor.text_color),
+            text: convert(self.theme.project_panel.entry.default_style().text.color),
+            text_muted: convert(active_tab.description.text.color),
+            element_hover: self
+                .theme
+                .picker
+                .item
+                .hovered
+                .as_ref()
+                .and_then(|hovered| hovered.container.background_color)
+                .map(zed1_color_to_hsla),
+            element_selected: self
+                .theme
+                .picker
+                .item
+                .active_state()
+                .container
+                .background_color
+                .map(zed1_color_to_hsla),
             tab_bar_background: tab_bar.container.background_color.map(zed1_color_to_hsla),
             tab_active_background: active_tab
                 .container

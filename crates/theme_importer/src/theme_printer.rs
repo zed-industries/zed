@@ -160,6 +160,7 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
             ),
             ("surface_background", self.0.surface_background),
             ("background", self.0.background),
+            ("panel_background", self.0.panel_background),
             ("element_background", self.0.element_background),
             ("element_hover", self.0.element_hover),
             ("element_active", self.0.element_active),

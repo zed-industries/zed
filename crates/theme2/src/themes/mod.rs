@@ -2,43 +2,37 @@
 // Be careful when modifying it by hand.
 
 mod andromeda;
+mod atelier;
 mod ayu;
-mod dracula;
 mod gruvbox;
-mod night_owl;
-mod noctis;
-mod nord;
-mod palenight;
+mod one;
 mod rose_pine;
+mod sandcastle;
 mod solarized;
-mod synthwave_84;
+mod summercamp;
 
 pub use andromeda::*;
+pub use atelier::*;
 pub use ayu::*;
-pub use dracula::*;
 pub use gruvbox::*;
-pub use night_owl::*;
-pub use noctis::*;
-pub use nord::*;
-pub use palenight::*;
+pub use one::*;
 pub use rose_pine::*;
+pub use sandcastle::*;
 pub use solarized::*;
-pub use synthwave_84::*;
+pub use summercamp::*;
 
 use crate::UserThemeFamily;
 
 pub(crate) fn all_user_themes() -> Vec<UserThemeFamily> {
     vec![
         andromeda(),
+        atelier(),
         ayu(),
-        dracula(),
         gruvbox(),
-        night_owl(),
-        noctis(),
-        nord(),
-        palenight(),
+        one(),
         rose_pine(),
+        sandcastle(),
         solarized(),
-        synthwave_84(),
+        summercamp(),
     ]
 }
