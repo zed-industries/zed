@@ -6,8 +6,8 @@ use gpui::{HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
-    one_themes::one_family, zed_pro_family, Appearance, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
+    Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme, ThemeColors,
+    ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
 };
 
 #[derive(Debug, Clone)]
@@ -21,6 +21,7 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
+    #[allow(unused)]
     fn insert_theme_families(&mut self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);
@@ -123,12 +124,8 @@ impl ThemeRegistry {
 
 impl Default for ThemeRegistry {
     fn default() -> Self {
-        let mut this = Self {
+        Self {
             themes: HashMap::default(),
-        };
-
-        this.insert_theme_families([zed_pro_family(), one_family()]);
-
-        this
+        }
     }
 }
