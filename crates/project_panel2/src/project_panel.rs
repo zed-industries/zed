@@ -400,6 +400,7 @@ impl ProjectPanel {
                     if is_root {
                         menu = menu.entry(
                             "Remove from Project",
+                            None,
                             cx.handler_for(&this, move |this, cx| {
                                 this.project.update(cx, |project, cx| {
                                     project.remove_worktree(worktree_id, cx)

@@ -532,7 +532,7 @@ impl ChannelModalDelegate {
         let user_id = user.id;
         let picker = cx.view().clone();
         let context_menu = ContextMenu::build(cx, |mut menu, _cx| {
-            menu = menu.entry("Remove Member", {
+            menu = menu.entry("Remove Member", None, {
                 let picker = picker.clone();
                 move |cx| {
                     picker.update(cx, |picker, cx| {
@@ -544,7 +544,7 @@ impl ChannelModalDelegate {
             let picker = picker.clone();
             match role {
                 ChannelRole::Admin => {
-                    menu = menu.entry("Revoke Admin", move |cx| {
+                    menu = menu.entry("Revoke Admin", None, move |cx| {
                         picker.update(cx, |picker, cx| {
                             picker
                                 .delegate
@@ -553,7 +553,7 @@ impl ChannelModalDelegate {
                     });
                 }
                 ChannelRole::Member => {
-                    menu = menu.entry("Make Admin", move |cx| {
+                    menu = menu.entry("Make Admin", None, move |cx| {
                         picker.update(cx, |picker, cx| {
                             picker
                                 .delegate

@@ -990,7 +990,7 @@ impl Pane {
         &mut self,
         cx: &mut ViewContext<Pane>,
         mut save_intent: SaveIntent,
-        should_close: impl 'static + Fn(EntityId) -> bool,
+        should_close: impl Fn(EntityId) -> bool,
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
@@ -1571,28 +1571,74 @@ impl Pane {
             }
         };
 
+        let pane = cx.view().clone();
         right_click_menu(ix).trigger(tab).menu(move |cx| {
-            ContextMenu::build(cx, |menu, _| {
+            let pane = pane.clone();
+            ContextMenu::build(cx, move |menu, cx| {
                 let menu = menu
-                    .action("Close", CloseActiveItem { save_intent: None }.boxed_clone())
-                    .action("Close Others", CloseInactiveItems.boxed_clone())
+                    .entry(
+                        "Close",
+                        Some(Box::new(CloseActiveItem { save_intent: None })),
+                        cx.handler_for(&pane, move |pane, cx| {
+                            pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
+                        }),
+                    )
+                    .entry(
+                        "Close Others",
+                        Some(Box::new(CloseInactiveItems)),
+                        cx.handler_for(&pane, move |pane, cx| {
+                            pane.close_items(cx, SaveIntent::Close, |id| id != item_id)
+                                .detach_and_log_err(cx);
+                        }),
+                    )
                     .separator()
-                    .action("Close Left", CloseItemsToTheLeft.boxed_clone())
-                    .action("Close Right", CloseItemsToTheRight.boxed_clone())
+                    .entry(
+                        "Close Left",
+                        Some(Box::new(CloseItemsToTheLeft)),
+                        cx.handler_for(&pane, move |pane, cx| {
+                            pane.close_items_to_the_left_by_id(item_id, cx)
+                                .detach_and_log_err(cx);
+                        }),
+                    )
+                    .entry(
+                        "Close Right",
+                        Some(Box::new(CloseItemsToTheRight)),
+                        cx.handler_for(&pane, move |pane, cx| {
+                            pane.close_items_to_the_right_by_id(item_id, cx)
+                                .detach_and_log_err(cx);
+                        }),
+                    )
                     .separator()
-                    .action("Close Clean", CloseCleanItems.boxed_clone())
-                    .action(
+                    .entry(
+                        "Close Clean",
+                        Some(Box::new(CloseCleanItems)),
+                        cx.handler_for(&pane, move |pane, cx| {
+                            pane.close_clean_items(&CloseCleanItems, cx)
+                                .map(|task| task.detach_and_log_err(cx));
+                        }),
+                    )
+                    .entry(
                         "Close All",
-                        CloseAllItems { save_intent: None }.boxed_clone(),
+                        Some(Box::new(CloseAllItems { save_intent: None })),
+                        cx.handler_for(&pane, |pane, cx| {
+                            pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+                                .map(|task| task.detach_and_log_err(cx));
+                        }),
                     );
 
                 if let Some(entry) = single_entry_to_resolve {
-                    menu.separator().action(
+                    let entry_id = entry.to_proto();
+                    menu.separator().entry(
                         "Reveal In Project Panel",
-                        RevealInProjectPanel {
-                            entry_id: entry.to_proto(),
-                        }
-                        .boxed_clone(),
+                        Some(Box::new(RevealInProjectPanel { entry_id })),
+                        cx.handler_for(&pane, move |pane, cx| {
+                            pane.project.update(cx, |_, cx| {
+                                cx.emit(project::Event::RevealInProjectPanel(
+                                    ProjectEntryId::from_proto(entry_id),
+                                ))
+                            });
+                        }),
                     )
                 } else {
                     menu

@@ -76,13 +76,14 @@ impl ContextMenu {
     pub fn entry(
         mut self,
         label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
         handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
             label: label.into(),
             handler: Rc::new(handler),
             icon: None,
-            action: None,
+            action,
         });
         self
     }
@@ -282,7 +283,10 @@ impl Render for ContextMenu {
                             ListItem::new(ix)
                                 .inset(true)
                                 .selected(Some(ix) == self.selected_index)
-                                .on_click(move |_, cx| handler(cx))
+                                .on_click(cx.listener(move |_, _, cx| {
+                                    handler(cx);
+                                    cx.emit(DismissEvent);
+                                }))
                                 .child(
                                     h_stack()
                                         .w_full()
@@ -303,7 +307,10 @@ impl Render for ContextMenu {
                             ListItem::new(ix)
                                 .inset(true)
                                 .selected(Some(ix) == self.selected_index)
-                                .on_click(move |_, cx| handler(cx))
+                                .on_click(cx.listener(move |_, _, cx| {
+                                    handler(cx);
+                                    cx.emit(DismissEvent);
+                                }))
                                 .child(entry_render(cx))
                                 .into_any_element()
                         }

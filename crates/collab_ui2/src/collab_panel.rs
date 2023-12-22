@@ -993,6 +993,7 @@ impl CollabPanel {
                 };
                 context_menu = context_menu.entry(
                     expand_action_name,
+                    None,
                     cx.handler_for(&this, move |this, cx| {
                         this.toggle_channel_collapsed(channel_id, cx)
                     }),
@@ -1002,18 +1003,21 @@ impl CollabPanel {
             context_menu = context_menu
                 .entry(
                     "Open Notes",
+                    None,
                     cx.handler_for(&this, move |this, cx| {
                         this.open_channel_notes(channel_id, cx)
                     }),
                 )
                 .entry(
                     "Open Chat",
+                    None,
                     cx.handler_for(&this, move |this, cx| {
                         this.join_channel_chat(channel_id, cx)
                     }),
                 )
                 .entry(
                     "Copy Channel Link",
+                    None,
                     cx.handler_for(&this, move |this, cx| {
                         this.copy_channel_link(channel_id, cx)
                     }),
@@ -1024,14 +1028,17 @@ impl CollabPanel {
                     .separator()
                     .entry(
                         "New Subchannel",
+                        None,
                         cx.handler_for(&this, move |this, cx| this.new_subchannel(channel_id, cx)),
                     )
                     .entry(
                         "Rename",
+                        None,
                         cx.handler_for(&this, move |this, cx| this.rename_channel(channel_id, cx)),
                     )
                     .entry(
                         "Move this channel",
+                        None,
                         cx.handler_for(&this, move |this, cx| {
                             this.start_move_channel(channel_id, cx)
                         }),
@@ -1040,6 +1047,7 @@ impl CollabPanel {
                 if let Some(channel_name) = clipboard_channel_name {
                     context_menu = context_menu.separator().entry(
                         format!("Move '#{}' here", channel_name),
+                        None,
                         cx.handler_for(&this, move |this, cx| {
                             this.move_channel_on_clipboard(channel_id, cx)
                         }),
@@ -1050,14 +1058,17 @@ impl CollabPanel {
                     .separator()
                     .entry(
                         "Invite Members",
+                        None,
                         cx.handler_for(&this, move |this, cx| this.invite_members(channel_id, cx)),
                     )
                     .entry(
                         "Manage Members",
+                        None,
                         cx.handler_for(&this, move |this, cx| this.manage_members(channel_id, cx)),
                     )
                     .entry(
                         "Delete",
+                        None,
                         cx.handler_for(&this, move |this, cx| this.remove_channel(channel_id, cx)),
                     );
             }
