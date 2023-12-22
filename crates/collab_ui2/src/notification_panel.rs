@@ -684,10 +684,6 @@ pub struct NotificationToast {
     workspace: WeakView<Workspace>,
 }
 
-pub enum ToastEvent {
-    Dismiss,
-}
-
 impl NotificationToast {
     fn focus_notification_panel(&self, cx: &mut ViewContext<Self>) {
         let workspace = self.workspace.clone();
@@ -721,16 +717,15 @@ impl Render for NotificationToast {
             .child(Label::new(self.text.clone()))
             .child(
                 IconButton::new("close", Icon::Close)
-                    .on_click(cx.listener(|_, _, cx| cx.emit(ToastEvent::Dismiss))),
+                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
             )
             .on_click(cx.listener(|this, _, cx| {
                 this.focus_notification_panel(cx);
-                cx.emit(ToastEvent::Dismiss);
+                cx.emit(DismissEvent);
             }))
     }
 }
 
-impl EventEmitter<ToastEvent> for NotificationToast {}
 impl EventEmitter<DismissEvent> for NotificationToast {}
 
 fn format_timestamp(
