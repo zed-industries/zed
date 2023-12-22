@@ -188,10 +188,13 @@ fn main() -> Result<()> {
     let zed1_theme_familes = [
         "Andromeda",
         "Atelier",
-        "One",
+        "Ayu",
         "Gruvbox",
+        "One",
         "Rosé Pine",
+        "Sandcastle",
         "Solarized",
+        "Summercamp",
     ];
 
     let mut zed1_themes_by_family: HashMap<String, Vec<UserTheme>> = HashMap::from_iter(
@@ -285,7 +288,10 @@ fn main() -> Result<()> {
     let mut theme_modules = Vec::new();
 
     for theme_family in theme_families {
-        let theme_family_slug = any_ascii(&theme_family.name).to_case(Case::Snake);
+        let theme_family_slug = any_ascii(&theme_family.name)
+            .replace("(", "")
+            .replace(")", "")
+            .to_case(Case::Snake);
 
         let mut output_file =
             File::create(themes_output_path.join(format!("{theme_family_slug}.rs")))?;

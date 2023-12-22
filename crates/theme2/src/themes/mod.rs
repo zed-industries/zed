@@ -2,27 +2,45 @@
 // Be careful when modifying it by hand.
 
 mod andromeda;
+mod andromeda_zed_1;
+mod atelier_zed_1;
 mod ayu;
+mod ayu_zed_1;
 mod dracula;
 mod gruvbox;
+mod gruvbox_zed_1;
 mod night_owl;
 mod noctis;
 mod nord;
+mod one_zed_1;
 mod palenight;
 mod rose_pine;
+mod rose_pine_zed_1;
+mod sandcastle_zed_1;
 mod solarized;
+mod solarized_zed_1;
+mod summercamp_zed_1;
 mod synthwave_84;
 
 pub use andromeda::*;
+pub use andromeda_zed_1::*;
+pub use atelier_zed_1::*;
 pub use ayu::*;
+pub use ayu_zed_1::*;
 pub use dracula::*;
 pub use gruvbox::*;
+pub use gruvbox_zed_1::*;
 pub use night_owl::*;
 pub use noctis::*;
 pub use nord::*;
+pub use one_zed_1::*;
 pub use palenight::*;
 pub use rose_pine::*;
+pub use rose_pine_zed_1::*;
+pub use sandcastle_zed_1::*;
 pub use solarized::*;
+pub use solarized_zed_1::*;
+pub use summercamp_zed_1::*;
 pub use synthwave_84::*;
 
 use crate::UserThemeFamily;
@@ -40,5 +58,14 @@ pub(crate) fn all_user_themes() -> Vec<UserThemeFamily> {
         noctis(),
         ayu(),
         gruvbox(),
+        andromeda_zed_1(),
+        one_zed_1(),
+        atelier_zed_1(),
+        gruvbox_zed_1(),
+        rose_pine_zed_1(),
+        sandcastle_zed_1(),
+        ayu_zed_1(),
+        solarized_zed_1(),
+        summercamp_zed_1(),
     ]
 }
