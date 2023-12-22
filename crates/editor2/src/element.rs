@@ -2840,23 +2840,26 @@ impl Element for EditorElement {
                 }
                 self.paint_text(text_bounds, &mut layout, cx);
 
-                cx.with_z_index(0, |cx| {
-                    self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
-                });
-
-                cx.with_z_index(1, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
-
                 if !layout.blocks.is_empty() {
-                    cx.with_z_index(2, |cx| {
+                    cx.with_z_index(0, |cx| {
                         cx.with_element_id(Some("editor_blocks"), |cx| {
                             self.paint_blocks(bounds, &mut layout, cx);
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout,
+                                cx,
+                            );
                         });
                     })
                 }
 
-                cx.with_z_index(3, |cx| {
+                cx.with_z_index(1, |cx| {
                     self.paint_overlays(text_bounds, &mut layout, cx);
                 });
+
+                cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
             });
         })
     }
