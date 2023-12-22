@@ -1985,6 +1985,7 @@ dependencies = [
  "serde_derive",
  "settings2",
  "smallvec",
+ "smol",
  "theme2",
  "theme_selector2",
  "time",

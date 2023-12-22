@@ -52,7 +52,6 @@ pub struct CollabTitlebarItem {
     user_store: Model<UserStore>,
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
-    project_popover: Option<(View<recent_projects::RecentProjects>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -290,7 +289,6 @@ impl CollabTitlebarItem {
             project,
             user_store,
             client,
-            project_popover: None,
             _subscriptions: subscriptions,
         }
     }
@@ -327,22 +325,15 @@ impl CollabTitlebarItem {
         };
 
         let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
+        let workspace = self.workspace.clone();
         popover_menu("project_name_trigger")
             .trigger(
                 Button::new("project_name_trigger", name)
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx))
-                    .on_click(cx.listener(|this, _, cx| {
-                        this.toggle_project_menu(&ToggleProjectMenu, cx);
-                    })),
+                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
             )
-            .when_some(
-                self.project_popover
-                    .as_ref()
-                    .map(|(project, _)| project.clone()),
-                |this, project| this.menu(move |_| project.clone()),
-            )
+            .menu(move |cx| Self::render_project_popover(workspace.clone(), cx))
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -467,36 +458,24 @@ impl CollabTitlebarItem {
         view
     }
 
-    pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
-        if self.project_popover.take().is_none() {
-            let workspace = self.workspace.clone();
-            cx.spawn(|this, mut cx| async move {
-                let workspaces = WORKSPACE_DB
-                    .recent_workspaces_on_disk()
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(_, location)| location)
-                    .collect();
+    pub fn render_project_popover(
+        workspace: WeakView<Workspace>,
+        cx: &mut WindowContext<'_>,
+    ) -> View<RecentProjects> {
+        let workspaces = smol::block_on(async move {
+            WORKSPACE_DB
+                .recent_workspaces_on_disk()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, location)| location)
+                .collect()
+        });
+        let view = RecentProjects::open_popover(workspace, workspaces, cx);
 
-                let workspace = workspace.clone();
-                this.update(&mut cx, move |this, cx| {
-                    let view = RecentProjects::open_popover(workspace, workspaces, cx);
-
-                    let focus_handle = view.focus_handle(cx);
-                    cx.focus(&focus_handle);
-                    //this.branch_popover.take();
-                    let subscription = cx.subscribe(&view, |this, _, _, _| {
-                        this.project_popover.take();
-                    });
-                    this.project_popover = Some((view, subscription));
-                    cx.notify();
-                })
-                .log_err();
-            })
-            .detach();
-        }
-        cx.notify();
+        let focus_handle = view.focus_handle(cx);
+        cx.focus(&focus_handle);
+        view
     }
 
     fn render_connection_status(
