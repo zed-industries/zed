@@ -1,4 +1,5 @@
 use anyhow;
+use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
@@ -8,21 +9,21 @@ use workspace::dock::DockPosition;
 pub struct CollaborationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
-    pub default_width: f32,
+    pub default_width: Pixels,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct ChatPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
-    pub default_width: f32,
+    pub default_width: Pixels,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct NotificationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
-    pub default_width: f32,
+    pub default_width: Pixels,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]

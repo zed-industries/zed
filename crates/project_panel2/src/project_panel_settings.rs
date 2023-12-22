@@ -1,4 +1,5 @@
 use anyhow;
+use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
@@ -12,7 +13,7 @@ pub enum ProjectPanelDockPosition {
 
 #[derive(Deserialize, Debug)]
 pub struct ProjectPanelSettings {
-    pub default_width: f32,
+    pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
     pub file_icons: bool,
     pub folder_icons: bool,
