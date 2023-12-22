@@ -384,7 +384,7 @@ impl Style {
         });
 
         let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.is_some() {
+        if background_color.map_or(false, |color| !color.is_transparent()) {
             cx.with_z_index(1, |cx| {
                 cx.paint_quad(quad(
                     bounds,
