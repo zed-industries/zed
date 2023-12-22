@@ -4,7 +4,7 @@ use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Render, Styled,
+    ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled,
     Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
@@ -44,8 +44,8 @@ pub struct TerminalPanel {
     pane: View<Pane>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
-    width: Option<f32>,
-    height: Option<f32>,
+    width: Option<Pixels>,
+    height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -364,7 +364,7 @@ impl Panel for TerminalPanel {
         });
     }
 
-    fn size(&self, cx: &WindowContext) -> f32 {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
@@ -374,7 +374,7 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
@@ -428,6 +428,6 @@ impl Panel for TerminalPanel {
 struct SerializedTerminalPanel {
     items: Vec<u64>,
     active_item_id: Option<u64>,
-    width: Option<f32>,
-    height: Option<f32>,
+    width: Option<Pixels>,
+    height: Option<Pixels>,
 }

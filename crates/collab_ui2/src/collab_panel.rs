@@ -2314,15 +2314,13 @@ impl Panel for CollabPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> f32 {
-        self.width.map_or_else(
-            || CollaborationPanelSettings::get_global(cx).default_width,
-            |width| width.0,
-        )
+    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+        self.width
+            .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
-        self.width = size.map(|s| px(s));
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
+        self.width = size;
         self.serialize(cx);
         cx.notify();
     }

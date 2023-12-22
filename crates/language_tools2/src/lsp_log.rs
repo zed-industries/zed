@@ -828,6 +828,7 @@ impl Render for LspLogToolbarItemView {
                     }
                     menu
                 })
+                .into()
             });
 
         h_stack().size_full().child(lsp_menu).child(

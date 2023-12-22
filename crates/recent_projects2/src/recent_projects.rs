@@ -12,10 +12,7 @@ use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::paths::PathExt;
-use workspace::{
-    notifications::simple_message_notification::MessageNotification, ModalView, Workspace,
-    WorkspaceLocation, WORKSPACE_DB,
-};
+use workspace::{ModalView, Workspace, WorkspaceLocation, WORKSPACE_DB};
 
 pub use projects::OpenRecent;
 
@@ -35,6 +32,25 @@ impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
         let picker = cx.build_view(|cx| Picker::new(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        // We do not want to block the UI on a potentially lenghty call to DB, so we're gonna swap
+        // out workspace locations once the future runs to completion.
+        cx.spawn(|this, mut cx| async move {
+            let workspaces = WORKSPACE_DB
+                .recent_workspaces_on_disk()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, location)| location)
+                .collect();
+            this.update(&mut cx, move |this, cx| {
+                this.picker.update(cx, move |picker, cx| {
+                    picker.delegate.workspace_locations = workspaces;
+                    picker.update_matches(picker.query(cx), cx)
+                })
+            })
+            .ok()
+        })
+        .detach();
         Self {
             picker,
             rem_width,
@@ -61,50 +77,20 @@ impl RecentProjects {
 
     fn open(_: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<Task<Result<()>>> {
         Some(cx.spawn(|workspace, mut cx| async move {
-            let workspace_locations: Vec<_> = cx
-                .background_executor()
-                .spawn(async {
-                    WORKSPACE_DB
-                        .recent_workspaces_on_disk()
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|(_, location)| location)
-                        .collect()
-                })
-                .await;
-
             workspace.update(&mut cx, |workspace, cx| {
-                if !workspace_locations.is_empty() {
-                    let weak_workspace = cx.view().downgrade();
-                    workspace.toggle_modal(cx, |cx| {
-                        let delegate =
-                            RecentProjectsDelegate::new(weak_workspace, workspace_locations, true);
+                let weak_workspace = cx.view().downgrade();
+                workspace.toggle_modal(cx, |cx| {
+                    let delegate = RecentProjectsDelegate::new(weak_workspace, true);
 
-                        let modal = RecentProjects::new(delegate, 34., cx);
-                        modal
-                    });
-                } else {
-                    workspace.show_notification(0, cx, |cx| {
-                        cx.build_view(|_| MessageNotification::new("No recent projects to open."))
-                    })
-                }
+                    let modal = RecentProjects::new(delegate, 34., cx);
+                    modal
+                });
             })?;
             Ok(())
         }))
     }
-    pub fn open_popover(
-        workspace: WeakView<Workspace>,
-        workspaces: Vec<WorkspaceLocation>,
-        cx: &mut WindowContext<'_>,
-    ) -> View<Self> {
-        cx.build_view(|cx| {
-            Self::new(
-                RecentProjectsDelegate::new(workspace, workspaces, false),
-                20.,
-                cx,
-            )
-        })
+    pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
+        cx.build_view(|cx| Self::new(RecentProjectsDelegate::new(workspace, false), 20., cx))
     }
 }
 
@@ -140,14 +126,10 @@ pub struct RecentProjectsDelegate {
 }
 
 impl RecentProjectsDelegate {
-    fn new(
-        workspace: WeakView<Workspace>,
-        workspace_locations: Vec<WorkspaceLocation>,
-        render_paths: bool,
-    ) -> Self {
+    fn new(workspace: WeakView<Workspace>, render_paths: bool) -> Self {
         Self {
             workspace,
-            workspace_locations,
+            workspace_locations: vec![],
             selected_match_index: 0,
             matches: Default::default(),
             render_paths,

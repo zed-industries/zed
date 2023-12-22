@@ -156,7 +156,7 @@ pub enum Event {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedProjectPanel {
-    width: Option<f32>,
+    width: Option<Pixels>,
 }
 
 struct DraggedProjectEntryView {
@@ -333,7 +333,7 @@ impl ProjectPanel {
             let panel = ProjectPanel::new(workspace, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width.map(px);
+                    panel.width = serialized_panel.width;
                     cx.notify();
                 });
             }
@@ -348,9 +348,7 @@ impl ProjectPanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         PROJECT_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedProjectPanel {
-                            width: width.map(|p| p.0),
-                        })?,
+                        serde_json::to_string(&SerializedProjectPanel { width })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -1602,15 +1600,13 @@ impl Panel for ProjectPanel {
         );
     }
 
-    fn size(&self, cx: &WindowContext) -> f32 {
-        self.width.map_or_else(
-            || ProjectPanelSettings::get_global(cx).default_width,
-            |width| width.0,
-        )
+    fn size(&self, cx: &WindowContext) -> Pixels {
+        self.width
+            .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
-        self.width = size.map(px);
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
+        self.width = size;
         self.serialize(cx);
         cx.notify();
     }

@@ -25,8 +25,8 @@ pub struct TerminalSettings {
     pub option_as_meta: bool,
     pub copy_on_select: bool,
     pub dock: TerminalDockPosition,
-    pub default_width: f32,
-    pub default_height: f32,
+    pub default_width: Pixels,
+    pub default_height: Pixels,
     pub detect_venv: VenvSettings,
 }
 
