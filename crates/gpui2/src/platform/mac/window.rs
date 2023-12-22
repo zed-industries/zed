@@ -886,11 +886,16 @@ impl PlatformWindow for MacWindow {
     }
 
     fn show_character_palette(&self) {
-        unsafe {
-            let app = NSApplication::sharedApplication(nil);
-            let window = self.0.lock().native_window;
-            let _: () = msg_send![app, orderFrontCharacterPalette: window];
-        }
+        let this = self.0.lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    let app = NSApplication::sharedApplication(nil);
+                    let _: () = msg_send![app, orderFrontCharacterPalette: window];
+                }
+            })
+            .detach();
     }
 
     fn minimize(&self) {
