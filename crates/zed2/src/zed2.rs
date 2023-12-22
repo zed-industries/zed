@@ -1,6 +1,3 @@
-#![allow(unused_variables, unused_mut)]
-//todo!()
-
 mod app_menus;
 mod assets;
 pub mod languages;
@@ -37,9 +34,8 @@ use util::{
 use uuid::Uuid;
 use workspace::Pane;
 use workspace::{
-    create_and_open_local_file, dock::PanelHandle,
-    notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
-    NewWindow, Workspace, WorkspaceSettings,
+    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
+    open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
 };
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
 
@@ -184,7 +180,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let project_panel_position = project_panel.position(cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
@@ -473,7 +468,7 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
         })
         .log_err();
 
-        if let (true, Some(window)) = (should_confirm, workspace_windows.first().copied()) {
+        if let (true, Some(_)) = (should_confirm, workspace_windows.first().copied()) {
             let answer = cx
                 .update(|_, cx| {
                     cx.prompt(
@@ -484,7 +479,7 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
                 })
                 .log_err();
 
-            if let Some(mut answer) = answer {
+            if let Some(answer) = answer {
                 let answer = answer.await.ok();
                 if answer != Some(0) {
                     return Ok(());
