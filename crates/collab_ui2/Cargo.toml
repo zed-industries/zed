@@ -59,7 +59,6 @@ lazy_static.workspace = true
 log.workspace = true
 schemars.workspace = true
 postage.workspace = true
-smol.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 time.workspace = true

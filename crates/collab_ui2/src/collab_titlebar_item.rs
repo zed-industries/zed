@@ -18,7 +18,7 @@ use ui::{
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, Workspace, WORKSPACE_DB};
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -457,16 +457,7 @@ impl CollabTitlebarItem {
         workspace: WeakView<Workspace>,
         cx: &mut WindowContext<'_>,
     ) -> View<RecentProjects> {
-        let workspaces = smol::block_on(async move {
-            WORKSPACE_DB
-                .recent_workspaces_on_disk()
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(_, location)| location)
-                .collect()
-        });
-        let view = RecentProjects::open_popover(workspace, workspaces, cx);
+        let view = RecentProjects::open_popover(workspace, cx);
 
         let focus_handle = view.focus_handle(cx);
         cx.focus(&focus_handle);
