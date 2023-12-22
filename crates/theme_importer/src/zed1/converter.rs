@@ -110,6 +110,22 @@ impl Zed1ThemeConverter {
             scrollbar_track_background: scrollbar.track.background_color.map(zed1_color_to_hsla),
             scrollbar_track_border: convert(scrollbar.track.border.color),
             scrollbar_thumb_background: scrollbar.thumb.background_color.map(zed1_color_to_hsla),
+            terminal_ansi_bright_black: convert(self.theme.terminal.bright_black),
+            terminal_ansi_bright_red: convert(self.theme.terminal.bright_red),
+            terminal_ansi_bright_green: convert(self.theme.terminal.bright_green),
+            terminal_ansi_bright_yellow: convert(self.theme.terminal.bright_yellow),
+            terminal_ansi_bright_blue: convert(self.theme.terminal.bright_blue),
+            terminal_ansi_bright_magenta: convert(self.theme.terminal.bright_magenta),
+            terminal_ansi_bright_cyan: convert(self.theme.terminal.bright_cyan),
+            terminal_ansi_bright_white: convert(self.theme.terminal.bright_white),
+            terminal_ansi_black: convert(self.theme.terminal.black),
+            terminal_ansi_red: convert(self.theme.terminal.red),
+            terminal_ansi_green: convert(self.theme.terminal.green),
+            terminal_ansi_yellow: convert(self.theme.terminal.yellow),
+            terminal_ansi_blue: convert(self.theme.terminal.blue),
+            terminal_ansi_magenta: convert(self.theme.terminal.magenta),
+            terminal_ansi_cyan: convert(self.theme.terminal.cyan),
+            terminal_ansi_white: convert(self.theme.terminal.white),
             ..Default::default()
         })
     }
