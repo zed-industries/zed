@@ -1,4 +1,4 @@
-use gpui::{actions, Action, AnchorCorner, Div, Render, View};
+use gpui::{actions, AnchorCorner, Div, Render, View};
 use story::Story;
 
 use crate::prelude::*;
@@ -10,12 +10,9 @@ fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<C
     ContextMenu::build(cx, |menu, _| {
         menu.header(header)
             .separator()
-            .entry("Print current time", |cx| {
-                println!("dispatching PrintCurrentTime action");
-                cx.dispatch_action(PrintCurrentDate.boxed_clone())
-            })
-            .entry("Print best foot", |cx| {
-                cx.dispatch_action(PrintBestFood.boxed_clone())
+            .action("Print current time", Box::new(PrintCurrentDate))
+            .entry("Print best food", Some(Box::new(PrintBestFood)), |cx| {
+                cx.dispatch_action(Box::new(PrintBestFood))
             })
     })
 }

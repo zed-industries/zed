@@ -763,6 +763,7 @@ impl Render for LspLogToolbarItemView {
                             ))
                             .entry(
                                 SERVER_LOGS,
+                                None,
                                 cx.handler_for(&log_view, move |view, cx| {
                                     view.show_logs_for_server(row.server_id, cx);
                                 }),

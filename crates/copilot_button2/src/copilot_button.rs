@@ -133,8 +133,11 @@ impl CopilotButton {
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, cx| {
-            menu.entry("Sign In", initiate_sign_in)
-                .entry("Disable Copilot", move |cx| hide_copilot(fs.clone(), cx))
+            menu.entry("Sign In", None, initiate_sign_in).entry(
+                "Disable Copilot",
+                None,
+                move |cx| hide_copilot(fs.clone(), cx),
+            )
         })
     }
 
@@ -154,6 +157,7 @@ impl CopilotButton {
                         if language_enabled { "Hide" } else { "Show" },
                         language.name()
                     ),
+                    None,
                     move |cx| toggle_copilot_for_language(language.clone(), fs.clone(), cx),
                 );
             }
@@ -169,6 +173,7 @@ impl CopilotButton {
                         "{} Suggestions for This Path",
                         if path_enabled { "Hide" } else { "Show" }
                     ),
+                    None,
                     move |cx| {
                         if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
                             if let Ok(workspace) = workspace.root_view(cx) {
@@ -194,6 +199,7 @@ impl CopilotButton {
                 } else {
                     "Show Suggestions for All Files"
                 },
+                None,
                 move |cx| toggle_copilot_globally(fs.clone(), cx),
             )
             .separator()

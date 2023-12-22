@@ -459,6 +459,7 @@ impl SyntaxTreeToolbarItemView {
                                     layer.language.name(),
                                     format_node_range(layer.node())
                                 ),
+                                None,
                                 cx.handler_for(&view, move |view, cx| {
                                     view.select_layer(layer_ix, cx);
                                 }),
