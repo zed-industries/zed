@@ -74,14 +74,13 @@ impl Render for CollabTitlebarItem {
             // Set a non-scaling min-height here to ensure the titlebar is
             // always at least the height of the traffic lights.
             .min_h(px(32.))
-            .pl_2()
             .map(|this| {
                 if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
                     this.pl_2()
                 } else {
                     // Use pixels here instead of a rem-based size because the macOS traffic
                     // lights are a static size, and don't scale with the rest of the UI.
-                    this.pl(px(72.))
+                    this.pl(px(80.))
                 }
             })
             .bg(cx.theme().colors().title_bar_background)
