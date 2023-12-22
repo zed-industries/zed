@@ -1,9 +1,10 @@
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
     BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement,
-    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
-    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
+    WindowContext,
 };
 
 use collections::HashMap;
@@ -1509,12 +1510,26 @@ impl Interactivity {
                                     let delta = event.delta.pixel_delta(line_height);
 
                                     if overflow.x == Overflow::Scroll {
-                                        scroll_offset.x = (scroll_offset.x + delta.x)
+                                        let mut delta_x = Pixels::ZERO;
+                                        if !delta.x.is_zero() {
+                                            delta_x = delta.x;
+                                        } else if overflow.y != Overflow::Scroll {
+                                            delta_x = delta.y;
+                                        }
+
+                                        scroll_offset.x = (scroll_offset.x + delta_x)
                                             .clamp(-scroll_max.width, px(0.));
                                     }
 
                                     if overflow.y == Overflow::Scroll {
-                                        scroll_offset.y = (scroll_offset.y + delta.y)
+                                        let mut delta_y = Pixels::ZERO;
+                                        if !delta.y.is_zero() {
+                                            delta_y = delta.y;
+                                        } else if overflow.x != Overflow::Scroll {
+                                            delta_y = delta.x;
+                                        }
+
+                                        scroll_offset.y = (scroll_offset.y + delta_y)
                                             .clamp(-scroll_max.height, px(0.));
                                     }
 
