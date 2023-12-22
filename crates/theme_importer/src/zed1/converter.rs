@@ -132,6 +132,23 @@ impl Zed1ThemeConverter {
                 .background_color
                 .map(zed1_color_to_hsla),
             text: convert(self.theme.project_panel.entry.default_style().text.color),
+            text_muted: convert(active_tab.description.text.color),
+            element_hover: self
+                .theme
+                .picker
+                .item
+                .hovered
+                .as_ref()
+                .and_then(|hovered| hovered.container.background_color)
+                .map(zed1_color_to_hsla),
+            element_selected: self
+                .theme
+                .picker
+                .item
+                .active_state()
+                .container
+                .background_color
+                .map(zed1_color_to_hsla),
             tab_bar_background: tab_bar.container.background_color.map(zed1_color_to_hsla),
             tab_active_background: active_tab
                 .container
