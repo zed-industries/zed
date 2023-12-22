@@ -53,7 +53,7 @@ impl Zed1ThemeConverter {
         let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(UserTheme {
-            name: self.theme.meta.name,
+            name: format!("{} (Zed1)", self.theme.meta.name),
             appearance,
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinement,

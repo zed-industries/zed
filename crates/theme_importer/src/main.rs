@@ -4,6 +4,7 @@ mod util;
 mod vscode;
 mod zed1;
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
@@ -20,11 +21,13 @@ use json_comments::StripComments;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
-use theme::{Appearance, UserThemeFamily};
+use theme::{Appearance, UserTheme, UserThemeFamily};
+use theme1::Theme as Zed1Theme;
 
 use crate::theme_printer::UserThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
+use crate::zed1::Zed1ThemeConverter;
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
@@ -179,6 +182,21 @@ fn main() -> Result<()> {
 
     let zed1_themes_path = PathBuf::from_str("assets/themes")?;
 
+    let zed1_theme_familes = [
+        "Andromeda",
+        "Atelier",
+        "One",
+        "Gruvbox",
+        "Rosé Pine",
+        "Solarized",
+    ];
+
+    let mut zed1_themes_by_family: HashMap<String, Vec<UserTheme>> = HashMap::from_iter(
+        zed1_theme_familes
+            .into_iter()
+            .map(|family| (family.to_string(), Vec::new())),
+    );
+
     for entry in fs::read_dir(&zed1_themes_path)? {
         let entry = entry?;
 
@@ -186,7 +204,54 @@ fn main() -> Result<()> {
             continue;
         }
 
-        dbg!(entry);
+        match entry.path().extension() {
+            None => continue,
+            Some(extension) => {
+                if extension != "json" {
+                    continue;
+                }
+            }
+        }
+
+        let theme_file_path = entry.path();
+
+        let theme_file = match File::open(&theme_file_path) {
+            Ok(file) => file,
+            Err(_) => {
+                log::info!("Failed to open file at path: {:?}", theme_file_path);
+                continue;
+            }
+        };
+
+        let theme_without_comments = StripComments::new(theme_file);
+        let zed1_theme: Zed1Theme = serde_json::from_reader(theme_without_comments)
+            .context(format!("failed to parse theme {theme_file_path:?}"))?;
+
+        let theme_name = zed1_theme.meta.name.clone();
+
+        let converter = Zed1ThemeConverter::new(zed1_theme);
+
+        let theme = converter.convert()?;
+
+        let Some((_, themes_for_family)) = zed1_themes_by_family
+            .iter_mut()
+            .find(|(family, _)| theme_name.starts_with(*family))
+        else {
+            log::warn!("No theme family found for '{}'.", theme_name);
+            continue;
+        };
+
+        themes_for_family.push(theme);
+    }
+
+    for (family, themes) in zed1_themes_by_family {
+        let theme_family = UserThemeFamily {
+            name: format!("{family} (Zed1)"),
+            author: "Zed Industries".to_string(),
+            themes,
+        };
+
+        theme_families.push(theme_family);
     }
 
     let themes_output_path = PathBuf::from_str(OUT_PATH)?;
