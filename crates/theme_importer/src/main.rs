@@ -275,7 +275,7 @@ fn main() -> Result<()> {
 
     for (family, themes) in zed1_themes_by_family {
         let theme_family = UserThemeFamily {
-            name: format!("{family}"),
+            name: family,
             author: "Zed Industries".to_string(),
             themes,
         };

@@ -53,7 +53,7 @@ impl Zed1ThemeConverter {
         let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(UserTheme {
-            name: format!("{}", self.theme.meta.name),
+            name: self.theme.meta.name,
             appearance,
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinement,
@@ -68,33 +68,16 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
-        let diff_style = self.theme.editor.diff.clone();
+        let diff_style = &self.theme.editor.diff;
+        let diagnostic_summary = &self.theme.workspace.status_bar.diagnostic_summary;
 
         Ok(StatusColorsRefinement {
             created: convert(diff_style.inserted),
             modified: convert(diff_style.modified),
             deleted: convert(diff_style.deleted),
-            success: convert(
-                self.theme
-                    .workspace
-                    .status_bar
-                    .diagnostic_summary
-                    .icon_color_ok,
-            ),
-            warning: convert(
-                self.theme
-                    .workspace
-                    .status_bar
-                    .diagnostic_summary
-                    .icon_color_warning,
-            ),
-            error: convert(
-                self.theme
-                    .workspace
-                    .status_bar
-                    .diagnostic_summary
-                    .icon_color_error,
-            ),
+            success: convert(diagnostic_summary.icon_color_ok),
+            warning: convert(diagnostic_summary.icon_color_warning),
+            error: convert(diagnostic_summary.icon_color_error),
             ..Default::default()
         })
     }
@@ -104,11 +87,11 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
-        let tab_bar = self.theme.workspace.tab_bar.clone();
-        let active_tab = self.theme.workspace.tab_bar.tab_style(true, true).clone();
-        let inactive_tab = self.theme.workspace.tab_bar.tab_style(true, false).clone();
-        let toolbar = self.theme.workspace.toolbar.clone();
-        let scrollbar = self.theme.editor.scrollbar.clone();
+        let tab_bar = &self.theme.workspace.tab_bar;
+        let active_tab = &self.theme.workspace.tab_bar.tab_style(true, true);
+        let inactive_tab = &self.theme.workspace.tab_bar.tab_style(true, false);
+        let toolbar = &self.theme.workspace.toolbar;
+        let scrollbar = &self.theme.editor.scrollbar;
 
         let zed1_titlebar_border = convert(self.theme.titlebar.container.border.color);
 
