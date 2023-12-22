@@ -13,9 +13,11 @@ use std::{
     ops::{AddAssign, Range, RangeInclusive},
     panic::Location,
     pin::Pin,
-    sync::atomic::AtomicU32,
     task::{Context, Poll},
 };
+
+#[cfg(not(feature = "allow-multiple-gpui-versions"))]
+use std::sync::atomic::AtomicU32;
 
 pub use backtrace::Backtrace;
 use futures::Future;
@@ -434,19 +436,20 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
     }
 }
 
+#[cfg(not(feature = "allow-multiple-gpui-versions"))]
 static GPUI_LOADED: AtomicU32 = AtomicU32::new(0);
 
 pub fn gpui2_loaded() {
+    #[cfg(not(feature = "allow-multiple-gpui-versions"))]
     if GPUI_LOADED.fetch_add(2, std::sync::atomic::Ordering::SeqCst) != 0 {
-        // TODO: Temporarily commenting these out so we can run the `theme_importer` to import Zed1 themes.
-        // panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
+        panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
     }
 }
 
 pub fn gpui1_loaded() {
+    #[cfg(not(feature = "allow-multiple-gpui-versions"))]
     if GPUI_LOADED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) != 0 {
-        // TODO: Temporarily commenting these out so we can run the `theme_importer` to import Zed1 themes.
-        // panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
+        panic!("=========\nYou are loading both GPUI1 and GPUI2 in the same build!\nFix Your Dependencies with cargo tree!\n=========")
     }
 }
 
