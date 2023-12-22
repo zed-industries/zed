@@ -66,7 +66,7 @@ static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 #[ctor]
 unsafe fn build_classes() {
     APP_CLASS = {
-        let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
+        let mut decl = ClassDecl::new("GPUI2Application", class!(NSApplication)).unwrap();
         decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
         decl.add_method(
             sel!(sendEvent:),
@@ -76,7 +76,7 @@ unsafe fn build_classes() {
     };
 
     APP_DELEGATE_CLASS = {
-        let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
+        let mut decl = ClassDecl::new("GPUI2ApplicationDelegate", class!(NSResponder)).unwrap();
         decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
         decl.add_method(
             sel!(applicationDidFinishLaunching:),

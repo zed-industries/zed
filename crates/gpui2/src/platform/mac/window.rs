@@ -85,10 +85,10 @@ const NSDragOperationCopy: NSDragOperation = 1;
 unsafe fn build_classes() {
     ::util::gpui2_loaded();
 
-    WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
-    PANEL_CLASS = build_window_class("GPUIPanel", class!(NSPanel));
+    WINDOW_CLASS = build_window_class("GPUI2Window", class!(NSWindow));
+    PANEL_CLASS = build_window_class("GPUI2Panel", class!(NSPanel));
     VIEW_CLASS = {
-        let mut decl = ClassDecl::new("GPUIView", class!(NSView)).unwrap();
+        let mut decl = ClassDecl::new("GPUI2View", class!(NSView)).unwrap();
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
 
         decl.add_method(sel!(dealloc), dealloc_view as extern "C" fn(&Object, Sel));
