@@ -31,6 +31,9 @@ pub fn ayu_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xaad84cff).into()),
+                        deleted: Some(rgba(0xc3595fff).into()),
+                        modified: Some(rgba(0xfeb454ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -327,6 +330,9 @@ pub fn ayu_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xa1c24bff).into()),
+                        deleted: Some(rgba(0xef7271ff).into()),
+                        modified: Some(rgba(0xf1ae4aff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -623,6 +629,9 @@ pub fn ayu_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xd5fe80ff).into()),
+                        deleted: Some(rgba(0xc46a60ff).into()),
+                        modified: Some(rgba(0xfed073ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

@@ -30,6 +30,9 @@ pub fn sandcastle_zed_1() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    created: Some(rgba(0x83a598ff).into()),
+                    deleted: Some(rgba(0x8d4f61ff).into()),
+                    modified: Some(rgba(0xa07e3bff).into()),
                     ..Default::default()
                 },
                 syntax: Some(UserSyntaxTheme {

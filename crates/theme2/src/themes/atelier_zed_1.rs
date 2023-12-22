@@ -31,6 +31,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x98ab54ff).into()),
+                        deleted: Some(rgba(0xba6337ff).into()),
+                        modified: Some(rgba(0xa59810ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -348,6 +351,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x7b9727ff).into()),
+                        deleted: Some(rgba(0xc82234ff).into()),
+                        modified: Some(rgba(0xc38419ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -665,6 +671,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x6fae80ff).into()),
+                        deleted: Some(rgba(0xb1623aff).into()),
+                        modified: Some(rgba(0xa07e3cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -982,6 +991,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x2c9292ff).into()),
+                        deleted: Some(rgba(0x953a5fff).into()),
+                        modified: Some(rgba(0xa06e3bff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1299,6 +1311,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x7d9727ff).into()),
+                        deleted: Some(rgba(0x934e2dff).into()),
+                        modified: Some(rgba(0xa59810ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1616,6 +1631,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xac973aff).into()),
+                        deleted: Some(rgba(0xa33a1eff).into()),
+                        modified: Some(rgba(0xc08b31ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1933,6 +1951,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xbfab61ff).into()),
+                        deleted: Some(rgba(0xc94a23ff).into()),
+                        modified: Some(rgba(0xc08b31ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -2250,6 +2271,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x60ac3aff).into()),
+                        deleted: Some(rgba(0xaf2c2eff).into()),
+                        modified: Some(rgba(0xae9515ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -2567,6 +2591,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x2ba32aff).into()),
+                        deleted: Some(rgba(0xbd1331ff).into()),
+                        modified: Some(rgba(0x98981cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -2884,6 +2911,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x5fa8a7ff).into()),
+                        deleted: Some(rgba(0xbe4778ff).into()),
+                        modified: Some(rgba(0xa06e3cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -3201,6 +3231,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x4b8b8bff).into()),
+                        deleted: Some(rgba(0xa23b3bff).into()),
+                        modified: Some(rgba(0xa06e3bff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -3518,6 +3551,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x918b3bff).into()),
+                        deleted: Some(rgba(0xa43424ff).into()),
+                        modified: Some(rgba(0xbb8a36ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -3835,6 +3871,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x568c3bff).into()),
+                        deleted: Some(rgba(0xa9275aff).into()),
+                        modified: Some(rgba(0x8a8a11ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -4152,6 +4191,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x97ab54ff).into()),
+                        deleted: Some(rgba(0xf22e41ff).into()),
+                        modified: Some(rgba(0xc3841aff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -4469,6 +4511,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x83bd62ff).into()),
+                        deleted: Some(rgba(0xd73838ff).into()),
+                        modified: Some(rgba(0xae9515ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -4786,6 +4831,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x70a2a1ff).into()),
+                        deleted: Some(rgba(0xca4a4aff).into()),
+                        modified: Some(rgba(0xa06e3cff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -5103,6 +5151,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x61b656ff).into()),
+                        deleted: Some(rgba(0xe61c3dff).into()),
+                        modified: Some(rgba(0x98981dff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -5420,6 +5471,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x489963ff).into()),
+                        deleted: Some(rgba(0x8b4d2fff).into()),
+                        modified: Some(rgba(0xa07e3bff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -5737,6 +5791,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xa8a161ff).into()),
+                        deleted: Some(rgba(0xca412cff).into()),
+                        modified: Some(rgba(0xbb8a36ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -6054,6 +6111,9 @@ pub fn atelier_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x78a361ff).into()),
+                        deleted: Some(rgba(0xd22f72ff).into()),
+                        modified: Some(rgba(0x8a8a11ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

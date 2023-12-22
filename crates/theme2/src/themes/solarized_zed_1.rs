@@ -31,6 +31,9 @@ pub fn solarized_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xa0ad46ff).into()),
+                        deleted: Some(rgba(0xdc3330ff).into()),
+                        modified: Some(rgba(0xb58904ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -327,6 +330,9 @@ pub fn solarized_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x859904ff).into()),
+                        deleted: Some(rgba(0xb52727ff).into()),
+                        modified: Some(rgba(0xb58903ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

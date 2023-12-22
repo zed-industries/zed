@@ -30,6 +30,9 @@ pub fn andromeda_zed_1() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    created: Some(rgba(0x96df72ff).into()),
+                    deleted: Some(rgba(0xcd1d5aff).into()),
+                    modified: Some(rgba(0xfee56dff).into()),
                     ..Default::default()
                 },
                 syntax: Some(UserSyntaxTheme {

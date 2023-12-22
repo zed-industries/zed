@@ -31,6 +31,9 @@ pub fn one_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x84b278ff).into()),
+                        deleted: Some(rgba(0xd36151ff).into()),
+                        modified: Some(rgba(0xdec184ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -334,6 +337,9 @@ pub fn one_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xa1c181ff).into()),
+                        deleted: Some(rgba(0xa45a5eff).into()),
+                        modified: Some(rgba(0xdec184ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

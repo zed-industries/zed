@@ -64,7 +64,16 @@ impl Zed1ThemeConverter {
     }
 
     fn convert_status_colors(&self) -> Result<StatusColorsRefinement> {
+        fn convert(color: Zed1Color) -> Option<Hsla> {
+            Some(zed1_color_to_hsla(color))
+        }
+
+        let diff_style = self.theme.editor.diff.clone();
+
         Ok(StatusColorsRefinement {
+            created: convert(diff_style.inserted),
+            modified: convert(diff_style.modified),
+            deleted: convert(diff_style.deleted),
             ..Default::default()
         })
     }

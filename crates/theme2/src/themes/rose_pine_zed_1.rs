@@ -31,6 +31,9 @@ pub fn rose_pine_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x6bbca3ff).into()),
+                        deleted: Some(rgba(0xb4647aff).into()),
+                        modified: Some(rgba(0xe99d35ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -341,6 +344,9 @@ pub fn rose_pine_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x5dc2a3ff).into()),
+                        deleted: Some(rgba(0xbe5773ff).into()),
+                        modified: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -651,6 +657,9 @@ pub fn rose_pine_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x5dc2a3ff).into()),
+                        deleted: Some(rgba(0xbe5773ff).into()),
+                        modified: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

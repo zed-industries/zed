@@ -31,6 +31,9 @@ pub fn gruvbox_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x958e43ff).into()),
+                        deleted: Some(rgba(0x9d0408ff).into()),
+                        modified: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -334,6 +337,9 @@ pub fn gruvbox_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xb8bb27ff).into()),
+                        deleted: Some(rgba(0xd0382bff).into()),
+                        modified: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -637,6 +643,9 @@ pub fn gruvbox_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x958e43ff).into()),
+                        deleted: Some(rgba(0x9d0408ff).into()),
+                        modified: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -940,6 +949,9 @@ pub fn gruvbox_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xb8bb27ff).into()),
+                        deleted: Some(rgba(0xd0382bff).into()),
+                        modified: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1243,6 +1255,9 @@ pub fn gruvbox_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0x958e43ff).into()),
+                        deleted: Some(rgba(0x9d0408ff).into()),
+                        modified: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {
@@ -1546,6 +1561,9 @@ pub fn gruvbox_zed_1() -> UserThemeFamily {
                         ..Default::default()
                     },
                     status: StatusColorsRefinement {
+                        created: Some(rgba(0xb8bb27ff).into()),
+                        deleted: Some(rgba(0xd0382bff).into()),
+                        modified: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
                     syntax: Some(UserSyntaxTheme {

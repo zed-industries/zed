@@ -30,6 +30,9 @@ pub fn summercamp_zed_1() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    created: Some(rgba(0x5dea5aff).into()),
+                    deleted: Some(rgba(0xb93f36ff).into()),
+                    modified: Some(rgba(0xf1fe29ff).into()),
                     ..Default::default()
                 },
                 syntax: Some(UserSyntaxTheme {
