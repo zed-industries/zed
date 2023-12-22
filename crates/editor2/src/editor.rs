@@ -1350,15 +1350,15 @@ impl CompletionsMenu {
                 completion.sort_key(),
             )
         });
-        drop(completions);
 
         for mat in &mut matches {
-            let completions = self.completions.read();
-            let filter_start = completions[mat.candidate_id].label.filter_range.start;
+            let completion = &completions[mat.candidate_id];
+            mat.string = completion.label.text.clone();
             for position in &mut mat.positions {
-                *position += filter_start;
+                *position += completion.label.filter_range.start;
             }
         }
+        drop(completions);
 
         self.matches = matches.into();
         self.selected_item = 0;
