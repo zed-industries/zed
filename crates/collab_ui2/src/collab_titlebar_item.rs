@@ -18,7 +18,7 @@ use ui::{
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, Workspace, WORKSPACE_DB};
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -52,8 +52,6 @@ pub struct CollabTitlebarItem {
     user_store: Model<UserStore>,
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
-    branch_popover: Option<(View<BranchList>, Subscription)>,
-    project_popover: Option<(View<recent_projects::RecentProjects>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -291,8 +289,6 @@ impl CollabTitlebarItem {
             project,
             user_store,
             client,
-            branch_popover: None,
-            project_popover: None,
             _subscriptions: subscriptions,
         }
     }
@@ -329,22 +325,15 @@ impl CollabTitlebarItem {
         };
 
         let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
+        let workspace = self.workspace.clone();
         popover_menu("project_name_trigger")
             .trigger(
                 Button::new("project_name_trigger", name)
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx))
-                    .on_click(cx.listener(|this, _, cx| {
-                        this.toggle_project_menu(&ToggleProjectMenu, cx);
-                    })),
+                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
             )
-            .when_some(
-                self.project_popover
-                    .as_ref()
-                    .map(|(project, _)| project.clone()),
-                |this, project| this.menu(move |_| project.clone()),
-            )
+            .menu(move |cx| Some(Self::render_project_popover(workspace.clone(), cx)))
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -357,7 +346,7 @@ impl CollabTitlebarItem {
 
             names_and_branches.next().flatten()
         };
-
+        let workspace = self.workspace.upgrade()?;
         let branch_name = entry
             .as_ref()
             .and_then(RepositoryEntry::branch)
@@ -376,17 +365,9 @@ impl CollabTitlebarItem {
                                 "Local branches only",
                                 cx,
                             )
-                        })
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.toggle_vcs_menu(&ToggleVcsMenu, cx);
-                        })),
+                        }),
                 )
-                .when_some(
-                    self.branch_popover
-                        .as_ref()
-                        .map(|(branch, _)| branch.clone()),
-                    |this, branch| this.menu(move |_| branch.clone()),
-                ),
+                .menu(move |cx| Self::render_vcs_popover(workspace.clone(), cx)),
         )
     }
 
@@ -462,55 +443,25 @@ impl CollabTitlebarItem {
             .log_err();
     }
 
-    pub fn toggle_vcs_menu(&mut self, _: &ToggleVcsMenu, cx: &mut ViewContext<Self>) {
-        if self.branch_popover.take().is_none() {
-            if let Some(workspace) = self.workspace.upgrade() {
-                let Some(view) = build_branch_list(workspace, cx).log_err() else {
-                    return;
-                };
-                self.project_popover.take();
-                let focus_handle = view.focus_handle(cx);
-                cx.focus(&focus_handle);
-                let subscription = cx.subscribe(&view, |this, _, _, _| {
-                    this.branch_popover.take();
-                });
-                self.branch_popover = Some((view, subscription));
-            }
-        }
-
-        cx.notify();
+    pub fn render_vcs_popover(
+        workspace: View<Workspace>,
+        cx: &mut WindowContext<'_>,
+    ) -> Option<View<BranchList>> {
+        let view = build_branch_list(workspace, cx).log_err()?;
+        let focus_handle = view.focus_handle(cx);
+        cx.focus(&focus_handle);
+        Some(view)
     }
 
-    pub fn toggle_project_menu(&mut self, _: &ToggleProjectMenu, cx: &mut ViewContext<Self>) {
-        if self.project_popover.take().is_none() {
-            let workspace = self.workspace.clone();
-            cx.spawn(|this, mut cx| async move {
-                let workspaces = WORKSPACE_DB
-                    .recent_workspaces_on_disk()
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(_, location)| location)
-                    .collect();
+    pub fn render_project_popover(
+        workspace: WeakView<Workspace>,
+        cx: &mut WindowContext<'_>,
+    ) -> View<RecentProjects> {
+        let view = RecentProjects::open_popover(workspace, cx);
 
-                let workspace = workspace.clone();
-                this.update(&mut cx, move |this, cx| {
-                    let view = RecentProjects::open_popover(workspace, workspaces, cx);
-
-                    let focus_handle = view.focus_handle(cx);
-                    cx.focus(&focus_handle);
-                    this.branch_popover.take();
-                    let subscription = cx.subscribe(&view, |this, _, _, _| {
-                        this.project_popover.take();
-                    });
-                    this.project_popover = Some((view, subscription));
-                    cx.notify();
-                })
-                .log_err();
-            })
-            .detach();
-        }
-        cx.notify();
+        let focus_handle = view.focus_handle(cx);
+        cx.focus(&focus_handle);
+        view
     }
 
     fn render_connection_status(
@@ -587,6 +538,7 @@ impl CollabTitlebarItem {
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                             .action("Sign Out", client::SignOut.boxed_clone())
                     })
+                    .into()
                 })
                 .trigger(
                     ButtonLike::new("user-menu")
@@ -609,6 +561,7 @@ impl CollabTitlebarItem {
                             .separator()
                             .action("Share Feedback", feedback::GiveFeedback.boxed_clone())
                     })
+                    .into()
                 })
                 .trigger(
                     ButtonLike::new("user-menu")
