@@ -1930,7 +1930,8 @@ impl Render for Pane {
                 }),
             )
             .child(self.render_tab_bar(cx))
-            .child(
+            .child({
+                let has_worktrees = self.project.read(cx).worktrees().next().is_some();
                 // main content
                 div()
                     .flex_1()
@@ -1944,10 +1945,15 @@ impl Render for Pane {
                                 .child(self.toolbar.clone())
                                 .child(item.to_any())
                         } else {
-                            div.h_flex().size_full().justify_center().child(
-                                Label::new("Open a file or project to get started.")
-                                    .color(Color::Muted),
-                            )
+                            let placeholder = div.h_flex().size_full().justify_center();
+                            if has_worktrees {
+                                placeholder
+                            } else {
+                                placeholder.child(
+                                    Label::new("Open a file or project to get started.")
+                                        .color(Color::Muted),
+                                )
+                            }
                         }
                     })
                     .child(
@@ -1984,8 +1990,8 @@ impl Render for Pane {
                                     div.top_0().bottom_0().right_0().w_32()
                                 }
                             }),
-                    ),
-            )
+                    )
+            })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|pane, _, cx| {
