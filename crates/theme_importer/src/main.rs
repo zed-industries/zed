@@ -325,6 +325,8 @@ fn main() -> Result<()> {
         theme_modules.push(theme_family_slug);
     }
 
+    theme_modules.sort();
+
     let themes_vector_contents = format!(
         r#"
         use crate::UserThemeFamily;
