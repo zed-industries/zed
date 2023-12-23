@@ -192,21 +192,43 @@ pub struct PanelButtons {
 }
 
 impl Dock {
-    pub fn new(position: DockPosition, cx: &mut ViewContext<'_, Self>) -> Self {
+    pub fn new(position: DockPosition, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let focus_handle = cx.focus_handle();
-        let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
-            if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
-                active_entry.panel.focus_handle(cx).focus(cx)
+
+        let dock = cx.build_view(|cx: &mut ViewContext<Self>| {
+            let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
+                if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
+                    active_entry.panel.focus_handle(cx).focus(cx)
+                }
+            });
+            Self {
+                position,
+                panel_entries: Default::default(),
+                active_panel_index: 0,
+                is_open: false,
+                focus_handle: focus_handle.clone(),
+                _focus_subscription: focus_subscription,
             }
         });
-        Self {
-            position,
-            panel_entries: Default::default(),
-            active_panel_index: 0,
-            is_open: false,
-            focus_handle,
-            _focus_subscription: focus_subscription,
-        }
+
+        cx.observe(&dock, move |workspace, dock, cx| {
+            if dock.read(cx).is_open() {
+                if let Some(panel) = dock.read(cx).active_panel() {
+                    if panel.is_zoomed(cx) {
+                        workspace.zoomed = Some(panel.to_any().downgrade());
+                        workspace.zoomed_position = Some(position);
+                        return;
+                    }
+                }
+            }
+            if workspace.zoomed_position == Some(position) {
+                workspace.zoomed = None;
+                workspace.zoomed_position = None;
+            }
+        })
+        .detach();
+
+        dock
     }
 
     pub fn position(&self) -> DockPosition {
