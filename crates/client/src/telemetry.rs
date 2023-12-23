@@ -125,7 +125,7 @@ const MAX_QUEUE_LEN: usize = 50;
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
-const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
+const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(120);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
