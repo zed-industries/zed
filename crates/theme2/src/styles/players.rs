@@ -1,8 +1,9 @@
 use gpui::Hsla;
+use serde_derive::Deserialize;
 
 use crate::{amber, blue, jade, lime, orange, pink, purple, red};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
 pub struct PlayerColor {
     pub cursor: Hsla,
     pub background: Hsla,
@@ -15,7 +16,7 @@ pub struct PlayerColor {
 ///
 /// The rest of the default colors crisscross back and forth on the
 /// color wheel so that the colors are as distinct as possible.
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
 impl Default for PlayerColors {

@@ -108,6 +108,16 @@ impl<'a> Debug for UserThemeStylesRefinementPrinter<'a> {
             .field("colors", &ThemeColorsRefinementPrinter(&self.0.colors))
             .field("status", &StatusColorsRefinementPrinter(&self.0.status))
             .field(
+                "player",
+                &OptionPrinter(
+                    &self
+                        .0
+                        .player
+                        .as_ref()
+                        .map(|player_colors| PlayerColorsPrinter(player_colors)),
+                ),
+            )
+            .field(
                 "syntax",
                 &OptionPrinter(
                     &self

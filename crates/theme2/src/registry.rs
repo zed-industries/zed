@@ -49,8 +49,19 @@ impl ThemeRegistry {
             };
             theme_colors.refine(&user_theme.styles.colors);
 
-            let mut status_colors = StatusColors::dark();
+            let mut status_colors = match user_theme.appearance {
+                Appearance::Light => StatusColors::light(),
+                Appearance::Dark => StatusColors::dark(),
+            };
             status_colors.refine(&user_theme.styles.status);
+
+            let mut player_colors = match user_theme.appearance {
+                Appearance::Light => PlayerColors::light(),
+                Appearance::Dark => PlayerColors::dark(),
+            };
+            if let Some(player_colors_from_theme) = user_theme.styles.player {
+                player_colors = player_colors_from_theme;
+            }
 
             let mut syntax_colors = match user_theme.appearance {
                 Appearance::Light => SyntaxTheme::light(),
@@ -82,10 +93,7 @@ impl ThemeRegistry {
                     system: SystemColors::default(),
                     colors: theme_colors,
                     status: status_colors,
-                    player: match user_theme.appearance {
-                        Appearance::Light => PlayerColors::light(),
-                        Appearance::Dark => PlayerColors::dark(),
-                    },
+                    player: player_colors,
                     syntax: Arc::new(syntax_colors),
                     accents: Vec::new(),
                 },

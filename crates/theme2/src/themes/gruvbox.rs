@@ -5,8 +5,9 @@ use gpui::rgba;
 
 #[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
-    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
+    UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn gruvbox() -> UserThemeFamily {
@@ -76,6 +77,48 @@ pub fn gruvbox() -> UserThemeFamily {
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x0b6678ff).into(),
+                            background: rgba(0x0b6678ff).into(),
+                            selection: rgba(0x0b66783d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x7c6f64ff).into(),
+                            background: rgba(0x7c6f64ff).into(),
+                            selection: rgba(0x7c6f643d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xaf3b05ff).into(),
+                            background: rgba(0xaf3b05ff).into(),
+                            selection: rgba(0xaf3b053d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8f4071ff).into(),
+                            background: rgba(0x8f4071ff).into(),
+                            selection: rgba(0x8f40713d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x437b59ff).into(),
+                            background: rgba(0x437b59ff).into(),
+                            selection: rgba(0x437b593d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x9d0408ff).into(),
+                            background: rgba(0x9d0408ff).into(),
+                            selection: rgba(0x9d04083d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb57616ff).into(),
+                            background: rgba(0xb57616ff).into(),
+                            selection: rgba(0xb576163d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x797410ff).into(),
+                            background: rgba(0x797410ff).into(),
+                            selection: rgba(0x7974103d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -422,6 +465,48 @@ pub fn gruvbox() -> UserThemeFamily {
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x83a598ff).into(),
+                            background: rgba(0x83a598ff).into(),
+                            selection: rgba(0x83a5983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xa89984ff).into(),
+                            background: rgba(0xa89984ff).into(),
+                            selection: rgba(0xa899843d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfd801bff).into(),
+                            background: rgba(0xfd801bff).into(),
+                            selection: rgba(0xfd801b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd3869bff).into(),
+                            background: rgba(0xd3869bff).into(),
+                            selection: rgba(0xd3869b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8ec07cff).into(),
+                            background: rgba(0x8ec07cff).into(),
+                            selection: rgba(0x8ec07c3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfb4a35ff).into(),
+                            background: rgba(0xfb4a35ff).into(),
+                            selection: rgba(0xfb4a353d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf9bd30ff).into(),
+                            background: rgba(0xf9bd30ff).into(),
+                            selection: rgba(0xf9bd303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb8bb27ff).into(),
+                            background: rgba(0xb8bb27ff).into(),
+                            selection: rgba(0xb8bb273d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -768,6 +853,48 @@ pub fn gruvbox() -> UserThemeFamily {
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x0b6678ff).into(),
+                            background: rgba(0x0b6678ff).into(),
+                            selection: rgba(0x0b66783d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x7c6f64ff).into(),
+                            background: rgba(0x7c6f64ff).into(),
+                            selection: rgba(0x7c6f643d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xaf3b05ff).into(),
+                            background: rgba(0xaf3b05ff).into(),
+                            selection: rgba(0xaf3b053d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8f4071ff).into(),
+                            background: rgba(0x8f4071ff).into(),
+                            selection: rgba(0x8f40713d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x437b59ff).into(),
+                            background: rgba(0x437b59ff).into(),
+                            selection: rgba(0x437b593d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x9d0408ff).into(),
+                            background: rgba(0x9d0408ff).into(),
+                            selection: rgba(0x9d04083d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb57616ff).into(),
+                            background: rgba(0xb57616ff).into(),
+                            selection: rgba(0xb576163d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x797410ff).into(),
+                            background: rgba(0x797410ff).into(),
+                            selection: rgba(0x7974103d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -1114,6 +1241,48 @@ pub fn gruvbox() -> UserThemeFamily {
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x83a598ff).into(),
+                            background: rgba(0x83a598ff).into(),
+                            selection: rgba(0x83a5983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xa89984ff).into(),
+                            background: rgba(0xa89984ff).into(),
+                            selection: rgba(0xa899843d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfd801bff).into(),
+                            background: rgba(0xfd801bff).into(),
+                            selection: rgba(0xfd801b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd3869bff).into(),
+                            background: rgba(0xd3869bff).into(),
+                            selection: rgba(0xd3869b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8ec07cff).into(),
+                            background: rgba(0x8ec07cff).into(),
+                            selection: rgba(0x8ec07c3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfb4a35ff).into(),
+                            background: rgba(0xfb4a35ff).into(),
+                            selection: rgba(0xfb4a353d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf9bd30ff).into(),
+                            background: rgba(0xf9bd30ff).into(),
+                            selection: rgba(0xf9bd303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb8bb27ff).into(),
+                            background: rgba(0xb8bb27ff).into(),
+                            selection: rgba(0xb8bb273d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -1460,6 +1629,48 @@ pub fn gruvbox() -> UserThemeFamily {
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x0b6678ff).into(),
+                            background: rgba(0x0b6678ff).into(),
+                            selection: rgba(0x0b66783d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x7c6f64ff).into(),
+                            background: rgba(0x7c6f64ff).into(),
+                            selection: rgba(0x7c6f643d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xaf3b05ff).into(),
+                            background: rgba(0xaf3b05ff).into(),
+                            selection: rgba(0xaf3b053d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8f4071ff).into(),
+                            background: rgba(0x8f4071ff).into(),
+                            selection: rgba(0x8f40713d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x437b59ff).into(),
+                            background: rgba(0x437b59ff).into(),
+                            selection: rgba(0x437b593d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x9d0408ff).into(),
+                            background: rgba(0x9d0408ff).into(),
+                            selection: rgba(0x9d04083d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb57616ff).into(),
+                            background: rgba(0xb57616ff).into(),
+                            selection: rgba(0xb576163d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x797410ff).into(),
+                            background: rgba(0x797410ff).into(),
+                            selection: rgba(0x7974103d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -1806,6 +2017,48 @@ pub fn gruvbox() -> UserThemeFamily {
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x83a598ff).into(),
+                            background: rgba(0x83a598ff).into(),
+                            selection: rgba(0x83a5983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xa89984ff).into(),
+                            background: rgba(0xa89984ff).into(),
+                            selection: rgba(0xa899843d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfd801bff).into(),
+                            background: rgba(0xfd801bff).into(),
+                            selection: rgba(0xfd801b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd3869bff).into(),
+                            background: rgba(0xd3869bff).into(),
+                            selection: rgba(0xd3869b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8ec07cff).into(),
+                            background: rgba(0x8ec07cff).into(),
+                            selection: rgba(0x8ec07c3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfb4a35ff).into(),
+                            background: rgba(0xfb4a35ff).into(),
+                            selection: rgba(0xfb4a353d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf9bd30ff).into(),
+                            background: rgba(0xf9bd30ff).into(),
+                            selection: rgba(0xf9bd303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb8bb27ff).into(),
+                            background: rgba(0xb8bb27ff).into(),
+                            selection: rgba(0xb8bb273d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (

@@ -3,8 +3,9 @@ use gpui::{Hsla, Rgba};
 use gpui1::color::Color as Zed1Color;
 use gpui1::fonts::HighlightStyle as Zed1HighlightStyle;
 use theme::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
-    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
+    UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme, UserTheme,
+    UserThemeStylesRefinement,
 };
 use theme1::Theme as Zed1Theme;
 
@@ -50,6 +51,7 @@ impl Zed1ThemeConverter {
 
         let status_colors_refinement = self.convert_status_colors()?;
         let theme_colors_refinement = self.convert_theme_colors()?;
+        let player_colors = self.convert_player_colors()?;
         let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(UserTheme {
@@ -58,6 +60,7 @@ impl Zed1ThemeConverter {
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinement,
                 status: status_colors_refinement,
+                player: Some(player_colors),
                 syntax: Some(syntax_theme),
             },
         })
@@ -80,6 +83,31 @@ impl Zed1ThemeConverter {
             error: convert(diagnostic_summary.icon_color_error),
             ..Default::default()
         })
+    }
+
+    fn convert_player_colors(&self) -> Result<PlayerColors> {
+        let player_one = self.theme.editor.selection;
+
+        let mut player_colors = vec![PlayerColor {
+            cursor: zed1_color_to_hsla(player_one.cursor),
+            selection: zed1_color_to_hsla(player_one.selection),
+            background: zed1_color_to_hsla(player_one.cursor),
+        }];
+
+        for index in 1..8 {
+            let player = self
+                .theme
+                .editor
+                .selection_style_for_room_participant(index);
+
+            player_colors.push(PlayerColor {
+                cursor: zed1_color_to_hsla(player.cursor),
+                selection: zed1_color_to_hsla(player.selection),
+                background: zed1_color_to_hsla(player.cursor),
+            });
+        }
+
+        Ok(PlayerColors(player_colors))
     }
 
     fn convert_theme_colors(&self) -> Result<ThemeColorsRefinement> {
