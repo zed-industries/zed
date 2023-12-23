@@ -316,8 +316,9 @@ fn main() -> Result<()> {
 
             #[allow(unused)]
             use crate::{{
-                Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme,
-                UserTheme, UserThemeFamily, UserThemeStylesRefinement, UserFontWeight, UserFontStyle
+                Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
+                UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+                UserFontWeight, UserFontStyle
             }};
 
             pub fn {theme_family_slug}() -> UserThemeFamily {{

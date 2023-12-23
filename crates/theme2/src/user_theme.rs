@@ -1,4 +1,7 @@
-use crate::{Appearance, StatusColors, StatusColorsRefinement, ThemeColors, ThemeColorsRefinement};
+use crate::{
+    Appearance, PlayerColors, StatusColors, StatusColorsRefinement, ThemeColors,
+    ThemeColorsRefinement,
+};
 use gpui::{FontStyle, FontWeight, Hsla};
 use refineable::Refineable;
 use serde::Deserialize;
@@ -24,6 +27,7 @@ pub struct UserThemeStyles {
     pub colors: ThemeColors,
     #[refineable]
     pub status: StatusColors,
+    pub player: PlayerColors,
     pub syntax: UserSyntaxTheme,
 }
 
