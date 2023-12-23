@@ -1684,9 +1684,11 @@ impl Pane {
                             .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
                     ),
             )
-            .end_child({
-                let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                render_tab_buttons(self, cx)
+            .when(self.has_focus(cx), |tab_bar| {
+                tab_bar.end_child({
+                    let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                    render_tab_buttons(self, cx)
+                })
             })
             .children(
                 self.items
@@ -1937,7 +1939,9 @@ impl Render for Pane {
                     })
                 }),
             )
-            .child(self.render_tab_bar(cx))
+            .when(self.active_item().is_some(), |pane| {
+                pane.child(self.render_tab_bar(cx))
+            })
             .child({
                 let has_worktrees = self.project.read(cx).worktrees().next().is_some();
                 // main content
