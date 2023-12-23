@@ -116,7 +116,7 @@ impl Zed1ThemeConverter {
                 .container
                 .background_color
                 .map(zed1_color_to_hsla),
-            text: convert(self.theme.project_panel.entry.default_style().text.color),
+            text: convert(self.theme.collab_panel.channel_name.text.color),
             text_muted: convert(active_tab.description.text.color),
             text_accent: convert(status_bar.panel_buttons.button.active_state().icon_color),
             text_disabled: convert(status_bar.panel_buttons.button.disabled_style().icon_color),
