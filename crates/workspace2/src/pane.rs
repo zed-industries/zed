@@ -187,6 +187,7 @@ pub struct Pane {
     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
+    display_nav_history_buttons: bool,
 }
 
 pub struct ItemNavHistory {
@@ -439,6 +440,7 @@ impl Pane {
                     })
                     .into_any_element()
             }),
+            display_nav_history_buttons: true,
             _subscriptions: subscriptions,
         }
     }
@@ -1660,30 +1662,32 @@ impl Pane {
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         TabBar::new("tab_bar")
             .track_scroll(self.tab_bar_scroll_handle.clone())
-            .start_child(
-                h_stack()
-                    .gap_2()
-                    .child(
-                        IconButton::new("navigate_backward", Icon::ArrowLeft)
-                            .icon_size(IconSize::Small)
-                            .on_click({
-                                let view = cx.view().clone();
-                                move |_, cx| view.update(cx, Self::navigate_backward)
-                            })
-                            .disabled(!self.can_navigate_backward())
-                            .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
-                    )
-                    .child(
-                        IconButton::new("navigate_forward", Icon::ArrowRight)
-                            .icon_size(IconSize::Small)
-                            .on_click({
-                                let view = cx.view().clone();
-                                move |_, cx| view.update(cx, Self::navigate_backward)
-                            })
-                            .disabled(!self.can_navigate_forward())
-                            .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
-                    ),
-            )
+            .when(self.display_nav_history_buttons, |tab_bar| {
+                tab_bar.start_child(
+                    h_stack()
+                        .gap_2()
+                        .child(
+                            IconButton::new("navigate_backward", Icon::ArrowLeft)
+                                .icon_size(IconSize::Small)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_backward())
+                                .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
+                        )
+                        .child(
+                            IconButton::new("navigate_forward", Icon::ArrowRight)
+                                .icon_size(IconSize::Small)
+                                .on_click({
+                                    let view = cx.view().clone();
+                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                })
+                                .disabled(!self.can_navigate_forward())
+                                .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
+                        ),
+                )
+            })
             .when(self.has_focus(cx), |tab_bar| {
                 tab_bar.end_child({
                     let render_tab_buttons = self.render_tab_bar_buttons.clone();
@@ -1850,6 +1854,10 @@ impl Pane {
                 });
             })
             .log_err();
+    }
+
+    pub fn display_nav_history_buttons(&mut self, display: bool) {
+        self.display_nav_history_buttons = display;
     }
 }
 
