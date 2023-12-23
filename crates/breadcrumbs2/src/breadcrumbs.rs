@@ -53,12 +53,15 @@ impl Render for Breadcrumbs {
         };
 
         let highlighted_segments = segments.into_iter().map(|segment| {
+            let mut text_style = cx.text_style();
+            text_style.color = Color::Muted.color(cx);
+
             StyledText::new(segment.text)
-                .with_highlights(&cx.text_style(), segment.highlights.unwrap_or_default())
+                .with_highlights(&text_style, segment.highlights.unwrap_or_default())
                 .into_any()
         });
         let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
-            Label::new("›").into_any_element()
+            Label::new("›").color(Color::Muted).into_any_element()
         });
 
         let editor = active_item
