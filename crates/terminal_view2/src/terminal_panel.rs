@@ -76,6 +76,7 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 h_stack()
+                    .gap_2()
                     .child(
                         IconButton::new("plus", Icon::Plus)
                             .icon_size(IconSize::Small)
