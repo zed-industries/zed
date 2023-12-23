@@ -377,6 +377,7 @@ impl Pane {
             can_split: true,
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 h_stack()
+                    .gap_2()
                     .child(
                         IconButton::new("plus", Icon::Plus)
                             .icon_size(IconSize::Small)
@@ -1657,24 +1658,28 @@ impl Pane {
         TabBar::new("tab_bar")
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .start_child(
-                IconButton::new("navigate_backward", Icon::ArrowLeft)
-                    .icon_size(IconSize::Small)
-                    .on_click({
-                        let view = cx.view().clone();
-                        move |_, cx| view.update(cx, Self::navigate_backward)
-                    })
-                    .disabled(!self.can_navigate_backward())
-                    .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
-            )
-            .start_child(
-                IconButton::new("navigate_forward", Icon::ArrowRight)
-                    .icon_size(IconSize::Small)
-                    .on_click({
-                        let view = cx.view().clone();
-                        move |_, cx| view.update(cx, Self::navigate_backward)
-                    })
-                    .disabled(!self.can_navigate_forward())
-                    .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
+                h_stack()
+                    .gap_2()
+                    .child(
+                        IconButton::new("navigate_backward", Icon::ArrowLeft)
+                            .icon_size(IconSize::Small)
+                            .on_click({
+                                let view = cx.view().clone();
+                                move |_, cx| view.update(cx, Self::navigate_backward)
+                            })
+                            .disabled(!self.can_navigate_backward())
+                            .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
+                    )
+                    .child(
+                        IconButton::new("navigate_forward", Icon::ArrowRight)
+                            .icon_size(IconSize::Small)
+                            .on_click({
+                                let view = cx.view().clone();
+                                move |_, cx| view.update(cx, Self::navigate_backward)
+                            })
+                            .disabled(!self.can_navigate_forward())
+                            .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
+                    ),
             )
             .end_child({
                 let render_tab_buttons = self.render_tab_bar_buttons.clone();
