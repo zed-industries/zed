@@ -99,11 +99,9 @@ impl Zed1ThemeConverter {
         let scrollbar = &self.theme.editor.scrollbar;
         let terminal = &self.theme.terminal;
 
-        let title_bar_border = convert(title_bar.container.border.color);
-
         Ok(ThemeColorsRefinement {
-            border: title_bar_border,
-            border_variant: title_bar_border,
+            border: convert(active_tab.container.border.color),
+            border_variant: convert(toolbar.container.border.color),
             background: convert(self.theme.workspace.background),
             elevated_surface_background: picker.container.background_color.map(zed1_color_to_hsla),
             title_bar_background: title_bar.container.background_color.map(zed1_color_to_hsla),
@@ -116,8 +114,8 @@ impl Zed1ThemeConverter {
                 .container
                 .background_color
                 .map(zed1_color_to_hsla),
-            text: convert(self.theme.project_panel.entry.default_style().text.color),
-            text_muted: convert(active_tab.description.text.color),
+            text: convert(self.theme.collab_panel.channel_name.text.color),
+            text_muted: convert(tab_bar.pane_button.default_style().color),
             text_accent: convert(status_bar.panel_buttons.button.active_state().icon_color),
             text_disabled: convert(status_bar.panel_buttons.button.disabled_style().icon_color),
             text_placeholder: picker

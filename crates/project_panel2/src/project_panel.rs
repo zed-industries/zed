@@ -1372,7 +1372,11 @@ impl ProjectPanel {
                 GitFileStatus::Modified => Color::Modified,
                 GitFileStatus::Conflict => Color::Conflict,
             })
-            .unwrap_or(Color::Default);
+            .unwrap_or(if is_selected {
+                Color::Default
+            } else {
+                Color::Muted
+            });
 
         let file_name = details.filename.clone();
         let icon = details.icon.clone();
