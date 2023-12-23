@@ -183,6 +183,7 @@ impl Render for CollabTitlebarItem {
                                     if is_shared { "Unshare" } else { "Share" },
                                 )
                                 .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener(
                                     move |this, _, cx| {
                                         if is_shared {
@@ -197,6 +198,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             IconButton::new("leave-call", ui::Icon::Exit)
                                 .style(ButtonStyle::Subtle)
+                                .icon_size(IconSize::Small)
                                 .on_click(move |_, cx| {
                                     ActiveCall::global(cx)
                                         .update(cx, |call, cx| call.hang_up(cx))
@@ -213,6 +215,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .icon_size(IconSize::Small)
                             .selected(is_muted)
                             .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                         )
@@ -226,6 +229,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
                                 Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
@@ -235,6 +239,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             IconButton::new("screen-share", ui::Icon::Screen)
                                 .style(ButtonStyle::Subtle)
+                                .icon_size(IconSize::Small)
                                 .selected(is_screen_sharing)
                                 .on_click(move |_, cx| {
                                     crate::toggle_screen_sharing(&Default::default(), cx)
@@ -313,6 +318,7 @@ impl CollabTitlebarItem {
                 Button::new("project_owner_trigger", host.github_login.clone())
                     .color(Color::Player(participant_index.0))
                     .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
             ),
         )
