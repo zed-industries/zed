@@ -71,6 +71,7 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
+        let editor = &self.theme.editor;
         let diff_style = &self.theme.editor.diff;
         let diagnostic_summary = &self.theme.workspace.status_bar.diagnostic_summary;
 
@@ -81,6 +82,7 @@ impl Zed1ThemeConverter {
             success: convert(diagnostic_summary.icon_color_ok),
             warning: convert(diagnostic_summary.icon_color_warning),
             error: convert(diagnostic_summary.icon_color_error),
+            hint: editor.hint.color.map(zed1_color_to_hsla),
             ..Default::default()
         })
     }

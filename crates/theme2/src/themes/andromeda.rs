@@ -71,6 +71,7 @@ pub fn andromeda() -> UserThemeFamily {
                     created: Some(rgba(0x96df72ff).into()),
                     deleted: Some(rgba(0xcd1d5aff).into()),
                     error: Some(rgba(0xf82872ff).into()),
+                    hint: Some(rgba(0x618399ff).into()),
                     modified: Some(rgba(0xfee56dff).into()),
                     success: Some(rgba(0xf7f7f8ff).into()),
                     warning: Some(rgba(0xfee56dff).into()),
