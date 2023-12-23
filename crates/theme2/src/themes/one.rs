@@ -19,8 +19,8 @@ pub fn one() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0xc9c9caff).into()),
-                        border_variant: Some(rgba(0xc9c9caff).into()),
+                        border: Some(rgba(0xdfdfe0ff).into()),
+                        border_variant: Some(rgba(0xeeeeeeff).into()),
                         elevated_surface_background: Some(rgba(0xdcdcddff).into()),
                         background: Some(rgba(0xdcdcddff).into()),
                         panel_background: Some(rgba(0xebebecff).into()),
@@ -365,8 +365,8 @@ pub fn one() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x464b57ff).into()),
-                        border_variant: Some(rgba(0x464b57ff).into()),
+                        border: Some(rgba(0x363c46ff).into()),
+                        border_variant: Some(rgba(0x2e333cff).into()),
                         elevated_surface_background: Some(rgba(0x3b414dff).into()),
                         background: Some(rgba(0x3b414dff).into()),
                         panel_background: Some(rgba(0x2f343eff).into()),

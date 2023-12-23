@@ -18,8 +18,8 @@ pub fn andromeda() -> UserThemeFamily {
             appearance: Appearance::Dark,
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
-                    border: Some(rgba(0x2b2f39ff).into()),
-                    border_variant: Some(rgba(0x2b2f39ff).into()),
+                    border: Some(rgba(0x252931ff).into()),
+                    border_variant: Some(rgba(0x21232aff).into()),
                     elevated_surface_background: Some(rgba(0x262a33ff).into()),
                     background: Some(rgba(0x262a33ff).into()),
                     panel_background: Some(rgba(0x21242bff).into()),

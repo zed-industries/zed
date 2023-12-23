@@ -18,8 +18,8 @@ pub fn sandcastle() -> UserThemeFamily {
             appearance: Appearance::Dark,
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
-                    border: Some(rgba(0x3d4350ff).into()),
-                    border_variant: Some(rgba(0x3d4350ff).into()),
+                    border: Some(rgba(0x313741ff).into()),
+                    border_variant: Some(rgba(0x2a2f38ff).into()),
                     elevated_surface_background: Some(rgba(0x333944ff).into()),
                     background: Some(rgba(0x333944ff).into()),
                     panel_background: Some(rgba(0x2b3039ff).into()),

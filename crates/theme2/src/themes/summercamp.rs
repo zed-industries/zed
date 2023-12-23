@@ -18,8 +18,8 @@ pub fn summercamp() -> UserThemeFamily {
             appearance: Appearance::Dark,
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
-                    border: Some(rgba(0x312d21ff).into()),
-                    border_variant: Some(rgba(0x312d21ff).into()),
+                    border: Some(rgba(0x29251bff).into()),
+                    border_variant: Some(rgba(0x221e15ff).into()),
                     elevated_surface_background: Some(rgba(0x2a261cff).into()),
                     background: Some(rgba(0x2a261cff).into()),
                     panel_background: Some(rgba(0x231f16ff).into()),

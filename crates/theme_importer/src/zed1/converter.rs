@@ -99,11 +99,9 @@ impl Zed1ThemeConverter {
         let scrollbar = &self.theme.editor.scrollbar;
         let terminal = &self.theme.terminal;
 
-        let title_bar_border = convert(title_bar.container.border.color);
-
         Ok(ThemeColorsRefinement {
-            border: title_bar_border,
-            border_variant: title_bar_border,
+            border: convert(active_tab.container.border.color),
+            border_variant: convert(toolbar.container.border.color),
             background: convert(self.theme.workspace.background),
             elevated_surface_background: picker.container.background_color.map(zed1_color_to_hsla),
             title_bar_background: title_bar.container.background_color.map(zed1_color_to_hsla),

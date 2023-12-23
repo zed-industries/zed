@@ -19,8 +19,8 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0xdcd6d5ff).into()),
-                        border_variant: Some(rgba(0xdcd6d5ff).into()),
+                        border: Some(rgba(0xe5e0dfff).into()),
+                        border_variant: Some(rgba(0xfdf8f1ff).into()),
                         elevated_surface_background: Some(rgba(0xdcd8d8ff).into()),
                         background: Some(rgba(0xdcd8d8ff).into()),
                         panel_background: Some(rgba(0xfef9f2ff).into()),
@@ -372,8 +372,8 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x504c68ff).into()),
-                        border_variant: Some(rgba(0x504c68ff).into()),
+                        border: Some(rgba(0x322f48ff).into()),
+                        border_variant: Some(rgba(0x27243bff).into()),
                         elevated_surface_background: Some(rgba(0x38354eff).into()),
                         background: Some(rgba(0x38354eff).into()),
                         panel_background: Some(rgba(0x28253cff).into()),
@@ -725,8 +725,8 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x423f55ff).into()),
-                        border_variant: Some(rgba(0x423f55ff).into()),
+                        border: Some(rgba(0x232132ff).into()),
+                        border_variant: Some(rgba(0x1c1a29ff).into()),
                         elevated_surface_background: Some(rgba(0x292739ff).into()),
                         background: Some(rgba(0x292739ff).into()),
                         panel_background: Some(rgba(0x1d1b2aff).into()),

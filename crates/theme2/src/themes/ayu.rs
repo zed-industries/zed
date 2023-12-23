@@ -19,8 +19,8 @@ pub fn ayu() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x3f4043ff).into()),
-                        border_variant: Some(rgba(0x3f4043ff).into()),
+                        border: Some(rgba(0x2d2f34ff).into()),
+                        border_variant: Some(rgba(0x1b1e24ff).into()),
                         elevated_surface_background: Some(rgba(0x313337ff).into()),
                         background: Some(rgba(0x313337ff).into()),
                         panel_background: Some(rgba(0x1f2127ff).into()),
@@ -358,8 +358,8 @@ pub fn ayu() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0xcfd1d2ff).into()),
-                        border_variant: Some(rgba(0xcfd1d2ff).into()),
+                        border: Some(rgba(0xdfe0e1ff).into()),
+                        border_variant: Some(rgba(0xefeff0ff).into()),
                         elevated_surface_background: Some(rgba(0xdcdddeff).into()),
                         background: Some(rgba(0xdcdddeff).into()),
                         panel_background: Some(rgba(0xececedff).into()),
@@ -697,8 +697,8 @@ pub fn ayu() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x53565dff).into()),
-                        border_variant: Some(rgba(0x53565dff).into()),
+                        border: Some(rgba(0x43464fff).into()),
+                        border_variant: Some(rgba(0x323641ff).into()),
                         elevated_surface_background: Some(rgba(0x464a52ff).into()),
                         background: Some(rgba(0x464a52ff).into()),
                         panel_background: Some(rgba(0x353944ff).into()),
