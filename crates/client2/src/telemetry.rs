@@ -118,7 +118,7 @@ pub enum ClickhouseEvent {
 const MAX_QUEUE_LEN: usize = 1;
 
 #[cfg(not(debug_assertions))]
-const MAX_QUEUE_LEN: usize = 10;
+const MAX_QUEUE_LEN: usize = 50;
 
 #[cfg(debug_assertions)]
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
