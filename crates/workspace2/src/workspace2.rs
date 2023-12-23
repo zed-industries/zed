@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, Status, TypedEnvelope, UserStore,
+    Client, Status, TelemetrySettings, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -1250,6 +1250,10 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
+        self.client()
+            .telemetry()
+            .report_app_event(telemetry_settings, "open project", false);
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,

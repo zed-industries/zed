@@ -173,7 +173,7 @@ impl Telemetry {
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>, cx: &mut AppContext) -> impl Future<Output = ()> {
         let telemetry_settings = TelemetrySettings::get_global(cx).clone();
-        self.report_app_event(telemetry_settings, "close");
+        self.report_app_event(telemetry_settings, "close", true);
         Task::ready(())
     }
 
@@ -364,18 +364,18 @@ impl Telemetry {
         self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
-    // app_events are called at app open and app close, so flush is set to immediately send
     pub fn report_app_event(
         self: &Arc<Self>,
         telemetry_settings: TelemetrySettings,
         operation: &'static str,
+        immediate_flush: bool,
     ) {
         let event = ClickhouseEvent::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, true)
+        self.report_clickhouse_event(event, telemetry_settings, immediate_flush)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {

@@ -184,7 +184,7 @@ fn main() {
         };
         client
             .telemetry()
-            .report_app_event(telemetry_settings, event_operation);
+            .report_app_event(telemetry_settings, event_operation, true);
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),

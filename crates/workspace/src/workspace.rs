@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, Status, TypedEnvelope, UserStore,
+    Client, Status, TelemetrySettings, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;
@@ -1462,6 +1462,10 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+        self.client()
+            .telemetry()
+            .report_app_event(telemetry_settings, "open project", false);
         let mut paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
