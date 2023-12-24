@@ -327,19 +327,29 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
 }
 
 async fn installation_id() -> Result<(String, bool)> {
-    let legacy_key_name = "device_id";
+    let legacy_key_name = "device_id".to_string();
+    let key_name = "installation_id".to_string();
 
-    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
-        Ok((installation_id, true))
-    } else {
-        let installation_id = Uuid::new_v4().to_string();
-
+    // Migrate legacy key to new key
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&legacy_key_name) {
         KEY_VALUE_STORE
-            .write_kvp(legacy_key_name.to_string(), installation_id.clone())
+            .write_kvp(key_name, installation_id.clone())
             .await?;
-
-        Ok((installation_id, false))
+        KEY_VALUE_STORE.delete_kvp(legacy_key_name).await?;
+        return Ok((installation_id, true));
     }
+
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&key_name) {
+        return Ok((installation_id, true));
+    }
+
+    let installation_id = Uuid::new_v4().to_string();
+
+    KEY_VALUE_STORE
+        .write_kvp(key_name, installation_id.clone())
+        .await?;
+
+    Ok((installation_id, false))
 }
 
 async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
