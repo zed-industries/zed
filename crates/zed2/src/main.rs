@@ -53,8 +53,6 @@ use zed2::{
     OpenListener, OpenRequest,
 };
 
-mod open_listener;
-
 fn main() {
     menu::init();
     zed_actions::init();
