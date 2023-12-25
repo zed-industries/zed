@@ -1,6 +1,3 @@
-#![allow(unused_variables, dead_code, unused_mut)]
-// todo!() this is to make transition easier.
-
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
@@ -55,8 +52,6 @@ use zed2::{
     handle_keymap_file_changes, initialize_workspace, languages, Assets, IsOnlyInstance,
     OpenListener, OpenRequest,
 };
-
-mod open_listener;
 
 fn main() {
     menu::init();
@@ -209,7 +204,6 @@ fn main() {
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
         channel::init(&client, user_store.clone(), cx);
-        // diagnostics::init(cx);
         search::init(cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
@@ -254,7 +248,7 @@ fn main() {
             cx: &mut AppContext,
         ) {
             let task = workspace::open_paths(&paths, &app_state, None, cx);
-            cx.spawn(|cx| async move {
+            cx.spawn(|_| async move {
                 if let Some((_window, results)) = task.await.log_err() {
                     for result in results {
                         if let Some(Err(e)) = result {
@@ -315,53 +309,48 @@ fn main() {
         }
 
         let app_state = app_state.clone();
-        let closure_client = client.clone();
-        cx.spawn(move |mut cx| {
-            let client = closure_client.clone();
-            async move {
-                while let Some(request) = open_rx.next().await {
-                    match request {
-                        OpenRequest::Paths { paths } => {
-                            cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
-                                .ok();
-                        }
-                        OpenRequest::CliConnection { connection } => {
-                            let app_state = app_state.clone();
-                            cx.spawn(move |cx| {
-                                handle_cli_connection(connection, app_state.clone(), cx)
-                            })
-                            .detach();
-                        }
-                        OpenRequest::JoinChannel { channel_id } => {
-                            let app_state = app_state.clone();
-                            cx.update(|mut cx| {
-                                cx.spawn(|cx| async move {
-                                    cx.update(|cx| {
-                                        workspace::join_channel(channel_id, app_state, None, cx)
-                                    })?
-                                    .await?;
-                                    anyhow::Ok(())
-                                })
-                                .detach_and_log_err(&mut cx);
-                            })
-                            .log_err();
-                        }
-                        OpenRequest::OpenChannelNotes { channel_id } => {
-                            let app_state = app_state.clone();
-                            let open_notes_task = cx.spawn(|mut cx| async move {
-                                let workspace_window =
-                                    workspace::get_any_active_workspace(app_state, cx.clone())
-                                        .await?;
-                                let _ = workspace_window
-                                    .update(&mut cx, |_, cx| {
-                                        ChannelView::open(channel_id, cx.view().clone(), cx)
-                                    })?
-                                    .await?;
+        cx.spawn(move |cx| async move {
+            while let Some(request) = open_rx.next().await {
+                match request {
+                    OpenRequest::Paths { paths } => {
+                        cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
+                            .ok();
+                    }
+                    OpenRequest::CliConnection { connection } => {
+                        let app_state = app_state.clone();
+                        cx.spawn(move |cx| {
+                            handle_cli_connection(connection, app_state.clone(), cx)
+                        })
+                        .detach();
+                    }
+                    OpenRequest::JoinChannel { channel_id } => {
+                        let app_state = app_state.clone();
+                        cx.update(|mut cx| {
+                            cx.spawn(|cx| async move {
+                                cx.update(|cx| {
+                                    workspace::join_channel(channel_id, app_state, None, cx)
+                                })?
+                                .await?;
                                 anyhow::Ok(())
-                            });
-                            cx.update(|cx| open_notes_task.detach_and_log_err(cx))
-                                .log_err();
-                        }
+                            })
+                            .detach_and_log_err(&mut cx);
+                        })
+                        .log_err();
+                    }
+                    OpenRequest::OpenChannelNotes { channel_id } => {
+                        let app_state = app_state.clone();
+                        let open_notes_task = cx.spawn(|mut cx| async move {
+                            let workspace_window =
+                                workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                            let _ = workspace_window
+                                .update(&mut cx, |_, cx| {
+                                    ChannelView::open(channel_id, cx.view().clone(), cx)
+                                })?
+                                .await?;
+                            anyhow::Ok(())
+                        });
+                        cx.update(|cx| open_notes_task.detach_and_log_err(cx))
+                            .log_err();
                     }
                 }
             }
@@ -412,7 +401,7 @@ async fn installation_id() -> Result<(String, bool)> {
     Ok((installation_id, false))
 }
 
-async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, cx: AsyncAppContext) {
     async_maybe!({
         if let Some(location) = workspace::last_opened_workspace_paths().await {
             cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
@@ -777,7 +766,7 @@ async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) 
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
-    cx.spawn(|mut cx| async move {
+    cx.spawn(|cx| async move {
         let mut events = fs
             .watch(
                 "assets/icons/file_icons/file_types.json".as_ref(),
