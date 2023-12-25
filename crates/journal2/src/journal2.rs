@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use gpui::AppContext;
+use gpui::{actions, AppContext, ViewContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings2::Settings;
@@ -9,11 +9,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace2::AppState;
-// use zed::AppState;
+use workspace2::{AppState, Workspace};
 
-// todo!();
-// actions!(journal, [NewJournalEntry]);
+actions!(journal, [NewJournalEntry]);
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JournalSettings {
@@ -55,8 +53,14 @@ impl settings2::Settings for JournalSettings {
 pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     JournalSettings::register(cx);
 
-    // todo!()
-    // cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
+    cx.observe_new_views(
+        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+            workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
+                new_journal_entry(workspace.app_state().clone(), cx);
+            });
+        },
+    )
+    .detach();
 }
 
 pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {

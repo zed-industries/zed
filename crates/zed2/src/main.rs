@@ -215,7 +215,7 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
 
-        // journal2::init(app_state.clone(), cx);
+        journal::init(app_state.clone(), cx);
         language_selector::init(cx);
         theme_selector::init(cx);
         language_tools::init(cx);
