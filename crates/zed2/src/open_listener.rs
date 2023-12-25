@@ -251,12 +251,11 @@ pub async fn handle_cli_connection(
                                 let wait = async move {
                                     if paths.is_empty() {
                                         let (done_tx, done_rx) = oneshot::channel();
-                                        let _subscription =
-                                            workspace.update(&mut cx, |workspace, cx| {
-                                                cx.on_release(move |_, _, _| {
-                                                    let _ = done_tx.send(());
-                                                })
-                                            });
+                                        let _subscription = workspace.update(&mut cx, |_, cx| {
+                                            cx.on_release(move |_, _, _| {
+                                                let _ = done_tx.send(());
+                                            })
+                                        });
                                         let _ = done_rx.await;
                                     } else {
                                         let _ = futures::future::try_join_all(item_release_futures)

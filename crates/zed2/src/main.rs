@@ -1,6 +1,3 @@
-#![allow(unused_variables, dead_code, unused_mut)]
-// todo!() this is to make transition easier.
-
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
@@ -411,7 +408,7 @@ async fn installation_id() -> Result<(String, bool)> {
     Ok((installation_id, false))
 }
 
-async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, cx: AsyncAppContext) {
     async_maybe!({
         if let Some(location) = workspace::last_opened_workspace_paths().await {
             cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
