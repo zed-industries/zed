@@ -1185,7 +1185,7 @@ mod tests {
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx));
 
-        let font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
+        let _font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
 
         let text = "one two three\nfour five six\nseven eight";
 

@@ -1,11 +1,10 @@
-#![allow(unused)]
 use anyhow::Result;
 use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
-    div, Action, AnchorCorner, AppContext, AsyncAppContext, AsyncWindowContext, Div, Entity,
-    ParentElement, Render, Subscription, View, ViewContext, WeakView, WindowContext,
+    div, Action, AnchorCorner, AppContext, AsyncWindowContext, Div, Entity, ParentElement, Render,
+    Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{self, all_language_settings, AllLanguageSettings},
@@ -17,10 +16,7 @@ use util::{paths, ResultExt};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
-    ui::{
-        popover_menu, ButtonCommon, Clickable, ContextMenu, Icon, IconButton, IconSize,
-        PopoverMenu, Tooltip,
-    },
+    ui::{popover_menu, ButtonCommon, Clickable, ContextMenu, Icon, IconButton, IconSize, Tooltip},
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
@@ -71,27 +67,31 @@ impl Render for CopilotButton {
             return div().child(
                 IconButton::new("copilot-error", icon)
                     .icon_size(IconSize::Small)
-                    .on_click(cx.listener(move |this, _, cx| {
+                    .on_click(cx.listener(move |_, _, cx| {
                         if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.show_toast(
-                                    Toast::new(
-                                        COPILOT_ERROR_TOAST_ID,
-                                        format!("Copilot can't be started: {}", e),
-                                    )
-                                    .on_click(
-                                        "Reinstall Copilot",
-                                        |cx| {
-                                            if let Some(copilot) = Copilot::global(cx) {
-                                                copilot
-                                                    .update(cx, |copilot, cx| copilot.reinstall(cx))
-                                                    .detach();
-                                            }
-                                        },
-                                    ),
-                                    cx,
-                                );
-                            });
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.show_toast(
+                                        Toast::new(
+                                            COPILOT_ERROR_TOAST_ID,
+                                            format!("Copilot can't be started: {}", e),
+                                        )
+                                        .on_click(
+                                            "Reinstall Copilot",
+                                            |cx| {
+                                                if let Some(copilot) = Copilot::global(cx) {
+                                                    copilot
+                                                        .update(cx, |copilot, cx| {
+                                                            copilot.reinstall(cx)
+                                                        })
+                                                        .detach();
+                                                }
+                                            },
+                                        ),
+                                        cx,
+                                    );
+                                })
+                                .ok();
                         }
                     }))
                     .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
@@ -134,7 +134,7 @@ impl CopilotButton {
 
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
-        ContextMenu::build(cx, |menu, cx| {
+        ContextMenu::build(cx, |menu, _| {
             menu.entry("Sign In", None, initiate_sign_in).entry(
                 "Disable Copilot",
                 None,

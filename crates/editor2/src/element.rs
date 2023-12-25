@@ -16,24 +16,23 @@ use crate::{
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, LineDown, LineUp, MoveDown, OpenExcerpts, PageDown, PageUp, Point,
-    SelectPhase, Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
+    HalfPageDown, HalfPageUp, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase,
+    Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
-    AnchorCorner, AnyElement, AsyncWindowContext, AvailableSpace, BorrowWindow, Bounds,
-    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementId,
-    ElementInputHandler, Entity, EntityId, Hsla, InteractiveBounds, InteractiveElement,
-    IntoElement, LineLayout, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, RenderOnce, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, View,
-    ViewContext, WeakView, WindowContext, WrappedLine,
+    AnchorCorner, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Hsla, InteractiveBounds,
+    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun,
+    TextStyle, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
-use language::{language_settings::ShowWhitespaceSetting, Language};
+use language::language_settings::ShowWhitespaceSetting;
 use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -52,14 +51,10 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
-use ui::{
-    h_stack, ButtonLike, ButtonStyle, Disclosure, IconButton, IconElement, IconSize, Label, Tooltip,
-};
-use ui::{prelude::*, Icon};
+use ui::prelude::*;
+use ui::{h_stack, ButtonLike, ButtonStyle, IconButton, Label, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
-
-enum FoldMarkers {}
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -732,7 +727,7 @@ impl EditorElement {
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
 
-                line.paint(line_origin, line_height, cx);
+                line.paint(line_origin, line_height, cx).log_err();
             }
         }
 
@@ -2687,11 +2682,13 @@ impl LineWithInvisibles {
         let line_height = layout.position_map.line_height;
         let line_y = line_height * row as f32 - layout.position_map.scroll_position.y;
 
-        self.line.paint(
-            content_origin + gpui::point(-layout.position_map.scroll_position.x, line_y),
-            line_height,
-            cx,
-        );
+        self.line
+            .paint(
+                content_origin + gpui::point(-layout.position_map.scroll_position.x, line_y),
+                line_height,
+                cx,
+            )
+            .log_err();
 
         self.draw_invisibles(
             &selection_ranges,
@@ -2746,7 +2743,7 @@ impl LineWithInvisibles {
                     continue;
                 }
             }
-            invisible_symbol.paint(origin, line_height, cx);
+            invisible_symbol.paint(origin, line_height, cx).log_err();
         }
     }
 }
@@ -3090,7 +3087,9 @@ impl Cursor {
         cx.paint_quad(cursor);
 
         if let Some(block_text) = &self.block_text {
-            block_text.paint(self.origin + origin, self.line_height, cx);
+            block_text
+                .paint(self.origin + origin, self.line_height, cx)
+                .log_err();
         }
     }
 
@@ -3251,7 +3250,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
-    use gpui::{EmptyView, TestAppContext};
+    use gpui::TestAppContext;
     use language::language_settings;
     use log::info;
     use std::{num::NonZeroU32, sync::Arc};
@@ -3432,7 +3431,7 @@ mod tests {
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         let mut element = EditorElement::new(&editor, style);
-        let state = window.update(cx, |editor, cx| {
+        let _state = window.update(cx, |editor, cx| {
             editor.cursor_shape = CursorShape::Block;
             editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([
@@ -3504,7 +3503,7 @@ mod tests {
             .unwrap();
 
         let mut element = EditorElement::new(&editor, style);
-        let mut state = cx
+        let state = cx
             .update_window(window.into(), |_, cx| {
                 element.compute_layout(
                     Bounds {
@@ -3768,17 +3767,15 @@ fn compute_auto_height_layout(
         .width;
 
     let mut snapshot = editor.snapshot(cx);
-    let gutter_padding;
     let gutter_width;
     let gutter_margin;
     if snapshot.show_gutter {
         let descent = cx.text_system().descent(font_id, font_size);
         let gutter_padding_factor = 3.5;
-        gutter_padding = (em_width * gutter_padding_factor).round();
+        let gutter_padding = (em_width * gutter_padding_factor).round();
         gutter_width = max_line_number_width + gutter_padding * 2.0;
         gutter_margin = -descent;
     } else {
-        gutter_padding = Pixels::ZERO;
         gutter_width = Pixels::ZERO;
         gutter_margin = Pixels::ZERO;
     };

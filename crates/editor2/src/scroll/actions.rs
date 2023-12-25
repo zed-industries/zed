@@ -3,7 +3,7 @@ use crate::{
     Autoscroll, Bias, Editor, EditorMode, NextScreen, ScrollAnchor, ScrollCursorBottom,
     ScrollCursorCenter, ScrollCursorTop,
 };
-use gpui::{actions, AppContext, Point, ViewContext};
+use gpui::{Point, ViewContext};
 
 impl Editor {
     pub fn next_screen(&mut self, _: &NextScreen, cx: &mut ViewContext<Editor>) {

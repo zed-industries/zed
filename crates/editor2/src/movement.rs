@@ -2,7 +2,7 @@ use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
 use gpui::{px, Pixels, TextSystem};
 use language::Point;
-use serde::de::IntoDeserializer;
+
 use std::{ops::Range, sync::Arc};
 
 #[derive(Debug, PartialEq)]
@@ -757,7 +757,7 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
         let window = cx.window.clone();
-        cx.update_window(window, |_, cx| {
+        _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
                 editor.update(cx, |editor, cx| editor.text_layout_details(cx));
 

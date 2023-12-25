@@ -1,4 +1,3 @@
-#![allow(unused)]
 mod blink_manager;
 pub mod display_map;
 mod editor_settings;
@@ -42,11 +41,10 @@ use git::diff_hunk_to_display;
 use gpui::{
     actions, div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, Div, ElementId, EventEmitter, FocusHandle, FocusableView, FontFeatures,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model,
-    MouseButton, ParentElement, Pixels, Render, RenderOnce, SharedString, Styled, StyledText,
-    Subscription, Task, TextRun, TextStyle, UniformListScrollHandle, View, ViewContext,
-    VisualContext, WeakView, WhiteSpace, WindowContext,
+    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton,
+    ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -61,7 +59,7 @@ use language::{
     LanguageRegistry, LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal,
     TransactionId,
 };
-use lazy_static::lazy_static;
+
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use mouse_context_menu::MouseContextMenu;
@@ -72,7 +70,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::{self, *};
@@ -99,19 +97,11 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
-use theme::{
-    ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, Theme, ThemeColors, ThemeSettings,
-};
-use ui::{
-    h_stack, v_stack, ButtonSize, ButtonStyle, HighlightedLabel, Icon, IconButton, Popover, Tooltip,
-};
+use theme::{ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, ThemeColors, ThemeSettings};
+use ui::{h_stack, ButtonSize, ButtonStyle, Icon, IconButton, Popover, Tooltip};
 use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{
-    item::{Item, ItemEvent, ItemHandle},
-    searchable::SearchEvent,
-    ItemNavHistory, Pane, SplitDirection, ViewId, Workspace,
-};
+use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -439,7 +429,7 @@ pub fn init(cx: &mut AppContext) {
     workspace::register_followable_item::<Editor>(cx);
     workspace::register_deserializable_item::<Editor>(cx);
     cx.observe_new_views(
-        |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_in_direction);
         },
@@ -1216,7 +1206,7 @@ impl CompletionsMenu {
             cx.view().clone(),
             "completions",
             matches.len(),
-            move |editor, range, cx| {
+            move |_editor, range, cx| {
                 let start_ix = range.start;
                 let completions_guard = completions.read();
 
@@ -1271,7 +1261,7 @@ impl CompletionsMenu {
                             })
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(move |editor, event, cx| {
+                                cx.listener(move |editor, _event, cx| {
                                     cx.stop_propagation();
                                     editor
                                         .confirm_completion(
@@ -1414,7 +1404,7 @@ impl CodeActionsMenu {
     fn render(
         &self,
         mut cursor_position: DisplayPoint,
-        style: &EditorStyle,
+        _style: &EditorStyle,
         max_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement) {
@@ -1425,7 +1415,7 @@ impl CodeActionsMenu {
             cx.view().clone(),
             "code_actions_menu",
             self.actions.len(),
-            move |this, range, cx| {
+            move |_this, range, cx| {
                 actions[range.clone()]
                     .iter()
                     .enumerate()
@@ -3418,9 +3408,11 @@ impl Editor {
         Some(cx.spawn(|editor, mut cx| async move {
             if let Some(transaction) = on_type_formatting.await? {
                 if push_to_client_history {
-                    buffer.update(&mut cx, |buffer, _| {
-                        buffer.push_transaction(transaction, Instant::now());
-                    });
+                    buffer
+                        .update(&mut cx, |buffer, _| {
+                            buffer.push_transaction(transaction, Instant::now());
+                        })
+                        .ok();
                 }
                 editor.update(&mut cx, |editor, cx| {
                     editor.refresh_document_highlights(cx);
@@ -4226,7 +4218,7 @@ impl Editor {
 
     pub fn render_code_actions_indicator(
         &self,
-        style: &EditorStyle,
+        _style: &EditorStyle,
         is_active: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<IconButton> {
@@ -4236,7 +4228,7 @@ impl Editor {
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .selected(is_active)
-                    .on_click(cx.listener(|editor, e, cx| {
+                    .on_click(cx.listener(|editor, _e, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: true,
@@ -4253,10 +4245,10 @@ impl Editor {
     pub fn render_fold_indicators(
         &self,
         fold_data: Vec<Option<(FoldStatus, u32, bool)>>,
-        style: &EditorStyle,
+        _style: &EditorStyle,
         gutter_hovered: bool,
-        line_height: Pixels,
-        gutter_margin: Pixels,
+        _line_height: Pixels,
+        _gutter_margin: Pixels,
         cx: &mut ViewContext<Self>,
     ) -> Vec<Option<IconButton>> {
         fold_data
@@ -4267,7 +4259,7 @@ impl Editor {
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
                             IconButton::new(ix as usize, ui::Icon::ChevronDown)
-                                .on_click(cx.listener(move |editor, e, cx| match fold_status {
+                                .on_click(cx.listener(move |editor, _e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
                                     }
@@ -7379,11 +7371,13 @@ impl Editor {
                     .filter_map(|location| location.transpose())
                     .collect::<Result<_>>()
                     .context("location tasks")?;
-                workspace.update(&mut cx, |workspace, cx| {
-                    Self::open_locations_in_multibuffer(
-                        workspace, locations, replica_id, title, split, cx,
-                    )
-                });
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        Self::open_locations_in_multibuffer(
+                            workspace, locations, replica_id, title, split, cx,
+                        )
+                    })
+                    .ok();
 
                 anyhow::Ok(())
             })
@@ -7832,15 +7826,17 @@ impl Editor {
                 transaction = format.log_err().fuse() => transaction,
             };
 
-            buffer.update(&mut cx, |buffer, cx| {
-                if let Some(transaction) = transaction {
-                    if !buffer.is_singleton() {
-                        buffer.push_transaction(&transaction.0, cx);
+            buffer
+                .update(&mut cx, |buffer, cx| {
+                    if let Some(transaction) = transaction {
+                        if !buffer.is_singleton() {
+                            buffer.push_transaction(&transaction.0, cx);
+                        }
                     }
-                }
 
-                cx.notify();
-            });
+                    cx.notify();
+                })
+                .ok();
 
             Ok(())
         })
@@ -9119,7 +9115,7 @@ impl Editor {
         let listener = Arc::new(listener);
 
         self.editor_actions.push(Box::new(move |cx| {
-            let view = cx.view().clone();
+            let _view = cx.view().clone();
             let cx = cx.window_context();
             let listener = listener.clone();
             cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {
@@ -9289,7 +9285,7 @@ pub enum EditorEvent {
 impl EventEmitter<EditorEvent> for Editor {}
 
 impl FocusableView for Editor {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -9329,7 +9325,7 @@ impl Render for Editor {
 
         let background = match self.mode {
             EditorMode::SingleLine => cx.theme().system().transparent,
-            EditorMode::AutoHeight { max_lines } => cx.theme().system().transparent,
+            EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
             EditorMode::Full => cx.theme().colors().editor_background,
         };
 
@@ -9719,7 +9715,7 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
+pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> RenderBlock {
     let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
 
     Arc::new(move |cx: &mut BlockContext| {

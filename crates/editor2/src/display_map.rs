@@ -12,10 +12,7 @@ use crate::{
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{
-    Font, FontId, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, ShapedLine,
-    TextRun, UnderlineStyle, WrappedLine,
-};
+use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
@@ -24,7 +21,7 @@ use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
-use theme::{StatusColors, SyntaxTheme, Theme};
+
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -1018,7 +1015,7 @@ pub mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let test_platform = &cx.test_platform;
+        let _test_platform = &cx.test_platform;
         let mut tab_size = rng.gen_range(1..=4);
         let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
@@ -1280,7 +1277,7 @@ pub mod tests {
         let editor = cx.editor.clone();
         let window = cx.window.clone();
 
-        cx.update_window(window, |_, cx| {
+        _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
                 editor.update(cx, |editor, cx| editor.text_layout_details(cx));
 

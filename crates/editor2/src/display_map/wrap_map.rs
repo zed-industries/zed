@@ -197,7 +197,8 @@ impl WrapMap {
                             this.background_task = None;
                             this.flush_edits(cx);
                             cx.notify();
-                        });
+                        })
+                        .ok();
                     }));
                 }
             }
@@ -277,7 +278,8 @@ impl WrapMap {
                                 this.background_task = None;
                                 this.flush_edits(cx);
                                 cx.notify();
-                            });
+                            })
+                            .ok();
                         }));
                     }
                 }
@@ -1057,7 +1059,7 @@ mod tests {
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let font = font("Helvetica");
-        let font_id = text_system.font_id(&font).unwrap();
+        let _font_id = text_system.font_id(&font).unwrap();
         let font_size = px(14.0);
 
         log::info!("Tab size: {}", tab_size);

@@ -1,17 +1,15 @@
 use crate::{
     editor_settings::SeedQuerySetting, link_go_to_definition::hide_link_definition,
-    movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
-    EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot,
-    NavigationData, ToPoint as _,
+    persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor, EditorEvent, EditorSettings,
+    ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    div, point, AnyElement, AppContext, AsyncAppContext, AsyncWindowContext, Context, Div, Entity,
-    EntityId, EventEmitter, FocusHandle, IntoElement, Model, ParentElement, Pixels, Render,
-    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    div, point, AnyElement, AppContext, AsyncWindowContext, Context, Div, Entity, EntityId,
+    EventEmitter, IntoElement, Model, ParentElement, Pixels, Render, SharedString, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
@@ -20,7 +18,7 @@ use language::{
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use smallvec::SmallVec;
+
 use std::fmt::Write;
 use std::{
     borrow::Cow,
@@ -581,7 +579,7 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        let theme = cx.theme();
+        let _theme = cx.theme();
 
         let description = detail.and_then(|detail| {
             let path = path_for_buffer(&self.buffer, detail, false, cx)?;
@@ -697,12 +695,14 @@ impl Item for Editor {
                     })?
                     .await?;
                 for buffer in clean_buffers {
-                    buffer.update(&mut cx, |buffer, cx| {
-                        let version = buffer.saved_version().clone();
-                        let fingerprint = buffer.saved_version_fingerprint();
-                        let mtime = buffer.saved_mtime();
-                        buffer.did_save(version, fingerprint, mtime, cx);
-                    });
+                    buffer
+                        .update(&mut cx, |buffer, cx| {
+                            let version = buffer.saved_version().clone();
+                            let fingerprint = buffer.saved_version_fingerprint();
+                            let mtime = buffer.saved_mtime();
+                            buffer.did_save(version, fingerprint, mtime, cx);
+                        })
+                        .ok();
                 }
             }
 
@@ -742,13 +742,15 @@ impl Item for Editor {
             this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
             })?;
-            buffer.update(&mut cx, |buffer, cx| {
-                if let Some(transaction) = transaction {
-                    if !buffer.is_singleton() {
-                        buffer.push_transaction(&transaction.0, cx);
+            buffer
+                .update(&mut cx, |buffer, cx| {
+                    if let Some(transaction) = transaction {
+                        if !buffer.is_singleton() {
+                            buffer.push_transaction(&transaction.0, cx);
+                        }
                     }
-                }
-            });
+                })
+                .ok();
             Ok(())
         })
     }

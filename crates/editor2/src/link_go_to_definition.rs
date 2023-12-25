@@ -618,7 +618,7 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
-    use gpui::{Modifiers, ModifiersChangedEvent, View};
+    use gpui::{Modifiers, ModifiersChangedEvent};
     use indoc::indoc;
     use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
