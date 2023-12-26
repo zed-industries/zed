@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::bail;
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;

@@ -248,14 +248,8 @@ impl TerminalElement {
                 {
                     let cell_text = cell.c.to_string();
                     if !is_blank(&cell) {
-                        let cell_style = TerminalElement::cell_style(
-                            &cell,
-                            fg,
-                            theme,
-                            text_style,
-                            text_system,
-                            hyperlink,
-                        );
+                        let cell_style =
+                            TerminalElement::cell_style(&cell, fg, theme, text_style, hyperlink);
 
                         let layout_cell = text_system
                             .shape_line(
@@ -315,7 +309,6 @@ impl TerminalElement {
         // bg: terminal::alacritty_terminal::ansi::Color,
         colors: &Theme,
         text_style: &TextStyle,
-        text_system: &TextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
     ) -> TextRun {
         let flags = indexed.cell.flags;
@@ -392,7 +385,6 @@ impl TerminalElement {
         let font_size =
             font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
 
-        let settings = ThemeSettings::get_global(cx);
         let theme = cx.theme().clone();
 
         let link_style = HighlightStyle {
@@ -898,7 +890,7 @@ impl PlatformInputHandler for TerminalInputHandler {
         None
     }
 
-    fn text_for_range(&mut self, range_utf16: std::ops::Range<usize>) -> Option<String> {
+    fn text_for_range(&mut self, _: std::ops::Range<usize>) -> Option<String> {
         None
     }
 

@@ -1,6 +1,3 @@
-#![allow(unused_variables)]
-//todo!(remove)
-
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
@@ -68,11 +65,9 @@ pub fn init(cx: &mut AppContext) {
 
     register_deserializable_item::<TerminalView>(cx);
 
-    cx.observe_new_views(
-        |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(TerminalView::deploy);
-        },
-    )
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(TerminalView::deploy);
+    })
     .detach();
 }
 
@@ -141,7 +136,6 @@ impl TerminalView {
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let view_id = cx.entity_id();
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, move |this, _, event, cx| match event {
             Event::Wakeup => {
@@ -308,7 +302,7 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
-        let context_menu = ContextMenu::build(cx, |menu, cx| {
+        let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.action("Clear", Box::new(Clear))
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
@@ -628,7 +622,6 @@ impl Render for TerminalView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let terminal_handle = self.terminal.clone();
 
-        let self_id = cx.entity_id();
         let focused = self.focus_handle.is_focused(cx);
 
         div()
