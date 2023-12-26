@@ -1,8 +1,5 @@
-#![allow(unused)]
-// todo!()
-
 use editor::{scroll::VERTICAL_SCROLL_MARGIN, test::editor_test_context::ContextHandle};
-use gpui::{point, px, rems, size, Context};
+use gpui::{px, size, Context};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
