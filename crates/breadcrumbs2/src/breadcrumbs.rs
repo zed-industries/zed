@@ -11,10 +11,6 @@ use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
 
-pub enum Event {
-    UpdateLocation,
-}
-
 pub struct Breadcrumbs {
     pane_focused: bool,
     active_item: Option<Box<dyn ItemHandle>>,
@@ -31,7 +27,6 @@ impl Breadcrumbs {
     }
 }
 
-impl EventEmitter<Event> for Breadcrumbs {}
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
@@ -39,15 +34,9 @@ impl Render for Breadcrumbs {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
         let element = h_stack().text_ui();
-
-        let Some(active_item) = &self
-            .active_item
-            .as_ref()
-            .filter(|item| item.downcast::<editor::Editor>().is_some())
-        else {
+        let Some(active_item) = self.active_item.as_ref() else {
             return element;
         };
-
         let Some(segments) = active_item.breadcrumbs(cx.theme(), cx) else {
             return element;
         };
@@ -64,21 +53,24 @@ impl Render for Breadcrumbs {
             Label::new("›").color(Color::Muted).into_any_element()
         });
 
-        let editor = active_item
+        let breadcrumbs_stack = h_stack().gap_1().children(breadcrumbs);
+        match active_item
             .downcast::<Editor>()
-            .map(|editor| editor.downgrade());
-
-        element.child(
-            ButtonLike::new("toggle outline view")
-                .style(ButtonStyle::Subtle)
-                .child(h_stack().gap_1().children(breadcrumbs))
-                .on_click(move |_, cx| {
-                    if let Some(editor) = editor.as_ref().and_then(|editor| editor.upgrade()) {
-                        outline::toggle(editor, &outline::Toggle, cx)
-                    }
-                })
-                .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
-        )
+            .map(|editor| editor.downgrade())
+        {
+            Some(editor) => element.child(
+                ButtonLike::new("toggle outline view")
+                    .child(breadcrumbs_stack)
+                    .style(ButtonStyle::Subtle)
+                    .on_click(move |_, cx| {
+                        if let Some(editor) = editor.upgrade() {
+                            outline::toggle(editor, &outline::Toggle, cx)
+                        }
+                    })
+                    .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
+            ),
+            None => element.child(breadcrumbs_stack),
+        }
     }
 }
 
@@ -97,7 +89,6 @@ impl ToolbarItemView for Breadcrumbs {
                 Box::new(move |event, cx| {
                     if let ItemEvent::UpdateBreadcrumbs = event {
                         this.update(cx, |_, cx| {
-                            cx.emit(Event::UpdateLocation);
                             cx.notify();
                         })
                         .ok();
@@ -110,19 +101,6 @@ impl ToolbarItemView for Breadcrumbs {
             ToolbarItemLocation::Hidden
         }
     }
-
-    // fn location_for_event(
-    //     &self,
-    //     _: &Event,
-    //     current_location: ToolbarItemLocation,
-    //     cx: &AppContext,
-    // ) -> ToolbarItemLocation {
-    //     if let Some(active_item) = self.active_item.as_ref() {
-    //         active_item.breadcrumb_location(cx)
-    //     } else {
-    //         current_location
-    //     }
-    // }
 
     fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
         self.pane_focused = pane_focused;
