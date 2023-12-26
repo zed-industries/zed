@@ -5,8 +5,9 @@ use gpui::rgba;
 
 #[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
-    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
+    UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn gruvbox() -> UserThemeFamily {
@@ -19,15 +20,18 @@ pub fn gruvbox() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0xc9b99aff).into()),
-                        border_variant: Some(rgba(0xc9b99aff).into()),
+                        border: Some(rgba(0xddcca7ff).into()),
+                        border_variant: Some(rgba(0xefe2bcff).into()),
                         elevated_surface_background: Some(rgba(0xd9c8a4ff).into()),
                         background: Some(rgba(0xd9c8a4ff).into()),
                         panel_background: Some(rgba(0xecddb5ff).into()),
                         element_hover: Some(rgba(0xc9b99a80).into()),
                         element_selected: Some(rgba(0xb5a68e80).into()),
-                        text: Some(rgba(0x5f5650ff).into()),
-                        text_muted: Some(rgba(0xad9e87ff).into()),
+                        text: Some(rgba(0x282828ff).into()),
+                        text_muted: Some(rgba(0x5f5650ff).into()),
+                        text_placeholder: Some(rgba(0xad9e87ff).into()),
+                        text_disabled: Some(rgba(0x282828ff).into()),
+                        text_accent: Some(rgba(0x0b6678ff).into()),
                         status_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         title_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         toolbar_background: Some(rgba(0xf9f5d7ff).into()),
@@ -68,11 +72,54 @@ pub fn gruvbox() -> UserThemeFamily {
                         created: Some(rgba(0x958e43ff).into()),
                         deleted: Some(rgba(0x9d0408ff).into()),
                         error: Some(rgba(0x9d0408ff).into()),
+                        hint: Some(rgba(0x677562ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
                         success: Some(rgba(0x282828ff).into()),
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x0b6678ff).into(),
+                            background: rgba(0x0b6678ff).into(),
+                            selection: rgba(0x0b66783d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x7c6f64ff).into(),
+                            background: rgba(0x7c6f64ff).into(),
+                            selection: rgba(0x7c6f643d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xaf3b05ff).into(),
+                            background: rgba(0xaf3b05ff).into(),
+                            selection: rgba(0xaf3b053d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8f4071ff).into(),
+                            background: rgba(0x8f4071ff).into(),
+                            selection: rgba(0x8f40713d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x437b59ff).into(),
+                            background: rgba(0x437b59ff).into(),
+                            selection: rgba(0x437b593d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x9d0408ff).into(),
+                            background: rgba(0x9d0408ff).into(),
+                            selection: rgba(0x9d04083d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb57616ff).into(),
+                            background: rgba(0xb57616ff).into(),
+                            selection: rgba(0xb576163d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x797410ff).into(),
+                            background: rgba(0x797410ff).into(),
+                            selection: rgba(0x7974103d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -362,15 +409,18 @@ pub fn gruvbox() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x5b534dff).into()),
-                        border_variant: Some(rgba(0x5b534dff).into()),
+                        border: Some(rgba(0x494340ff).into()),
+                        border_variant: Some(rgba(0x393634ff).into()),
                         elevated_surface_background: Some(rgba(0x4c4642ff).into()),
                         background: Some(rgba(0x4c4642ff).into()),
                         panel_background: Some(rgba(0x3b3735ff).into()),
                         element_hover: Some(rgba(0x5b534d80).into()),
                         element_selected: Some(rgba(0x6e635a80).into()),
-                        text: Some(rgba(0xc5b597ff).into()),
-                        text_muted: Some(rgba(0x776b61ff).into()),
+                        text: Some(rgba(0xfbf1c7ff).into()),
+                        text_muted: Some(rgba(0xc5b597ff).into()),
+                        text_placeholder: Some(rgba(0x776b61ff).into()),
+                        text_disabled: Some(rgba(0xfbf1c7ff).into()),
+                        text_accent: Some(rgba(0x83a598ff).into()),
                         status_bar_background: Some(rgba(0x4c4642ff).into()),
                         title_bar_background: Some(rgba(0x4c4642ff).into()),
                         toolbar_background: Some(rgba(0x32302fff).into()),
@@ -411,11 +461,54 @@ pub fn gruvbox() -> UserThemeFamily {
                         created: Some(rgba(0xb8bb27ff).into()),
                         deleted: Some(rgba(0xd0382bff).into()),
                         error: Some(rgba(0xfb4a35ff).into()),
+                        hint: Some(rgba(0x8d957eff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
                         success: Some(rgba(0xfbf1c7ff).into()),
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x83a598ff).into(),
+                            background: rgba(0x83a598ff).into(),
+                            selection: rgba(0x83a5983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xa89984ff).into(),
+                            background: rgba(0xa89984ff).into(),
+                            selection: rgba(0xa899843d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfd801bff).into(),
+                            background: rgba(0xfd801bff).into(),
+                            selection: rgba(0xfd801b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd3869bff).into(),
+                            background: rgba(0xd3869bff).into(),
+                            selection: rgba(0xd3869b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8ec07cff).into(),
+                            background: rgba(0x8ec07cff).into(),
+                            selection: rgba(0x8ec07c3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfb4a35ff).into(),
+                            background: rgba(0xfb4a35ff).into(),
+                            selection: rgba(0xfb4a353d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf9bd30ff).into(),
+                            background: rgba(0xf9bd30ff).into(),
+                            selection: rgba(0xf9bd303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb8bb27ff).into(),
+                            background: rgba(0xb8bb27ff).into(),
+                            selection: rgba(0xb8bb273d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -705,15 +798,18 @@ pub fn gruvbox() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0xc9b99aff).into()),
-                        border_variant: Some(rgba(0xc9b99aff).into()),
+                        border: Some(rgba(0xddcca7ff).into()),
+                        border_variant: Some(rgba(0xefe1b8ff).into()),
                         elevated_surface_background: Some(rgba(0xd9c8a4ff).into()),
                         background: Some(rgba(0xd9c8a4ff).into()),
                         panel_background: Some(rgba(0xecddb4ff).into()),
                         element_hover: Some(rgba(0xc9b99a80).into()),
                         element_selected: Some(rgba(0xb5a68e80).into()),
-                        text: Some(rgba(0x5f5650ff).into()),
-                        text_muted: Some(rgba(0xad9e87ff).into()),
+                        text: Some(rgba(0x282828ff).into()),
+                        text_muted: Some(rgba(0x5f5650ff).into()),
+                        text_placeholder: Some(rgba(0xad9e87ff).into()),
+                        text_disabled: Some(rgba(0x282828ff).into()),
+                        text_accent: Some(rgba(0x0b6678ff).into()),
                         status_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         title_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         toolbar_background: Some(rgba(0xfbf1c7ff).into()),
@@ -754,11 +850,54 @@ pub fn gruvbox() -> UserThemeFamily {
                         created: Some(rgba(0x958e43ff).into()),
                         deleted: Some(rgba(0x9d0408ff).into()),
                         error: Some(rgba(0x9d0408ff).into()),
+                        hint: Some(rgba(0x677562ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
                         success: Some(rgba(0x282828ff).into()),
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x0b6678ff).into(),
+                            background: rgba(0x0b6678ff).into(),
+                            selection: rgba(0x0b66783d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x7c6f64ff).into(),
+                            background: rgba(0x7c6f64ff).into(),
+                            selection: rgba(0x7c6f643d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xaf3b05ff).into(),
+                            background: rgba(0xaf3b05ff).into(),
+                            selection: rgba(0xaf3b053d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8f4071ff).into(),
+                            background: rgba(0x8f4071ff).into(),
+                            selection: rgba(0x8f40713d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x437b59ff).into(),
+                            background: rgba(0x437b59ff).into(),
+                            selection: rgba(0x437b593d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x9d0408ff).into(),
+                            background: rgba(0x9d0408ff).into(),
+                            selection: rgba(0x9d04083d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb57616ff).into(),
+                            background: rgba(0xb57616ff).into(),
+                            selection: rgba(0xb576163d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x797410ff).into(),
+                            background: rgba(0x797410ff).into(),
+                            selection: rgba(0x7974103d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -1048,15 +1187,18 @@ pub fn gruvbox() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x5b534dff).into()),
-                        border_variant: Some(rgba(0x5b534dff).into()),
+                        border: Some(rgba(0x494340ff).into()),
+                        border_variant: Some(rgba(0x373432ff).into()),
                         elevated_surface_background: Some(rgba(0x4c4642ff).into()),
                         background: Some(rgba(0x4c4642ff).into()),
                         panel_background: Some(rgba(0x3a3735ff).into()),
                         element_hover: Some(rgba(0x5b534d80).into()),
                         element_selected: Some(rgba(0x6e635a80).into()),
-                        text: Some(rgba(0xc5b597ff).into()),
-                        text_muted: Some(rgba(0x776b61ff).into()),
+                        text: Some(rgba(0xfbf1c7ff).into()),
+                        text_muted: Some(rgba(0xc5b597ff).into()),
+                        text_placeholder: Some(rgba(0x776b61ff).into()),
+                        text_disabled: Some(rgba(0xfbf1c7ff).into()),
+                        text_accent: Some(rgba(0x83a598ff).into()),
                         status_bar_background: Some(rgba(0x4c4642ff).into()),
                         title_bar_background: Some(rgba(0x4c4642ff).into()),
                         toolbar_background: Some(rgba(0x282828ff).into()),
@@ -1097,11 +1239,54 @@ pub fn gruvbox() -> UserThemeFamily {
                         created: Some(rgba(0xb8bb27ff).into()),
                         deleted: Some(rgba(0xd0382bff).into()),
                         error: Some(rgba(0xfb4a35ff).into()),
+                        hint: Some(rgba(0x8d957eff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
                         success: Some(rgba(0xfbf1c7ff).into()),
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x83a598ff).into(),
+                            background: rgba(0x83a598ff).into(),
+                            selection: rgba(0x83a5983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xa89984ff).into(),
+                            background: rgba(0xa89984ff).into(),
+                            selection: rgba(0xa899843d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfd801bff).into(),
+                            background: rgba(0xfd801bff).into(),
+                            selection: rgba(0xfd801b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd3869bff).into(),
+                            background: rgba(0xd3869bff).into(),
+                            selection: rgba(0xd3869b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8ec07cff).into(),
+                            background: rgba(0x8ec07cff).into(),
+                            selection: rgba(0x8ec07c3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfb4a35ff).into(),
+                            background: rgba(0xfb4a35ff).into(),
+                            selection: rgba(0xfb4a353d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf9bd30ff).into(),
+                            background: rgba(0xf9bd30ff).into(),
+                            selection: rgba(0xf9bd303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb8bb27ff).into(),
+                            background: rgba(0xb8bb27ff).into(),
+                            selection: rgba(0xb8bb273d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -1391,15 +1576,18 @@ pub fn gruvbox() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0xc9b99aff).into()),
-                        border_variant: Some(rgba(0xc9b99aff).into()),
+                        border: Some(rgba(0xddcca7ff).into()),
+                        border_variant: Some(rgba(0xeddeb5ff).into()),
                         elevated_surface_background: Some(rgba(0xd9c8a4ff).into()),
                         background: Some(rgba(0xd9c8a4ff).into()),
                         panel_background: Some(rgba(0xecdcb3ff).into()),
                         element_hover: Some(rgba(0xc9b99a80).into()),
                         element_selected: Some(rgba(0xb5a68e80).into()),
-                        text: Some(rgba(0x5f5650ff).into()),
-                        text_muted: Some(rgba(0xad9e87ff).into()),
+                        text: Some(rgba(0x282828ff).into()),
+                        text_muted: Some(rgba(0x5f5650ff).into()),
+                        text_placeholder: Some(rgba(0xad9e87ff).into()),
+                        text_disabled: Some(rgba(0x282828ff).into()),
+                        text_accent: Some(rgba(0x0b6678ff).into()),
                         status_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         title_bar_background: Some(rgba(0xd9c8a4ff).into()),
                         toolbar_background: Some(rgba(0xf2e5bcff).into()),
@@ -1440,11 +1628,54 @@ pub fn gruvbox() -> UserThemeFamily {
                         created: Some(rgba(0x958e43ff).into()),
                         deleted: Some(rgba(0x9d0408ff).into()),
                         error: Some(rgba(0x9d0408ff).into()),
+                        hint: Some(rgba(0x677562ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
                         success: Some(rgba(0x282828ff).into()),
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x0b6678ff).into(),
+                            background: rgba(0x0b6678ff).into(),
+                            selection: rgba(0x0b66783d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x7c6f64ff).into(),
+                            background: rgba(0x7c6f64ff).into(),
+                            selection: rgba(0x7c6f643d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xaf3b05ff).into(),
+                            background: rgba(0xaf3b05ff).into(),
+                            selection: rgba(0xaf3b053d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8f4071ff).into(),
+                            background: rgba(0x8f4071ff).into(),
+                            selection: rgba(0x8f40713d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x437b59ff).into(),
+                            background: rgba(0x437b59ff).into(),
+                            selection: rgba(0x437b593d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x9d0408ff).into(),
+                            background: rgba(0x9d0408ff).into(),
+                            selection: rgba(0x9d04083d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb57616ff).into(),
+                            background: rgba(0xb57616ff).into(),
+                            selection: rgba(0xb576163d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x797410ff).into(),
+                            background: rgba(0x797410ff).into(),
+                            selection: rgba(0x7974103d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -1734,15 +1965,18 @@ pub fn gruvbox() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x5b534dff).into()),
-                        border_variant: Some(rgba(0x5b534dff).into()),
+                        border: Some(rgba(0x494340ff).into()),
+                        border_variant: Some(rgba(0x343130ff).into()),
                         elevated_surface_background: Some(rgba(0x4c4642ff).into()),
                         background: Some(rgba(0x4c4642ff).into()),
                         panel_background: Some(rgba(0x393634ff).into()),
                         element_hover: Some(rgba(0x5b534d80).into()),
                         element_selected: Some(rgba(0x6e635a80).into()),
-                        text: Some(rgba(0xc5b597ff).into()),
-                        text_muted: Some(rgba(0x776b61ff).into()),
+                        text: Some(rgba(0xfbf1c7ff).into()),
+                        text_muted: Some(rgba(0xc5b597ff).into()),
+                        text_placeholder: Some(rgba(0x776b61ff).into()),
+                        text_disabled: Some(rgba(0xfbf1c7ff).into()),
+                        text_accent: Some(rgba(0x83a598ff).into()),
                         status_bar_background: Some(rgba(0x4c4642ff).into()),
                         title_bar_background: Some(rgba(0x4c4642ff).into()),
                         toolbar_background: Some(rgba(0x1d2021ff).into()),
@@ -1783,11 +2017,54 @@ pub fn gruvbox() -> UserThemeFamily {
                         created: Some(rgba(0xb8bb27ff).into()),
                         deleted: Some(rgba(0xd0382bff).into()),
                         error: Some(rgba(0xfb4a35ff).into()),
+                        hint: Some(rgba(0x8d957eff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
                         success: Some(rgba(0xfbf1c7ff).into()),
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x83a598ff).into(),
+                            background: rgba(0x83a598ff).into(),
+                            selection: rgba(0x83a5983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xa89984ff).into(),
+                            background: rgba(0xa89984ff).into(),
+                            selection: rgba(0xa899843d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfd801bff).into(),
+                            background: rgba(0xfd801bff).into(),
+                            selection: rgba(0xfd801b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd3869bff).into(),
+                            background: rgba(0xd3869bff).into(),
+                            selection: rgba(0xd3869b3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x8ec07cff).into(),
+                            background: rgba(0x8ec07cff).into(),
+                            selection: rgba(0x8ec07c3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xfb4a35ff).into(),
+                            background: rgba(0xfb4a35ff).into(),
+                            selection: rgba(0xfb4a353d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf9bd30ff).into(),
+                            background: rgba(0xf9bd30ff).into(),
+                            selection: rgba(0xf9bd303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb8bb27ff).into(),
+                            background: rgba(0xb8bb27ff).into(),
+                            selection: rgba(0xb8bb273d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (

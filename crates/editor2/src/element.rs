@@ -1719,7 +1719,7 @@ impl EditorElement {
         // Show the placeholder when the editor is empty
         if snapshot.is_empty() {
             let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-            let placeholder_color = cx.theme().styles.colors.text_placeholder;
+            let placeholder_color = cx.theme().colors().text_placeholder;
             let placeholder_text = snapshot.placeholder_text();
 
             let placeholder_lines = placeholder_text
@@ -2837,17 +2837,13 @@ impl Element for EditorElement {
                 }
                 self.paint_text(text_bounds, &mut layout, cx);
 
+                cx.with_z_index(0, |cx| {
+                    self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
+                });
                 if !layout.blocks.is_empty() {
                     cx.with_z_index(0, |cx| {
                         cx.with_element_id(Some("editor_blocks"), |cx| {
                             self.paint_blocks(bounds, &mut layout, cx);
-                            self.paint_mouse_listeners(
-                                bounds,
-                                gutter_bounds,
-                                text_bounds,
-                                &layout,
-                                cx,
-                            );
                         });
                     })
                 }

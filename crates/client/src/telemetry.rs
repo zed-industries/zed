@@ -119,13 +119,13 @@ pub enum ClickhouseEvent {
 const MAX_QUEUE_LEN: usize = 1;
 
 #[cfg(not(debug_assertions))]
-const MAX_QUEUE_LEN: usize = 10;
+const MAX_QUEUE_LEN: usize = 50;
 
 #[cfg(debug_assertions)]
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
-const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
+const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(120);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
@@ -340,18 +340,18 @@ impl Telemetry {
         self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
-    // app_events are called at app open and app close, so flush is set to immediately send
     pub fn report_app_event(
         self: &Arc<Self>,
         telemetry_settings: TelemetrySettings,
         operation: &'static str,
+        immediate_flush: bool,
     ) {
         let event = ClickhouseEvent::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, true)
+        self.report_clickhouse_event(event, telemetry_settings, immediate_flush)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {

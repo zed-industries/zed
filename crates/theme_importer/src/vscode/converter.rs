@@ -61,6 +61,7 @@ impl VsCodeThemeConverter {
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinements,
                 status: status_color_refinements,
+                player: None,
                 syntax: Some(syntax_theme),
             },
         })

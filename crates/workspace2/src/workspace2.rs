@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, Status, TypedEnvelope, UserStore,
+    Client, Status, TelemetrySettings, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -586,9 +586,9 @@ impl Workspace {
 
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
 
-        let left_dock = cx.build_view(|cx| Dock::new(DockPosition::Left, cx));
-        let bottom_dock = cx.build_view(|cx| Dock::new(DockPosition::Bottom, cx));
-        let right_dock = cx.build_view(|cx| Dock::new(DockPosition::Right, cx));
+        let left_dock = Dock::new(DockPosition::Left, cx);
+        let bottom_dock = Dock::new(DockPosition::Bottom, cx);
+        let right_dock = Dock::new(DockPosition::Right, cx);
         let left_dock_buttons = cx.build_view(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.build_view(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.build_view(|cx| PanelButtons::new(right_dock.clone(), cx));
@@ -1250,6 +1250,10 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
+        self.client()
+            .telemetry()
+            .report_app_event(telemetry_settings, "open project", false);
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -1616,7 +1620,6 @@ impl Workspace {
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
-                let mut reveal_dock = false;
                 let panel = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, cx);
 
@@ -1625,12 +1628,7 @@ impl Workspace {
                         if should_focus(&**panel, cx) {
                             dock.set_open(true, cx);
                             panel.focus_handle(cx).focus(cx);
-                            reveal_dock = true;
                         } else {
-                            // todo!()
-                            // if panel.is_zoomed(cx) {
-                            //     dock.set_open(false, cx);
-                            // }
                             focus_center = true;
                         }
                     }

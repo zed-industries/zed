@@ -5,8 +5,9 @@ use gpui::rgba;
 
 #[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
-    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
+    UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn andromeda() -> UserThemeFamily {
@@ -18,15 +19,18 @@ pub fn andromeda() -> UserThemeFamily {
             appearance: Appearance::Dark,
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
-                    border: Some(rgba(0x2b2f39ff).into()),
-                    border_variant: Some(rgba(0x2b2f39ff).into()),
+                    border: Some(rgba(0x252931ff).into()),
+                    border_variant: Some(rgba(0x21232aff).into()),
                     elevated_surface_background: Some(rgba(0x262a33ff).into()),
                     background: Some(rgba(0x262a33ff).into()),
                     panel_background: Some(rgba(0x21242bff).into()),
                     element_hover: Some(rgba(0x2b2f3980).into()),
                     element_selected: Some(rgba(0x383b4580).into()),
-                    text: Some(rgba(0xaca8aeff).into()),
-                    text_muted: Some(rgba(0x474a53ff).into()),
+                    text: Some(rgba(0xf7f7f8ff).into()),
+                    text_muted: Some(rgba(0xaca8aeff).into()),
+                    text_placeholder: Some(rgba(0x474a53ff).into()),
+                    text_disabled: Some(rgba(0xf7f7f8ff).into()),
+                    text_accent: Some(rgba(0x11a793ff).into()),
                     status_bar_background: Some(rgba(0x262a33ff).into()),
                     title_bar_background: Some(rgba(0x262a33ff).into()),
                     toolbar_background: Some(rgba(0x1e2025ff).into()),
@@ -67,11 +71,54 @@ pub fn andromeda() -> UserThemeFamily {
                     created: Some(rgba(0x96df72ff).into()),
                     deleted: Some(rgba(0xcd1d5aff).into()),
                     error: Some(rgba(0xf82872ff).into()),
+                    hint: Some(rgba(0x618399ff).into()),
                     modified: Some(rgba(0xfee56dff).into()),
                     success: Some(rgba(0xf7f7f8ff).into()),
                     warning: Some(rgba(0xfee56dff).into()),
                     ..Default::default()
                 },
+                player: Some(PlayerColors(vec![
+                    PlayerColor {
+                        cursor: rgba(0x11a793ff).into(),
+                        background: rgba(0x11a793ff).into(),
+                        selection: rgba(0x11a7933d).into(),
+                    },
+                    PlayerColor {
+                        cursor: rgba(0xc74decff).into(),
+                        background: rgba(0xc74decff).into(),
+                        selection: rgba(0xc74dec3d).into(),
+                    },
+                    PlayerColor {
+                        cursor: rgba(0xf29c14ff).into(),
+                        background: rgba(0xf29c14ff).into(),
+                        selection: rgba(0xf29c143d).into(),
+                    },
+                    PlayerColor {
+                        cursor: rgba(0x8a3fa6ff).into(),
+                        background: rgba(0x8a3fa6ff).into(),
+                        selection: rgba(0x8a3fa63d).into(),
+                    },
+                    PlayerColor {
+                        cursor: rgba(0x09e7c6ff).into(),
+                        background: rgba(0x09e7c6ff).into(),
+                        selection: rgba(0x09e7c63d).into(),
+                    },
+                    PlayerColor {
+                        cursor: rgba(0xf82872ff).into(),
+                        background: rgba(0xf82872ff).into(),
+                        selection: rgba(0xf828723d).into(),
+                    },
+                    PlayerColor {
+                        cursor: rgba(0xfee56dff).into(),
+                        background: rgba(0xfee56dff).into(),
+                        selection: rgba(0xfee56d3d).into(),
+                    },
+                    PlayerColor {
+                        cursor: rgba(0x96df72ff).into(),
+                        background: rgba(0x96df72ff).into(),
+                        selection: rgba(0x96df723d).into(),
+                    },
+                ])),
                 syntax: Some(UserSyntaxTheme {
                     highlights: vec![
                         (

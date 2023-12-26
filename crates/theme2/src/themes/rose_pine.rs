@@ -5,8 +5,9 @@ use gpui::rgba;
 
 #[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
-    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
+    UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn rose_pine() -> UserThemeFamily {
@@ -19,15 +20,18 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0xdcd6d5ff).into()),
-                        border_variant: Some(rgba(0xdcd6d5ff).into()),
+                        border: Some(rgba(0xe5e0dfff).into()),
+                        border_variant: Some(rgba(0xfdf8f1ff).into()),
                         elevated_surface_background: Some(rgba(0xdcd8d8ff).into()),
                         background: Some(rgba(0xdcd8d8ff).into()),
                         panel_background: Some(rgba(0xfef9f2ff).into()),
                         element_hover: Some(rgba(0xdcd6d580).into()),
                         element_selected: Some(rgba(0xc1bac180).into()),
-                        text: Some(rgba(0x706c8cff).into()),
-                        text_muted: Some(rgba(0xb1abb5ff).into()),
+                        text: Some(rgba(0x575279ff).into()),
+                        text_muted: Some(rgba(0x706c8cff).into()),
+                        text_placeholder: Some(rgba(0xb1abb5ff).into()),
+                        text_disabled: Some(rgba(0x575279ff).into()),
+                        text_accent: Some(rgba(0x57949fff).into()),
                         status_bar_background: Some(rgba(0xdcd8d8ff).into()),
                         title_bar_background: Some(rgba(0xdcd8d8ff).into()),
                         toolbar_background: Some(rgba(0xfaf4edff).into()),
@@ -68,11 +72,54 @@ pub fn rose_pine() -> UserThemeFamily {
                         created: Some(rgba(0x6bbca3ff).into()),
                         deleted: Some(rgba(0xb4647aff).into()),
                         error: Some(rgba(0xb4647aff).into()),
+                        hint: Some(rgba(0x7a92aaff).into()),
                         modified: Some(rgba(0xe99d35ff).into()),
                         success: Some(rgba(0x575279ff).into()),
                         warning: Some(rgba(0xe99d35ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x57949fff).into(),
+                            background: rgba(0x57949fff).into(),
+                            selection: rgba(0x57949f3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x7c697fff).into(),
+                            background: rgba(0x7c697fff).into(),
+                            selection: rgba(0x7c697f3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x907aa9ff).into(),
+                            background: rgba(0x907aa9ff).into(),
+                            selection: rgba(0x907aa93d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x907aa9ff).into(),
+                            background: rgba(0x907aa9ff).into(),
+                            selection: rgba(0x907aa93d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x2a6983ff).into(),
+                            background: rgba(0x2a6983ff).into(),
+                            selection: rgba(0x2a69833d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb4647aff).into(),
+                            background: rgba(0xb4647aff).into(),
+                            selection: rgba(0xb4647a3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xe99d35ff).into(),
+                            background: rgba(0xe99d35ff).into(),
+                            selection: rgba(0xe99d353d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x3eaa8eff).into(),
+                            background: rgba(0x3eaa8eff).into(),
+                            selection: rgba(0x3eaa8e3d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -369,15 +416,18 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x504c68ff).into()),
-                        border_variant: Some(rgba(0x504c68ff).into()),
+                        border: Some(rgba(0x322f48ff).into()),
+                        border_variant: Some(rgba(0x27243bff).into()),
                         elevated_surface_background: Some(rgba(0x38354eff).into()),
                         background: Some(rgba(0x38354eff).into()),
                         panel_background: Some(rgba(0x28253cff).into()),
                         element_hover: Some(rgba(0x504c6880).into()),
                         element_selected: Some(rgba(0x45415d80).into()),
-                        text: Some(rgba(0x85819eff).into()),
-                        text_muted: Some(rgba(0x3a3653ff).into()),
+                        text: Some(rgba(0xe0def4ff).into()),
+                        text_muted: Some(rgba(0x85819eff).into()),
+                        text_placeholder: Some(rgba(0x3a3653ff).into()),
+                        text_disabled: Some(rgba(0xe0def4ff).into()),
+                        text_accent: Some(rgba(0x9cced7ff).into()),
                         status_bar_background: Some(rgba(0x38354eff).into()),
                         title_bar_background: Some(rgba(0x38354eff).into()),
                         toolbar_background: Some(rgba(0x232136ff).into()),
@@ -418,11 +468,54 @@ pub fn rose_pine() -> UserThemeFamily {
                         created: Some(rgba(0x5dc2a3ff).into()),
                         deleted: Some(rgba(0xbe5773ff).into()),
                         error: Some(rgba(0xea6f92ff).into()),
+                        hint: Some(rgba(0x728aa2ff).into()),
                         modified: Some(rgba(0xf5c177ff).into()),
                         success: Some(rgba(0xe0def4ff).into()),
                         warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x9cced7ff).into(),
+                            background: rgba(0x9cced7ff).into(),
+                            selection: rgba(0x9cced73d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xa784a1ff).into(),
+                            background: rgba(0xa784a1ff).into(),
+                            selection: rgba(0xa784a13d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xc4a7e6ff).into(),
+                            background: rgba(0xc4a7e6ff).into(),
+                            selection: rgba(0xc4a7e63d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xc4a7e6ff).into(),
+                            background: rgba(0xc4a7e6ff).into(),
+                            selection: rgba(0xc4a7e63d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x3f8fb0ff).into(),
+                            background: rgba(0x3f8fb0ff).into(),
+                            selection: rgba(0x3f8fb03d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xea6f92ff).into(),
+                            background: rgba(0xea6f92ff).into(),
+                            selection: rgba(0xea6f923d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf5c177ff).into(),
+                            background: rgba(0xf5c177ff).into(),
+                            selection: rgba(0xf5c1773d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x5dc2a3ff).into(),
+                            background: rgba(0x5dc2a3ff).into(),
+                            selection: rgba(0x5dc2a33d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -719,15 +812,18 @@ pub fn rose_pine() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x423f55ff).into()),
-                        border_variant: Some(rgba(0x423f55ff).into()),
+                        border: Some(rgba(0x232132ff).into()),
+                        border_variant: Some(rgba(0x1c1a29ff).into()),
                         elevated_surface_background: Some(rgba(0x292739ff).into()),
                         background: Some(rgba(0x292739ff).into()),
                         panel_background: Some(rgba(0x1d1b2aff).into()),
                         element_hover: Some(rgba(0x423f5580).into()),
                         element_selected: Some(rgba(0x47445b80).into()),
-                        text: Some(rgba(0x75718eff).into()),
-                        text_muted: Some(rgba(0x3b384fff).into()),
+                        text: Some(rgba(0xe0def4ff).into()),
+                        text_muted: Some(rgba(0x75718eff).into()),
+                        text_placeholder: Some(rgba(0x3b384fff).into()),
+                        text_disabled: Some(rgba(0xe0def4ff).into()),
+                        text_accent: Some(rgba(0x9cced7ff).into()),
                         status_bar_background: Some(rgba(0x292739ff).into()),
                         title_bar_background: Some(rgba(0x292739ff).into()),
                         toolbar_background: Some(rgba(0x191724ff).into()),
@@ -768,11 +864,54 @@ pub fn rose_pine() -> UserThemeFamily {
                         created: Some(rgba(0x5dc2a3ff).into()),
                         deleted: Some(rgba(0xbe5773ff).into()),
                         error: Some(rgba(0xea6f92ff).into()),
+                        hint: Some(rgba(0x5e768cff).into()),
                         modified: Some(rgba(0xf5c177ff).into()),
                         success: Some(rgba(0xe0def4ff).into()),
                         warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x9cced7ff).into(),
+                            background: rgba(0x9cced7ff).into(),
+                            selection: rgba(0x9cced73d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x9d7691ff).into(),
+                            background: rgba(0x9d7691ff).into(),
+                            selection: rgba(0x9d76913d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xc4a7e6ff).into(),
+                            background: rgba(0xc4a7e6ff).into(),
+                            selection: rgba(0xc4a7e63d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xc4a7e6ff).into(),
+                            background: rgba(0xc4a7e6ff).into(),
+                            selection: rgba(0xc4a7e63d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x32748fff).into(),
+                            background: rgba(0x32748fff).into(),
+                            selection: rgba(0x32748f3d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xea6f92ff).into(),
+                            background: rgba(0xea6f92ff).into(),
+                            selection: rgba(0xea6f923d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xf5c177ff).into(),
+                            background: rgba(0xf5c177ff).into(),
+                            selection: rgba(0xf5c1773d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x5dc2a3ff).into(),
+                            background: rgba(0x5dc2a3ff).into(),
+                            selection: rgba(0x5dc2a33d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (

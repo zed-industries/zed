@@ -172,7 +172,7 @@ impl RenderOnce for Button {
                     Label::new(label)
                         .color(label_color)
                         .size(self.label_size.unwrap_or_default())
-                        .line_height_style(LineHeightStyle::UILabel),
+                        .line_height_style(LineHeightStyle::UiLabel),
                 )
                 .when(!self.icon_position.is_some(), |this| {
                     this.children(self.icon.map(|icon| {

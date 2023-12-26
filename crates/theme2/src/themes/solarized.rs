@@ -5,8 +5,9 @@ use gpui::rgba;
 
 #[allow(unused)]
 use crate::{
-    Appearance, StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
-    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily, UserThemeStylesRefinement,
+    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
+    UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,
+    UserThemeStylesRefinement,
 };
 
 pub fn solarized() -> UserThemeFamily {
@@ -19,15 +20,18 @@ pub fn solarized() -> UserThemeFamily {
                 appearance: Appearance::Light,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x9faaa8ff).into()),
-                        border_variant: Some(rgba(0x9faaa8ff).into()),
+                        border: Some(rgba(0xdcdacbff).into()),
+                        border_variant: Some(rgba(0xf5eedbff).into()),
                         elevated_surface_background: Some(rgba(0xcfd0c4ff).into()),
                         background: Some(rgba(0xcfd0c4ff).into()),
                         panel_background: Some(rgba(0xf3eddaff).into()),
                         element_hover: Some(rgba(0x9faaa880).into()),
                         element_selected: Some(rgba(0x7f919480).into()),
-                        text: Some(rgba(0x34555eff).into()),
-                        text_muted: Some(rgba(0x788b8fff).into()),
+                        text: Some(rgba(0x002b36ff).into()),
+                        text_muted: Some(rgba(0x34555eff).into()),
+                        text_placeholder: Some(rgba(0x788b8fff).into()),
+                        text_disabled: Some(rgba(0x002b36ff).into()),
+                        text_accent: Some(rgba(0x298bd1ff).into()),
                         status_bar_background: Some(rgba(0xcfd0c4ff).into()),
                         title_bar_background: Some(rgba(0xcfd0c4ff).into()),
                         toolbar_background: Some(rgba(0xfdf6e3ff).into()),
@@ -68,11 +72,54 @@ pub fn solarized() -> UserThemeFamily {
                         created: Some(rgba(0xa0ad46ff).into()),
                         deleted: Some(rgba(0xdc3330ff).into()),
                         error: Some(rgba(0xdc3330ff).into()),
+                        hint: Some(rgba(0x5889a3ff).into()),
                         modified: Some(rgba(0xb58904ff).into()),
                         success: Some(rgba(0x002b36ff).into()),
                         warning: Some(rgba(0xb58904ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x298bd1ff).into(),
+                            background: rgba(0x298bd1ff).into(),
+                            selection: rgba(0x298bd13d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd33882ff).into(),
+                            background: rgba(0xd33882ff).into(),
+                            selection: rgba(0xd338823d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xcb4c18ff).into(),
+                            background: rgba(0xcb4c18ff).into(),
+                            selection: rgba(0xcb4c183d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x6d71c4ff).into(),
+                            background: rgba(0x6d71c4ff).into(),
+                            selection: rgba(0x6d71c43d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x2ca198ff).into(),
+                            background: rgba(0x2ca198ff).into(),
+                            selection: rgba(0x2ca1983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xdc3330ff).into(),
+                            background: rgba(0xdc3330ff).into(),
+                            selection: rgba(0xdc33303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb58904ff).into(),
+                            background: rgba(0xb58904ff).into(),
+                            selection: rgba(0xb589043d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x859904ff).into(),
+                            background: rgba(0x859904ff).into(),
+                            selection: rgba(0x8599043d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (
@@ -355,15 +402,18 @@ pub fn solarized() -> UserThemeFamily {
                 appearance: Appearance::Dark,
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
-                        border: Some(rgba(0x2b4f58ff).into()),
-                        border_variant: Some(rgba(0x2b4f58ff).into()),
+                        border: Some(rgba(0x063541ff).into()),
+                        border_variant: Some(rgba(0x032f3bff).into()),
                         elevated_surface_background: Some(rgba(0x083743ff).into()),
                         background: Some(rgba(0x083743ff).into()),
                         panel_background: Some(rgba(0x04313cff).into()),
                         element_hover: Some(rgba(0x2b4f5880).into()),
                         element_selected: Some(rgba(0x566d7480).into()),
-                        text: Some(rgba(0x93a1a1ff).into()),
-                        text_muted: Some(rgba(0x5f757dff).into()),
+                        text: Some(rgba(0xfdf6e3ff).into()),
+                        text_muted: Some(rgba(0x93a1a1ff).into()),
+                        text_placeholder: Some(rgba(0x5f757dff).into()),
+                        text_disabled: Some(rgba(0xfdf6e3ff).into()),
+                        text_accent: Some(rgba(0x288bd1ff).into()),
                         status_bar_background: Some(rgba(0x083743ff).into()),
                         title_bar_background: Some(rgba(0x083743ff).into()),
                         toolbar_background: Some(rgba(0x002b36ff).into()),
@@ -404,11 +454,54 @@ pub fn solarized() -> UserThemeFamily {
                         created: Some(rgba(0x859904ff).into()),
                         deleted: Some(rgba(0xb52727ff).into()),
                         error: Some(rgba(0xdc3330ff).into()),
+                        hint: Some(rgba(0x4f8297ff).into()),
                         modified: Some(rgba(0xb58903ff).into()),
                         success: Some(rgba(0xfdf6e3ff).into()),
                         warning: Some(rgba(0xb58903ff).into()),
                         ..Default::default()
                     },
+                    player: Some(PlayerColors(vec![
+                        PlayerColor {
+                            cursor: rgba(0x288bd1ff).into(),
+                            background: rgba(0x288bd1ff).into(),
+                            selection: rgba(0x288bd13d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xd33782ff).into(),
+                            background: rgba(0xd33782ff).into(),
+                            selection: rgba(0xd337823d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xcb4b17ff).into(),
+                            background: rgba(0xcb4b17ff).into(),
+                            selection: rgba(0xcb4b173d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x6c71c4ff).into(),
+                            background: rgba(0x6c71c4ff).into(),
+                            selection: rgba(0x6c71c43d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x2ca198ff).into(),
+                            background: rgba(0x2ca198ff).into(),
+                            selection: rgba(0x2ca1983d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xdc3330ff).into(),
+                            background: rgba(0xdc3330ff).into(),
+                            selection: rgba(0xdc33303d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0xb58903ff).into(),
+                            background: rgba(0xb58903ff).into(),
+                            selection: rgba(0xb589033d).into(),
+                        },
+                        PlayerColor {
+                            cursor: rgba(0x859904ff).into(),
+                            background: rgba(0x859904ff).into(),
+                            selection: rgba(0x8599043d).into(),
+                        },
+                    ])),
                     syntax: Some(UserSyntaxTheme {
                         highlights: vec![
                             (

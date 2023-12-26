@@ -5,7 +5,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing};
+use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
 use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
@@ -26,6 +26,9 @@ pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
+    fn separators_after_indices(&self) -> Vec<usize> {
+        Vec::new()
+    }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
     fn placeholder_text(&self) -> Arc<str>;
@@ -266,6 +269,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                 "candidates",
                                 self.delegate.match_count(),
                                 {
+                                    let separators_after_indices = self.delegate.separators_after_indices();
                                     let selected_index = self.delegate.selected_index();
                                     move |picker, visible_range, cx| {
                                         visible_range
@@ -285,7 +289,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                                         ix,
                                                         ix == selected_index,
                                                         cx,
-                                                    ))
+                                                    )).when(separators_after_indices.contains(&ix), |picker| picker.child(ListSeparator))
                                             })
                                             .collect()
                                     }

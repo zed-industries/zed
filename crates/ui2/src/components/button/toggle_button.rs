@@ -122,7 +122,7 @@ impl RenderOnce for ToggleButton {
             .child(
                 Label::new(self.label)
                     .color(label_color)
-                    .line_height_style(LineHeightStyle::UILabel),
+                    .line_height_style(LineHeightStyle::UiLabel),
             )
     }
 }

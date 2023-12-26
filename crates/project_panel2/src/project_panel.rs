@@ -1364,16 +1364,19 @@ impl ProjectPanel {
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.width.unwrap_or(px(0.));
 
-        let theme = cx.theme();
         let filename_text_color = details
             .git_status
             .as_ref()
             .map(|status| match status {
-                GitFileStatus::Added => theme.status().created,
-                GitFileStatus::Modified => theme.status().modified,
-                GitFileStatus::Conflict => theme.status().conflict,
+                GitFileStatus::Added => Color::Created,
+                GitFileStatus::Modified => Color::Modified,
+                GitFileStatus::Conflict => Color::Conflict,
             })
-            .unwrap_or(theme.status().info);
+            .unwrap_or(if is_selected {
+                Color::Default
+            } else {
+                Color::Muted
+            });
 
         let file_name = details.filename.clone();
         let icon = details.icon.clone();
@@ -1407,9 +1410,7 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             div().h_full().w_full().child(editor.clone())
                         } else {
-                            div()
-                                .text_color(filename_text_color)
-                                .child(Label::new(file_name))
+                            div().child(Label::new(file_name).color(filename_text_color))
                         }
                         .ml_1(),
                     )

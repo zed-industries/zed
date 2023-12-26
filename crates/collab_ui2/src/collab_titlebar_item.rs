@@ -169,30 +169,36 @@ impl Render for CollabTitlebarItem {
                     .pr_1()
                     .when_some(room, |this, room| {
                         let room = room.read(cx);
-                        let is_shared = self.project.read(cx).is_shared();
+                        let project = self.project.read(cx);
+                        let is_local = project.is_local();
+                        let is_shared = is_local && project.is_shared();
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
 
-                        this.child(
-                            Button::new(
-                                "toggle_sharing",
-                                if is_shared { "Unshare" } else { "Share" },
+                        this.when(is_local, |this| {
+                            this.child(
+                                Button::new(
+                                    "toggle_sharing",
+                                    if is_shared { "Unshare" } else { "Share" },
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(
+                                    move |this, _, cx| {
+                                        if is_shared {
+                                            this.unshare_project(&Default::default(), cx);
+                                        } else {
+                                            this.share_project(&Default::default(), cx);
+                                        }
+                                    },
+                                )),
                             )
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(
-                                move |this, _, cx| {
-                                    if is_shared {
-                                        this.unshare_project(&Default::default(), cx);
-                                    } else {
-                                        this.share_project(&Default::default(), cx);
-                                    }
-                                },
-                            )),
-                        )
+                        })
                         .child(
                             IconButton::new("leave-call", ui::Icon::Exit)
                                 .style(ButtonStyle::Subtle)
+                                .icon_size(IconSize::Small)
                                 .on_click(move |_, cx| {
                                     ActiveCall::global(cx)
                                         .update(cx, |call, cx| call.hang_up(cx))
@@ -209,6 +215,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .icon_size(IconSize::Small)
                             .selected(is_muted)
                             .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                         )
@@ -222,6 +229,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
                                 Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
@@ -231,6 +239,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             IconButton::new("screen-share", ui::Icon::Screen)
                                 .style(ButtonStyle::Subtle)
+                                .icon_size(IconSize::Small)
                                 .selected(is_screen_sharing)
                                 .on_click(move |_, cx| {
                                     crate::toggle_screen_sharing(&Default::default(), cx)
@@ -309,6 +318,7 @@ impl CollabTitlebarItem {
                 Button::new("project_owner_trigger", host.github_login.clone())
                     .color(Color::Player(participant_index.0))
                     .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
             ),
         )

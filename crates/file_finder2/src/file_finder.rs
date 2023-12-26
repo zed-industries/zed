@@ -544,6 +544,15 @@ impl PickerDelegate for FileFinderDelegate {
         cx.notify();
     }
 
+    fn separators_after_indices(&self) -> Vec<usize> {
+        let history_items = self.matches.history.len();
+        if history_items == 0 {
+            Vec::new()
+        } else {
+            vec![history_items - 1]
+        }
+    }
+
     fn update_matches(
         &mut self,
         raw_query: String,

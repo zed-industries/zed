@@ -7670,12 +7670,10 @@ impl Editor {
                                                 inlays_style: HighlightStyle {
                                                     color: Some(cx.theme().status().hint),
                                                     font_weight: Some(FontWeight::BOLD),
-                                                    fade_out: Some(0.6),
                                                     ..HighlightStyle::default()
                                                 },
                                                 suggestions_style: HighlightStyle {
                                                     color: Some(cx.theme().status().predictive),
-                                                    fade_out: Some(0.6),
                                                     ..HighlightStyle::default()
                                                 },
                                             },
@@ -9344,12 +9342,10 @@ impl Render for Editor {
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
                     font_weight: Some(FontWeight::BOLD),
-                    fade_out: Some(0.6),
                     ..HighlightStyle::default()
                 },
                 suggestions_style: HighlightStyle {
                     color: Some(cx.theme().status().predictive),
-                    fade_out: Some(0.6),
                     ..HighlightStyle::default()
                 },
             },
