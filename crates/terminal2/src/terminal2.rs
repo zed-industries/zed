@@ -35,6 +35,7 @@ use procinfo::LocalProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
+use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
 use std::{
@@ -50,9 +51,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla, Keystroke,
-    ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, ScrollWheelEvent, Size, Task, TouchPhase,
+    actions, black, px, red, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter,
+    Hsla, Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -299,7 +300,6 @@ impl TerminalBuilder {
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         window: AnyWindowHandle,
-        color_for_index: impl Fn(usize, &mut AppContext) -> Hsla + Send + Sync + 'static,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = match shell.clone() {
@@ -405,7 +405,6 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             cmd_pressed: false,
             hovered_word: false,
-            color_for_index: Box::new(color_for_index),
         };
 
         Ok(TerminalBuilder {
@@ -562,8 +561,6 @@ pub struct Terminal {
     selection_phase: SelectionPhase,
     cmd_pressed: bool,
     hovered_word: bool,
-    // An implementation of the 8 bit ANSI color palette
-    color_for_index: Box<dyn Fn(usize, &mut AppContext) -> Hsla + Send + Sync + 'static>,
 }
 
 impl Terminal {
@@ -646,8 +643,9 @@ impl Terminal {
     ) {
         match event {
             InternalEvent::ColorRequest(index, format) => {
-                let color = term.colors()[*index]
-                    .unwrap_or_else(|| to_alac_rgb((self.color_for_index)(*index, cx)));
+                let color = term.colors()[*index].unwrap_or_else(|| {
+                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
+                });
                 self.write_to_pty(format(color))
             }
             InternalEvent::Resize(mut new_size) => {
@@ -1418,6 +1416,90 @@ fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
     clamped_row * size.columns() + clamped_col
 }
 
+///Converts an 8 bit ANSI color to it's GPUI equivalent.
+///Accepts usize for compatibility with the alacritty::Colors interface,
+///Other than that use case, should only be called with values in the [0,255] range
+pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
+    let colors = theme.colors();
+
+    match index {
+        //0-15 are the same as the named colors above
+        0 => colors.terminal_ansi_black,
+        1 => colors.terminal_ansi_red,
+        2 => colors.terminal_ansi_green,
+        3 => colors.terminal_ansi_yellow,
+        4 => colors.terminal_ansi_blue,
+        5 => colors.terminal_ansi_magenta,
+        6 => colors.terminal_ansi_cyan,
+        7 => colors.terminal_ansi_white,
+        8 => colors.terminal_ansi_bright_black,
+        9 => colors.terminal_ansi_bright_red,
+        10 => colors.terminal_ansi_bright_green,
+        11 => colors.terminal_ansi_bright_yellow,
+        12 => colors.terminal_ansi_bright_blue,
+        13 => colors.terminal_ansi_bright_magenta,
+        14 => colors.terminal_ansi_bright_cyan,
+        15 => colors.terminal_ansi_bright_white,
+        //16-231 are mapped to their RGB colors on a 0-5 range per channel
+        16..=231 => {
+            let (r, g, b) = rgb_for_index(&(index as u8)); //Split the index into it's ANSI-RGB components
+            let step = (u8::MAX as f32 / 5.).floor() as u8; //Split the RGB range into 5 chunks, with floor so no overflow
+            rgba_color(r * step, g * step, b * step) //Map the ANSI-RGB components to an RGB color
+        }
+        //232-255 are a 24 step grayscale from black to white
+        232..=255 => {
+            let i = index as u8 - 232; //Align index to 0..24
+            let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the RGB grayscale values into 24 chunks
+            rgba_color(i * step, i * step, i * step) //Map the ANSI-grayscale components to the RGB-grayscale
+        }
+        //For compatibility with the alacritty::Colors interface
+        256 => colors.text,
+        257 => colors.background,
+        258 => theme.players().local().cursor,
+
+        // todo!(more colors)
+        259 => red(),                      //style.dim_black,
+        260 => red(),                      //style.dim_red,
+        261 => red(),                      //style.dim_green,
+        262 => red(),                      //style.dim_yellow,
+        263 => red(),                      //style.dim_blue,
+        264 => red(),                      //style.dim_magenta,
+        265 => red(),                      //style.dim_cyan,
+        266 => red(),                      //style.dim_white,
+        267 => red(),                      //style.bright_foreground,
+        268 => colors.terminal_ansi_black, //'Dim Background', non-standard color
+
+        _ => black(),
+    }
+}
+
+///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
+///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
+///
+///Wikipedia gives a formula for calculating the index for a given color:
+///
+///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
+///
+///This function does the reverse, calculating the r, g, and b components from a given index.
+fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
+    debug_assert!((&16..=&231).contains(&i));
+    let i = i - 16;
+    let r = (i - (i % 36)) / 36;
+    let g = ((i % 36) - (i % 6)) / 6;
+    let b = (i % 36) % 6;
+    (r, g, b)
+}
+
+pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
+    Rgba {
+        r: (r as f32 / 255.) as f32,
+        g: (g as f32 / 255.) as f32,
+        b: (b as f32 / 255.) as f32,
+        a: 1.,
+    }
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use alacritty_terminal::{
@@ -1427,7 +1509,18 @@ mod tests {
     use gpui::{point, size, Pixels};
     use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
-    use crate::{content_index_for_mouse, IndexedCell, TerminalContent, TerminalSize};
+    use crate::{
+        content_index_for_mouse, rgb_for_index, IndexedCell, TerminalContent, TerminalSize,
+    };
+
+    #[test]
+    fn test_rgb_for_index() {
+        //Test every possible value in the color cube
+        for i in 16..=231 {
+            let (r, g, b) = rgb_for_index(&(i as u8));
+            assert_eq!(i, 16 + 36 * r + 6 * g + b);
+        }
+    }
 
     #[test]
     fn test_mouse_to_cell_test() {

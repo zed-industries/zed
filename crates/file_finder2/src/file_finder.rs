@@ -546,7 +546,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn separators_after_indices(&self) -> Vec<usize> {
         let history_items = self.matches.history.len();
-        if history_items == 0 {
+        if history_items == 0 || self.matches.search.is_empty() {
             Vec::new()
         } else {
             vec![history_items - 1]
