@@ -287,8 +287,8 @@ impl TerminalElement {
                 text_fragment.width
             };
 
-            //Cursor should always surround as much of the text as possible,
-            //hence when on pixel boundaries round the origin down and the width up
+            // Cursor should always surround as much of the text as possible,
+            // hence when on pixel boundaries round the origin down and the width up
             Some((
                 point(
                     (cursor_point.col() as f32 * size.cell_width()).floor(),
@@ -301,7 +301,7 @@ impl TerminalElement {
         }
     }
 
-    ///Convert the Alacritty cell styles to GPUI text styles and background color
+    /// Convert the Alacritty cell styles to GPUI text styles and background color
     fn cell_style(
         indexed: &IndexedCell,
         fg: terminal::alacritty_terminal::ansi::Color,
@@ -498,13 +498,6 @@ impl TerminalElement {
             let cursor_point = DisplayCursor::from(cursor.point, *display_offset);
             let cursor_text = {
                 let str_trxt = cursor_char.to_string();
-
-                let color = if self.focused {
-                    theme.players().local().background
-                } else {
-                    theme.players().local().cursor
-                };
-
                 let len = str_trxt.len();
                 cx.text_system()
                     .shape_line(
@@ -513,7 +506,7 @@ impl TerminalElement {
                         &[TextRun {
                             len,
                             font: text_style.font(),
-                            color,
+                            color: theme.colors().terminal_background,
                             background_color: None,
                             underline: Default::default(),
                         }],
