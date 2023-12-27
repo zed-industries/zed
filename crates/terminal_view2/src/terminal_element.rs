@@ -34,7 +34,7 @@ pub struct LayoutState {
     relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
     cursor: Option<Cursor>,
     background_color: Hsla,
-    size: TerminalSize,
+    dimensions: TerminalSize,
     mode: TermMode,
     display_offset: usize,
     hyperlink_tooltip: Option<AnyElement>,
@@ -86,12 +86,12 @@ impl LayoutCell {
             let point = self.point;
 
             Point::new(
-                (origin.x + point.column as f32 * layout.size.cell_width).floor(),
-                origin.y + point.line as f32 * layout.size.line_height,
+                (origin.x + point.column as f32 * layout.dimensions.cell_width).floor(),
+                origin.y + point.line as f32 * layout.dimensions.line_height,
             )
         };
 
-        self.text.paint(pos, layout.size.line_height, cx).ok();
+        self.text.paint(pos, layout.dimensions.line_height, cx).ok();
     }
 }
 
@@ -123,13 +123,13 @@ impl LayoutRect {
         let position = {
             let alac_point = self.point;
             point(
-                (origin.x + alac_point.column as f32 * layout.size.cell_width).floor(),
-                origin.y + alac_point.line as f32 * layout.size.line_height,
+                (origin.x + alac_point.column as f32 * layout.dimensions.cell_width).floor(),
+                origin.y + alac_point.line as f32 * layout.dimensions.line_height,
             )
         };
         let size = point(
-            (layout.size.cell_width * self.num_of_cells as f32).ceil(),
-            layout.size.line_height,
+            (layout.dimensions.cell_width * self.num_of_cells as f32).ceil(),
+            layout.dimensions.line_height,
         )
         .into();
 
@@ -545,7 +545,7 @@ impl TerminalElement {
             cells,
             cursor,
             background_color,
-            size: dimensions,
+            dimensions,
             rects,
             relative_highlighted_ranges,
             mode: *mode,
@@ -808,11 +808,11 @@ impl Element for TerminalElement {
                     {
                         let hr = HighlightedRange {
                             start_y, //Need to change this
-                            line_height: layout.size.line_height,
+                            line_height: layout.dimensions.line_height,
                             lines: highlighted_range_lines,
                             color: color.clone(),
                             //Copied from editor. TODO: move to theme or something
-                            corner_radius: 0.15 * layout.size.line_height,
+                            corner_radius: 0.15 * layout.dimensions.line_height,
                         };
                         hr.paint(bounds, cx);
                     }
@@ -969,21 +969,24 @@ fn to_highlighted_range_lines(
         AlacPoint::new(range.end().line + layout.display_offset, range.end().column);
 
     // Step 2. Clamp range to viewport, and return None if it doesn't overlap
-    if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.size.num_lines() as i32 {
+    if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.dimensions.num_lines() as i32 {
         return None;
     }
 
     let clamped_start_line = unclamped_start.line.0.max(0) as usize;
-    let clamped_end_line = unclamped_end.line.0.min(layout.size.num_lines() as i32) as usize;
+    let clamped_end_line = unclamped_end
+        .line
+        .0
+        .min(layout.dimensions.num_lines() as i32) as usize;
     //Convert the start of the range to pixels
-    let start_y = origin.y + clamped_start_line as f32 * layout.size.line_height;
+    let start_y = origin.y + clamped_start_line as f32 * layout.dimensions.line_height;
 
     // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
     //  (also convert to pixels)
     let mut highlighted_range_lines = Vec::new();
     for line in clamped_start_line..=clamped_end_line {
         let mut line_start = 0;
-        let mut line_end = layout.size.columns();
+        let mut line_end = layout.dimensions.columns();
 
         if line == clamped_start_line {
             line_start = unclamped_start.column.0 as usize;
@@ -993,8 +996,8 @@ fn to_highlighted_range_lines(
         }
 
         highlighted_range_lines.push(HighlightedRangeLine {
-            start_x: origin.x + line_start as f32 * layout.size.cell_width,
-            end_x: origin.x + line_end as f32 * layout.size.cell_width,
+            start_x: origin.x + line_start as f32 * layout.dimensions.cell_width,
+            end_x: origin.x + line_end as f32 * layout.dimensions.cell_width,
         });
     }
 
