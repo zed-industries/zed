@@ -438,7 +438,7 @@ impl TerminalElement {
 
         let search_matches = self.terminal.read(cx).matches.clone();
 
-        let background_color = theme.colors().background;
+        let background_color = theme.colors().terminal_background;
 
         let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
