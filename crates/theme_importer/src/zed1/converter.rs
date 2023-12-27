@@ -133,7 +133,11 @@ impl Zed1ThemeConverter {
             border: convert(active_tab.container.border.color),
             border_variant: convert(toolbar.container.border.color),
             background: convert(self.theme.workspace.background),
-            elevated_surface_background: picker.container.background_color.map(zed1_color_to_hsla),
+            elevated_surface_background: editor
+                .hover_popover
+                .container
+                .background_color
+                .map(zed1_color_to_hsla),
             title_bar_background: title_bar.container.background_color.map(zed1_color_to_hsla),
             status_bar_background: status_bar
                 .container

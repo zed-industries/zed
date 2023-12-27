@@ -22,7 +22,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x2d2f34ff).into()),
                         border_variant: Some(rgba(0x1b1e24ff).into()),
-                        elevated_surface_background: Some(rgba(0x313337ff).into()),
+                        elevated_surface_background: Some(rgba(0x1f2127ff).into()),
                         background: Some(rgba(0x313337ff).into()),
                         panel_background: Some(rgba(0x1f2127ff).into()),
                         element_hover: Some(rgba(0x3f404380).into()),
@@ -404,7 +404,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xdfe0e1ff).into()),
                         border_variant: Some(rgba(0xefeff0ff).into()),
-                        elevated_surface_background: Some(rgba(0xdcdddeff).into()),
+                        elevated_surface_background: Some(rgba(0xececedff).into()),
                         background: Some(rgba(0xdcdddeff).into()),
                         panel_background: Some(rgba(0xececedff).into()),
                         element_hover: Some(rgba(0xcfd1d280).into()),
@@ -786,7 +786,7 @@ pub fn ayu() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x43464fff).into()),
                         border_variant: Some(rgba(0x323641ff).into()),
-                        elevated_surface_background: Some(rgba(0x464a52ff).into()),
+                        elevated_surface_background: Some(rgba(0x353944ff).into()),
                         background: Some(rgba(0x464a52ff).into()),
                         panel_background: Some(rgba(0x353944ff).into()),
                         element_hover: Some(rgba(0x53565d80).into()),

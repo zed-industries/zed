@@ -21,7 +21,7 @@ pub fn andromeda() -> UserThemeFamily {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0x252931ff).into()),
                     border_variant: Some(rgba(0x21232aff).into()),
-                    elevated_surface_background: Some(rgba(0x262a33ff).into()),
+                    elevated_surface_background: Some(rgba(0x21242bff).into()),
                     background: Some(rgba(0x262a33ff).into()),
                     panel_background: Some(rgba(0x21242bff).into()),
                     element_hover: Some(rgba(0x2b2f3980).into()),
