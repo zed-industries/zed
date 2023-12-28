@@ -28,7 +28,6 @@ pub use components::*;
 pub use disableable::*;
 pub use fixed::*;
 pub use prelude::*;
-pub use selectable::*;
+
 pub use styled_ext::*;
 pub use styles::*;
-pub use visible_on_hover::*;

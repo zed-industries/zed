@@ -13,7 +13,6 @@ mod random_project_collaboration_tests;
 mod randomized_test_helpers;
 mod test_server;
 
-pub use crate as collab2;
 pub use randomized_test_helpers::{
     run_randomized_test, save_randomized_test_plan, RandomizedTest, TestError, UserTestPlan,
 };
