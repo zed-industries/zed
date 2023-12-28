@@ -23,7 +23,6 @@ pub struct Branch {
     pub unix_timestamp: Option<i64>,
 }
 
-#[async_trait::async_trait]
 pub trait GitRepository: Send {
     fn reload_index(&self);
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
@@ -248,7 +247,6 @@ impl FakeGitRepository {
     }
 }
 
-#[async_trait::async_trait]
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
