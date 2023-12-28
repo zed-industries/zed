@@ -1,7 +1,6 @@
 use smol::future::FutureExt;
 use std::{future::Future, time::Duration};
 
-
 pub fn post_inc(value: &mut usize) -> usize {
     let prev = *value;
     *value += 1;
