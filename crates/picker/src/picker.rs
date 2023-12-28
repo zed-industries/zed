@@ -86,6 +86,8 @@ impl<D: PickerDelegate> View for Picker<D> {
             editor_style = theme.input_editor.container;
         };
 
+        dbg!(container_style.border.color);
+
         Flex::new(Axis::Vertical)
             .with_child(
                 ChildView::new(&self.query_editor, cx)

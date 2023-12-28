@@ -21,7 +21,7 @@ pub fn solarized() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xdcdacbff).into()),
-                        border_variant: Some(rgba(0xf5eedbff).into()),
+                        border_variant: Some(rgba(0x9faaa8ff).into()),
                         elevated_surface_background: Some(rgba(0xf3eddaff).into()),
                         background: Some(rgba(0xcfd0c4ff).into()),
                         panel_background: Some(rgba(0xf3eddaff).into()),
@@ -403,7 +403,7 @@ pub fn solarized() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x063541ff).into()),
-                        border_variant: Some(rgba(0x032f3bff).into()),
+                        border_variant: Some(rgba(0x2b4f58ff).into()),
                         elevated_surface_background: Some(rgba(0x04313cff).into()),
                         background: Some(rgba(0x083743ff).into()),
                         panel_background: Some(rgba(0x04313cff).into()),

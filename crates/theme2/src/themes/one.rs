@@ -21,7 +21,7 @@ pub fn one() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xdfdfe0ff).into()),
-                        border_variant: Some(rgba(0xeeeeeeff).into()),
+                        border_variant: Some(rgba(0xc9c9caff).into()),
                         elevated_surface_background: Some(rgba(0xebebecff).into()),
                         background: Some(rgba(0xdcdcddff).into()),
                         panel_background: Some(rgba(0xebebecff).into()),
@@ -410,7 +410,7 @@ pub fn one() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x363c46ff).into()),
-                        border_variant: Some(rgba(0x2e333cff).into()),
+                        border_variant: Some(rgba(0x464b57ff).into()),
                         elevated_surface_background: Some(rgba(0x2f343eff).into()),
                         background: Some(rgba(0x3b414dff).into()),
                         panel_background: Some(rgba(0x2f343eff).into()),

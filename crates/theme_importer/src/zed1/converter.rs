@@ -131,7 +131,7 @@ impl Zed1ThemeConverter {
 
         Ok(ThemeColorsRefinement {
             border: convert(active_tab.container.border.color),
-            border_variant: convert(toolbar.container.border.color),
+            border_variant: convert(picker.container.border.color),
             background: convert(self.theme.workspace.background),
             elevated_surface_background: editor
                 .hover_popover
