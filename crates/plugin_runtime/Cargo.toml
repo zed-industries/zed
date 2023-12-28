@@ -5,9 +5,9 @@ edition = "2021"
 publish = false
 
 [dependencies]
-wasmtime = "0.38"
-wasmtime-wasi = "0.38"
-wasi-common = "0.38"
+wasmtime = "1.0"
+wasmtime-wasi = "1.0"
+wasi-common = "1.0"
 anyhow.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -17,4 +17,4 @@ pollster = "0.2.5"
 smol.workspace = true
 
 [build-dependencies]
-wasmtime = { version = "0.38", features = ["all-arch"] }
+wasmtime = { version = "1.0", features = ["all-arch"] }
