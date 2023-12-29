@@ -10,6 +10,7 @@ path = "src/storybook2.rs"
 
 [dependencies]
 anyhow.workspace = true
+assets = { path = "../assets" }
 # TODO: Remove after diagnosing stack overflow.
 backtrace-on-stack-overflow = "0.3.0"
 chrono = "0.4"

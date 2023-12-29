@@ -109,6 +109,17 @@ pub trait Settings: 'static + Send + Sync {
     {
         cx.global_mut::<SettingsStore>().override_global(settings)
     }
+
+    #[track_caller]
+    fn override_global_with<F>(cx: &mut AppContext, f: F)
+    where
+        F: for<'a> FnOnce(&'a mut Self, &'a mut AppContext),
+        Self: Sized + Clone,
+    {
+        let mut settings = Self::get_global(cx).clone();
+        f(&mut settings, cx);
+        Self::override_global(settings, cx);
+    }
 }
 
 pub struct SettingsJsonSchemaParams<'a> {

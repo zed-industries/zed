@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use gpui::{HighlightStyle, SharedString};
+use gpui::{AppContext, HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
@@ -21,6 +21,10 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
+    pub fn global(cx: &AppContext) -> &Self {
+        cx.global()
+    }
+
     fn insert_theme_families(&mut self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);

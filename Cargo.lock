@@ -352,6 +352,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 
 [[package]]
+name = "assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "parking_lot 0.11.2",
+ "rust-embed",
+]
+
+[[package]]
 name = "assistant"
 version = "0.1.0"
 dependencies = [
@@ -9301,6 +9311,7 @@ name = "storybook2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "backtrace-on-stack-overflow",
  "chrono",
  "clap 4.4.4",
@@ -11942,6 +11953,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace2_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "clap 3.2.25",
+ "gpui2",
+ "log",
+ "picker2",
+ "rust-embed",
+ "settings2",
+ "simplelog",
+ "theme2",
+ "ui2",
+ "util",
+ "workspace2",
+]
+
+[[package]]
 name = "ws2_32-sys"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12167,6 +12197,7 @@ dependencies = [
  "activity_indicator2",
  "ai2",
  "anyhow",
+ "assets",
  "assistant2",
  "async-compression",
  "async-recursion 0.3.2",

@@ -1,5 +1,4 @@
 mod app_menus;
-mod assets;
 pub mod languages;
 mod only_instance;
 mod open_listener;

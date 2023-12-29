@@ -17,11 +17,8 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use node_runtime::RealNodeRuntime;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use settings::{
-    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
-};
+use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
@@ -66,7 +63,8 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
-    let app = App::production(Arc::new(Assets));
+    let assets = Arc::new(Assets);
+    let app = App::production(assets.clone());
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -116,16 +114,9 @@ fn main() {
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             cx.set_global(AppCommitSha(build_sha.into()))
         }
-
         cx.set_global(listener.clone());
-
-        load_embedded_fonts(cx);
-
-        let mut store = SettingsStore::default();
-        store
-            .set_default_settings(default_settings().as_ref(), cx)
-            .unwrap();
-        cx.set_global(store);
+        assets.load_embedded_fonts(cx);
+        settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
@@ -720,30 +711,6 @@ fn collect_url_args() -> Vec<String> {
             }
         })
         .collect()
-}
-
-fn load_embedded_fonts(cx: &AppContext) {
-    let asset_source = cx.asset_source();
-    let font_paths = asset_source.list("fonts").unwrap();
-    let embedded_fonts = Mutex::new(Vec::new());
-    let executor = cx.background_executor();
-
-    executor.block(executor.scoped(|scope| {
-        for font_path in &font_paths {
-            if !font_path.ends_with(".ttf") {
-                continue;
-            }
-
-            scope.spawn(async {
-                let font_bytes = asset_source.load(font_path).unwrap().to_vec();
-                embedded_fonts.lock().push(Arc::from(font_bytes));
-            });
-        }
-    }));
-
-    cx.text_system()
-        .add_fonts(&embedded_fonts.into_inner())
-        .unwrap();
 }
 
 #[cfg(debug_assertions)]

@@ -109,7 +109,7 @@ pub struct Component<C> {
     component: Option<C>,
 }
 
-pub struct CompositeElementState<C: RenderOnce> {
+pub struct ComponentState<C: RenderOnce> {
     rendered_element: Option<<C::Rendered as IntoElement>::Element>,
     rendered_element_state: Option<<<C::Rendered as IntoElement>::Element as Element>::State>,
 }
@@ -123,7 +123,7 @@ impl<C> Component<C> {
 }
 
 impl<C: RenderOnce> Element for Component<C> {
-    type State = CompositeElementState<C>;
+    type State = ComponentState<C>;
 
     fn layout(
         &mut self,
@@ -134,7 +134,7 @@ impl<C: RenderOnce> Element for Component<C> {
         if let Some(element_id) = element.element_id() {
             let layout_id =
                 cx.with_element_state(element_id, |state, cx| element.layout(state, cx));
-            let state = CompositeElementState {
+            let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: None,
             };
@@ -142,7 +142,7 @@ impl<C: RenderOnce> Element for Component<C> {
         } else {
             let (layout_id, state) =
                 element.layout(state.and_then(|s| s.rendered_element_state), cx);
-            let state = CompositeElementState {
+            let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: Some(state),
             };

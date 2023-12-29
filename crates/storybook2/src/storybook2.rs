@@ -1,25 +1,21 @@
-mod assets;
 mod stories;
 mod story_selector;
-
-use std::sync::Arc;
-
+use crate::story_selector::{ComponentStory, StorySelector};
+use assets::Assets;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, AppContext, Bounds, Div, Render, ViewContext, VisualContext,
-    WindowBounds, WindowOptions,
+    div, px, size, AnyView, Bounds, Div, Render, ViewContext, VisualContext, WindowBounds,
+    WindowOptions,
 };
+pub use indoc::indoc;
 use log::LevelFilter;
-use settings2::{default_settings, Settings, SettingsStore};
+use settings2::Settings;
 use simplelog::SimpleLogger;
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme2::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
-
-use crate::assets::Assets;
-use crate::story_selector::{ComponentStory, StorySelector};
-pub use indoc::indoc;
 
 // gpui::actions! {
 //     storybook,
@@ -50,7 +46,7 @@ fn main() {
         let stories = ComponentStory::iter().collect::<Vec<_>>();
 
         let selection = FuzzySelect::new()
-            .with_prompt("Choose a story to run:")
+            .with_prompt("Choose a story to rungit :")
             .items(&stories)
             .interact()
             .unwrap();
@@ -59,16 +55,10 @@ fn main() {
     });
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
 
-    let asset_source = Arc::new(Assets);
-    gpui::App::production(asset_source).run(move |cx| {
-        load_embedded_fonts(cx).unwrap();
-
-        let mut store = SettingsStore::default();
-        store
-            .set_default_settings(default_settings().as_ref(), cx)
-            .unwrap();
-        cx.set_global(store);
-
+    let assets = Arc::new(Assets);
+    gpui::App::production(assets.clone()).run(move |cx| {
+        assets.load_embedded_fonts(cx);
+        settings2::init(cx);
         theme2::init(theme2::LoadThemes::All, cx);
 
         let selector = story_selector;
@@ -123,17 +113,4 @@ impl Render for StoryWrapper {
             .font("Zed Mono")
             .child(self.story.clone())
     }
-}
-
-fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
-    let font_paths = cx.asset_source().list("fonts")?;
-    let mut embedded_fonts = Vec::new();
-    for font_path in font_paths {
-        if font_path.ends_with(".ttf") {
-            let font_bytes = cx.asset_source().load(&font_path)?.to_vec();
-            embedded_fonts.push(Arc::from(font_bytes));
-        }
-    }
-
-    cx.text_system().add_fonts(&embedded_fonts)
 }
