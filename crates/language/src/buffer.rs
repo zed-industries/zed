@@ -2,7 +2,7 @@ pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
     markdown::ParsedMarkdown,
-    proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, PLAIN_TEXT,
+    proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},

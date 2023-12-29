@@ -199,6 +199,7 @@ impl ButtonStyle {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn disabled(self, cx: &mut WindowContext) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
