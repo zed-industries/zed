@@ -37,8 +37,7 @@ impl RenderOnce for Avatar {
             .child(
                 self.image
                     .size(size)
-                    // todo!(Pull the avatar fallback background from the theme.)
-                    .bg(gpui::red()),
+                    .bg(cx.theme().colors().ghost_element_background),
             )
             .children(self.is_available.map(|is_free| {
                 // HACK: non-integer sizes result in oval indicators.
