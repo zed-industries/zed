@@ -6,7 +6,8 @@ import { Theme, create_theme } from "./theme/create_theme"
 import { themes } from "./themes"
 import { useThemeStore } from "./theme"
 
-const assets_directory = `${__dirname}/../../assets`
+// const assets_directory = `${__dirname}/../../assets`
+const assets_directory = "/Users/nathan/src/zed/crates/theme2/legacy_themes"
 const temp_directory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"))
 
 function clear_themes(theme_directory: string) {
@@ -26,17 +27,17 @@ const all_themes: Theme[] = themes.map((theme) => create_theme(theme))
 function write_themes(themes: Theme[], output_directory: string) {
     clear_themes(output_directory)
     for (const theme of themes) {
-        const { setTheme } = useThemeStore.getState()
-        setTheme(theme)
+        // const { setTheme } = useThemeStore.getState()
+        // setTheme(theme)
 
-        const style_tree = app()
+        // const style_tree = app()
         // Nathan: New elements will read directly from the theme colors.
         // Adding this during the transition. Afterwards, we can port all themes to Rust.
-        style_tree.base_theme = theme
-        const style_tree_json = JSON.stringify(style_tree, null, 2)
+        // style_tree.base_theme = theme
+        // const style_tree_json = JSON.stringify(style_tree, null, 2)
         const temp_path = path.join(temp_directory, `${theme.name}.json`)
         const out_path = path.join(output_directory, `${theme.name}.json`)
-        fs.writeFileSync(temp_path, style_tree_json)
+        fs.writeFileSync(temp_path, JSON.stringify(theme, null, 2))
         fs.renameSync(temp_path, out_path)
         console.log(`- ${out_path} created`)
     }

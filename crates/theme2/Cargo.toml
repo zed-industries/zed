@@ -18,11 +18,16 @@ test-support = [
 path = "src/theme2.rs"
 doctest = false
 
+[[bin]]
+name = "import_themes"
+path = "src/bin/import_themes.rs"
+
 [dependencies]
 anyhow.workspace = true
 fs = { package = "fs2", path = "../fs2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 indexmap = "1.6.2"
+indoc.workspace = true
 parking_lot.workspace = true
 refineable.workspace = true
 schemars.workspace = true

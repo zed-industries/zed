@@ -1,0 +1,790 @@
+{
+  "name": "Andromeda",
+  "is_light": false,
+  "ramps": {},
+  "lowest": {
+    "base": {
+      "default": {
+        "background": "#262a33",
+        "border": "#2b2f39",
+        "foreground": "#f7f7f8"
+      },
+      "hovered": {
+        "background": "#2b2f39",
+        "border": "#2b2f39",
+        "foreground": "#f7f7f8"
+      },
+      "pressed": {
+        "background": "#2d313b",
+        "border": "#2b2f39",
+        "foreground": "#f7f7f8"
+      },
+      "active": {
+        "background": "#383b45",
+        "border": "#4e5059",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#262a33",
+        "border": "#292d37",
+        "foreground": "#6b6b73"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#32363f"
+      }
+    },
+    "variant": {
+      "default": {
+        "background": "#262a33",
+        "border": "#2b2f39",
+        "foreground": "#aca8ae"
+      },
+      "hovered": {
+        "background": "#2b2f39",
+        "border": "#2b2f39",
+        "foreground": "#aca8ae"
+      },
+      "pressed": {
+        "background": "#2d313b",
+        "border": "#2b2f39",
+        "foreground": "#aca8ae"
+      },
+      "active": {
+        "background": "#383b45",
+        "border": "#4e5059",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#262a33",
+        "border": "#292d37",
+        "foreground": "#6b6b73"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#32363f"
+      }
+    },
+    "on": {
+      "default": {
+        "background": "#21242b",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "hovered": {
+        "background": "#252931",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "pressed": {
+        "background": "#272c35",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "active": {
+        "background": "#2a2f39",
+        "border": "#2e323c",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#21242b",
+        "border": "#23262d",
+        "foreground": "#474a53"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#2a2f39"
+      }
+    },
+    "accent": {
+      "default": {
+        "background": "#122420",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "hovered": {
+        "background": "#183a34",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "pressed": {
+        "background": "#1a473f",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "active": {
+        "background": "#1b594f",
+        "border": "#1b6f62",
+        "foreground": "#f7fcfa"
+      },
+      "disabled": {
+        "background": "#122420",
+        "border": "#152f2a",
+        "foreground": "#178a7a"
+      },
+      "inverted": {
+        "background": "#f7fcfa",
+        "border": "#000000",
+        "foreground": "#1b544a"
+      }
+    },
+    "positive": {
+      "default": {
+        "background": "#194618",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "hovered": {
+        "background": "#306129",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "pressed": {
+        "background": "#3c7031",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "active": {
+        "background": "#4d853e",
+        "border": "#619f4c",
+        "foreground": "#fbfef9"
+      },
+      "disabled": {
+        "background": "#194618",
+        "border": "#255321",
+        "foreground": "#7bbf5f"
+      },
+      "inverted": {
+        "background": "#fbfef9",
+        "border": "#002500",
+        "foreground": "#488039"
+      }
+    },
+    "warning": {
+      "default": {
+        "background": "#5c5015",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "hovered": {
+        "background": "#796b26",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "pressed": {
+        "background": "#89792e",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "active": {
+        "background": "#a08e3a",
+        "border": "#baa748",
+        "foreground": "#fffef9"
+      },
+      "disabled": {
+        "background": "#5c5015",
+        "border": "#6a5d1e",
+        "foreground": "#dcc55a"
+      },
+      "inverted": {
+        "background": "#fffef9",
+        "border": "#382f00",
+        "foreground": "#998836"
+      }
+    },
+    "negative": {
+      "default": {
+        "background": "#55051b",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "hovered": {
+        "background": "#720a2b",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "pressed": {
+        "background": "#820d33",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "active": {
+        "background": "#99123f",
+        "border": "#b4184d",
+        "foreground": "#fff8f9"
+      },
+      "disabled": {
+        "background": "#55051b",
+        "border": "#630723",
+        "foreground": "#d61f5f"
+      },
+      "inverted": {
+        "background": "#fff8f9",
+        "border": "#320000",
+        "foreground": "#92113b"
+      }
+    }
+  },
+  "middle": {
+    "base": {
+      "default": {
+        "background": "#21242b",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "hovered": {
+        "background": "#252931",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "pressed": {
+        "background": "#272c35",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "active": {
+        "background": "#2a2f39",
+        "border": "#2e323c",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#21242b",
+        "border": "#23262d",
+        "foreground": "#474a53"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#2a2f39"
+      }
+    },
+    "variant": {
+      "default": {
+        "background": "#21242b",
+        "border": "#252931",
+        "foreground": "#aca8ae"
+      },
+      "hovered": {
+        "background": "#252931",
+        "border": "#252931",
+        "foreground": "#aca8ae"
+      },
+      "pressed": {
+        "background": "#272c35",
+        "border": "#252931",
+        "foreground": "#aca8ae"
+      },
+      "active": {
+        "background": "#2a2f39",
+        "border": "#2e323c",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#21242b",
+        "border": "#23262d",
+        "foreground": "#474a53"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#2a2f39"
+      }
+    },
+    "on": {
+      "default": {
+        "background": "#1e2025",
+        "border": "#21232a",
+        "foreground": "#f7f7f8"
+      },
+      "hovered": {
+        "background": "#21232a",
+        "border": "#21232a",
+        "foreground": "#f7f7f8"
+      },
+      "pressed": {
+        "background": "#22252c",
+        "border": "#21232a",
+        "foreground": "#f7f7f8"
+      },
+      "active": {
+        "background": "#242830",
+        "border": "#292d37",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#1e2025",
+        "border": "#1f2227",
+        "foreground": "#2d313b"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#24272f"
+      }
+    },
+    "accent": {
+      "default": {
+        "background": "#122420",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "hovered": {
+        "background": "#183a34",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "pressed": {
+        "background": "#1a473f",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "active": {
+        "background": "#1b594f",
+        "border": "#1b6f62",
+        "foreground": "#f7fcfa"
+      },
+      "disabled": {
+        "background": "#122420",
+        "border": "#152f2a",
+        "foreground": "#178a7a"
+      },
+      "inverted": {
+        "background": "#f7fcfa",
+        "border": "#000000",
+        "foreground": "#1b544a"
+      }
+    },
+    "positive": {
+      "default": {
+        "background": "#194618",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "hovered": {
+        "background": "#306129",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "pressed": {
+        "background": "#3c7031",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "active": {
+        "background": "#4d853e",
+        "border": "#619f4c",
+        "foreground": "#fbfef9"
+      },
+      "disabled": {
+        "background": "#194618",
+        "border": "#255321",
+        "foreground": "#7bbf5f"
+      },
+      "inverted": {
+        "background": "#fbfef9",
+        "border": "#002500",
+        "foreground": "#488039"
+      }
+    },
+    "warning": {
+      "default": {
+        "background": "#5c5015",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "hovered": {
+        "background": "#796b26",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "pressed": {
+        "background": "#89792e",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "active": {
+        "background": "#a08e3a",
+        "border": "#baa748",
+        "foreground": "#fffef9"
+      },
+      "disabled": {
+        "background": "#5c5015",
+        "border": "#6a5d1e",
+        "foreground": "#dcc55a"
+      },
+      "inverted": {
+        "background": "#fffef9",
+        "border": "#382f00",
+        "foreground": "#998836"
+      }
+    },
+    "negative": {
+      "default": {
+        "background": "#55051b",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "hovered": {
+        "background": "#720a2b",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "pressed": {
+        "background": "#820d33",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "active": {
+        "background": "#99123f",
+        "border": "#b4184d",
+        "foreground": "#fff8f9"
+      },
+      "disabled": {
+        "background": "#55051b",
+        "border": "#630723",
+        "foreground": "#d61f5f"
+      },
+      "inverted": {
+        "background": "#fff8f9",
+        "border": "#320000",
+        "foreground": "#92113b"
+      }
+    }
+  },
+  "highest": {
+    "base": {
+      "default": {
+        "background": "#1e2025",
+        "border": "#21232a",
+        "foreground": "#f7f7f8"
+      },
+      "hovered": {
+        "background": "#21232a",
+        "border": "#21232a",
+        "foreground": "#f7f7f8"
+      },
+      "pressed": {
+        "background": "#22252c",
+        "border": "#21232a",
+        "foreground": "#f7f7f8"
+      },
+      "active": {
+        "background": "#242830",
+        "border": "#292d37",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#1e2025",
+        "border": "#1f2227",
+        "foreground": "#2d313b"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#24272f"
+      }
+    },
+    "variant": {
+      "default": {
+        "background": "#1e2025",
+        "border": "#21232a",
+        "foreground": "#aca8ae"
+      },
+      "hovered": {
+        "background": "#21232a",
+        "border": "#21232a",
+        "foreground": "#aca8ae"
+      },
+      "pressed": {
+        "background": "#22252c",
+        "border": "#21232a",
+        "foreground": "#aca8ae"
+      },
+      "active": {
+        "background": "#242830",
+        "border": "#292d37",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#1e2025",
+        "border": "#1f2227",
+        "foreground": "#2d313b"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#24272f"
+      }
+    },
+    "on": {
+      "default": {
+        "background": "#21242b",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "hovered": {
+        "background": "#252931",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "pressed": {
+        "background": "#272c35",
+        "border": "#252931",
+        "foreground": "#f7f7f8"
+      },
+      "active": {
+        "background": "#2a2f39",
+        "border": "#2e323c",
+        "foreground": "#f7f7f8"
+      },
+      "disabled": {
+        "background": "#21242b",
+        "border": "#23262d",
+        "foreground": "#474a53"
+      },
+      "inverted": {
+        "background": "#f7f7f8",
+        "border": "#1e2025",
+        "foreground": "#2a2f39"
+      }
+    },
+    "accent": {
+      "default": {
+        "background": "#122420",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "hovered": {
+        "background": "#183a34",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "pressed": {
+        "background": "#1a473f",
+        "border": "#183a34",
+        "foreground": "#11a793"
+      },
+      "active": {
+        "background": "#1b594f",
+        "border": "#1b6f62",
+        "foreground": "#f7fcfa"
+      },
+      "disabled": {
+        "background": "#122420",
+        "border": "#152f2a",
+        "foreground": "#178a7a"
+      },
+      "inverted": {
+        "background": "#f7fcfa",
+        "border": "#000000",
+        "foreground": "#1b544a"
+      }
+    },
+    "positive": {
+      "default": {
+        "background": "#194618",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "hovered": {
+        "background": "#306129",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "pressed": {
+        "background": "#3c7031",
+        "border": "#306129",
+        "foreground": "#96df72"
+      },
+      "active": {
+        "background": "#4d853e",
+        "border": "#619f4c",
+        "foreground": "#fbfef9"
+      },
+      "disabled": {
+        "background": "#194618",
+        "border": "#255321",
+        "foreground": "#7bbf5f"
+      },
+      "inverted": {
+        "background": "#fbfef9",
+        "border": "#002500",
+        "foreground": "#488039"
+      }
+    },
+    "warning": {
+      "default": {
+        "background": "#5c5015",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "hovered": {
+        "background": "#796b26",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "pressed": {
+        "background": "#89792e",
+        "border": "#796b26",
+        "foreground": "#fee56d"
+      },
+      "active": {
+        "background": "#a08e3a",
+        "border": "#baa748",
+        "foreground": "#fffef9"
+      },
+      "disabled": {
+        "background": "#5c5015",
+        "border": "#6a5d1e",
+        "foreground": "#dcc55a"
+      },
+      "inverted": {
+        "background": "#fffef9",
+        "border": "#382f00",
+        "foreground": "#998836"
+      }
+    },
+    "negative": {
+      "default": {
+        "background": "#55051b",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "hovered": {
+        "background": "#720a2b",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "pressed": {
+        "background": "#820d33",
+        "border": "#720a2b",
+        "foreground": "#f82872"
+      },
+      "active": {
+        "background": "#99123f",
+        "border": "#b4184d",
+        "foreground": "#fff8f9"
+      },
+      "disabled": {
+        "background": "#55051b",
+        "border": "#630723",
+        "foreground": "#d61f5f"
+      },
+      "inverted": {
+        "background": "#fff8f9",
+        "border": "#320000",
+        "foreground": "#92113b"
+      }
+    }
+  },
+  "popover_shadow": {
+    "blur": 4,
+    "color": "#00000033",
+    "offset": [
+      1,
+      2
+    ]
+  },
+  "modal_shadow": {
+    "blur": 16,
+    "color": "#00000033",
+    "offset": [
+      0,
+      2
+    ]
+  },
+  "players": {
+    "0": {
+      "selection": "#11a7933d",
+      "cursor": "#11a793"
+    },
+    "1": {
+      "selection": "#96df723d",
+      "cursor": "#96df72"
+    },
+    "2": {
+      "selection": "#c74dec3d",
+      "cursor": "#c74dec"
+    },
+    "3": {
+      "selection": "#f29c143d",
+      "cursor": "#f29c14"
+    },
+    "4": {
+      "selection": "#8a3fa63d",
+      "cursor": "#8a3fa6"
+    },
+    "5": {
+      "selection": "#09e7c63d",
+      "cursor": "#09e7c6"
+    },
+    "6": {
+      "selection": "#f828723d",
+      "cursor": "#f82872"
+    },
+    "7": {
+      "selection": "#fee56d3d",
+      "cursor": "#fee56d"
+    }
+  },
+  "syntax": {},
+  "color_family": {
+    "neutral": {
+      "low": 13.137254901960786,
+      "high": 97.05882352941177,
+      "range": 83.92156862745098,
+      "scaling_value": 1.191588785046729
+    },
+    "red": {
+      "low": 9.803921568627452,
+      "high": 100,
+      "range": 90.19607843137254,
+      "scaling_value": 1.108695652173913
+    },
+    "orange": {
+      "low": 10,
+      "high": 100,
+      "range": 90,
+      "scaling_value": 1.1111111111111112
+    },
+    "yellow": {
+      "low": 10.980392156862745,
+      "high": 100,
+      "range": 89.01960784313725,
+      "scaling_value": 1.1233480176211454
+    },
+    "green": {
+      "low": 7.254901960784315,
+      "high": 100,
+      "range": 92.74509803921569,
+      "scaling_value": 1.0782241014799154
+    },
+    "cyan": {
+      "low": 7.8431372549019605,
+      "high": 100,
+      "range": 92.15686274509804,
+      "scaling_value": 1.0851063829787233
+    },
+    "blue": {
+      "low": 0,
+      "high": 100,
+      "range": 100,
+      "scaling_value": 1
+    },
+    "violet": {
+      "low": 0,
+      "high": 100,
+      "range": 100,
+      "scaling_value": 1
+    },
+    "magenta": {
+      "low": 7.254901960784315,
+      "high": 100,
+      "range": 92.74509803921569,
+      "scaling_value": 1.0782241014799154
+    }
+  }
+}

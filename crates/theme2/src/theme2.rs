@@ -1,5 +1,7 @@
 mod default_colors;
 mod default_theme;
+pub mod fabric;
+pub mod fabric_themes;
 mod one_themes;
 pub mod prelude;
 mod registry;
@@ -15,6 +17,7 @@ use std::sync::Arc;
 use ::settings::Settings;
 pub use default_colors::*;
 pub use default_theme::*;
+pub use fabric::*;
 pub use registry::*;
 pub use scale::*;
 pub use settings::*;
