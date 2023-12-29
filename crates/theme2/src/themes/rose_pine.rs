@@ -22,7 +22,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xe5e0dfff).into()),
                         border_variant: Some(rgba(0xfdf8f1ff).into()),
-                        elevated_surface_background: Some(rgba(0xdcd8d8ff).into()),
+                        elevated_surface_background: Some(rgba(0xfef9f2ff).into()),
                         background: Some(rgba(0xdcd8d8ff).into()),
                         panel_background: Some(rgba(0xfef9f2ff).into()),
                         element_hover: Some(rgba(0xdcd6d580).into()),
@@ -418,7 +418,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x322f48ff).into()),
                         border_variant: Some(rgba(0x27243bff).into()),
-                        elevated_surface_background: Some(rgba(0x38354eff).into()),
+                        elevated_surface_background: Some(rgba(0x28253cff).into()),
                         background: Some(rgba(0x38354eff).into()),
                         panel_background: Some(rgba(0x28253cff).into()),
                         element_hover: Some(rgba(0x504c6880).into()),
@@ -814,7 +814,7 @@ pub fn rose_pine() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x232132ff).into()),
                         border_variant: Some(rgba(0x1c1a29ff).into()),
-                        elevated_surface_background: Some(rgba(0x292739ff).into()),
+                        elevated_surface_background: Some(rgba(0x1d1b2aff).into()),
                         background: Some(rgba(0x292739ff).into()),
                         panel_background: Some(rgba(0x1d1b2aff).into()),
                         element_hover: Some(rgba(0x423f5580).into()),

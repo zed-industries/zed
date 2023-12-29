@@ -22,7 +22,7 @@ pub fn one() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xdfdfe0ff).into()),
                         border_variant: Some(rgba(0xeeeeeeff).into()),
-                        elevated_surface_background: Some(rgba(0xdcdcddff).into()),
+                        elevated_surface_background: Some(rgba(0xebebecff).into()),
                         background: Some(rgba(0xdcdcddff).into()),
                         panel_background: Some(rgba(0xebebecff).into()),
                         element_hover: Some(rgba(0xc9c9ca80).into()),
@@ -411,7 +411,7 @@ pub fn one() -> UserThemeFamily {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x363c46ff).into()),
                         border_variant: Some(rgba(0x2e333cff).into()),
-                        elevated_surface_background: Some(rgba(0x3b414dff).into()),
+                        elevated_surface_background: Some(rgba(0x2f343eff).into()),
                         background: Some(rgba(0x3b414dff).into()),
                         panel_background: Some(rgba(0x2f343eff).into()),
                         element_hover: Some(rgba(0x464b5780).into()),
