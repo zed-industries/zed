@@ -149,16 +149,26 @@ fn main() {
                     .collect::<Vec<String>>()
                     .join("\n");
 
+                let mut imports =
+                    "use crate::{{FabricSurface, FabricSurfaceState, FabricTheme}};".to_string();
+
+                if indented_theme.contains("rgb(") {
+                    imports.push_str("\nuse gpui::rgb;")
+                }
+
+                if indented_theme.contains("rgba(") {
+                    imports.push_str("\nuse gpui::rgba;")
+                }
+
                 let module_source = format!(
                     indoc! {r#"
-                        use crate::{{FabricSurface, FabricSurfaceState, FabricTheme}};
-                        use gpui::rgba;
+                        {}
 
                         pub fn {}() -> FabricTheme {{
                         {}
                         }}
                     "#},
-                    mod_name, indented_theme,
+                    imports, mod_name, indented_theme,
                 );
 
                 let module_path = Path::new(env!("PWD"))

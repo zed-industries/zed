@@ -1,0 +1,12 @@
+[package]
+name = "fabric_theme_importer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+gpui = { package = "gpui2", path = "../gpui2", features = ["allow-multiple-gpui-versions"] }
+indoc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+theme = { package = "theme2", path = "../theme2", features = ["importing-themes"] }

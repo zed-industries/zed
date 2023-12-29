@@ -39,6 +39,7 @@ members = [
     "crates/diagnostics2",
     "crates/drag_and_drop",
     "crates/editor",
+    "crates/fabric_theme_importer",
     "crates/feature_flags",
     "crates/feature_flags2",
     "crates/feedback",

@@ -27,7 +27,12 @@ pub struct Rgba {
 
 impl fmt::Debug for Rgba {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "rgba({:#010x})", u32::from(*self))
+        let rgba_int = u32::from(*self);
+        if rgba_int & 0xFF == 0xFF {
+            write!(f, "rgb({:#06x})", rgba_int >> 8)
+        } else {
+            write!(f, "rgba({:#010x})", rgba_int)
+        }
     }
 }
 

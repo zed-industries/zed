@@ -5,7 +5,7 @@ use gpui::Rgba;
 ///
 /// Each `Surface` in the `Theme` struct has a default, hovered, pressed, active, disabled, and inverted state.
 /// These states determine the colors of the UI elements in different conditions.
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Clone)]
 pub struct FabricTheme {
     pub name: String,
 
@@ -32,6 +32,30 @@ pub struct FabricTheme {
     /// `negative` indicates error states or negative actions, like incorrect inputs or destructive operations.
     /// It clearly signals an error but in a non-threatening way.
     pub negative: FabricSurface,
+}
+
+struct DebugInto<T>(T);
+
+impl<T: std::fmt::Debug> std::fmt::Debug for DebugInto<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}.into()", self.0)
+    }
+}
+
+impl std::fmt::Debug for FabricTheme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FabricTheme")
+            .field("name", &DebugInto(&self.name))
+            .field("cotton", &self.cotton)
+            .field("linen", &self.linen)
+            .field("denim", &self.denim)
+            .field("silk", &self.silk)
+            .field("satin", &self.satin)
+            .field("positive", &self.positive)
+            .field("warning", &self.warning)
+            .field("negative", &self.negative)
+            .finish()
+    }
 }
 
 #[derive(Default, Debug, Clone)]
