@@ -10,12 +10,12 @@ path = "src/workspace2_ui.rs"
 ui = { package = "ui2", path = "../ui2", features = ["stories"] }
 gpui = { package = "gpui2", path = "../gpui2" }
 theme = { path = "../theme2", package = "theme2" }
+log = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
 assets = { path = "../assets" }
 clap = { version = "3.1", features = ["derive"] }
-log = { workspace = true }
 picker = { package = "picker2", path = "../picker2" }
 rust-embed = { workspace = true }
 settings = { path = "../settings2", package = "settings2" }

@@ -1,19 +1,48 @@
-use gpui::{div, img, prelude::*, px, rems, Div, SharedString, Stateful, WindowContext};
+use gpui::{
+    div, img, prelude::*, px, rems, AnyElement, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, SharedString, Stateful, View, ViewContext, WindowContext,
+};
 use theme::ActiveFabricTheme;
-use ui::{Button, ButtonCommon, ButtonStyle, Color, LabelSize, Tooltip};
+use ui::{Button, ButtonCommon, ButtonStyle, Clickable, Color, LabelSize, PopoverMenu, Tooltip};
+
+pub struct PeerId(u32);
+
+pub trait TitlebarDelegate: 'static + Sized {
+    fn toggle_following(&mut self, peer_index: PeerId, cx: &mut ViewContext<Self>);
+}
+
+impl TitlebarDelegate for () {
+    fn toggle_following(&mut self, peer: PeerId, cx: &mut ViewContext<Self>) {
+        log::info!("deploy host menu");
+    }
+}
 
 #[derive(IntoElement)]
-pub struct Titlebar {
+pub struct Titlebar<D: TitlebarDelegate = ()> {
+    delegate: Option<View<D>>,
     full_screen: bool,
-    project_host: Option<ProjectHost>,
+    project_host: Option<ProjectHost<D>>,
+    recent_projects: RecentProjects<D>,
+    branch: Option<Branches>,
     collaborators: Vec<FacePile>,
 }
 
 #[derive(IntoElement)]
-struct ProjectHost {
+struct ProjectHost<D: TitlebarDelegate> {
+    delegate: Option<View<D>>,
+    id: PeerId,
     login: SharedString,
     peer_index: u32,
 }
+
+#[derive(IntoElement)]
+struct RecentProjects<D: TitlebarDelegate> {
+    delegate: View<D>,
+    current_project: SharedString,
+    recent_projects: Vec<SharedString>,
+}
+
+struct Branches {}
 
 #[derive(IntoElement, Default)]
 pub struct FacePile {
@@ -33,13 +62,7 @@ pub enum AvatarShape {
     Circle,
 }
 
-// pub struct TitlebarCall {
-//     current_user: TitlebarUser,
-// }
-
-// pub struct TitlebarUser {}
-
-impl RenderOnce for Titlebar {
+impl<D: TitlebarDelegate> RenderOnce for Titlebar<D> {
     type Rendered = Stateful<Div>;
 
     fn render(self, cx: &mut ui::prelude::WindowContext) -> Self::Rendered {
@@ -67,10 +90,13 @@ impl RenderOnce for Titlebar {
             })
             // left side
             .child(
-                div().flex().flex_row().gap_1().children(self.project_host), // .children(self.render_project_host(cx))
-                                                                             // .child(self.render_project_name(cx))
-                                                                             // .children(self.render_project_branch(cx))
-                                                                             // .children(self.render_collaborators(cx)),
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .children(self.project_host)
+                    .child(self.recent_projects), // .children(self.render_project_branch(cx))
+                                                  // .children(self.render_collaborators(cx)),
             )
         // right side
         // .child(
@@ -173,6 +199,119 @@ impl RenderOnce for Titlebar {
     }
 }
 
+impl<D: TitlebarDelegate> RenderOnce for ProjectHost<D> {
+    type Rendered = Button;
+
+    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+        Button::new("project-host", self.login)
+            .color(Color::Player(self.peer_index))
+            .style(ButtonStyle::Subtle)
+            .label_size(LabelSize::Small)
+            .tooltip(move |cx| Tooltip::text("Toggle following", cx))
+            .when_some(self.delegate, |div, delegate| {
+                div.on_click(move |_, cx| {
+                    let host_id = self.id;
+                    delegate.update(cx, |this, cx| this.toggle_following(host_id, cx))
+                })
+            })
+    }
+}
+
+struct RecentProjectsMenu<D> {
+    delegate: Option<D>,
+    focus: FocusHandle,
+}
+
+impl<D: 'static> EventEmitter<DismissEvent> for RecentProjectsMenu<D> {}
+
+impl<D: TitlebarDelegate> Render for RecentProjectsMenu<D> {
+    type Element = Div;
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+        todo!()
+    }
+}
+
+impl<D: TitlebarDelegate> FocusableView for RecentProjectsMenu<D> {
+    fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl<D: TitlebarDelegate> RenderOnce for RecentProjects<D> {
+    type Rendered = RecentProjectsMenu<D>;
+
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+        todo!()
+        // PopoverMenu::new("recent-projects").trigger()
+    }
+}
+
+impl RenderOnce for FacePile {
+    type Rendered = Div;
+
+    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+        let face_count = self.faces.len();
+        div()
+            .p_1()
+            .flex()
+            .items_center()
+            .children(self.faces.into_iter().enumerate().map(|(ix, avatar)| {
+                let last_child = ix == face_count - 1;
+                div()
+                    .z_index((face_count - ix) as u8)
+                    .when(!last_child, |div| div.neg_mr_1())
+                    .child(avatar)
+            }))
+    }
+}
+
+impl RenderOnce for Avatar {
+    type Rendered = Div;
+
+    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+        div()
+            .map(|this| match self.shape {
+                AvatarShape::Square => this.rounded_md(),
+                AvatarShape::Circle => this.rounded_full(),
+            })
+            .map(|this| match self.audio_status {
+                AudioStatus::None => this,
+                AudioStatus::Muted => this.border_color(cx.theme().muted),
+                AudioStatus::Speaking => this.border_color(cx.theme().speaking),
+            })
+            .size(cx.rem_size() + px(2.))
+            .child(
+                img(self.image_uri)
+                    .size(cx.rem_size())
+                    .bg(cx.theme().cotton.disabled.background),
+            )
+            .children(self.available.map(|is_free| {
+                // Non-integer sizes result in non-round indicators.
+                let indicator_size = (cx.rem_size() * 0.4).round();
+
+                div()
+                    .absolute()
+                    .z_index(1)
+                    .bg(if is_free {
+                        cx.theme().positive.default.background
+                    } else {
+                        cx.theme().negative.default.background
+                    })
+                    .size(indicator_size)
+                    .rounded(indicator_size)
+                    .bottom_0()
+                    .right_0()
+            }))
+    }
+}
+
+pub enum AudioStatus {
+    None,
+    Muted,
+    Speaking,
+}
+
 // impl Titlebar {
 //     pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
 //         let host = self.project.read(cx).host()?;
@@ -191,28 +330,6 @@ impl RenderOnce for Titlebar {
 //                     .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
 //             ),
 //         )
-//     }
-
-//     pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl Element {
-//         let name = {
-//             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
-//                 let worktree = worktree.read(cx);
-//                 worktree.root_name()
-//             });
-
-//             names.next().unwrap_or("")
-//         };
-
-//         let name = util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH);
-//         let workspace = self.workspace.clone();
-//         popover_menu("project_name_trigger")
-//             .trigger(
-//                 Button::new("project_name_trigger", name)
-//                     .style(ButtonStyle::Subtle)
-//                     .label_size(LabelSize::Small)
-//                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-//             )
-//             .menu(move |cx| Some(Self::render_project_popover(workspace.clone(), cx)))
 //     }
 
 //     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -291,81 +408,3 @@ impl RenderOnce for Titlebar {
 //         Some(pile)
 //     }
 // }
-
-impl RenderOnce for ProjectHost {
-    type Rendered = Button;
-
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
-        Button::new("project_host", self.login)
-            .color(Color::Player(self.peer_index))
-            .style(ButtonStyle::Subtle)
-            .label_size(LabelSize::Small)
-            .tooltip(move |cx| Tooltip::text("Toggle following", cx))
-        // .on_click(|cx| )
-    }
-}
-
-impl RenderOnce for FacePile {
-    type Rendered = Div;
-
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
-        let face_count = self.faces.len();
-        div()
-            .p_1()
-            .flex()
-            .items_center()
-            .children(self.faces.into_iter().enumerate().map(|(ix, avatar)| {
-                let last_child = ix == face_count - 1;
-                div()
-                    .z_index((face_count - ix) as u8)
-                    .when(!last_child, |div| div.neg_mr_1())
-                    .child(avatar)
-            }))
-    }
-}
-
-impl RenderOnce for Avatar {
-    type Rendered = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        div()
-            .map(|this| match self.shape {
-                AvatarShape::Square => this.rounded_md(),
-                AvatarShape::Circle => this.rounded_full(),
-            })
-            .map(|this| match self.audio_status {
-                AudioStatus::None => this,
-                AudioStatus::Muted => this.border_color(cx.theme().muted),
-                AudioStatus::Speaking => this.border_color(cx.theme().speaking),
-            })
-            .size(cx.rem_size() + px(2.))
-            .child(
-                img(self.image_uri)
-                    .size(cx.rem_size())
-                    .bg(cx.theme().cotton.disabled.background),
-            )
-            .children(self.available.map(|is_free| {
-                // Non-integer sizes result in non-round indicators.
-                let indicator_size = (cx.rem_size() * 0.4).round();
-
-                div()
-                    .absolute()
-                    .z_index(1)
-                    .bg(if is_free {
-                        cx.theme().positive.default.background
-                    } else {
-                        cx.theme().negative.default.background
-                    })
-                    .size(indicator_size)
-                    .rounded(indicator_size)
-                    .bottom_0()
-                    .right_0()
-            }))
-    }
-}
-
-pub enum AudioStatus {
-    None,
-    Muted,
-    Speaking,
-}

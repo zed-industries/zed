@@ -17,18 +17,18 @@ use workspace::{ModalView, Workspace, WorkspaceLocation, WORKSPACE_DB};
 pub use projects::OpenRecent;
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(RecentProjects::register).detach();
+    cx.observe_new_views(RecentProjectsMenu::register).detach();
 }
 
-pub struct RecentProjects {
+pub struct RecentProjectsMenu {
     pub picker: View<Picker<RecentProjectsDelegate>>,
     rem_width: f32,
     _subscription: Subscription,
 }
 
-impl ModalView for RecentProjects {}
+impl ModalView for RecentProjectsMenu {}
 
-impl RecentProjects {
+impl RecentProjectsMenu {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
         let picker = cx.build_view(|cx| Picker::new(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
@@ -82,7 +82,7 @@ impl RecentProjects {
                 workspace.toggle_modal(cx, |cx| {
                     let delegate = RecentProjectsDelegate::new(weak_workspace, true);
 
-                    let modal = RecentProjects::new(delegate, 34., cx);
+                    let modal = RecentProjectsMenu::new(delegate, 34., cx);
                     modal
                 });
             })?;
@@ -94,15 +94,15 @@ impl RecentProjects {
     }
 }
 
-impl EventEmitter<DismissEvent> for RecentProjects {}
+impl EventEmitter<DismissEvent> for RecentProjectsMenu {}
 
-impl FocusableView for RecentProjects {
+impl FocusableView for RecentProjectsMenu {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
-impl Render for RecentProjects {
+impl Render for RecentProjectsMenu {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
