@@ -36,7 +36,7 @@ pub(crate) fn one_dark() -> Theme {
         id: "one_dark".to_string(),
         name: "One Dark".into(),
         appearance: Appearance::Dark,
-
+        fabric: None,
         styles: ThemeStyles {
             system: SystemColors::default(),
             colors: ThemeColors {

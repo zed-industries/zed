@@ -19,6 +19,8 @@ impl RenderOnce for Avatar {
     type Rendered = Div;
 
     fn render(mut self, cx: &mut WindowContext) -> Self::Rendered {
+        cx.theme();
+
         if self.image.style().corner_radii.top_left.is_none() {
             self = self.shape(Shape::Circle);
         }

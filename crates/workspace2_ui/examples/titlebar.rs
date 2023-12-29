@@ -43,7 +43,7 @@ fn main() {
             move |cx| {
                 let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
                 cx.set_rem_size(ui_font_size);
-                cx.build_view(|cx| TitlebarExample)
+                cx.build_view(|_cx| TitlebarExample)
             },
         );
 

@@ -17,6 +17,11 @@ fn main() {
         for entry in legacy_theme_files {
             let entry: DirEntry = entry.expect("Failed to read directory entry");
             let path = entry.path();
+
+            if !path.to_string_lossy().contains("One") {
+                continue;
+            }
+
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
                 let theme_json =
                     fs::read_to_string(&path).expect(&format!("Failed to read {:?}", path));
@@ -141,6 +146,9 @@ fn main() {
                     positive: FabricSurface::from(legacy_theme.lowest.positive.clone()),
                     warning: FabricSurface::from(legacy_theme.lowest.warning.clone()),
                     negative: FabricSurface::from(legacy_theme.lowest.negative.clone()),
+
+                    muted: legacy_theme.lowest.negative.default.border,
+                    speaking: legacy_theme.lowest.positive.default.border,
                 };
 
                 let indented_theme = format!("{:#?}", theme)

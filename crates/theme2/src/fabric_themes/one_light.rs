@@ -332,5 +332,7 @@ pub fn one_light() -> FabricTheme {
                 secondary_foreground: None,
             },
         },
+        muted: rgb(0xf6c6bd),
+        speaking: rgb(0xc8dcc1),
     }
 }

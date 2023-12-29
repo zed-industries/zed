@@ -26,7 +26,7 @@ pub use styles::*;
 pub use themes::*;
 pub use user_theme::*;
 
-use gpui::{AppContext, Hsla, SharedString};
+use gpui::{Hsla, SharedString};
 use serde::Deserialize;
 
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
@@ -97,6 +97,7 @@ pub struct Theme {
     pub name: SharedString,
     pub appearance: Appearance,
     pub styles: ThemeStyles,
+    pub fabric: Option<Arc<FabricTheme>>,
 }
 
 impl Theme {

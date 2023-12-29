@@ -93,6 +93,7 @@ impl ThemeRegistry {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: user_theme.name.into(),
                 appearance: user_theme.appearance,
+                fabric: None,
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     colors: theme_colors,

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[[bin]]
+name = "fabric_theme_importer"
+path = "src/fabric_theme_importer.rs"
+
 [dependencies]
 gpui = { package = "gpui2", path = "../gpui2", features = ["allow-multiple-gpui-versions"] }
 indoc.workspace = true

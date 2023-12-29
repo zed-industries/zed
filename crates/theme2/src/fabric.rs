@@ -1,4 +1,8 @@
-use gpui::Rgba;
+use std::sync::Arc;
+
+pub use gpui::{AppContext, Rgba};
+
+use crate::ActiveTheme;
 
 /// `Theme` struct represents a collection of surfaces with their color states.
 /// It defines the visual appearance of various UI elements in the IDE.
@@ -32,6 +36,14 @@ pub struct FabricTheme {
     /// `negative` indicates error states or negative actions, like incorrect inputs or destructive operations.
     /// It clearly signals an error but in a non-threatening way.
     pub negative: FabricSurface,
+
+    /// `muted` represents the color used to indicate a non-active speaker,
+    /// such as when the microphone is off or the user is silent.
+    pub muted: Rgba,
+
+    /// `speaking` represents the color used to indicate an active speaker,
+    /// such as a border around their avatar.
+    pub speaking: Rgba,
 }
 
 struct DebugInto<T>(T);
@@ -54,9 +66,22 @@ impl std::fmt::Debug for FabricTheme {
             .field("positive", &self.positive)
             .field("warning", &self.warning)
             .field("negative", &self.negative)
+            .field("muted", &self.muted)
+            .field("speaking", &self.speaking)
             .finish()
     }
 }
+
+pub trait ActiveFabricTheme: ActiveTheme {
+    fn theme(&self) -> &Arc<FabricTheme> {
+        ActiveTheme::theme(self)
+            .fabric
+            .as_ref()
+            .expect("theme does not map to a fabric theme")
+    }
+}
+
+impl ActiveFabricTheme for AppContext {}
 
 #[derive(Default, Debug, Clone)]
 pub struct FabricSurface {
