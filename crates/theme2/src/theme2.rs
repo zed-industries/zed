@@ -73,6 +73,7 @@ impl ActiveTheme for AppContext {
     }
 }
 
+// todo!()
 // impl<'a> ActiveTheme for WindowContext<'a> {
 //     fn theme(&self) -> &Arc<Theme> {
 //         &ThemeSettings::get_global(self.app()).active_theme

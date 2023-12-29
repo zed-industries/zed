@@ -129,6 +129,7 @@ pub struct ThemeColors {
     /// The border color of the scrollbar track.
     pub scrollbar_track_border: Hsla,
     // /// The opacity of the scrollbar status marks, like diagnostic states and git status.
+    // todo!()
     // pub scrollbar_status_opacity: Hsla,
 
     // ===
