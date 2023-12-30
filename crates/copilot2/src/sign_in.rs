@@ -1,8 +1,8 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    div, size, AppContext, Bounds, ClipboardItem, Div, Element, GlobalPixels, InteractiveElement,
-    IntoElement, ParentElement, Point, Render, Stateful, Styled, ViewContext, VisualContext,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions,
+    div, size, AppContext, Bounds, ClipboardItem, Element, GlobalPixels, InteractiveElement,
+    IntoElement, ParentElement, Point, Render, Styled, ViewContext, VisualContext, WindowBounds,
+    WindowHandle, WindowKind, WindowOptions,
 };
 use theme::ActiveTheme;
 use ui::{prelude::*, Button, Icon, IconElement, Label};
@@ -181,9 +181,7 @@ impl CopilotCodeVerification {
 }
 
 impl Render for CopilotCodeVerification {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let prompt = match &self.status {
             Status::SigningIn {
                 prompt: Some(prompt),

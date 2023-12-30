@@ -7,9 +7,9 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
     actions, div, img, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    CursorStyle, DismissEvent, Div, Element, EventEmitter, FocusHandle, FocusableView,
+    CursorStyle, DismissEvent, Element, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, IntoElement, ListAlignment, ListScrollEvent, ListState, Model,
-    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, Task, View, ViewContext,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Task, View, ViewContext,
     VisualContext, WeakView, WindowContext,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
@@ -540,9 +540,7 @@ impl NotificationPanel {
 }
 
 impl Render for NotificationPanel {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .size_full()
             .child(
@@ -706,9 +704,7 @@ impl NotificationToast {
 }
 
 impl Render for NotificationToast {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let user = self.actor.clone();
 
         h_stack()

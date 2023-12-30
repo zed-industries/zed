@@ -1,4 +1,4 @@
-use gpui::{overlay, Action, AnyView, IntoElement, Overlay, Render, VisualContext};
+use gpui::{overlay, Action, AnyView, IntoElement, Render, VisualContext};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -68,9 +68,7 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    type Element = Overlay;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         overlay().child(
             // padding to avoid mouse cursor

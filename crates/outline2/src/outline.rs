@@ -4,7 +4,7 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    actions, div, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    actions, div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     FontStyle, FontWeight, HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task,
     TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
@@ -57,9 +57,7 @@ impl EventEmitter<DismissEvent> for OutlineView {}
 impl ModalView for OutlineView {}
 
 impl Render for OutlineView {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }

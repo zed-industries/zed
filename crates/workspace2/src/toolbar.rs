@@ -1,7 +1,7 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, Div, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View,
-    ViewContext, WindowContext,
+    AnyView, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View, ViewContext,
+    WindowContext,
 };
 use ui::prelude::*;
 use ui::{h_stack, v_stack};
@@ -93,9 +93,7 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if !self.has_any_visible_items() {
             return div();
         }

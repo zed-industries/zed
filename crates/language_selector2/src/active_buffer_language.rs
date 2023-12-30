@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, Div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView,
+    div, Element, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView,
 };
 use std::sync::Arc;
 use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
@@ -38,9 +38,7 @@ impl ActiveBufferLanguage {
 }
 
 impl Render for ActiveBufferLanguage {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Div {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()

@@ -12,11 +12,11 @@ use editor::{
 };
 use editor::{EditorElement, EditorStyle};
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context as _, Div, Element, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
-    IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
-    WhiteSpace, WindowContext,
+    actions, div, AnyElement, AnyView, AppContext, Context as _, Element, EntityId, EventEmitter,
+    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, KeyContext,
+    Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled, Subscription,
+    Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
+    WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -279,9 +279,7 @@ pub enum ViewEvent {
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
-    type Element = AnyElement;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if self.has_matches() {
             div()
                 .flex_1()
@@ -1494,9 +1492,7 @@ impl ProjectSearchBar {
 }
 
 impl Render for ProjectSearchBar {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let Some(search) = self.active_project_search.clone() else {
             return div();
         };

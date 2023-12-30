@@ -1,15 +1,11 @@
-use gpui::{Div, Render};
+use crate::{prelude::*, HighlightedLabel, Label};
+use gpui::Render;
 use story::Story;
-
-use crate::prelude::*;
-use crate::{HighlightedLabel, Label};
 
 pub struct LabelStory;
 
 impl Render for LabelStory {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .child(Story::title_for::<Label>())
             .child(Story::label("Default"))

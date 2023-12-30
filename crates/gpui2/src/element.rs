@@ -7,9 +7,7 @@ pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
 pub trait Render: 'static + Sized {
-    type Element: Element + 'static;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element;
 }
 
 pub trait IntoElement: Sized {

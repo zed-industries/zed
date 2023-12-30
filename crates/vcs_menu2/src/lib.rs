@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Result};
 use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AnyElement, AppContext, DismissEvent, Div, Element, EventEmitter, FocusHandle,
+    actions, rems, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusHandle,
     FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
     Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
@@ -65,9 +65,7 @@ impl FocusableView for BranchList {
 }
 
 impl Render for BranchList {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .w(rems(self.rem_width))
             .child(self.picker.clone())

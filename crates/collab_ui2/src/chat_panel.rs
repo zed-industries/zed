@@ -8,8 +8,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, Div, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent,
-    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    ClickEvent, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState,
+    Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -549,9 +549,7 @@ impl ChatPanel {
 impl EventEmitter<Event> for ChatPanel {}
 
 impl Render for ChatPanel {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         div()
             .full()
             .child(if self.client.user_id().is_some() {

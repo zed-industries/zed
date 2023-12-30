@@ -13,10 +13,10 @@ use editor::{
 };
 use futures::future::try_join_all;
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model,
-    ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    actions, div, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
+    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
+    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -91,9 +91,7 @@ struct DiagnosticGroupState {
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
 impl Render for ProjectDiagnosticsEditor {
-    type Element = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let child = if self.path_states.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)

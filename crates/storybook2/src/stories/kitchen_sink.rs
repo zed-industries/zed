@@ -1,4 +1,4 @@
-use gpui::{prelude::*, Div, Render, Stateful, View};
+use gpui::{prelude::*, Render, View};
 use story::Story;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -14,9 +14,7 @@ impl KitchenSinkStory {
 }
 
 impl Render for KitchenSinkStory {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let component_stories = ComponentStory::iter()
             .map(|selector| selector.story(cx))
             .collect::<Vec<_>>();

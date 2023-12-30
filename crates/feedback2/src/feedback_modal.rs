@@ -7,8 +7,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, red, rems, serde_json, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, Model, PromptLevel, Render, Task, View, ViewContext,
+    div, red, rems, serde_json, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Model, PromptLevel, Render, Task, View, ViewContext,
 };
 use isahc::Request;
 use language::Buffer;
@@ -396,9 +396,7 @@ impl FeedbackModal {
 }
 
 impl Render for FeedbackModal {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         self.update_submission_state(cx);
 
         let submit_button_text = if self.awaiting_submission() {
