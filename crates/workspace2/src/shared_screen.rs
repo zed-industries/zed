@@ -7,9 +7,9 @@ use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, img, AppContext, Div, Element, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveElement, ParentElement, Render, SharedString, Styled, Task, View, ViewContext,
-    VisualContext, WindowContext,
+    div, img, AppContext, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
+    WindowContext,
 };
 use std::sync::{Arc, Weak};
 use ui::{h_stack, prelude::*, Icon, IconElement, Label};
@@ -66,9 +66,7 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    type Element = Focusable<Div>;
-
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
         div().track_focus(&self.focus).size_full().children(
             self.frame
                 .as_ref()

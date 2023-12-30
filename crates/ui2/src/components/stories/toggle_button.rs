@@ -1,4 +1,4 @@
-use gpui::{Component, Render};
+use gpui::Render;
 use story::{StoryContainer, StoryItem, StorySection};
 
 use crate::{prelude::*, ToggleButton};
@@ -6,9 +6,7 @@ use crate::{prelude::*, ToggleButton};
 pub struct ToggleButtonStory;
 
 impl Render for ToggleButtonStory {
-    type Element = Component<StoryContainer>;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         StoryContainer::new(
             "Toggle Button",
             "crates/ui2/src/components/stories/toggle_button.rs",

@@ -1,6 +1,6 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    div, AnyView, Div, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    div, AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
 use std::any::TypeId;
@@ -33,9 +33,7 @@ pub struct StatusBar {
 }
 
 impl Render for StatusBar {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         div()
             .py_0p5()
             .px_1()

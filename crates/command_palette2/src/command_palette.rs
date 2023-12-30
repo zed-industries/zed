@@ -6,7 +6,7 @@ use std::{
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -83,9 +83,7 @@ impl FocusableView for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }

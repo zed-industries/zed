@@ -4,9 +4,9 @@ mod base_keymap_setting;
 use client::TelemetrySettings;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    svg, AnyElement, AppContext, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    ParentElement, Render, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -58,9 +58,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    type Element = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
         h_stack().full().track_focus(&self.focus_handle).child(
             v_stack()
                 .w_96()

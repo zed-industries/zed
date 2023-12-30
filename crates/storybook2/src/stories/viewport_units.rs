@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 
 use ui::prelude::*;
@@ -6,9 +6,7 @@ use ui::prelude::*;
 pub struct ViewportUnitsStory;
 
 impl Render for ViewportUnitsStory {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         Story::container().child(
             div()
                 .flex()

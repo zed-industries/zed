@@ -17,9 +17,9 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, serde_json, AnyElement,
     AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, ListOffset, ListState,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
-    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, ListOffset, ListState, Model,
+    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, SharedString,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -2263,9 +2263,7 @@ fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement
 }
 
 impl Render for CollabPanel {
-    type Element = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
@@ -2453,9 +2451,7 @@ struct DraggedChannelView {
 }
 
 impl Render for DraggedChannelView {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_stack()
             .font(ui_font)

@@ -1,5 +1,5 @@
 use crate::ProjectDiagnosticsEditor;
-use gpui::{div, Div, EventEmitter, ParentElement, Render, ViewContext, WeakView};
+use gpui::{div, EventEmitter, ParentElement, Render, ViewContext, WeakView};
 use ui::prelude::*;
 use ui::{Icon, IconButton, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
@@ -9,9 +9,7 @@ pub struct ToolbarControls {
 }
 
 impl Render for ToolbarControls {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let include_warnings = self
             .editor
             .as_ref()

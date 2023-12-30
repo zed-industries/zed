@@ -1,4 +1,4 @@
-use gpui::{Component, Render};
+use gpui::Render;
 use story::{StoryContainer, StoryItem, StorySection};
 
 use crate::{prelude::*, Tooltip};
@@ -7,9 +7,7 @@ use crate::{Icon, IconButton};
 pub struct IconButtonStory;
 
 impl Render for IconButtonStory {
-    type Element = Component<StoryContainer>;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         let default_button = StoryItem::new(
             "Default",
             IconButton::new("default_icon_button", Icon::Hash),

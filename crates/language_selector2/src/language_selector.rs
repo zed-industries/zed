@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use language::{Buffer, LanguageRegistry};
@@ -67,9 +67,7 @@ impl LanguageSelector {
 }
 
 impl Render for LanguageSelector {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }

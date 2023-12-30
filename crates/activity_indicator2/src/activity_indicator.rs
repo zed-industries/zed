@@ -2,8 +2,8 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    actions, svg, AppContext, CursorStyle, Div, EventEmitter, InteractiveElement as _, Model,
-    ParentElement as _, Render, SharedString, Stateful, StatefulInteractiveElement, Styled, View,
+    actions, svg, AppContext, CursorStyle, EventEmitter, InteractiveElement as _, Model,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement, Styled, View,
     ViewContext, VisualContext as _,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
@@ -304,9 +304,7 @@ impl ActivityIndicator {
 impl EventEmitter<Event> for ActivityIndicator {}
 
 impl Render for ActivityIndicator {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let content = self.content_to_render(cx);
 
         let mut result = h_stack()

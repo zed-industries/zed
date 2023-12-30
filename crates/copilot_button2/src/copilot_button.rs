@@ -3,8 +3,8 @@ use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
-    div, Action, AnchorCorner, AppContext, AsyncWindowContext, Div, Entity, ParentElement, Render,
-    Subscription, View, ViewContext, WeakView, WindowContext,
+    div, Action, AnchorCorner, AppContext, AsyncWindowContext, Element, Entity, ParentElement,
+    Render, Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{self, all_language_settings, AllLanguageSettings},
@@ -34,9 +34,7 @@ pub struct CopilotButton {
 }
 
 impl Render for CopilotButton {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let all_language_settings = all_language_settings(None, cx);
         if !all_language_settings.copilot.feature_enabled {
             return div();

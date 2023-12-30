@@ -1,7 +1,7 @@
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
-    rems, Div, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
+    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
     ViewContext, WeakView,
 };
 use language::Diagnostic;
@@ -21,9 +21,7 @@ pub struct DiagnosticIndicator {
 }
 
 impl Render for DiagnosticIndicator {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_stack().child(
                 IconElement::new(Icon::Check)

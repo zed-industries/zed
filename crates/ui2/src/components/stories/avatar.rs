@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 
 use crate::prelude::*;
@@ -7,9 +7,7 @@ use crate::Avatar;
 pub struct AvatarStory;
 
 impl Render for AvatarStory {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .child(Story::title_for::<Avatar>())
             .child(Story::label("Default"))
