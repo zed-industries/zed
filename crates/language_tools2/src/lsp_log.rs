@@ -596,9 +596,9 @@ fn log_contents(lines: &VecDeque<String>) -> String {
 
 impl Render for LspLogView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        let _x = self.editor.update(cx, |editor, cx| editor.render(cx));
-
-        div()
+        self
+            .editor
+            .update(cx, |editor, cx| editor.render(cx).into_any())
     }
 }
 
