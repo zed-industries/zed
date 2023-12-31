@@ -518,3 +518,11 @@ impl Element for () {
     ) {
     }
 }
+
+impl Render for () {
+    type Element = Self;
+
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        ()
+    }
+}

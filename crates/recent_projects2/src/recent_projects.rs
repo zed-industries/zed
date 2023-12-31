@@ -29,7 +29,11 @@ pub struct RecentProjectsMenu {
 impl ModalView for RecentProjectsMenu {}
 
 impl RecentProjectsMenu {
-    fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        delegate: RecentProjectsDelegate,
+        rem_width: f32,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let picker = cx.build_view(|cx| Picker::new(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lenghty call to DB, so we're gonna swap

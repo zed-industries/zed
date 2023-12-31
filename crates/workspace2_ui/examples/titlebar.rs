@@ -1,11 +1,14 @@
 use assets::Assets;
 use clap::Parser;
-use gpui::{px, App, Bounds, Render, Size, VisualContext, WindowBounds, WindowOptions};
+use gpui::{
+    px, App, Bounds, IntoElement, Render, Size, VisualContext, WindowBounds, WindowOptions,
+};
 use log::LevelFilter;
 use settings::Settings;
 use simplelog::SimpleLogger;
 use std::sync::Arc;
 use theme::{LoadThemes, ThemeRegistry, ThemeSettings};
+use workspace2_ui::{Branches, PeerId, ProjectHost, Titlebar};
 
 #[derive(Parser)]
 struct Args {
@@ -54,9 +57,30 @@ fn main() {
 struct TitlebarExample;
 
 impl Render for TitlebarExample {
-    type Element = ();
+    type Element = <Titlebar as IntoElement>::Element;
 
     fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> Self::Element {
-        todo!()
+        let delegate = cx.build_view(|_| ());
+
+        Titlebar {
+            delegate: delegate.clone(),
+            full_screen: false,
+            project_host: Some(ProjectHost {
+                delegate: delegate.clone(),
+                id: PeerId(1),
+                login: "nathansobo".into(),
+                peer_index: todo!(),
+            }),
+            recent_projects: RecentProjects {
+                delegate: delegate.clone(),
+                current_project: "zed",
+                recent_projects: (),
+            },
+            branch: Some(Branches {
+                current: "main".into(),
+            }),
+            collaborators: vec![],
+        }
+        .into_element()
     }
 }

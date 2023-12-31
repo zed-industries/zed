@@ -1,48 +1,69 @@
 use gpui::{
-    div, img, prelude::*, px, rems, AnyElement, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, SharedString, Stateful, View, ViewContext, WindowContext,
+    div, img, prelude::*, px, rems, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    SharedString, Stateful, View, ViewContext, WindowContext,
 };
 use theme::ActiveFabricTheme;
-use ui::{Button, ButtonCommon, ButtonStyle, Clickable, Color, LabelSize, PopoverMenu, Tooltip};
+use ui::{
+    popover_menu, Button, ButtonCommon, ButtonStyle, Clickable, Color, LabelSize, PopoverMenu,
+    Tooltip,
+};
 
-pub struct PeerId(u32);
+#[derive(Clone, Copy, Debug)]
+pub struct PeerId(pub u32);
+
+#[derive(Clone, Copy, Debug)]
+pub struct ProjectId(u64);
 
 pub trait TitlebarDelegate: 'static + Sized {
     fn toggle_following(&mut self, peer_index: PeerId, cx: &mut ViewContext<Self>);
 }
 
 impl TitlebarDelegate for () {
-    fn toggle_following(&mut self, peer: PeerId, cx: &mut ViewContext<Self>) {
-        log::info!("deploy host menu");
+    fn toggle_following(&mut self, peer: PeerId, _cx: &mut ViewContext<Self>) {
+        log::info!("toggle following {:?}", peer);
     }
 }
 
 #[derive(IntoElement)]
 pub struct Titlebar<D: TitlebarDelegate = ()> {
-    delegate: Option<View<D>>,
-    full_screen: bool,
-    project_host: Option<ProjectHost<D>>,
-    recent_projects: RecentProjects<D>,
-    branch: Option<Branches>,
-    collaborators: Vec<FacePile>,
+    pub delegate: View<D>,
+    pub full_screen: bool,
+    pub project_host: Option<ProjectHost<D>>,
+    pub recent_projects: Projects<D>,
+    pub branch: Option<Branches>,
+    pub collaborators: Vec<FacePile>,
 }
 
 #[derive(IntoElement)]
-struct ProjectHost<D: TitlebarDelegate> {
-    delegate: Option<View<D>>,
-    id: PeerId,
-    login: SharedString,
-    peer_index: u32,
+pub struct ProjectHost<D: TitlebarDelegate> {
+    pub delegate: View<D>,
+    pub id: PeerId,
+    pub login: SharedString,
+    pub peer_index: u32,
 }
 
 #[derive(IntoElement)]
-struct RecentProjects<D: TitlebarDelegate> {
+pub struct Projects<D: TitlebarDelegate> {
+    pub delegate: View<D>,
+    pub current: SharedString,
+    pub recent: Vec<Project>,
+}
+
+#[derive(Clone)]
+pub struct Project {
+    pub name: SharedString,
+    pub id: ProjectId,
+}
+
+pub struct ProjectsMenu<D> {
     delegate: View<D>,
-    current_project: SharedString,
-    recent_projects: Vec<SharedString>,
+    focus: FocusHandle,
+    recent_projects: Vec<Project>,
 }
 
-struct Branches {}
+pub struct Branches {
+    pub current: SharedString,
+}
 
 #[derive(IntoElement, Default)]
 pub struct FacePile {
@@ -203,28 +224,22 @@ impl<D: TitlebarDelegate> RenderOnce for ProjectHost<D> {
     type Rendered = Button;
 
     fn render(self, _: &mut WindowContext) -> Self::Rendered {
+        let delegate = self.delegate;
         Button::new("project-host", self.login)
             .color(Color::Player(self.peer_index))
             .style(ButtonStyle::Subtle)
             .label_size(LabelSize::Small)
             .tooltip(move |cx| Tooltip::text("Toggle following", cx))
-            .when_some(self.delegate, |div, delegate| {
-                div.on_click(move |_, cx| {
-                    let host_id = self.id;
-                    delegate.update(cx, |this, cx| this.toggle_following(host_id, cx))
-                })
+            .on_click(move |_, cx| {
+                let host_id = self.id;
+                delegate.update(cx, |this, cx| this.toggle_following(host_id, cx))
             })
     }
 }
 
-struct RecentProjectsMenu<D> {
-    delegate: Option<D>,
-    focus: FocusHandle,
-}
+impl<D: 'static> EventEmitter<DismissEvent> for ProjectsMenu<D> {}
 
-impl<D: 'static> EventEmitter<DismissEvent> for RecentProjectsMenu<D> {}
-
-impl<D: TitlebarDelegate> Render for RecentProjectsMenu<D> {
+impl<D: TitlebarDelegate> Render for ProjectsMenu<D> {
     type Element = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
@@ -232,18 +247,37 @@ impl<D: TitlebarDelegate> Render for RecentProjectsMenu<D> {
     }
 }
 
-impl<D: TitlebarDelegate> FocusableView for RecentProjectsMenu<D> {
+impl<D: TitlebarDelegate> FocusableView for ProjectsMenu<D> {
     fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
         self.focus.clone()
     }
 }
 
-impl<D: TitlebarDelegate> RenderOnce for RecentProjects<D> {
-    type Rendered = RecentProjectsMenu<D>;
+impl<D: TitlebarDelegate> RenderOnce for Projects<D> {
+    type Rendered = PopoverMenu<ProjectsMenu<D>>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
-        todo!()
-        // PopoverMenu::new("recent-projects").trigger()
+    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+        let delegate = self.delegate;
+        let recent_projects = self.recent;
+
+        popover_menu("recent-projects")
+            .trigger(
+                Button::new("trigger", self.current)
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
+                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+            )
+            .menu(move |cx| {
+                if recent_projects.is_empty() {
+                    None
+                } else {
+                    Some(cx.build_view(|cx| ProjectsMenu {
+                        delegate: delegate.clone(),
+                        focus: cx.focus_handle(),
+                        recent_projects: recent_projects.clone(),
+                    }))
+                }
+            })
     }
 }
 
