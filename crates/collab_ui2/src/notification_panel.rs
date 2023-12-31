@@ -540,7 +540,7 @@ impl NotificationPanel {
 }
 
 impl Render for NotificationPanel {
-    type Element = Div;
+    type Output = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div {
         v_stack()
@@ -706,9 +706,9 @@ impl NotificationToast {
 }
 
 impl Render for NotificationToast {
-    type Element = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let user = self.actor.clone();
 
         h_stack()

@@ -9,9 +9,9 @@ use crate::{Indicator, Tab};
 pub struct TabStory;
 
 impl Render for TabStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         Story::container()
             .child(Story::title_for::<Tab>())
             .child(Story::label("Default"))

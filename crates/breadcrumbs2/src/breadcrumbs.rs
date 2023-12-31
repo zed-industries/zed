@@ -30,9 +30,9 @@ impl Breadcrumbs {
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let element = h_stack().text_ui();
         let Some(active_item) = self.active_item.as_ref() else {
             return element;

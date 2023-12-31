@@ -549,9 +549,9 @@ impl ChatPanel {
 impl EventEmitter<Event> for ChatPanel {}
 
 impl Render for ChatPanel {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .full()
             .child(if self.client.user_id().is_some() {

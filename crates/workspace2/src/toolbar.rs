@@ -93,9 +93,9 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         if !self.has_any_visible_items() {
             return div();
         }

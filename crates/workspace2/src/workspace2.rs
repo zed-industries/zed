@@ -3489,9 +3489,9 @@ impl FocusableView for Workspace {
 struct DraggedDock(DockPosition);
 
 impl Render for Workspace {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let mut context = KeyContext::default();
         context.add("Workspace");
 
@@ -4287,7 +4287,7 @@ struct DisconnectedOverlay;
 impl Element for DisconnectedOverlay {
     type State = AnyElement;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,

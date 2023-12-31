@@ -910,9 +910,9 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        type Element = Focusable<Div>;
+        type Output = Focusable<Div>;
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Output {
             gpui::div().track_focus(&self.focus_handle)
         }
     }

@@ -36,9 +36,9 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    type Element = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
@@ -138,9 +138,9 @@ impl QuickActionBarButton {
 }
 
 impl RenderOnce for QuickActionBarButton {
-    type Rendered = IconButton;
+    type Output = IconButton;
 
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Output {
         let tooltip = self.tooltip.clone();
         let action = self.action.boxed_clone();
 

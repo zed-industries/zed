@@ -1101,9 +1101,9 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 }
 
 impl Render for AssistantPanel {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
             v_stack()
                 .on_action(cx.listener(AssistantPanel::save_credentials))
@@ -2513,9 +2513,9 @@ impl ConversationEditor {
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
@@ -2618,9 +2618,9 @@ struct InlineAssistant {
 impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 
 impl Render for InlineAssistant {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let measurements = self.measurements.get();
         h_stack()
             .w_full()

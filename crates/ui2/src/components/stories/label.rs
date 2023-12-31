@@ -7,9 +7,9 @@ use crate::{HighlightedLabel, Label};
 pub struct LabelStory;
 
 impl Render for LabelStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         Story::container()
             .child(Story::title_for::<Label>())
             .child(Story::label("Default"))

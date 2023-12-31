@@ -65,9 +65,9 @@ impl FocusableView for BranchList {
 }
 
 impl Render for BranchList {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         v_stack()
             .w(rems(self.rem_width))
             .child(self.picker.clone())

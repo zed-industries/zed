@@ -58,9 +58,9 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         h_stack().full().track_focus(&self.focus_handle).child(
             v_stack()
                 .w_96()

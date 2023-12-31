@@ -733,9 +733,9 @@ impl AnyWindowHandle {
 pub struct EmptyView {}
 
 impl Render for EmptyView {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> Self::Output {
         div()
     }
 }

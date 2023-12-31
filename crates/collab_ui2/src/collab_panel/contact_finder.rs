@@ -35,7 +35,7 @@ impl ContactFinder {
 }
 
 impl Render for ContactFinder {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         v_stack()
             .elevation_3(cx)
             .child(
@@ -52,7 +52,7 @@ impl Render for ContactFinder {
             .w(rems(34.))
     }
 
-    type Element = Div;
+    type Output = Div;
 }
 
 pub struct ContactFinderDelegate {

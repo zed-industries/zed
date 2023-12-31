@@ -60,7 +60,7 @@ pub struct MenuHandleState<M> {
 impl<M: ManagedView> Element for RightClickMenu<M> {
     type State = MenuHandleState<M>;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
         cx: &mut WindowContext,

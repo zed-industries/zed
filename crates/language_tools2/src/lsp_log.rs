@@ -595,9 +595,9 @@ fn log_contents(lines: &VecDeque<String>) -> String {
 }
 
 impl Render for LspLogView {
-    type Element = EditorElement;
+    type Output = EditorElement;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         self.editor.update(cx, |editor, cx| editor.render(cx))
     }
 }
@@ -709,9 +709,9 @@ impl ToolbarItemView for LspLogToolbarItemView {
 }
 
 impl Render for LspLogToolbarItemView {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let Some(log_view) = self.log_view.clone() else {
             return div();
         };

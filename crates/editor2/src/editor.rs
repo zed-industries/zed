@@ -9291,9 +9291,9 @@ impl FocusableView for Editor {
 }
 
 impl Render for Editor {
-    type Element = EditorElement;
+    type Output = EditorElement;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let settings = ThemeSettings::get_global(cx);
         let text_style = match self.mode {
             EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {

@@ -617,9 +617,9 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let terminal_handle = self.terminal.clone();
 
         let focused = self.focus_handle.is_focused(cx);

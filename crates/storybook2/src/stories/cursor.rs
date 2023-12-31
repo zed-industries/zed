@@ -5,9 +5,9 @@ use ui::prelude::*;
 pub struct CursorStory;
 
 impl Render for CursorStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         let all_cursors: [(&str, Box<dyn Fn(Stateful<Div>) -> Stateful<Div>>); 19] = [
             (
                 "cursor_default",

@@ -396,9 +396,9 @@ impl FeedbackModal {
 }
 
 impl Render for FeedbackModal {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         self.update_submission_state(cx);
 
         let submit_button_text = if self.awaiting_submission() {

@@ -6,9 +6,9 @@ use crate::{prelude::*, Tab, TabBar, TabPosition};
 pub struct TabBarStory;
 
 impl Render for TabBarStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         let tab_count = 20;
         let selected_tab_index = 3;
 

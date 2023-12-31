@@ -34,9 +34,9 @@ pub struct CopilotButton {
 }
 
 impl Render for CopilotButton {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let all_language_settings = all_language_settings(None, cx);
         if !all_language_settings.copilot.feature_enabled {
             return div();

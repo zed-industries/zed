@@ -76,9 +76,9 @@ impl ParentElement for LabelLike {
 }
 
 impl RenderOnce for LabelLike {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(

@@ -38,7 +38,7 @@ impl ActiveBufferLanguage {
 }
 
 impl Render for ActiveBufferLanguage {
-    type Element = Div;
+    type Output = Div;
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Div {
         div().when_some(self.active_language.as_ref(), |el, active_language| {

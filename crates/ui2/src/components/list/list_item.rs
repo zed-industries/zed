@@ -147,9 +147,9 @@ impl ParentElement for ListItem {
 }
 
 impl RenderOnce for ListItem {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         h_stack()
             .id(self.id)
             .w_full()

@@ -6,9 +6,9 @@ use crate::{prelude::*, ToggleButton};
 pub struct ToggleButtonStory;
 
 impl Render for ToggleButtonStory {
-    type Element = Component<StoryContainer>;
+    type Output = Component<StoryContainer>;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         StoryContainer::new(
             "Toggle Button",
             "crates/ui2/src/components/stories/toggle_button.rs",

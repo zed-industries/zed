@@ -11,9 +11,9 @@ pub struct KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         h_stack()
             .flex_none()
             .gap_2()
@@ -91,9 +91,9 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         let single_char = self.key.len() == 1;
 
         div()
@@ -125,9 +125,9 @@ pub struct KeyIcon {
 }
 
 impl RenderOnce for KeyIcon {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         div()
             .w(rems(14. / 16.))
             .child(IconElement::new(self.icon).size(IconSize::Small))

@@ -16,9 +16,9 @@ pub struct Avatar {
 }
 
 impl RenderOnce for Avatar {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(mut self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(mut self, cx: &mut WindowContext) -> Self::Output {
         if self.image.style().corner_radii.top_left.is_none() {
             self = self.shape(Shape::Circle);
         }

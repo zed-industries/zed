@@ -56,9 +56,9 @@ pub struct CollabTitlebarItem {
 }
 
 impl Render for CollabTitlebarItem {
-    type Element = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();

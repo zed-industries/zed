@@ -196,9 +196,9 @@ impl MessageEditor {
 }
 
 impl Render for MessageEditor {
-    type Element = AnyView;
+    type Output = AnyView;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         self.editor.to_any()
     }
 }

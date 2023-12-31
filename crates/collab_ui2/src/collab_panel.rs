@@ -2263,9 +2263,9 @@ fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement
 }
 
 impl Render for CollabPanel {
-    type Element = Focusable<Div>;
+    type Output = Focusable<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         v_stack()
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
@@ -2453,9 +2453,9 @@ struct DraggedChannelView {
 }
 
 impl Render for DraggedChannelView {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_stack()
             .font(ui_font)

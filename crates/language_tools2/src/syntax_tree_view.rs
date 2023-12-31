@@ -305,9 +305,9 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Self::Output {
         let settings = ThemeSettings::get_global(cx);
         let line_height = cx
             .text_style()
@@ -507,7 +507,7 @@ fn format_node_range(node: Node) -> String {
 }
 
 impl Render for SyntaxTreeToolbarItemView {
-    type Element = PopoverMenu<ContextMenu>;
+    type Output = PopoverMenu<ContextMenu>;
 
     fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> PopoverMenu<ContextMenu> {
         self.render_menu(cx)

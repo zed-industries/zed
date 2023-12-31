@@ -47,7 +47,7 @@ impl ModeIndicator {
 }
 
 impl Render for ModeIndicator {
-    type Element = AnyElement;
+    type Output = AnyElement;
 
     fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement {
         let Some(mode) = self.mode.as_ref() else {

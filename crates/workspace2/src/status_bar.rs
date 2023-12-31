@@ -33,9 +33,9 @@ pub struct StatusBar {
 }
 
 impl Render for StatusBar {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .py_0p5()
             .px_1()

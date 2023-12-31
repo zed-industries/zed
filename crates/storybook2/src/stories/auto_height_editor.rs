@@ -22,9 +22,9 @@ impl AutoHeightEditorStory {
 }
 
 impl Render for AutoHeightEditorStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         div()
             .size_full()
             .bg(white())

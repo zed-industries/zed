@@ -750,7 +750,7 @@ impl TerminalElement {
 impl Element for TerminalElement {
     type State = InteractiveElementState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
         cx: &mut WindowContext<'_>,

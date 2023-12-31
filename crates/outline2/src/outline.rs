@@ -57,9 +57,9 @@ impl EventEmitter<DismissEvent> for OutlineView {}
 impl ModalView for OutlineView {}
 
 impl Render for OutlineView {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }

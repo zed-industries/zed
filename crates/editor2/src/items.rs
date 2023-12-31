@@ -1193,9 +1193,9 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Output {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",

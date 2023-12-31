@@ -205,9 +205,9 @@ impl ExternalPaths {
 }
 
 impl Render for ExternalPaths {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Output {
         div() // Intentionally left empty because the platform will render icons for the dragged files
     }
 }
@@ -305,9 +305,9 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        type Element = Stateful<Div>;
+        type Output = Stateful<Div>;
 
-        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
             div().id("testview").child(
                 div()
                     .key_context("parent")

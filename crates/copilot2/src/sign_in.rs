@@ -181,9 +181,9 @@ impl CopilotCodeVerification {
 }
 
 impl Render for CopilotCodeVerification {
-    type Element = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let prompt = match &self.status {
             Status::SigningIn {
                 prompt: Some(prompt),

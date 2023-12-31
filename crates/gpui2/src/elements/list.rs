@@ -302,7 +302,7 @@ pub struct ListOffset {
 impl Element for List {
     type State = ();
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _state: Option<Self::State>,
         cx: &mut crate::WindowContext,

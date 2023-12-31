@@ -7,9 +7,9 @@ use crate::Avatar;
 pub struct AvatarStory;
 
 impl Render for AvatarStory {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
         Story::container()
             .child(Story::title_for::<Avatar>())
             .child(Story::label("Default"))

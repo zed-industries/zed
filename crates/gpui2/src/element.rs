@@ -6,23 +6,61 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
-pub trait Render: 'static + Sized {
-    type Element: Element + 'static;
+/// Elements describe the contents of a window for a given frame.
+/// Like HTML elements, elements form a tree and participate in layout.
+/// In GPUI, elements are single-use objects that do not outlive a single frame.
+/// Elements are associated with state.
+/// If the element has an identifier, the element's state persists across frames in which the element appears.
+/// If the element is anonymous, the state only persists across from layout request to paint in is referred to as "frame state".
+/// A potential improvement would be to separate this temporary frame state from persistent element state at the type level, and request element state from the context with an id. /cc @as-cii\
+/// To render the contents of a window, we first walk over the tree of elements recursively via [request_layout], giving each an opportunity to register with the layout engine.
+/// Then we compute the requested layout and use the computed bounds to paint the element tree recursively with [paint].
+/// You can implement this trait yourself for performance or other special situations, but you'll typically compose existing elements such as `Div`, `Img`, etc.
+pub trait Element: 'static + IntoElement {
+    /// State that is carried from [request_layout] to [paint] for anonymous elements, and between frames for elements that have an id.
+    type State: 'static;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element;
+    /// Recursively register this element and all its descendants with the layout engine.
+    /// If this element has an id, you'll receive the [State] from the previous frame if an element with this id existed in that frame.
+    /// Return the [LayoutId] you requested from the engine and whatever state you want to carry over to [paint], and also the next frame if this element has an id.
+    fn request_layout(
+        &mut self,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State);
+
+    /// Recursively paint this element by populating the current frame's [Scene] with geometric primitives such as quads, sprites, paths, etc.
+    /// Receives the state from layout, and potentially the previous frame if this element has an id.
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
+
+    /// Convert into a dynamically-typed [AnyElement].
+    /// Before an element can be painted, it must be converted into an [AnyElement].
+    /// It's also useful in situations where you need to own an element, but don't care about its specific type.
+    fn into_any(self) -> AnyElement {
+        AnyElement::new(self)
+    }
 }
 
+/// Implemented by any type that can be converted into an element.
 pub trait IntoElement: Sized {
-    type Element: Element + 'static;
+    /// The specific type of element into which the implementing type is converted.
+    type Element: Element;
 
+    /// The [ElementId] of self once converted into an [Element].
+    /// If present, the resulting element's state will be carried across frames.
     fn element_id(&self) -> Option<ElementId>;
 
+    /// Convert self into a type that implements [Element].
     fn into_element(self) -> Self::Element;
 
+    /// Convert self into a dynamically-typed [AnyElement].
     fn into_any_element(self) -> AnyElement {
         self.into_element().into_any()
     }
 
+    /// Convert into an element, then draw in the current window at the given origin.
+    /// The provided available space is provided to the layout engine to determine the size of the root element.
+    /// Once the element is drawn, its associated element staet is yielded to the given callback.
     fn draw_and_update_state<T, R>(
         self,
         origin: Point<Pixels>,
@@ -54,6 +92,7 @@ pub trait IntoElement: Sized {
         }
     }
 
+    /// Convert self to another type by calling the given closure. Useful in rendering code.
     fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
     where
         Self: Sized,
@@ -62,6 +101,7 @@ pub trait IntoElement: Sized {
         f(self)
     }
 
+    /// Conditionally chain onto self with the given closure. Useful in rendering code.
     fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
     where
         Self: Sized,
@@ -69,6 +109,8 @@ pub trait IntoElement: Sized {
         self.map(|this| if condition { then(this) } else { this })
     }
 
+    /// Conditionally chain onto self with the given closure if the given option is Some.
+    /// The contents of the option are provided to the closure.
     fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
     where
         Self: Sized,
@@ -83,35 +125,46 @@ pub trait IntoElement: Sized {
     }
 }
 
-pub trait Element: 'static + IntoElement {
-    type State: 'static;
+pub trait Render: 'static + Sized {
+    type Output: IntoElement;
 
-    fn layout(
-        &mut self,
-        state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State);
-
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
-
-    fn into_any(self) -> AnyElement {
-        AnyElement::new(self)
-    }
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output;
 }
 
 pub trait RenderOnce: 'static {
-    type Rendered: IntoElement;
+    type Output: IntoElement;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered;
+    fn render(self, cx: &mut WindowContext) -> Self::Output;
+}
+
+pub trait ParentElement {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]>;
+
+    fn child(mut self, child: impl IntoElement) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut().push(child.into_element().into_any());
+        self
+    }
+
+    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut()
+            .extend(children.into_iter().map(|child| child.into_any_element()));
+        self
+    }
 }
 
 pub struct Component<C> {
     component: Option<C>,
 }
 
-pub struct CompositeElementState<C: RenderOnce> {
-    rendered_element: Option<<C::Rendered as IntoElement>::Element>,
-    rendered_element_state: Option<<<C::Rendered as IntoElement>::Element as Element>::State>,
+pub struct ComponentState<C: RenderOnce> {
+    rendered_element: Option<<C::Output as IntoElement>::Element>,
+    rendered_element_state: Option<<<C::Output as IntoElement>::Element as Element>::State>,
 }
 
 impl<C> Component<C> {
@@ -123,9 +176,9 @@ impl<C> Component<C> {
 }
 
 impl<C: RenderOnce> Element for Component<C> {
-    type State = CompositeElementState<C>;
+    type State = ComponentState<C>;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,
@@ -133,16 +186,16 @@ impl<C: RenderOnce> Element for Component<C> {
         let mut element = self.component.take().unwrap().render(cx).into_element();
         if let Some(element_id) = element.element_id() {
             let layout_id =
-                cx.with_element_state(element_id, |state, cx| element.layout(state, cx));
-            let state = CompositeElementState {
+                cx.with_element_state(element_id, |state, cx| element.request_layout(state, cx));
+            let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: None,
             };
             (layout_id, state)
         } else {
             let (layout_id, state) =
-                element.layout(state.and_then(|s| s.rendered_element_state), cx);
-            let state = CompositeElementState {
+                element.request_layout(state.and_then(|s| s.rendered_element_state), cx);
+            let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: Some(state),
             };
@@ -182,27 +235,6 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
-
-pub trait ParentElement {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]>;
-
-    fn child(mut self, child: impl IntoElement) -> Self
-    where
-        Self: Sized,
-    {
-        self.children_mut().push(child.into_element().into_any());
-        self
-    }
-
-    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
-    where
-        Self: Sized,
-    {
-        self.children_mut()
-            .extend(children.into_iter().map(|child| child.into_any_element()));
-        self
-    }
-}
 
 trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;
@@ -262,11 +294,14 @@ impl<E: Element> DrawableElement<E> {
         let (layout_id, frame_state) = if let Some(id) = self.element.as_ref().unwrap().element_id()
         {
             let layout_id = cx.with_element_state(id, |element_state, cx| {
-                self.element.as_mut().unwrap().layout(element_state, cx)
+                self.element
+                    .as_mut()
+                    .unwrap()
+                    .request_layout(element_state, cx)
             });
             (layout_id, None)
         } else {
-            let (layout_id, frame_state) = self.element.as_mut().unwrap().layout(None, cx);
+            let (layout_id, frame_state) = self.element.as_mut().unwrap().request_layout(None, cx);
             (layout_id, Some(frame_state))
         };
 
@@ -454,7 +489,7 @@ impl AnyElement {
 impl Element for AnyElement {
     type State = ();
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,
@@ -502,7 +537,7 @@ impl IntoElement for () {
 impl Element for () {
     type State = ();
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _state: Option<Self::State>,
         cx: &mut WindowContext,

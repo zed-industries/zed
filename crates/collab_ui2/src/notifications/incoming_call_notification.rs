@@ -117,9 +117,9 @@ impl IncomingCallNotification {
 }
 
 impl Render for IncomingCallNotification {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);

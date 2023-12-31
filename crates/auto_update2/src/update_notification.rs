@@ -13,9 +13,9 @@ pub struct UpdateNotification {
 impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         let app_name = cx.global::<ReleaseChannel>().display_name();
 
         v_stack()

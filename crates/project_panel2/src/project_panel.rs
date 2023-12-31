@@ -1480,9 +1480,9 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    type Element = Focusable<Stateful<Div>>;
+    type Output = Focusable<Stateful<Div>>;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         let has_worktree = self.visible_entries.len() != 0;
 
         if has_worktree {
@@ -1548,9 +1548,9 @@ impl Render for ProjectPanel {
 }
 
 impl Render for DraggedProjectEntryView {
-    type Element = Div;
+    type Output = Div;
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_stack()

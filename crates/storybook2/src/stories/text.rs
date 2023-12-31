@@ -14,9 +14,9 @@ impl TextStory {
 }
 
 impl Render for TextStory {
-    type Element = Component<StoryContainer>;
+    type Output = Component<StoryContainer>;
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
         StoryContainer::new("Text Story", "crates/storybook2/src/stories/text.rs")
             .children(
                 vec![

@@ -46,9 +46,9 @@ impl ParentElement for List {
 }
 
 impl RenderOnce for List {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         v_stack().w_full().py_1().children(self.header).map(|this| {
             match (self.children.is_empty(), self.toggle) {
                 (false, _) => this.children(self.children),
