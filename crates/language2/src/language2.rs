@@ -44,7 +44,7 @@ use std::{
 };
 use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
-use tree_sitter::{self, Query};
+use tree_sitter::{self, wasmtime, Query, WasmStore};
 use unicase::UniCase;
 use util::{http::HttpClient, paths::PathExt};
 use util::{post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
@@ -84,10 +84,15 @@ impl LspBinaryStatusSender {
 }
 
 thread_local! {
-    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+    static PARSER: RefCell<Parser> = {
+        let mut parser = Parser::new();
+        parser.set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap()).unwrap();
+        RefCell::new(parser)
+    };
 }
 
 lazy_static! {
+    pub static ref WASM_ENGINE: wasmtime::Engine = wasmtime::Engine::default();
     pub static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
@@ -360,6 +365,7 @@ pub struct CodeLabel {
 #[derive(Clone, Deserialize)]
 pub struct LanguageConfig {
     pub name: Arc<str>,
+    pub grammar_name: Option<Arc<str>>,
     pub path_suffixes: Vec<String>,
     pub brackets: BracketPairConfig,
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -446,6 +452,7 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
+            grammar_name: None,
             path_suffixes: Default::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
@@ -620,12 +627,23 @@ type AvailableLanguageId = usize;
 #[derive(Clone)]
 struct AvailableLanguage {
     id: AvailableLanguageId,
-    path: &'static str,
     config: LanguageConfig,
-    grammar: tree_sitter::Language,
+    grammar: AvailableGrammar,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
-    get_queries: fn(&str) -> LanguageQueries,
     loaded: bool,
+}
+
+#[derive(Clone)]
+enum AvailableGrammar {
+    Native {
+        grammar: tree_sitter::Language,
+        asset_dir: &'static str,
+        get_queries: fn(&str) -> LanguageQueries,
+    },
+    Wasm {
+        grammar_name: Arc<str>,
+        path: Arc<Path>,
+    },
 }
 
 pub struct LanguageRegistry {
@@ -699,7 +717,7 @@ impl LanguageRegistry {
 
     pub fn register(
         &self,
-        path: &'static str,
+        asset_dir: &'static str,
         config: LanguageConfig,
         grammar: tree_sitter::Language,
         lsp_adapters: Vec<Arc<dyn LspAdapter>>,
@@ -708,11 +726,24 @@ impl LanguageRegistry {
         let state = &mut *self.state.write();
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
-            path,
             config,
-            grammar,
+            grammar: AvailableGrammar::Native {
+                grammar,
+                get_queries,
+                asset_dir,
+            },
             lsp_adapters,
-            get_queries,
+            loaded: false,
+        });
+    }
+
+    pub fn register_wasm(&self, path: Arc<Path>, grammar_name: Arc<str>, config: LanguageConfig) {
+        let state = &mut *self.state.write();
+        state.available_languages.push(AvailableLanguage {
+            id: post_inc(&mut state.next_available_language_id),
+            config,
+            grammar: AvailableGrammar::Wasm { grammar_name, path },
+            lsp_adapters: Vec::new(),
             loaded: false,
         });
     }
@@ -837,13 +868,43 @@ impl LanguageRegistry {
                         executor
                             .spawn(async move {
                                 let id = language.id;
-                                let queries = (language.get_queries)(&language.path);
-                                let language =
-                                    Language::new(language.config, Some(language.grammar))
+                                let name = language.config.name.clone();
+                                let language = async {
+                                    let (grammar, queries) = match language.grammar {
+                                        AvailableGrammar::Native {
+                                            grammar,
+                                            asset_dir,
+                                            get_queries,
+                                        } => (grammar, (get_queries)(asset_dir)),
+                                        AvailableGrammar::Wasm { grammar_name, path } => {
+                                            let mut wasm_path = path.join(grammar_name.as_ref());
+                                            wasm_path.set_extension("wasm");
+                                            let wasm_bytes = std::fs::read(&wasm_path)?;
+                                            let grammar = PARSER.with(|parser| {
+                                                let mut parser = parser.borrow_mut();
+                                                let mut store = parser.take_wasm_store().unwrap();
+                                                let grammar =
+                                                    store.load_language(&grammar_name, &wasm_bytes);
+                                                parser.set_wasm_store(store).unwrap();
+                                                grammar
+                                            })?;
+                                            let mut queries = LanguageQueries::default();
+                                            if let Ok(contents) = std::fs::read_to_string(
+                                                &path.join("highlights.scm"),
+                                            ) {
+                                                queries.highlights = Some(contents.into());
+                                            }
+                                            (grammar, queries)
+                                        }
+                                    };
+                                    Language::new(language.config, Some(grammar))
                                         .with_lsp_adapters(language.lsp_adapters)
-                                        .await;
-                                let name = language.name();
-                                match language.with_queries(queries) {
+                                        .await
+                                        .with_queries(queries)
+                                }
+                                .await;
+
+                                match language {
                                     Ok(language) => {
                                         let language = Arc::new(language);
                                         let mut state = this.state.write();
@@ -1175,7 +1236,7 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
-                    error_query: Query::new(ts_language, "(ERROR) @error").unwrap(),
+                    error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1236,13 +1297,13 @@ impl Language {
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        grammar.highlights_query = Some(Query::new(grammar.ts_language, source)?);
+        grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
@@ -1270,7 +1331,7 @@ impl Language {
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
@@ -1301,7 +1362,7 @@ impl Language {
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
         get_capture_indices(
@@ -1323,7 +1384,7 @@ impl Language {
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
@@ -1351,7 +1412,7 @@ impl Language {
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut content_capture_ix = None;
         get_capture_indices(
@@ -1390,7 +1451,7 @@ impl Language {
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = Query::new(self.grammar_mut().ts_language, source)?;
+        let query = Query::new(&self.grammar_mut().ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
@@ -1701,7 +1762,7 @@ impl Grammar {
         PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
             parser
-                .set_language(self.ts_language)
+                .set_language(&self.ts_language)
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
             parser

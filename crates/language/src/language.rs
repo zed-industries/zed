@@ -1169,7 +1169,7 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
-                    error_query: Query::new(ts_language, "(ERROR) @error").unwrap(),
+                    error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1230,13 +1230,13 @@ impl Language {
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        grammar.highlights_query = Some(Query::new(grammar.ts_language, source)?);
+        grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
@@ -1264,7 +1264,7 @@ impl Language {
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
@@ -1295,7 +1295,7 @@ impl Language {
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
         get_capture_indices(
@@ -1317,7 +1317,7 @@ impl Language {
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
@@ -1345,7 +1345,7 @@ impl Language {
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut content_capture_ix = None;
         get_capture_indices(
@@ -1384,7 +1384,7 @@ impl Language {
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = Query::new(self.grammar_mut().ts_language, source)?;
+        let query = Query::new(&self.grammar_mut().ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().copied().enumerate() {
@@ -1695,7 +1695,7 @@ impl Grammar {
         PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
             parser
-                .set_language(self.ts_language)
+                .set_language(&self.ts_language)
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
             parser

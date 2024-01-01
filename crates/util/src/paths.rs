@@ -10,6 +10,7 @@ lazy_static::lazy_static! {
     pub static ref EMBEDDINGS_DIR: PathBuf = HOME.join(".config/zed/embeddings");
     pub static ref LOGS_DIR: PathBuf = HOME.join("Library/Logs/Zed");
     pub static ref SUPPORT_DIR: PathBuf = HOME.join("Library/Application Support/Zed");
+    pub static ref PLUGINS_DIR: PathBuf = HOME.join("Library/Application Support/Zed/plugins");
     pub static ref LANGUAGES_DIR: PathBuf = HOME.join("Library/Application Support/Zed/languages");
     pub static ref COPILOT_DIR: PathBuf = HOME.join("Library/Application Support/Zed/copilot");
     pub static ref DEFAULT_PRETTIER_DIR: PathBuf = HOME.join("Library/Application Support/Zed/prettier");

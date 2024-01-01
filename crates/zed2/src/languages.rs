@@ -5,7 +5,7 @@ use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use settings::Settings;
 use std::{borrow::Cow, str, sync::Arc};
-use util::asset_str;
+use util::{asset_str, paths::PLUGINS_DIR};
 
 use self::elixir::ElixirSettings;
 
@@ -228,6 +228,21 @@ pub fn init(
         tree_sitter_uiua::language(),
         vec![Arc::new(uiua::UiuaLanguageServer {})],
     );
+
+    if let Ok(children) = std::fs::read_dir(&*PLUGINS_DIR) {
+        for child in children {
+            if let Ok(child) = child {
+                let path = child.path();
+                let config_path = path.join("config.toml");
+                if let Ok(config) = std::fs::read(&config_path) {
+                    let config: LanguageConfig = toml::from_slice(&config).unwrap();
+                    if let Some(grammar_name) = config.grammar_name.clone() {
+                        languages.register_wasm(path.into(), grammar_name, config);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
