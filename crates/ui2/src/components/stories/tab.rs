@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 
 use crate::{prelude::*, TabPosition};
@@ -9,9 +9,7 @@ use crate::{Indicator, Tab};
 pub struct TabStory;
 
 impl Render for TabStory {
-    type Output = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .child(Story::title_for::<Tab>())
             .child(Story::label("Default"))

@@ -1,6 +1,6 @@
 use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div,
+    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div, Element,
     EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
@@ -305,9 +305,7 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> impl Element {
         let settings = ThemeSettings::get_global(cx);
         let line_height = cx
             .text_style()
@@ -507,9 +505,7 @@ fn format_node_range(node: Node) -> String {
 }
 
 impl Render for SyntaxTreeToolbarItemView {
-    type Output = PopoverMenu<ContextMenu>;
-
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> PopoverMenu<ContextMenu> {
+    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> impl Element {
         self.render_menu(cx)
             .unwrap_or_else(|| popover_menu("Empty Syntax Tree"))
     }

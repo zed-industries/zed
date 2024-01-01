@@ -2,9 +2,7 @@ use crate::notification_window_options;
 use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
-use gpui::{
-    img, px, AppContext, Div, ParentElement, Render, Size, Styled, ViewContext, VisualContext,
-};
+use gpui::{img, px, AppContext, ParentElement, Render, Size, Styled, ViewContext, VisualContext};
 use settings::Settings;
 use std::sync::{Arc, Weak};
 use theme::ThemeSettings;
@@ -120,9 +118,7 @@ impl ProjectSharedNotification {
 }
 
 impl Render for ProjectSharedNotification {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);

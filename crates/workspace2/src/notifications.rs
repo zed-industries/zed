@@ -170,8 +170,8 @@ impl Workspace {
 
 pub mod simple_message_notification {
     use gpui::{
-        div, DismissEvent, Div, EventEmitter, InteractiveElement, ParentElement, Render,
-        SharedString, StatefulInteractiveElement, Styled, ViewContext,
+        div, DismissEvent, EventEmitter, InteractiveElement, ParentElement, Render, SharedString,
+        StatefulInteractiveElement, Styled, ViewContext,
     };
     use std::sync::Arc;
     use ui::prelude::*;
@@ -219,9 +219,7 @@ pub mod simple_message_notification {
     }
 
     impl Render for MessageNotification {
-        type Output = Div;
-
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
             v_stack()
                 .elevation_3(cx)
                 .p_4()

@@ -760,9 +760,9 @@ pub mod test {
     use super::{Item, ItemEvent};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
-        AnyElement, AppContext, Context as _, Div, EntityId, EventEmitter, Focusable,
-        FocusableView, InteractiveElement, IntoElement, Model, Render, SharedString, Task, View,
-        ViewContext, VisualContext, WeakView,
+        AnyElement, AppContext, Context as _, Element, EntityId, EventEmitter, FocusableView,
+        InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
+        VisualContext, WeakView,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
@@ -910,9 +910,7 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        type Output = Focusable<Div>;
-
-        fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Output {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
             gpui::div().track_focus(&self.focus_handle)
         }
     }

@@ -1,5 +1,5 @@
 use crate::{
-    div, point, Div, Element, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
+    div, point, Element, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
@@ -205,9 +205,7 @@ impl ExternalPaths {
 }
 
 impl Render for ExternalPaths {
-    type Output = Div;
-
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
         div() // Intentionally left empty because the platform will render icons for the dragged files
     }
 }
@@ -292,8 +290,8 @@ impl InputEvent {
 #[cfg(test)]
 mod test {
     use crate::{
-        self as gpui, div, Div, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
-        Keystroke, ParentElement, Render, Stateful, TestAppContext, VisualContext,
+        self as gpui, div, Element, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
+        Keystroke, ParentElement, Render, TestAppContext, VisualContext,
     };
 
     struct TestView {
@@ -305,9 +303,7 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        type Output = Stateful<Div>;
-
-        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
             div().id("testview").child(
                 div()
                     .key_context("parent")

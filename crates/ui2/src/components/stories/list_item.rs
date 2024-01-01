@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 
 use crate::{prelude::*, Avatar};
@@ -7,9 +7,7 @@ use crate::{Icon, ListItem};
 pub struct ListItemStory;
 
 impl Render for ListItemStory {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .bg(cx.theme().colors().background)
             .child(Story::title_for::<ListItem>())

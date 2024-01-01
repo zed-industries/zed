@@ -1,6 +1,5 @@
 use gpui::{
-    actions, div, prelude::*, Div, FocusHandle, Focusable, KeyBinding, Render, Stateful,
-    Subscription, View, WindowContext,
+    actions, div, prelude::*, FocusHandle, KeyBinding, Render, Subscription, View, WindowContext,
 };
 use ui::prelude::*;
 
@@ -57,9 +56,7 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    type Output = Focusable<Stateful<Div>>;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;

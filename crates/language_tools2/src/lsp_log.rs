@@ -1,10 +1,10 @@
 use collections::{HashMap, VecDeque};
-use editor::{Editor, EditorElement, EditorEvent, MoveToEnd};
+use editor::{Editor, EditorEvent, MoveToEnd};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, AnchorCorner, AnyElement, AppContext, Context, Div, EventEmitter, FocusHandle,
-    FocusableView, IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription,
-    View, ViewContext, VisualContext, WeakModel, WindowContext,
+    actions, div, AnchorCorner, AnyElement, AppContext, Context, Element, EventEmitter,
+    FocusHandle, FocusableView, IntoElement, Model, ModelContext, ParentElement, Render, Styled,
+    Subscription, View, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use language::{LanguageServerId, LanguageServerName};
 use lsp::IoKind;
@@ -595,10 +595,9 @@ fn log_contents(lines: &VecDeque<String>) -> String {
 }
 
 impl Render for LspLogView {
-    type Output = EditorElement;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
-        self.editor.update(cx, |editor, cx| editor.render(cx))
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        self.editor
+            .update(cx, |editor, cx| editor.render(cx).into_any())
     }
 }
 
@@ -709,9 +708,7 @@ impl ToolbarItemView for LspLogToolbarItemView {
 }
 
 impl Render for LspLogToolbarItemView {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let Some(log_view) = self.log_view.clone() else {
             return div();
         };

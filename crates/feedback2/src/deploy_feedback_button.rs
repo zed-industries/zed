@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Render, ViewContext, WeakView};
+use gpui::{Render, ViewContext, WeakView};
 use ui::{prelude::*, ButtonCommon, Icon, IconButton, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -17,9 +17,7 @@ impl DeployFeedbackButton {
 }
 
 impl Render for DeployFeedbackButton {
-    type Output = AnyElement;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let is_open = self
             .workspace
             .upgrade()

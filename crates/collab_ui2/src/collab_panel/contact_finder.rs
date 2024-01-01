@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
-    ParentElement as _, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ParentElement as _,
+    Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -35,7 +35,7 @@ impl ContactFinder {
 }
 
 impl Render for ContactFinder {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .elevation_3(cx)
             .child(
@@ -51,8 +51,6 @@ impl Render for ContactFinder {
             .child(self.picker.clone())
             .w(rems(34.))
     }
-
-    type Output = Div;
 }
 
 pub struct ContactFinderDelegate {

@@ -30,9 +30,9 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
-    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, Div, EventEmitter, FocusHandle,
-    Focusable, FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
@@ -1101,9 +1101,7 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 }
 
 impl Render for AssistantPanel {
-    type Output = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
             v_stack()
                 .on_action(cx.listener(AssistantPanel::save_credentials))
@@ -2513,9 +2511,7 @@ impl ConversationEditor {
 impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
 
 impl Render for ConversationEditor {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         div()
             .key_context("ConversationEditor")
             .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
@@ -2618,9 +2614,7 @@ struct InlineAssistant {
 impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 
 impl Render for InlineAssistant {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let measurements = self.measurements.get();
         h_stack()
             .w_full()

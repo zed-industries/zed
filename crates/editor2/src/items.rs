@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    div, point, AnyElement, AppContext, AsyncWindowContext, Context, Div, Entity, EntityId,
+    div, point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId,
     EventEmitter, IntoElement, Model, ParentElement, Pixels, Render, SharedString, Styled,
     Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -1193,9 +1193,7 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    type Output = Div;
-
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",

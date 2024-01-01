@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 
 use crate::{prelude::*, Icon};
@@ -7,9 +7,7 @@ use crate::{Button, ButtonStyle};
 pub struct ButtonStory;
 
 impl Render for ButtonStory {
-    type Output = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .child(Story::title_for::<Button>())
             .child(Story::label("Default"))

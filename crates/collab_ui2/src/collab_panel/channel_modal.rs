@@ -5,9 +5,9 @@ use client::{
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, overlay, AppContext, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusableView, Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView,
+    actions, div, overlay, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusableView,
+    Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -142,9 +142,7 @@ impl FocusableView for ChannelModal {
 }
 
 impl Render for ChannelModal {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let channel_store = self.channel_store.read(cx);
         let Some(channel) = channel_store.channel_for_id(self.channel_id) else {
             return div();

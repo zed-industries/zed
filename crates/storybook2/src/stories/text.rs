@@ -1,6 +1,6 @@
 use gpui::{
-    div, green, red, Component, HighlightStyle, InteractiveText, IntoElement, ParentElement,
-    Render, Styled, StyledText, View, VisualContext, WindowContext,
+    div, green, red, Element, HighlightStyle, InteractiveText, IntoElement, ParentElement, Render,
+    Styled, StyledText, View, VisualContext, WindowContext,
 };
 use indoc::indoc;
 use story::*;
@@ -14,9 +14,7 @@ impl TextStory {
 }
 
 impl Render for TextStory {
-    type Output = Component<StoryContainer>;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
         StoryContainer::new("Text Story", "crates/storybook2/src/stories/text.rs")
             .children(
                 vec![

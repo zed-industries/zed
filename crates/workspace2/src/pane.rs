@@ -9,9 +9,8 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
     AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, FocusHandle,
-    Focusable, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel,
-    Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -1868,9 +1867,7 @@ impl FocusableView for Pane {
 }
 
 impl Render for Pane {
-    type Output = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
@@ -2750,9 +2747,7 @@ mod tests {
 }
 
 impl Render for DraggedTab {
-    type Output = <Tab as RenderOnce>::Output;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         let item = &self.pane.read(cx).items[self.ix];
         let label = item.tab_content(Some(self.detail), false, cx);

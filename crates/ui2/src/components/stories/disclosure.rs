@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 
 use crate::prelude::*;
@@ -7,9 +7,7 @@ use crate::Disclosure;
 pub struct DisclosureStory;
 
 impl Render for DisclosureStory {
-    type Output = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .child(Story::title_for::<Disclosure>())
             .child(Story::label("Toggled"))

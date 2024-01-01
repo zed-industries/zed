@@ -312,18 +312,6 @@ impl std::fmt::Debug for AnyWeakView {
     }
 }
 
-impl<T, E> Render for T
-where
-    T: 'static + FnMut(&mut WindowContext) -> E,
-    E: 'static + Send + Element,
-{
-    type Output = E;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
-        (self)(cx)
-    }
-}
-
 mod any_view {
     use crate::{AnyElement, AnyView, IntoElement, LayoutId, Render, WindowContext};
 

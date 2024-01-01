@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
+    actions, div, serde_json, AppContext, AsyncWindowContext, Element, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled,
     Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -329,9 +329,7 @@ impl TerminalPanel {
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
-    type Output = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         div().size_full().child(self.pane.clone())
     }
 }

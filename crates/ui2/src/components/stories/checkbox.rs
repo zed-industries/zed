@@ -1,4 +1,4 @@
-use gpui::{Div, Render, ViewContext};
+use gpui::{Render, ViewContext};
 use story::Story;
 
 use crate::prelude::*;
@@ -7,9 +7,7 @@ use crate::{h_stack, Checkbox};
 pub struct CheckboxStory;
 
 impl Render for CheckboxStory {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .child(Story::title_for::<Checkbox>())
             .child(Story::label("Default"))

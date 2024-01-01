@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 use strum::IntoEnumIterator;
 
@@ -8,9 +8,7 @@ use crate::{Icon, IconElement};
 pub struct IconStory;
 
 impl Render for IconStory {
-    type Output = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         let icons = Icon::iter();
 
         Story::container()

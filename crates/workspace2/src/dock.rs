@@ -1,7 +1,7 @@
 use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity, EntityId,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
     SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -505,9 +505,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
@@ -594,9 +592,7 @@ impl PanelButtons {
 }
 
 impl Render for PanelButtons {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         // todo!()
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
@@ -691,7 +687,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{actions, div, Div, ViewContext, WindowContext};
+    use gpui::{actions, div, ViewContext, WindowContext};
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -717,9 +713,7 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        type Output = Div;
-
-        fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
             div()
         }
     }

@@ -64,9 +64,7 @@ impl BaseKeymapSelector {
 }
 
 impl Render for BaseKeymapSelector {
-    type Output = View<Picker<BaseKeymapSelectorDelegate>>;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         self.picker.clone()
     }
 }

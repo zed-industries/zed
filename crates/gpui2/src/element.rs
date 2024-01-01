@@ -6,36 +6,17 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
-/// Elements describe the contents of a window for a given frame.
-/// Like HTML elements, elements form a tree and participate in layout.
-/// In GPUI, elements are single-use objects that do not outlive a single frame.
-/// Elements are associated with state.
-/// If the element has an identifier, the element's state persists across frames in which the element appears.
-/// If the element is anonymous, the state only persists across from layout request to paint in is referred to as "frame state".
-/// A potential improvement would be to separate this temporary frame state from persistent element state at the type level, and request element state from the context with an id. /cc @as-cii\
-/// To render the contents of a window, we first walk over the tree of elements recursively via [request_layout], giving each an opportunity to register with the layout engine.
-/// Then we compute the requested layout and use the computed bounds to paint the element tree recursively with [paint].
-/// You can implement this trait yourself for performance or other special situations, but you'll typically compose existing elements such as `Div`, `Img`, etc.
 pub trait Element: 'static + IntoElement {
-    /// State that is carried from [request_layout] to [paint] for anonymous elements, and between frames for elements that have an id.
     type State: 'static;
 
-    /// Recursively register this element and all its descendants with the layout engine.
-    /// If this element has an id, you'll receive the [State] from the previous frame if an element with this id existed in that frame.
-    /// Return the [LayoutId] you requested from the engine and whatever state you want to carry over to [paint], and also the next frame if this element has an id.
-    fn request_layout(
+    fn layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State);
 
-    /// Recursively paint this element by populating the current frame's [Scene] with geometric primitives such as quads, sprites, paths, etc.
-    /// Receives the state from layout, and potentially the previous frame if this element has an id.
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
 
-    /// Convert into a dynamically-typed [AnyElement].
-    /// Before an element can be painted, it must be converted into an [AnyElement].
-    /// It's also useful in situations where you need to own an element, but don't care about its specific type.
     fn into_any(self) -> AnyElement {
         AnyElement::new(self)
     }
@@ -125,14 +106,8 @@ pub trait IntoElement: Sized {
     }
 }
 
-/// A trait that all [View] types must implement.
-/// This trait tells the framework how a particular type is displayed on screen.
-/// For any type `V` implementing `Render`, you can create a `View<V>` handle, which can be used as an element in another view or as the root of a window.
 pub trait Render: 'static + Sized {
-    type Output: IntoElement;
-
-    /// Describes how this type is displayed on screen.
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output;
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element;
 }
 
 /// You can derive [IntoElement] on any type that implements this trait.
@@ -192,7 +167,7 @@ impl<C: RenderOnce> Element for Component<C> {
         let mut element = self.component.take().unwrap().render(cx).into_element();
         if let Some(element_id) = element.element_id() {
             let layout_id =
-                cx.with_element_state(element_id, |state, cx| element.request_layout(state, cx));
+                cx.with_element_state(element_id, |state, cx| element.layout(state, cx));
             let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: None,
@@ -200,7 +175,7 @@ impl<C: RenderOnce> Element for Component<C> {
             (layout_id, state)
         } else {
             let (layout_id, state) =
-                element.request_layout(state.and_then(|s| s.rendered_element_state), cx);
+                element.layout(state.and_then(|s| s.rendered_element_state), cx);
             let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: Some(state),

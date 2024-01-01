@@ -1,4 +1,4 @@
-use gpui::{actions, AnchorCorner, Div, Render, View};
+use gpui::{actions, AnchorCorner, Render, View};
 use story::Story;
 
 use crate::prelude::*;
@@ -20,9 +20,7 @@ fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<C
 pub struct ContextMenuStory;
 
 impl Render for ContextMenuStory {
-    type Output = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .on_action(|_: &PrintCurrentDate, _| {
                 println!("printing unix time!");

@@ -3,8 +3,8 @@ mod projects;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Result, Subscription,
-    Task, View, ViewContext, WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result, Subscription, Task,
+    View, ViewContext, WeakView,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
@@ -103,9 +103,7 @@ impl FocusableView for RecentProjects {
 }
 
 impl Render for RecentProjects {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .w(rems(self.rem_width))
             .child(self.picker.clone())

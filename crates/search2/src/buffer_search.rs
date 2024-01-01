@@ -10,7 +10,7 @@ use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, AppContext, ClickEvent, Div, EventEmitter, FocusableView,
+    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
     FontStyle, FontWeight, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
     Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
     WhiteSpace, WindowContext,
@@ -101,9 +101,7 @@ impl BufferSearchBar {
 impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
-    type Output = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if self.dismissed {
             return div();
         }

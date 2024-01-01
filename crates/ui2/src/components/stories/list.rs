@@ -1,4 +1,4 @@
-use gpui::{Div, Render};
+use gpui::Render;
 use story::Story;
 
 use crate::{prelude::*, ListHeader, ListSeparator, ListSubHeader};
@@ -7,9 +7,7 @@ use crate::{List, ListItem};
 pub struct ListStory;
 
 impl Render for ListStory {
-    type Output = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Output {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         Story::container()
             .child(Story::title_for::<List>())
             .child(Story::label("Default"))
