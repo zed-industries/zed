@@ -403,7 +403,7 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
-            frame_arena: Arena::new(1 * 1024 * 1024),
+            frame_arena: Arena::new(1024 * 1024),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             blur_listeners: SubscriberSet::new(),
@@ -637,7 +637,7 @@ impl<'a> WindowContext<'a> {
         let handle = self.window.handle;
         let display_id = self.window.display_id;
 
-        if !self.frame_consumers.contains_key(&display_id) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.frame_consumers.entry(display_id) {
             let (tx, mut rx) = mpsc::unbounded::<()>();
             self.platform.set_display_link_output_callback(
                 display_id,
@@ -669,7 +669,7 @@ impl<'a> WindowContext<'a> {
                     .ok();
                 }
             });
-            self.frame_consumers.insert(display_id, consumer_task);
+            e.insert(consumer_task);
         }
 
         if self.next_frame_callbacks.is_empty() {
@@ -718,7 +718,7 @@ impl<'a> WindowContext<'a> {
         children: impl IntoIterator<Item = LayoutId>,
     ) -> LayoutId {
         self.app.layout_id_buffer.clear();
-        self.app.layout_id_buffer.extend(children.into_iter());
+        self.app.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
 
         self.window.layout_engine.as_mut().unwrap().request_layout(
@@ -844,7 +844,7 @@ impl<'a> WindowContext<'a> {
         let text_style = self.text_style();
         text_style
             .line_height
-            .to_pixels(text_style.font_size.into(), rem_size)
+            .to_pixels(text_style.font_size, rem_size)
     }
 
     /// Call to prevent the default action of an event. Currently only used to prevent
@@ -966,7 +966,7 @@ impl<'a> WindowContext<'a> {
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
         let stacking_order = self.window.next_frame.z_index_stack.clone();
         let depth_map = &mut self.window.next_frame.depth_map;
-        match depth_map.binary_search_by(|(level, _)| stacking_order.cmp(&level)) {
+        match depth_map.binary_search_by(|(level, _)| stacking_order.cmp(level)) {
             Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, bounds)),
         }
     }
@@ -1889,7 +1889,7 @@ impl Context for WindowContext<'_> {
         T: 'static,
     {
         let entity = self.entities.read(handle);
-        read(&*entity, &*self.app)
+        read(entity, &*self.app)
     }
 
     fn read_window<T, R>(
@@ -1949,7 +1949,7 @@ impl VisualContext for WindowContext<'_> {
         update: impl FnOnce(&mut T, &mut ViewContext<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut lease = self.app.entities.lease(&view.model);
-        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, &view);
+        let mut cx = ViewContext::new(&mut *self.app, &mut *self.window, view);
         let result = update(&mut *lease, &mut cx);
         cx.app.entities.end_lease(lease);
         result
@@ -1986,25 +1986,25 @@ impl<'a> std::ops::Deref for WindowContext<'a> {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
-        &self.app
+        self.app
     }
 }
 
 impl<'a> std::ops::DerefMut for WindowContext<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.app
+        self.app
     }
 }
 
 impl<'a> Borrow<AppContext> for WindowContext<'a> {
     fn borrow(&self) -> &AppContext {
-        &self.app
+        self.app
     }
 }
 
 impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
     fn borrow_mut(&mut self) -> &mut AppContext {
-        &mut self.app
+        self.app
     }
 }
 
@@ -2036,7 +2036,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     ) -> R {
         if let Some(id) = id.map(Into::into) {
             let window = self.window_mut();
-            window.element_id_stack.push(id.into());
+            window.element_id_stack.push(id);
             let result = f(self);
             let window: &mut Window = self.borrow_mut();
             window.element_id_stack.pop();
@@ -2258,13 +2258,13 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
 
 impl Borrow<Window> for WindowContext<'_> {
     fn borrow(&self) -> &Window {
-        &self.window
+        self.window
     }
 }
 
 impl BorrowMut<Window> for WindowContext<'_> {
     fn borrow_mut(&mut self) -> &mut Window {
-        &mut self.window
+        self.window
     }
 }
 
@@ -2939,9 +2939,9 @@ impl<V> Hash for WindowHandle<V> {
     }
 }
 
-impl<V: 'static> Into<AnyWindowHandle> for WindowHandle<V> {
-    fn into(self) -> AnyWindowHandle {
-        self.any_handle
+impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
+    fn from(val: WindowHandle<V>) -> Self {
+        val.any_handle
     }
 }
 

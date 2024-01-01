@@ -258,7 +258,7 @@ impl InputEvent {
         }
     }
 
-    pub fn mouse_event<'a>(&'a self) -> Option<&'a dyn Any> {
+    pub fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
             InputEvent::KeyDown { .. } => None,
             InputEvent::KeyUp { .. } => None,
@@ -272,7 +272,7 @@ impl InputEvent {
         }
     }
 
-    pub fn keyboard_event<'a>(&'a self) -> Option<&'a dyn Any> {
+    pub fn keyboard_event(&self) -> Option<&dyn Any> {
         match self {
             InputEvent::KeyDown(event) => Some(event),
             InputEvent::KeyUp(event) => Some(event),

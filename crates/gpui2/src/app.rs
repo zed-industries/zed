@@ -52,7 +52,7 @@ pub struct AppCell {
 impl AppCell {
     #[track_caller]
     pub fn borrow(&self) -> AppRef {
-        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+        if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
@@ -61,7 +61,7 @@ impl AppCell {
 
     #[track_caller]
     pub fn borrow_mut(&self) -> AppRefMut {
-        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+        if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
@@ -74,7 +74,7 @@ pub struct AppRef<'a>(Ref<'a, AppContext>);
 
 impl<'a> Drop for AppRef<'a> {
     fn drop(&mut self) {
-        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+        if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped borrow from {thread_id:?}");
         }
@@ -86,7 +86,7 @@ pub struct AppRefMut<'a>(RefMut<'a, AppContext>);
 
 impl<'a> Drop for AppRefMut<'a> {
     fn drop(&mut self) {
-        if let Some(_) = option_env!("TRACK_THREAD_BORROWS") {
+        if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped {thread_id:?}");
         }
@@ -130,7 +130,7 @@ impl App {
         let this = Rc::downgrade(&self.0);
         self.0.borrow().platform.on_open_urls(Box::new(move |urls| {
             if let Some(app) = this.upgrade() {
-                callback(urls, &mut *app.borrow_mut());
+                callback(urls, &mut app.borrow_mut());
             }
         }));
         self
@@ -280,7 +280,7 @@ impl AppContext {
             }),
         });
 
-        init_app_menus(platform.as_ref(), &mut *app.borrow_mut());
+        init_app_menus(platform.as_ref(), &mut app.borrow_mut());
 
         platform.on_quit(Box::new({
             let cx = app.clone();
@@ -428,7 +428,7 @@ impl AppContext {
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.windows
             .values()
-            .filter_map(|window| Some(window.as_ref()?.handle.clone()))
+            .filter_map(|window| Some(window.as_ref()?.handle))
             .collect()
     }
 
@@ -808,7 +808,7 @@ impl AppContext {
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type
             .entry(global_type)
-            .or_insert_with(|| Box::new(G::default()))
+            .or_insert_with(|| Box::<G>::default())
             .downcast_mut::<G>()
             .unwrap()
     }
@@ -993,7 +993,7 @@ impl AppContext {
             (),
             Box::new(move |cx| {
                 let future = on_quit(cx);
-                async move { future.await }.boxed_local()
+                future.boxed_local()
             }),
         );
         activate();

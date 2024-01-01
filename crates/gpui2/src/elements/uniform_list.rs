@@ -41,7 +41,7 @@ where
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
         interactivity: Interactivity {
-            element_id: Some(id.into()),
+            element_id: Some(id),
             base_style: Box::new(base_style),
 
             #[cfg(debug_assertions)]

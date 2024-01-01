@@ -166,6 +166,12 @@ pub struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
 }
 
+impl Default for MacPlatform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MacPlatform {
     pub fn new() -> Self {
         let dispatcher = Arc::new(MacDispatcher::new());
@@ -475,7 +481,6 @@ impl Platform for MacPlatform {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         MacDisplay::all()
-            .into_iter()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
     }
@@ -1035,7 +1040,6 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
     let urls = unsafe {
         (0..urls.count())
-            .into_iter()
             .filter_map(|i| {
                 let url = urls.objectAtIndex(i);
                 match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {

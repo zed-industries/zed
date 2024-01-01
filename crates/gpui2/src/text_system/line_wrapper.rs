@@ -97,14 +97,12 @@ impl LineWrapper {
                 self.cached_ascii_char_widths[c as usize] = Some(width);
                 width
             }
+        } else if let Some(cached_width) = self.cached_other_char_widths.get(&c) {
+            *cached_width
         } else {
-            if let Some(cached_width) = self.cached_other_char_widths.get(&c) {
-                *cached_width
-            } else {
-                let width = self.compute_width_for_char(c);
-                self.cached_other_char_widths.insert(c, width);
-                width
-            }
+            let width = self.compute_width_for_char(c);
+            self.cached_other_char_widths.insert(c, width);
+            width
         }
     }
 

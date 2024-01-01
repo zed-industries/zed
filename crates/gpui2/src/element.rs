@@ -159,7 +159,7 @@ impl<C: RenderOnce> Element for Component<C> {
         } else {
             element.paint(
                 bounds,
-                &mut state.rendered_element_state.as_mut().unwrap(),
+                state.rendered_element_state.as_mut().unwrap(),
                 cx,
             );
         }

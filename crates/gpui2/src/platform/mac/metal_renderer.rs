@@ -179,7 +179,7 @@ impl MetalRenderer {
     }
 
     pub fn layer(&self) -> &metal::MetalLayerRef {
-        &*self.layer
+        &self.layer
     }
 
     pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
@@ -206,7 +206,7 @@ impl MetalRenderer {
         let command_buffer = command_queue.new_command_buffer();
         let mut instance_offset = 0;
 
-        let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, &command_buffer);
+        let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, command_buffer);
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
         let color_attachment = render_pass_descriptor
@@ -429,7 +429,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let shadow_bytes_len = mem::size_of::<Shadow>() * shadows.len();
+        let shadow_bytes_len = std::mem::size_of_val(shadows);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(
@@ -489,7 +489,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let quad_bytes_len = mem::size_of::<Quad>() * quads.len();
+        let quad_bytes_len = std::mem::size_of_val(quads);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
@@ -537,7 +537,7 @@ impl MetalRenderer {
         let mut prev_texture_id = None;
         let mut sprites = SmallVec::<[_; 1]>::new();
         let mut paths_and_tiles = paths
-            .into_iter()
+            .iter()
             .map(|path| (path, tiles_by_path_id.get(&path.id).unwrap()))
             .peekable();
 
@@ -652,7 +652,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let quad_bytes_len = mem::size_of::<Underline>() * underlines.len();
+        let quad_bytes_len = std::mem::size_of_val(underlines);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(
@@ -723,7 +723,7 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-        let sprite_bytes_len = mem::size_of::<MonochromeSprite>() * sprites.len();
+        let sprite_bytes_len = std::mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(
@@ -794,7 +794,7 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-        let sprite_bytes_len = mem::size_of::<PolychromeSprite>() * sprites.len();
+        let sprite_bytes_len = std::mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(

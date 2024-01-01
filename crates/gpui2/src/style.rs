@@ -210,7 +210,7 @@ impl TextStyle {
     pub fn font(&self) -> Font {
         Font {
             family: self.font_family.clone(),
-            features: self.font_features.clone(),
+            features: self.font_features,
             weight: self.font_weight,
             style: self.font_style,
         }
@@ -232,7 +232,7 @@ impl TextStyle {
             },
             color: self.color,
             background_color: self.background_color,
-            underline: self.underline.clone(),
+            underline: self.underline,
         }
     }
 }
@@ -570,7 +570,7 @@ impl From<&TextStyle> for HighlightStyle {
             font_weight: Some(other.font_weight),
             font_style: Some(other.font_style),
             background_color: other.background_color,
-            underline: other.underline.clone(),
+            underline: other.underline,
             fade_out: None,
         }
     }

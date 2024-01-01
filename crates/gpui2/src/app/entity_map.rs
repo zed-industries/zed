@@ -327,9 +327,9 @@ impl<T: 'static> Model<T> {
         cx.entities.read(self)
     }
 
-    pub fn read_with<'a, R, C: Context>(
+    pub fn read_with<R, C: Context>(
         &self,
-        cx: &'a C,
+        cx: &C,
         f: impl FnOnce(&T, &AppContext) -> R,
     ) -> C::Result<R> {
         cx.read_model(self, f)

@@ -106,7 +106,7 @@ impl AsyncAppContext {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.borrow_mut();
-        Ok(f(&mut *lock))
+        Ok(f(&mut lock))
     }
 
     pub fn open_window<V>(

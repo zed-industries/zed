@@ -14,6 +14,7 @@ pub type LayerId = u32;
 
 pub type DrawOrder = u32;
 
+#[derive(Default)]
 pub(crate) struct SceneBuilder {
     last_order: Option<(StackingOrder, LayerId)>,
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
@@ -26,21 +27,7 @@ pub(crate) struct SceneBuilder {
     surfaces: Vec<Surface>,
 }
 
-impl Default for SceneBuilder {
-    fn default() -> Self {
-        SceneBuilder {
-            last_order: None,
-            layers_by_order: BTreeMap::new(),
-            shadows: Vec::new(),
-            quads: Vec::new(),
-            paths: Vec::new(),
-            underlines: Vec::new(),
-            monochrome_sprites: Vec::new(),
-            polychrome_sprites: Vec::new(),
-            surfaces: Vec::new(),
-        }
-    }
-}
+
 
 impl SceneBuilder {
     pub fn build(&mut self) -> Scene {

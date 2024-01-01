@@ -262,12 +262,12 @@ impl<'a, T> Context for ModelContext<'a, T> {
 
 impl<T> Borrow<AppContext> for ModelContext<'_, T> {
     fn borrow(&self) -> &AppContext {
-        &self.app
+        self.app
     }
 }
 
 impl<T> BorrowMut<AppContext> for ModelContext<'_, T> {
     fn borrow_mut(&mut self) -> &mut AppContext {
-        &mut self.app
+        self.app
     }
 }

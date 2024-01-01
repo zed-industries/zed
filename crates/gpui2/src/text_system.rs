@@ -106,7 +106,7 @@ impl TextSystem {
     }
 
     pub fn units_per_em(&self, font_id: FontId) -> u32 {
-        self.read_metrics(font_id, |metrics| metrics.units_per_em as u32)
+        self.read_metrics(font_id, |metrics| metrics.units_per_em)
     }
 
     pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
@@ -174,7 +174,7 @@ impl TextSystem {
 
         let layout = self
             .line_layout_cache
-            .layout_line(&text, font_size, &font_runs);
+            .layout_line(text, font_size, &font_runs);
 
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
@@ -208,7 +208,7 @@ impl TextSystem {
                 len: run.len as u32,
                 color: run.color,
                 background_color: run.background_color,
-                underline: run.underline.clone(),
+                underline: run.underline,
             });
         }
 
@@ -268,7 +268,7 @@ impl TextSystem {
                         len: run_len_within_line as u32,
                         color: run.color,
                         background_color: run.background_color,
-                        underline: run.underline.clone(),
+                        underline: run.underline,
                     });
                 }
 
@@ -287,7 +287,7 @@ impl TextSystem {
             lines.push(WrappedLine {
                 layout,
                 decoration_runs,
-                text: SharedString::from(line_text),
+                text: line_text,
             });
 
             // Skip `\n` character.
@@ -338,7 +338,7 @@ impl TextSystem {
     pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let raster_bounds = self.raster_bounds.upgradable_read();
         if let Some(bounds) = raster_bounds.get(params) {
-            Ok(bounds.clone())
+            Ok(*bounds)
         } else {
             let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
             let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
@@ -374,7 +374,7 @@ impl Drop for LineWrapperHandle {
         let wrapper = self.wrapper.take().unwrap();
         state
             .get_mut(&FontIdWithSize {
-                font_id: wrapper.font_id.clone(),
+                font_id: wrapper.font_id,
                 font_size: wrapper.font_size,
             })
             .unwrap()
@@ -439,8 +439,10 @@ impl FontWeight {
 
 /// Allows italic or oblique faces to be selected.
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
+#[derive(Default)]
 pub enum FontStyle {
     /// A face that is neither italic not obliqued.
+    #[default]
     Normal,
     /// A form that is generally cursive in nature.
     Italic,
@@ -448,11 +450,7 @@ pub enum FontStyle {
     Oblique,
 }
 
-impl Default for FontStyle {
-    fn default() -> FontStyle {
-        FontStyle::Normal
-    }
-}
+
 
 impl Display for FontStyle {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
