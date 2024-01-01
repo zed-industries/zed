@@ -1007,6 +1007,7 @@ impl ProjectSearchView {
     }
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
+        // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
         let text = self.query_editor.read(cx).text(cx);
         let included_files =
             match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
@@ -1022,8 +1023,7 @@ impl ProjectSearchView {
                     if should_mark_error {
                         cx.notify();
                     }
-
-                    return None;
+                    vec![]
                 }
             };
         let excluded_files =
@@ -1041,12 +1041,12 @@ impl ProjectSearchView {
                     if should_mark_error {
                         cx.notify();
                     }
-
-                    return None;
+                    vec![]
                 }
             };
+
         let current_mode = self.current_mode;
-        match current_mode {
+        let query = match current_mode {
             SearchMode::Regex => {
                 match SearchQuery::regex(
                     text,
@@ -1100,7 +1100,11 @@ impl ProjectSearchView {
                     None
                 }
             },
+        };
+        if !self.panels_with_errors.is_empty() {
+            return None;
         }
+        query
     }
 
     fn parse_path_matches(text: &str) -> anyhow::Result<Vec<PathMatcher>> {
