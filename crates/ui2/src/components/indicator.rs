@@ -45,9 +45,9 @@ impl Indicator {
 }
 
 impl RenderOnce for Indicator {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .flex_none()
             .map(|this| match self.style {

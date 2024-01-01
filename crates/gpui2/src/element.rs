@@ -6,8 +6,20 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
-pub trait Render: 'static + Sized {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element;
+pub trait Element: 'static + IntoElement {
+    type State: 'static;
+
+    fn layout(
+        &mut self,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State);
+
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
+
+    fn into_any(self) -> AnyElement {
+        AnyElement::new(self)
+    }
 }
 
 pub trait IntoElement: Sized {
@@ -81,35 +93,44 @@ pub trait IntoElement: Sized {
     }
 }
 
-pub trait Element: 'static + IntoElement {
-    type State: 'static;
-
-    fn layout(
-        &mut self,
-        state: Option<Self::State>,
-        cx: &mut WindowContext,
-    ) -> (LayoutId, Self::State);
-
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
-
-    fn into_any(self) -> AnyElement {
-        AnyElement::new(self)
-    }
+pub trait Render: 'static + Sized {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element;
 }
 
 pub trait RenderOnce: 'static {
-    type Rendered: IntoElement;
+    type Output: IntoElement;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered;
+    fn render(self, cx: &mut WindowContext) -> Self::Output;
+}
+
+pub trait ParentElement {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]>;
+
+    fn child(mut self, child: impl IntoElement) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut().push(child.into_element().into_any());
+        self
+    }
+
+    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut()
+            .extend(children.into_iter().map(|child| child.into_any_element()));
+        self
+    }
 }
 
 pub struct Component<C> {
     component: Option<C>,
 }
 
-pub struct CompositeElementState<C: RenderOnce> {
-    rendered_element: Option<<C::Rendered as IntoElement>::Element>,
-    rendered_element_state: Option<<<C::Rendered as IntoElement>::Element as Element>::State>,
+pub struct ComponentState<C: RenderOnce> {
+    rendered_element: Option<<C::Output as IntoElement>::Element>,
+    rendered_element_state: Option<<<C::Output as IntoElement>::Element as Element>::State>,
 }
 
 impl<C> Component<C> {
@@ -121,7 +142,7 @@ impl<C> Component<C> {
 }
 
 impl<C: RenderOnce> Element for Component<C> {
-    type State = CompositeElementState<C>;
+    type State = ComponentState<C>;
 
     fn layout(
         &mut self,
@@ -132,7 +153,7 @@ impl<C: RenderOnce> Element for Component<C> {
         if let Some(element_id) = element.element_id() {
             let layout_id =
                 cx.with_element_state(element_id, |state, cx| element.layout(state, cx));
-            let state = CompositeElementState {
+            let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: None,
             };
@@ -140,7 +161,7 @@ impl<C: RenderOnce> Element for Component<C> {
         } else {
             let (layout_id, state) =
                 element.layout(state.and_then(|s| s.rendered_element_state), cx);
-            let state = CompositeElementState {
+            let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: Some(state),
             };
@@ -180,27 +201,6 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
-
-pub trait ParentElement {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]>;
-
-    fn child(mut self, child: impl IntoElement) -> Self
-    where
-        Self: Sized,
-    {
-        self.children_mut().push(child.into_element().into_any());
-        self
-    }
-
-    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
-    where
-        Self: Sized,
-    {
-        self.children_mut()
-            .extend(children.into_iter().map(|child| child.into_any_element()));
-        self
-    }
-}
 
 trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;
