@@ -9,7 +9,7 @@ use std::{any::Any, fmt::Debug};
 pub trait Element: 'static + IntoElement {
     type State: 'static;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,
@@ -167,7 +167,7 @@ impl<C: RenderOnce> Element for Component<C> {
         let mut element = self.component.take().unwrap().render(cx).into_element();
         if let Some(element_id) = element.element_id() {
             let layout_id =
-                cx.with_element_state(element_id, |state, cx| element.layout(state, cx));
+                cx.with_element_state(element_id, |state, cx| element.request_layout(state, cx));
             let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: None,
@@ -175,7 +175,7 @@ impl<C: RenderOnce> Element for Component<C> {
             (layout_id, state)
         } else {
             let (layout_id, state) =
-                element.layout(state.and_then(|s| s.rendered_element_state), cx);
+                element.request_layout(state.and_then(|s| s.rendered_element_state), cx);
             let state = ComponentState {
                 rendered_element: Some(element),
                 rendered_element_state: Some(state),
@@ -271,7 +271,7 @@ impl<E: Element> DrawableElement<E> {
         self.element.as_ref()?.element_id()
     }
 
-    fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
         let (layout_id, frame_state) = if let Some(id) = self.element.as_ref().unwrap().element_id()
         {
             let layout_id = cx.with_element_state(id, |element_state, cx| {
@@ -341,7 +341,7 @@ impl<E: Element> DrawableElement<E> {
         cx: &mut WindowContext,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
-            self.layout(cx);
+            self.request_layout(cx);
         }
 
         let layout_id = match &mut self.phase {
@@ -396,7 +396,7 @@ where
     }
 
     fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
-        DrawableElement::layout(self.as_mut().unwrap(), cx)
+        DrawableElement::request_layout(self.as_mut().unwrap(), cx)
     }
 
     fn paint(&mut self, cx: &mut WindowContext) {
