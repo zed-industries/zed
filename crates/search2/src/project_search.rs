@@ -13,10 +13,10 @@ use editor::{
 use editor::{EditorElement, EditorStyle};
 use gpui::{
     actions, div, AnyElement, AnyView, AppContext, Context as _, Element, EntityId, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, KeyContext,
-    Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled, Subscription,
-    Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace,
-    WindowContext,
+    FocusHandle, FocusableView, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
+    WhiteSpace, WindowContext,
 };
 use menu::Confirm;
 use project::{
@@ -1011,24 +1011,37 @@ impl ProjectSearchView {
         let included_files =
             match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
                 Ok(included_files) => {
-                    self.panels_with_errors.remove(&InputPanel::Include);
+                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Include);
+                    if should_unmark_error {
+                        cx.notify();
+                    }
                     included_files
                 }
                 Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Include);
-                    cx.notify();
+                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Include);
+                    if should_mark_error {
+                        cx.notify();
+                    }
+
                     return None;
                 }
             };
         let excluded_files =
             match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
                 Ok(excluded_files) => {
-                    self.panels_with_errors.remove(&InputPanel::Exclude);
+                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Exclude);
+                    if should_unmark_error {
+                        cx.notify();
+                    }
+
                     excluded_files
                 }
                 Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Exclude);
-                    cx.notify();
+                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Exclude);
+                    if should_mark_error {
+                        cx.notify();
+                    }
+
                     return None;
                 }
             };
@@ -1044,12 +1057,20 @@ impl ProjectSearchView {
                     excluded_files,
                 ) {
                     Ok(query) => {
-                        self.panels_with_errors.remove(&InputPanel::Query);
+                        let should_unmark_error =
+                            self.panels_with_errors.remove(&InputPanel::Query);
+                        if should_unmark_error {
+                            cx.notify();
+                        }
+
                         Some(query)
                     }
                     Err(_e) => {
-                        self.panels_with_errors.insert(InputPanel::Query);
-                        cx.notify();
+                        let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
+                        if should_mark_error {
+                            cx.notify();
+                        }
+
                         None
                     }
                 }
@@ -1063,12 +1084,19 @@ impl ProjectSearchView {
                 excluded_files,
             ) {
                 Ok(query) => {
-                    self.panels_with_errors.remove(&InputPanel::Query);
+                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
+                    if should_unmark_error {
+                        cx.notify();
+                    }
+
                     Some(query)
                 }
                 Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Query);
-                    cx.notify();
+                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
+                    if should_mark_error {
+                        cx.notify();
+                    }
+
                     None
                 }
             },
@@ -1183,6 +1211,13 @@ impl ProjectSearchView {
         match self.current_mode {
             SearchMode::Text | SearchMode::Regex => "Include/exclude specific paths with the filter option. Matching exact word and/or casing is available too.".into(),
             SearchMode::Semantic => "\nSimply explain the code you are looking to find. ex. 'prompt user for permissions to index their project'".into()
+        }
+    }
+    fn border_color_for(&self, panel: InputPanel, cx: &WindowContext) -> Hsla {
+        if self.panels_with_errors.contains(&panel) {
+            Color::Error.color(cx)
+        } else {
+            cx.theme().colors().border
         }
     }
 }
@@ -1507,6 +1542,7 @@ impl Render for ProjectSearchBar {
         }
         let search = search.read(cx);
         let semantic_is_available = SemanticIndex::enabled(cx);
+
         let query_column = v_stack().child(
             h_stack()
                 .min_w(rems(512. / 16.))
@@ -1515,7 +1551,7 @@ impl Render for ProjectSearchBar {
                 .gap_2()
                 .bg(cx.theme().colors().editor_background)
                 .border_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(search.border_color_for(InputPanel::Query, cx))
                 .rounded_lg()
                 .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
@@ -1789,7 +1825,7 @@ impl Render for ProjectSearchBar {
                                 .px_2()
                                 .py_1()
                                 .border_1()
-                                .border_color(cx.theme().colors().border)
+                                .border_color(search.border_color_for(InputPanel::Include, cx))
                                 .rounded_lg()
                                 .child(self.render_text_input(&search.included_files_editor, cx))
                                 .when(search.current_mode != SearchMode::Semantic, |this| {
@@ -1815,7 +1851,7 @@ impl Render for ProjectSearchBar {
                                 .px_2()
                                 .py_1()
                                 .border_1()
-                                .border_color(cx.theme().colors().border)
+                                .border_color(search.border_color_for(InputPanel::Exclude, cx))
                                 .rounded_lg()
                                 .child(self.render_text_input(&search.excluded_files_editor, cx)),
                         ),
