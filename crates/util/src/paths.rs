@@ -67,8 +67,8 @@ impl<T: AsRef<Path>> PathExt for T {
     fn icon_suffix(&self) -> Option<&str> {
         let file_name = self.as_ref().file_name()?.to_str()?;
 
-        if file_name.starts_with(".") {
-            return file_name.strip_prefix(".");
+        if file_name.starts_with('.') {
+            return file_name.strip_prefix('.');
         }
 
         self.as_ref()
@@ -213,7 +213,7 @@ impl Eq for PathMatcher {}
 impl PathMatcher {
     pub fn new(maybe_glob: &str) -> Result<Self, globset::Error> {
         Ok(PathMatcher {
-            glob: Glob::new(&maybe_glob)?.compile_matcher(),
+            glob: Glob::new(maybe_glob)?.compile_matcher(),
             maybe_path: PathBuf::from(maybe_glob),
         })
     }

@@ -2655,7 +2655,7 @@ impl LineEnding {
             max_ix -= 1;
         }
 
-        if let Some(ix) = text[..max_ix].find(&['\n']) {
+        if let Some(ix) = text[..max_ix].find(['\n']) {
             if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
                 Self::Windows
             } else {

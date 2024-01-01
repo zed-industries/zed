@@ -18,7 +18,7 @@ impl Topic {
     }
 
     pub fn publish(&self, edits: impl Clone + IntoIterator<Item = Edit<usize>>) {
-        publish(&mut *self.0.lock(), edits);
+        publish(&mut self.0.lock(), edits);
     }
 
     pub fn publish_mut(&mut self, edits: impl Clone + IntoIterator<Item = Edit<usize>>) {
