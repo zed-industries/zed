@@ -856,6 +856,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
+                            self.active_match_index = None;
                             cx.notify();
                             return done_rx;
                         }
@@ -872,6 +873,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
+                            self.active_match_index = None;
                             cx.notify();
                             return done_rx;
                         }
