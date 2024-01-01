@@ -637,7 +637,7 @@ impl<'a> WindowContext<'a> {
         let handle = self.window.handle;
         let display_id = self.window.display_id;
 
-        if let std::collections::hash_map::Entry::Vacant(e) = self.frame_consumers.entry(display_id) {
+        if !self.frame_consumers.contains_key(&display_id) {
             let (tx, mut rx) = mpsc::unbounded::<()>();
             self.platform.set_display_link_output_callback(
                 display_id,
@@ -669,7 +669,7 @@ impl<'a> WindowContext<'a> {
                     .ok();
                 }
             });
-            e.insert(consumer_task);
+            self.frame_consumers.insert(display_id, consumer_task);
         }
 
         if self.next_frame_callbacks.is_empty() {

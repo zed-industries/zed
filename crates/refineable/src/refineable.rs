@@ -27,7 +27,7 @@ pub struct CascadeSlot(usize);
 impl<S: Refineable + Default> Cascade<S> {
     pub fn reserve(&mut self) -> CascadeSlot {
         self.0.push(None);
-        return CascadeSlot(self.0.len() - 1);
+        CascadeSlot(self.0.len() - 1)
     }
 
     pub fn base(&mut self) -> &mut S::Refinement {
@@ -40,10 +40,8 @@ impl<S: Refineable + Default> Cascade<S> {
 
     pub fn merged(&self) -> S::Refinement {
         let mut merged = self.0[0].clone().unwrap();
-        for refinement in self.0.iter().skip(1) {
-            if let Some(refinement) = refinement {
-                merged.refine(refinement);
-            }
+        for refinement in self.0.iter().skip(1).flatten() {
+            merged.refine(refinement);
         }
         merged
     }
