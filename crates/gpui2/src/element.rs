@@ -125,12 +125,18 @@ pub trait IntoElement: Sized {
     }
 }
 
+/// A trait that all [View] types must implement.
+/// This trait tells the framework how a particular type is displayed on screen.
+/// For any type `V` implementing `Render`, you can create a `View<V>` handle, which can be used as an element in another view or as the root of a window.
 pub trait Render: 'static + Sized {
     type Output: IntoElement;
 
+    /// Describes how this type is displayed on screen.
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Output;
 }
 
+/// You can derive [IntoElement] on any type that implements this trait.
+/// It is used to allow views to be expressed in terms of abstract data.
 pub trait RenderOnce: 'static {
     type Output: IntoElement;
 
