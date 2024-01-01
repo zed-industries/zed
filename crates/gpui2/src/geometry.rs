@@ -1896,7 +1896,6 @@ impl Into<Corners<Pixels>> for Pixels {
     Div,
     DivAssign,
     PartialEq,
-    PartialOrd,
     Serialize,
     Deserialize,
 )]
@@ -2039,9 +2038,15 @@ impl Mul<Pixels> for Pixels {
 
 impl Eq for Pixels {}
 
+impl PartialOrd for Pixels {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
 impl Ord for Pixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap()
+        self.partial_cmp(other).unwrap()
     }
 }
 

@@ -174,7 +174,7 @@ impl MetalRenderer {
             unit_vertices,
             instances,
             sprite_atlas,
-            core_video_texture_cache: CVMetalTextureCache::new(device.as_ptr()).unwrap(),
+            core_video_texture_cache: unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() },
         }
     }
 
@@ -849,28 +849,30 @@ impl MetalRenderer {
                 media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             );
 
-            let y_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    ptr::null(),
-                    MTLPixelFormat::R8Unorm,
-                    surface.image_buffer.plane_width(0),
-                    surface.image_buffer.plane_height(0),
-                    0,
-                )
-                .unwrap();
-            let cb_cr_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    ptr::null(),
-                    MTLPixelFormat::RG8Unorm,
-                    surface.image_buffer.plane_width(1),
-                    surface.image_buffer.plane_height(1),
-                    1,
-                )
-                .unwrap();
+            let y_texture = unsafe {
+                self.core_video_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        ptr::null(),
+                        MTLPixelFormat::R8Unorm,
+                        surface.image_buffer.plane_width(0),
+                        surface.image_buffer.plane_height(0),
+                        0,
+                    )
+                    .unwrap()
+            };
+            let cb_cr_texture = unsafe {
+                self.core_video_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        ptr::null(),
+                        MTLPixelFormat::RG8Unorm,
+                        surface.image_buffer.plane_width(1),
+                        surface.image_buffer.plane_height(1),
+                        1,
+                    )
+                    .unwrap()
+            };
 
             align_offset(offset);
             let next_offset = *offset + mem::size_of::<Surface>();
