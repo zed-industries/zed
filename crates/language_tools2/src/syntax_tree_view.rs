@@ -24,7 +24,7 @@ pub fn init(cx: &mut AppContext) {
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();
             let syntax_tree_view =
-                cx.build_view(|cx| SyntaxTreeView::new(workspace_handle, active_item, cx));
+                cx.new_view(|cx| SyntaxTreeView::new(workspace_handle, active_item, cx));
             workspace.split_item(SplitDirection::Right, Box::new(syntax_tree_view), cx)
         });
     })
@@ -417,7 +417,7 @@ impl Item for SyntaxTreeView {
     where
         Self: Sized,
     {
-        Some(cx.build_view(|cx| {
+        Some(cx.new_view(|cx| {
             let mut clone = Self::new(self.workspace_handle.clone(), None, cx);
             if let Some(editor) = &self.editor {
                 clone.set_editor(editor.editor.clone(), cx)

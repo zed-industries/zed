@@ -78,7 +78,7 @@ pub(crate) struct LogMenuItem {
 actions!(debug, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
-    let log_store = cx.build_model(|cx| LogStore::new(cx));
+    let log_store = cx.new_model(|cx| LogStore::new(cx));
 
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let project = workspace.project();
@@ -93,7 +93,7 @@ pub fn init(cx: &mut AppContext) {
             let project = workspace.project().read(cx);
             if project.is_local() {
                 workspace.add_item(
-                    Box::new(cx.build_view(|cx| {
+                    Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
                     cx,
@@ -444,7 +444,7 @@ impl LspLogView {
         log_contents: String,
         cx: &mut ViewContext<Self>,
     ) -> (View<Editor>, Subscription) {
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::multi_line(cx);
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);

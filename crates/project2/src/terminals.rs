@@ -39,7 +39,7 @@ impl Project {
                 window,
             )
             .map(|builder| {
-                let terminal_handle = cx.build_model(|cx| builder.subscribe(cx));
+                let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
 
                 self.terminals
                     .local_handles

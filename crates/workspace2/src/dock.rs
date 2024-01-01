@@ -195,7 +195,7 @@ impl Dock {
     pub fn new(position: DockPosition, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let focus_handle = cx.focus_handle();
 
-        let dock = cx.build_view(|cx: &mut ViewContext<Self>| {
+        let dock = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
                 if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
                     active_entry.panel.focus_handle(cx).focus(cx)
@@ -514,7 +514,7 @@ impl Render for Dock {
                 .id("resize-handle")
                 .on_drag(DraggedDock(position), |dock, cx| {
                     cx.stop_propagation();
-                    cx.build_view(|_| dock.clone())
+                    cx.new_view(|_| dock.clone())
                 })
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
                     if e.down.button == MouseButton::Left && e.down.click_count == 2 {

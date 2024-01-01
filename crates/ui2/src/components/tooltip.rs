@@ -13,7 +13,7 @@ pub struct Tooltip {
 
 impl Tooltip {
     pub fn text(title: impl Into<SharedString>, cx: &mut WindowContext) -> AnyView {
-        cx.build_view(|_cx| Self {
+        cx.new_view(|_cx| Self {
             title: title.into(),
             meta: None,
             key_binding: None,
@@ -26,7 +26,7 @@ impl Tooltip {
         action: &dyn Action,
         cx: &mut WindowContext,
     ) -> AnyView {
-        cx.build_view(|cx| Self {
+        cx.new_view(|cx| Self {
             title: title.into(),
             meta: None,
             key_binding: KeyBinding::for_action(action, cx),
@@ -40,7 +40,7 @@ impl Tooltip {
         meta: impl Into<SharedString>,
         cx: &mut WindowContext,
     ) -> AnyView {
-        cx.build_view(|cx| Self {
+        cx.new_view(|cx| Self {
             title: title.into(),
             meta: Some(meta.into()),
             key_binding: action.and_then(|action| KeyBinding::for_action(action, cx)),

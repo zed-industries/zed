@@ -35,7 +35,7 @@ pub struct BranchList {
 
 impl BranchList {
     fn new(delegate: BranchListDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         Self {
             picker,
@@ -84,7 +84,7 @@ pub fn build_branch_list(
     let delegate = workspace.update(cx, |workspace, cx| {
         BranchListDelegate::new(workspace, cx.view().clone(), 29, cx)
     })?;
-    Ok(cx.build_view(move |cx| BranchList::new(delegate, 20., cx)))
+    Ok(cx.new_view(move |cx| BranchList::new(delegate, 20., cx)))
 }
 
 pub struct BranchListDelegate {

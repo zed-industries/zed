@@ -46,7 +46,7 @@ impl ContextMenu {
         cx: &mut WindowContext,
         f: impl FnOnce(Self, &mut WindowContext) -> Self,
     ) -> View<Self> {
-        cx.build_view(|cx| {
+        cx.new_view(|cx| {
             let focus_handle = cx.focus_handle();
             let _on_blur_subscription = cx.on_blur(&focus_handle, |this: &mut ContextMenu, cx| {
                 this.cancel(&menu::Cancel, cx)

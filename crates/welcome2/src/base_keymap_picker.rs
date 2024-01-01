@@ -54,7 +54,7 @@ impl BaseKeymapSelector {
         delegate: BaseKeymapSelectorDelegate,
         cx: &mut ViewContext<BaseKeymapSelector>,
     ) -> Self {
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         let focus_handle = cx.focus_handle();
         Self {
             focus_handle,

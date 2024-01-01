@@ -71,7 +71,7 @@ fn create_copilot_auth_window(
         display_id: None,
     };
     let window = cx.open_window(window_options, |cx| {
-        cx.build_view(|_| CopilotCodeVerification::new(status.clone()))
+        cx.new_view(|_| CopilotCodeVerification::new(status.clone()))
     });
     window
 }

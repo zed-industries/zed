@@ -20,7 +20,7 @@ use util::{async_maybe, ResultExt};
 
 pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let channel_store =
-        cx.build_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+        cx.new_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
     cx.set_global(channel_store);
 }
 

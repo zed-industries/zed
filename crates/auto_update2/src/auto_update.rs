@@ -94,7 +94,7 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     .detach();
 
     if let Some(version) = ZED_APP_VERSION.or_else(|| cx.app_metadata().app_version) {
-        let auto_updater = cx.build_model(|cx| {
+        let auto_updater = cx.new_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url);
 
             let mut update_subscription = AutoUpdateSetting::get_global(cx)
@@ -160,7 +160,7 @@ pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
         if should_show_notification {
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.show_notification(0, cx, |cx| {
-                    cx.build_view(|_| UpdateNotification::new(version))
+                    cx.new_view(|_| UpdateNotification::new(version))
                 });
                 updater
                     .read(cx)

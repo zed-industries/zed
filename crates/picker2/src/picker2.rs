@@ -59,7 +59,7 @@ impl<D: PickerDelegate> FocusableView for Picker<D> {
 
 impl<D: PickerDelegate> Picker<D> {
     pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text(delegate.placeholder_text(), cx);
             editor

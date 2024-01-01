@@ -134,7 +134,7 @@ impl ProjectSearch {
         let replica_id = project.read(cx).replica_id();
         Self {
             project,
-            excerpts: cx.build_model(|_| MultiBuffer::new(replica_id)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -145,11 +145,11 @@ impl ProjectSearch {
     }
 
     fn clone(&self, cx: &mut ModelContext<Self>) -> Model<Self> {
-        cx.build_model(|cx| Self {
+        cx.new_model(|cx| Self {
             project: self.project.clone(),
             excerpts: self
                 .excerpts
-                .update(cx, |excerpts, cx| cx.build_model(|cx| excerpts.clone(cx))),
+                .update(cx, |excerpts, cx| cx.new_model(|cx| excerpts.clone(cx))),
             pending_search: Default::default(),
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
@@ -504,7 +504,7 @@ impl Item for ProjectSearchView {
         Self: Sized,
     {
         let model = self.model.update(cx, |model, cx| model.clone(cx));
-        Some(cx.build_view(|cx| Self::new(model, cx, None)))
+        Some(cx.new_view(|cx| Self::new(model, cx, None)))
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
@@ -805,7 +805,7 @@ impl ProjectSearchView {
         }
         subscriptions.push(cx.observe(&model, |this, _, cx| this.model_changed(cx)));
 
-        let query_editor = cx.build_view(|cx| {
+        let query_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Text search all files", cx);
             editor.set_text(query_text, cx);
@@ -817,7 +817,7 @@ impl ProjectSearchView {
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
             }),
         );
-        let replacement_editor = cx.build_view(|cx| {
+        let replacement_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Replace in project..", cx);
             if let Some(text) = replacement_text {
@@ -825,7 +825,7 @@ impl ProjectSearchView {
             }
             editor
         });
-        let results_editor = cx.build_view(|cx| {
+        let results_editor = cx.new_view(|cx| {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), cx);
             editor.set_searchable(false);
             editor
@@ -842,7 +842,7 @@ impl ProjectSearchView {
             }),
         );
 
-        let included_files_editor = cx.build_view(|cx| {
+        let included_files_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Include: crates/**/*.toml", cx);
 
@@ -855,7 +855,7 @@ impl ProjectSearchView {
             }),
         );
 
-        let excluded_files_editor = cx.build_view(|cx| {
+        let excluded_files_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
 
@@ -929,8 +929,8 @@ impl ProjectSearchView {
             return;
         };
 
-        let model = cx.build_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.build_view(|cx| ProjectSearchView::new(model, cx, None));
+        let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, None));
         workspace.add_item(Box::new(search.clone()), cx);
         search.update(cx, |search, cx| {
             search
@@ -973,8 +973,8 @@ impl ProjectSearchView {
             None
         };
 
-        let model = cx.build_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.build_view(|cx| ProjectSearchView::new(model, cx, settings));
+        let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
 
         workspace.add_item(Box::new(search.clone()), cx);
 
@@ -1246,13 +1246,13 @@ impl ProjectSearchBar {
                 new_query
             });
             if let Some(new_query) = new_query {
-                let model = cx.build_model(|cx| {
+                let model = cx.new_model(|cx| {
                     let mut model = ProjectSearch::new(workspace.project().clone(), cx);
                     model.search(new_query, cx);
                     model
                 });
                 workspace.add_item(
-                    Box::new(cx.build_view(|cx| ProjectSearchView::new(model, cx, None))),
+                    Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
                     cx,
                 );
             }
@@ -1886,7 +1886,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let search = cx.build_model(|cx| ProjectSearch::new(project, cx));
+        let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
 
         search_view

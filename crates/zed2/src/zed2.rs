@@ -115,17 +115,17 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
         let copilot =
-            cx.build_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
+            cx.new_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
-            cx.build_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+            cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
-            cx.build_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
-        let vim_mode_indicator = cx.build_view(|cx| vim::ModeIndicator::new(cx));
-        let feedback_button = cx
-            .build_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
-        let cursor_position = cx.build_view(|_| editor::items::CursorPosition::new());
+            cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+        let vim_mode_indicator = cx.new_view(|cx| vim::ModeIndicator::new(cx));
+        let feedback_button =
+            cx.new_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
+        let cursor_position = cx.new_view(|_| editor::items::CursorPosition::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
@@ -412,22 +412,22 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
-            let breadcrumbs = cx.build_view(|_| Breadcrumbs::new());
+            let breadcrumbs = cx.new_view(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, cx);
-            let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
+            let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             toolbar.add_item(buffer_search_bar.clone(), cx);
 
             let quick_action_bar =
-                cx.build_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
+                cx.new_view(|_| QuickActionBar::new(buffer_search_bar, workspace));
             toolbar.add_item(quick_action_bar, cx);
-            let diagnostic_editor_controls = cx.build_view(|_| diagnostics::ToolbarControls::new());
+            let diagnostic_editor_controls = cx.new_view(|_| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, cx);
-            let project_search_bar = cx.build_view(|_| ProjectSearchBar::new());
+            let project_search_bar = cx.new_view(|_| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, cx);
-            let lsp_log_item = cx.build_view(|_| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item = cx.new_view(|_| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, cx);
             let syntax_tree_item =
-                cx.build_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+                cx.new_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, cx);
         })
     });
@@ -541,13 +541,15 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             .expect("creating buffers on a local workspace always succeeds");
                         buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
 
-                        let buffer = cx.build_model(|cx| {
+                        let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
                         workspace.add_item(
-                            Box::new(cx.build_view(|cx| {
-                                Editor::for_multibuffer(buffer, Some(project), cx)
-                            })),
+                            Box::new(
+                                cx.new_view(|cx| {
+                                    Editor::for_multibuffer(buffer, Some(project), cx)
+                                }),
+                            ),
                             cx,
                         );
                     })
@@ -655,7 +657,7 @@ fn open_local_settings_file(
         .detach();
     } else {
         workspace.show_notification(0, cx, |cx| {
-            cx.build_view(|_| MessageNotification::new("This project has no folders open."))
+            cx.new_view(|_| MessageNotification::new("This project has no folders open."))
         })
     }
 }
@@ -702,11 +704,11 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                     buffer.edit([(buffer.len()..buffer.len(), log_suffix)], None, cx);
                 });
 
-                let buffer = cx.build_model(|cx| {
+                let buffer = cx.new_model(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item(
-                    Box::new(cx.build_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
+                    Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
                     cx,
                 );
             }).log_err()?;
@@ -736,11 +738,11 @@ fn open_bundled_file(
                             .create_buffer(text.as_ref(), language, cx)
                             .expect("creating buffers on a local workspace always succeeds")
                     });
-                    let buffer = cx.build_model(|cx| {
+                    let buffer = cx.new_model(|cx| {
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
                     });
                     workspace.add_item(
-                        Box::new(cx.build_view(|cx| {
+                        Box::new(cx.new_view(|cx| {
                             Editor::for_multibuffer(buffer, Some(project.clone()), cx)
                         })),
                         cx,

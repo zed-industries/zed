@@ -831,14 +831,14 @@ pub mod test {
                 worktree_id: WorktreeId::from_usize(0),
                 path: Path::new(path).into(),
             });
-            cx.build_model(|_| Self {
+            cx.new_model(|_| Self {
                 entry_id,
                 project_path,
             })
         }
 
         pub fn new_untitled(cx: &mut AppContext) -> Model<Self> {
-            cx.build_model(|_| Self {
+            cx.new_model(|_| Self {
                 project_path: None,
                 entry_id: None,
             })
@@ -987,7 +987,7 @@ pub mod test {
         where
             Self: Sized,
         {
-            Some(cx.build_view(|cx| Self {
+            Some(cx.new_view(|cx| Self {
                 state: self.state.clone(),
                 label: self.label.clone(),
                 save_count: self.save_count,
@@ -1063,7 +1063,7 @@ pub mod test {
             _item_id: ItemId,
             cx: &mut ViewContext<Pane>,
         ) -> Task<anyhow::Result<View<Self>>> {
-            let view = cx.build_view(|cx| Self::new_deserialized(workspace_id, cx));
+            let view = cx.new_view(|cx| Self::new_deserialized(workspace_id, cx));
             Task::Ready(Some(anyhow::Ok(view)))
         }
     }

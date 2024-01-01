@@ -117,7 +117,7 @@ impl Item for SharedScreen {
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
         let track = self.track.upgrade()?;
-        Some(cx.build_view(|cx| Self::new(&track, self.peer_id, self.user.clone(), cx)))
+        Some(cx.new_view(|cx| Self::new(&track, self.peer_id, self.user.clone(), cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

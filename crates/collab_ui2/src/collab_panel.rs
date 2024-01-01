@@ -177,8 +177,8 @@ enum ListEntry {
 
 impl CollabPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        cx.build_view(|cx| {
-            let filter_editor = cx.build_view(|cx| {
+        cx.new_view(|cx| {
+            let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
@@ -201,7 +201,7 @@ impl CollabPanel {
             })
             .detach();
 
-            let channel_name_editor = cx.build_view(|cx| Editor::single_line(cx));
+            let channel_name_editor = cx.new_view(|cx| Editor::single_line(cx));
 
             cx.subscribe(&channel_name_editor, |this: &mut Self, _, event, cx| {
                 if let editor::EditorEvent::Blurred = event {
@@ -2118,7 +2118,7 @@ impl CollabPanel {
             .flex()
             .w_full()
             .on_drag(channel.clone(), move |channel, cx| {
-                cx.build_view(|_| DraggedChannelView {
+                cx.new_view(|_| DraggedChannelView {
                     channel: channel.clone(),
                     width,
                 })

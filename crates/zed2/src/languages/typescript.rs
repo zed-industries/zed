@@ -378,7 +378,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             language::Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
         });
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());

@@ -6,7 +6,7 @@ pub struct ScrollStory;
 
 impl ScrollStory {
     pub fn view(cx: &mut WindowContext) -> View<ScrollStory> {
-        cx.build_view(|_cx| ScrollStory)
+        cx.new_view(|_cx| ScrollStory)
     }
 }
 

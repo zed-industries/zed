@@ -23,7 +23,7 @@ pub struct TestAppContext {
 impl Context for TestAppContext {
     type Result<T> = T;
 
-    fn build_model<T: 'static>(
+    fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>
@@ -31,7 +31,7 @@ impl Context for TestAppContext {
         T: 'static,
     {
         let mut app = self.app.borrow_mut();
-        app.build_model(build_model)
+        app.new_model(build_model)
     }
 
     fn update_model<T: 'static, R>(
@@ -134,15 +134,13 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window))
+        cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window))
     }
 
     pub fn add_empty_window(&mut self) -> AnyWindowHandle {
         let mut cx = self.app.borrow_mut();
-        cx.open_window(WindowOptions::default(), |cx| {
-            cx.build_view(|_| EmptyView {})
-        })
-        .any_handle
+        cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| EmptyView {}))
+            .any_handle
     }
 
     pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
@@ -151,7 +149,7 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        let window = cx.open_window(WindowOptions::default(), |cx| cx.build_view(build_window));
+        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window));
         drop(cx);
         let view = window.root_view(self).unwrap();
         let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
@@ -617,11 +615,11 @@ impl<'a> VisualTestContext<'a> {
 impl<'a> Context for VisualTestContext<'a> {
     type Result<T> = <TestAppContext as Context>::Result<T>;
 
-    fn build_model<T: 'static>(
+    fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>> {
-        self.cx.build_model(build_model)
+        self.cx.new_model(build_model)
     }
 
     fn update_model<T, R>(
@@ -666,7 +664,7 @@ impl<'a> Context for VisualTestContext<'a> {
 }
 
 impl<'a> VisualContext for VisualTestContext<'a> {
-    fn build_view<V>(
+    fn new_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
@@ -674,7 +672,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         V: 'static + Render,
     {
         self.window
-            .update(self.cx, |_, cx| cx.build_view(build_view))
+            .update(self.cx, |_, cx| cx.new_view(build_view))
             .unwrap()
     }
 
@@ -726,7 +724,7 @@ impl AnyWindowHandle {
         cx: &mut TestAppContext,
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> View<V> {
-        self.update(cx, |_, cx| cx.build_view(build_view)).unwrap()
+        self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
     }
 }
 

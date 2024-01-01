@@ -42,7 +42,7 @@ impl ChannelModal {
     ) -> Self {
         cx.observe(&channel_store, |_, _, cx| cx.notify()).detach();
         let channel_modal = cx.view().downgrade();
-        let picker = cx.build_view(|cx| {
+        let picker = cx.new_view(|cx| {
             Picker::new(
                 ChannelModalDelegate {
                     channel_modal,

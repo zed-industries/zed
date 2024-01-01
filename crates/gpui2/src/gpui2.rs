@@ -85,7 +85,7 @@ use taffy::TaffyLayoutEngine;
 pub trait Context {
     type Result<T>;
 
-    fn build_model<T: 'static>(
+    fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>;
@@ -120,7 +120,7 @@ pub trait Context {
 }
 
 pub trait VisualContext: Context {
-    fn build_view<V>(
+    fn new_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>

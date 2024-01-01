@@ -69,7 +69,7 @@ impl CommandPalette {
         let delegate =
             CommandPaletteDelegate::new(cx.view().downgrade(), commands, previous_focus_handle);
 
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         Self { picker }
     }
 }
@@ -394,7 +394,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_text("abc", cx);
             editor

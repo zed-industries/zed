@@ -119,7 +119,7 @@ impl Workspace {
         E: std::fmt::Debug,
     {
         self.show_notification(0, cx, |cx| {
-            cx.build_view(|_cx| {
+            cx.new_view(|_cx| {
                 simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
             })
         });
@@ -134,7 +134,7 @@ impl Workspace {
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
         self.dismiss_notification::<simple_message_notification::MessageNotification>(toast.id, cx);
         self.show_notification(toast.id, cx, |cx| {
-            cx.build_view(|_cx| match toast.on_click.as_ref() {
+            cx.new_view(|_cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
                     simple_message_notification::MessageNotification::new(toast.msg.clone())

@@ -106,7 +106,7 @@ impl FileFinder {
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            picker: cx.build_view(|cx| Picker::new(delegate, cx)),
+            picker: cx.new_view(|cx| Picker::new(delegate, cx)),
         }
     }
 }

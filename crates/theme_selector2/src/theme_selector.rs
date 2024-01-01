@@ -74,7 +74,7 @@ impl Render for ThemeSelector {
 
 impl ThemeSelector {
     pub fn new(delegate: ThemeSelectorDelegate, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         Self { picker }
     }
 }

@@ -9,7 +9,7 @@ pub struct TextStory;
 
 impl TextStory {
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        cx.build_view(|_cx| Self)
+        cx.new_view(|_cx| Self)
     }
 }
 

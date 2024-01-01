@@ -39,7 +39,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                     let options = notification_window_options(screen, window_size);
                     let window = cx
                         .open_window(options, |cx| {
-                            cx.build_view(|_| {
+                            cx.new_view(|_| {
                                 IncomingCallNotification::new(
                                     incoming_call.clone(),
                                     app_state.clone(),

@@ -312,7 +312,7 @@ impl Worktree {
         let closure_fs = Arc::clone(&fs);
         let closure_next_entry_id = Arc::clone(&next_entry_id);
         let closure_abs_path = abs_path.to_path_buf();
-        cx.build_model(move |cx: &mut ModelContext<Worktree>| {
+        cx.new_model(move |cx: &mut ModelContext<Worktree>| {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 if let Self::Local(this) = this {
                     let new_file_scan_exclusions =
@@ -415,7 +415,7 @@ impl Worktree {
         client: Arc<Client>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.build_model(|cx: &mut ModelContext<Self>| {
+        cx.new_model(|cx: &mut ModelContext<Self>| {
             let snapshot = Snapshot {
                 id: WorktreeId(worktree.id as usize),
                 abs_path: Arc::from(PathBuf::from(worktree.abs_path)),
@@ -682,7 +682,7 @@ impl LocalWorktree {
                 .background_executor()
                 .spawn(async move { text::Buffer::new(0, id, contents) })
                 .await;
-            cx.build_model(|_| Buffer::build(text_buffer, diff_base, Some(Arc::new(file))))
+            cx.new_model(|_| Buffer::build(text_buffer, diff_base, Some(Arc::new(file))))
         })
     }
 

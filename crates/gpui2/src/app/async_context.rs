@@ -17,7 +17,7 @@ pub struct AsyncAppContext {
 impl Context for AsyncAppContext {
     type Result<T> = Result<T>;
 
-    fn build_model<T: 'static>(
+    fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>
@@ -29,7 +29,7 @@ impl Context for AsyncAppContext {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app = app.borrow_mut();
-        Ok(app.build_model(build_model))
+        Ok(app.new_model(build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -230,15 +230,14 @@ impl AsyncWindowContext {
 impl Context for AsyncWindowContext {
     type Result<T> = Result<T>;
 
-    fn build_model<T>(
+    fn new_model<T>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Result<Model<T>>
     where
         T: 'static,
     {
-        self.window
-            .update(self, |_, cx| cx.build_model(build_model))
+        self.window.update(self, |_, cx| cx.new_model(build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -281,7 +280,7 @@ impl Context for AsyncWindowContext {
 }
 
 impl VisualContext for AsyncWindowContext {
-    fn build_view<V>(
+    fn new_view<V>(
         &mut self,
         build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
@@ -289,7 +288,7 @@ impl VisualContext for AsyncWindowContext {
         V: 'static + Render,
     {
         self.window
-            .update(self, |_, cx| cx.build_view(build_view_state))
+            .update(self, |_, cx| cx.new_view(build_view_state))
     }
 
     fn update_view<V: 'static, R>(

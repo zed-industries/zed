@@ -1105,7 +1105,7 @@ impl Context for AppContext {
     /// Build an entity that is owned by the application. The given function will be invoked with
     /// a `ModelContext` and must return an object representing the entity. A `Model` will be returned
     /// which can be used to access the entity in a context.
-    fn build_model<T: 'static>(
+    fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T> {

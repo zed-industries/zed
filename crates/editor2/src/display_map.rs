@@ -1046,7 +1046,7 @@ pub mod tests {
             }
         });
 
-        let map = cx.build_model(|cx| {
+        let map = cx.new_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
                 font("Helvetica"),
@@ -1286,7 +1286,7 @@ pub mod tests {
 
             let text = "one two three four five\nsix seven eight";
             let buffer = MultiBuffer::build_simple(text, cx);
-            let map = cx.build_model(|cx| {
+            let map = cx.new_model(|cx| {
                 DisplayMap::new(
                     buffer.clone(),
                     font("Helvetica"),
@@ -1393,7 +1393,7 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple(&text, cx);
 
         let font_size = px(14.0);
-        let map = cx.build_model(|cx| {
+        let map = cx.new_model(|cx| {
             DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
         });
 
@@ -1464,17 +1464,16 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
         });
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_size = px(14.0);
 
-        let map = cx.build_model(|cx| {
-            DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, cx)
-        });
+        let map = cx
+            .new_model(|cx| DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, cx));
         assert_eq!(
             cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             vec![
@@ -1551,15 +1550,15 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
         });
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_size = px(16.0);
 
-        let map = cx.build_model(|cx| {
+        let map = cx.new_model(|cx| {
             DisplayMap::new(buffer, font("Courier"), font_size, Some(px(40.0)), 1, 1, cx)
         });
         assert_eq!(
@@ -1618,17 +1617,17 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
         });
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let font_size = px(16.0);
-        let map = cx
-            .build_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, cx));
+        let map =
+            cx.new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, cx));
 
         enum MyType {}
 
@@ -1742,7 +1741,7 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_size = px(14.0);
 
-        let map = cx.build_model(|cx| {
+        let map = cx.new_model(|cx| {
             DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
@@ -1796,7 +1795,7 @@ pub mod tests {
 
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_size = px(14.0);
-        let map = cx.build_model(|cx| {
+        let map = cx.new_model(|cx| {
             DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
         });
         assert_eq!(
