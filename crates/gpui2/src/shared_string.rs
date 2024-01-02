@@ -60,9 +60,9 @@ impl<'a> PartialEq<&'a str> for SharedString {
     }
 }
 
-impl Into<Arc<str>> for SharedString {
-    fn into(self) -> Arc<str> {
-        match self.0 {
+impl From<SharedString> for Arc<str> {
+    fn from(val: SharedString) -> Self {
+        match val.0 {
             ArcCow::Borrowed(borrowed) => Arc::from(borrowed),
             ArcCow::Owned(owned) => owned.clone(),
         }
@@ -75,9 +75,9 @@ impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
     }
 }
 
-impl Into<String> for SharedString {
-    fn into(self) -> String {
-        self.0.to_string()
+impl From<SharedString> for String {
+    fn from(val: SharedString) -> Self {
+        val.0.to_string()
     }
 }
 

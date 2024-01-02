@@ -1601,13 +1601,13 @@ impl Edges<Pixels> {
     }
 }
 
-impl Into<Edges<Pixels>> for f32 {
-    fn into(self) -> Edges<Pixels> {
+impl From<f32> for Edges<Pixels> {
+    fn from(val: f32) -> Self {
         Edges {
-            top: self.into(),
-            right: self.into(),
-            bottom: self.into(),
-            left: self.into(),
+            top: val.into(),
+            right: val.into(),
+            bottom: val.into(),
+            left: val.into(),
         }
     }
 }
@@ -1840,24 +1840,24 @@ where
 
 impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
 
-impl Into<Corners<Pixels>> for f32 {
-    fn into(self) -> Corners<Pixels> {
+impl From<f32> for Corners<Pixels> {
+    fn from(val: f32) -> Self {
         Corners {
-            top_left: self.into(),
-            top_right: self.into(),
-            bottom_right: self.into(),
-            bottom_left: self.into(),
+            top_left: val.into(),
+            top_right: val.into(),
+            bottom_right: val.into(),
+            bottom_left: val.into(),
         }
     }
 }
 
-impl Into<Corners<Pixels>> for Pixels {
-    fn into(self) -> Corners<Pixels> {
+impl From<Pixels> for Corners<Pixels> {
+    fn from(val: Pixels) -> Self {
         Corners {
-            top_left: self,
-            top_right: self,
-            bottom_right: self,
-            bottom_left: self,
+            top_left: val,
+            top_right: val,
+            bottom_right: val,
+            bottom_left: val,
         }
     }
 }
@@ -1896,7 +1896,6 @@ impl Into<Corners<Pixels>> for Pixels {
     Div,
     DivAssign,
     PartialEq,
-    PartialOrd,
     Serialize,
     Deserialize,
 )]
@@ -2039,9 +2038,15 @@ impl Mul<Pixels> for Pixels {
 
 impl Eq for Pixels {}
 
+impl PartialOrd for Pixels {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
 impl Ord for Pixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap()
+        self.partial_cmp(other).unwrap()
     }
 }
 
@@ -2517,12 +2522,12 @@ impl Debug for Length {
 ///
 /// A `DefiniteLength` representing the relative length as a fraction of the parent's size.
 pub fn relative(fraction: f32) -> DefiniteLength {
-    DefiniteLength::Fraction(fraction).into()
+    DefiniteLength::Fraction(fraction)
 }
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
 pub fn phi() -> DefiniteLength {
-    relative(1.61803398875)
+    relative(1.618_034)
 }
 
 /// Constructs a `Rems` value representing a length in rems.

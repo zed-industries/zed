@@ -24,7 +24,7 @@ impl KeyContext {
     pub fn parse(source: &str) -> Result<Self> {
         let mut context = Self::default();
         let source = skip_whitespace(source);
-        Self::parse_expr(&source, &mut context)?;
+        Self::parse_expr(source, &mut context)?;
         Ok(context)
     }
 
@@ -220,7 +220,7 @@ impl KeyBindingContextPredicate {
             }
             '!' => {
                 let source = skip_whitespace(&source[1..]);
-                let (predicate, source) = Self::parse_expr(&source, PRECEDENCE_NOT)?;
+                let (predicate, source) = Self::parse_expr(source, PRECEDENCE_NOT)?;
                 Ok((KeyBindingContextPredicate::Not(Box::new(predicate)), source))
             }
             _ if is_identifier_char(next) => {

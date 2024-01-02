@@ -20,8 +20,8 @@ impl Connection {
                 self.sqlite3,
                 sql_str.as_c_str().as_ptr(),
                 None,
-                0 as *mut _,
-                0 as *mut _,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
             );
         }
         self.last_error()
@@ -59,10 +59,10 @@ impl Connection {
                     if completed_migration != migration {
                         return Err(anyhow!(formatdoc! {"
                             Migration changed for {} at step {}
-                            
+
                             Stored migration:
                             {}
-                            
+
                             Proposed migration:
                             {}", domain, index, completed_migration, migration}));
                     } else {

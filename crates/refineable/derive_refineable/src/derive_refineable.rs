@@ -85,9 +85,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     // Append to where_clause or create a new one if it doesn't exist
     let where_clause = match where_clause.cloned() {
         Some(mut where_clause) => {
-            where_clause
-                .predicates
-                .extend(type_param_bounds.into_iter());
+            where_clause.predicates.extend(type_param_bounds);
             where_clause.clone()
         }
         None => WhereClause {

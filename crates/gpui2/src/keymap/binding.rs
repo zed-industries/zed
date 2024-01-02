@@ -54,7 +54,7 @@ impl KeyBinding {
         pending_keystrokes: &[Keystroke],
         contexts: &[KeyContext],
     ) -> KeyMatch {
-        if self.keystrokes.as_ref().starts_with(&pending_keystrokes)
+        if self.keystrokes.as_ref().starts_with(pending_keystrokes)
             && self.matches_context(contexts)
         {
             // If the binding is completed, push it onto the matches list

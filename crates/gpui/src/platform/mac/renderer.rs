@@ -162,7 +162,7 @@ impl Renderer {
             "underline_fragment",
             PIXEL_FORMAT,
         );
-        let cv_texture_cache = CVMetalTextureCache::new(device.as_ptr()).unwrap();
+        let cv_texture_cache = unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() };
         Self {
             layer,
             command_queue: device.new_command_queue(),
@@ -887,28 +887,30 @@ impl Renderer {
                 core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             );
 
-            let y_texture = self
-                .cv_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    ptr::null(),
-                    MTLPixelFormat::R8Unorm,
-                    surface.image_buffer.plane_width(0),
-                    surface.image_buffer.plane_height(0),
-                    0,
-                )
-                .unwrap();
-            let cb_cr_texture = self
-                .cv_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    ptr::null(),
-                    MTLPixelFormat::RG8Unorm,
-                    surface.image_buffer.plane_width(1),
-                    surface.image_buffer.plane_height(1),
-                    1,
-                )
-                .unwrap();
+            let y_texture = unsafe {
+                self.cv_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        ptr::null(),
+                        MTLPixelFormat::R8Unorm,
+                        surface.image_buffer.plane_width(0),
+                        surface.image_buffer.plane_height(0),
+                        0,
+                    )
+                    .unwrap()
+            };
+            let cb_cr_texture = unsafe {
+                self.cv_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        ptr::null(),
+                        MTLPixelFormat::RG8Unorm,
+                        surface.image_buffer.plane_width(1),
+                        surface.image_buffer.plane_height(1),
+                        1,
+                    )
+                    .unwrap()
+            };
 
             align_offset(offset);
             let next_offset = *offset + mem::size_of::<shaders::GPUISurface>();

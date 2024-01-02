@@ -53,7 +53,7 @@ where
         lock.subscribers
             .entry(emitter_key.clone())
             .or_default()
-            .get_or_insert_with(|| Default::default())
+            .get_or_insert_with(Default::default)
             .insert(
                 subscriber_id,
                 Subscriber {
@@ -90,7 +90,7 @@ where
     }
 
     pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
-        let subscribers = self.0.lock().subscribers.remove(&emitter);
+        let subscribers = self.0.lock().subscribers.remove(emitter);
         subscribers
             .unwrap_or_default()
             .map(|s| s.into_values())
@@ -131,7 +131,7 @@ where
         let mut lock = self.0.lock();
 
         // Add any new subscribers that were added while invoking the callback.
-        if let Some(Some(new_subscribers)) = lock.subscribers.remove(&emitter) {
+        if let Some(Some(new_subscribers)) = lock.subscribers.remove(emitter) {
             subscribers.extend(new_subscribers);
         }
 

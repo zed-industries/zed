@@ -166,6 +166,12 @@ pub struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
 }
 
+impl Default for MacPlatform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MacPlatform {
     pub fn new() -> Self {
         let dispatcher = Arc::new(MacDispatcher::new());
@@ -219,7 +225,12 @@ impl MacPlatform {
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
-                menu.addItem_(self.create_menu_item(item_config, delegate, actions, keymap));
+                menu.addItem_(Self::create_menu_item(
+                    item_config,
+                    delegate,
+                    actions,
+                    keymap,
+                ));
             }
 
             let menu_item = NSMenuItem::new(nil).autorelease();
@@ -236,7 +247,6 @@ impl MacPlatform {
     }
 
     unsafe fn create_menu_item(
-        &self,
         item: MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
@@ -342,7 +352,7 @@ impl MacPlatform {
                 let submenu = NSMenu::new(nil).autorelease();
                 submenu.setDelegate_(delegate);
                 for item in items {
-                    submenu.addItem_(self.create_menu_item(item, delegate, actions, keymap));
+                    submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                 }
                 item.setSubmenu_(submenu);
                 item.setTitle_(ns_string(name));
@@ -475,7 +485,6 @@ impl Platform for MacPlatform {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         MacDisplay::all()
-            .into_iter()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
     }
@@ -1035,7 +1044,6 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
     let urls = unsafe {
         (0..urls.count())
-            .into_iter()
             .filter_map(|i| {
                 let url = urls.objectAtIndex(i);
                 match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {

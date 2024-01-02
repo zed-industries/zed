@@ -80,6 +80,12 @@ impl<T> Future for Task<T> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TaskLabel(NonZeroUsize);
 
+impl Default for TaskLabel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskLabel {
     pub fn new() -> Self {
         static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);

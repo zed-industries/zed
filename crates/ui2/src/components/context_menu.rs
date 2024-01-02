@@ -253,7 +253,7 @@ impl Render for ContextMenu {
                         } = item
                         {
                             el = el.on_boxed_action(
-                                action,
+                                &**action,
                                 cx.listener(ContextMenu::on_action_dispatch),
                             );
                         }
