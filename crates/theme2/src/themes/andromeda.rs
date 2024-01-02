@@ -74,6 +74,7 @@ pub fn andromeda() -> UserThemeFamily {
                     error: Some(rgba(0xf82872ff).into()),
                     hint: Some(rgba(0x618399ff).into()),
                     modified: Some(rgba(0xfee56dff).into()),
+                    predictive: Some(rgba(0x315f70ff).into()),
                     success: Some(rgba(0xf7f7f8ff).into()),
                     warning: Some(rgba(0xfee56dff).into()),
                     ..Default::default()

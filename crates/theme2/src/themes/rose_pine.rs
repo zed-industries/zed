@@ -75,6 +75,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         error: Some(rgba(0xb4647aff).into()),
                         hint: Some(rgba(0x7a92aaff).into()),
                         modified: Some(rgba(0xe99d35ff).into()),
+                        predictive: Some(rgba(0xa2acbeff).into()),
                         success: Some(rgba(0x575279ff).into()),
                         warning: Some(rgba(0xe99d35ff).into()),
                         ..Default::default()
@@ -472,6 +473,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         error: Some(rgba(0xea6f92ff).into()),
                         hint: Some(rgba(0x728aa2ff).into()),
                         modified: Some(rgba(0xf5c177ff).into()),
+                        predictive: Some(rgba(0x516b83ff).into()),
                         success: Some(rgba(0xe0def4ff).into()),
                         warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()
@@ -869,6 +871,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         error: Some(rgba(0xea6f92ff).into()),
                         hint: Some(rgba(0x5e768cff).into()),
                         modified: Some(rgba(0xf5c177ff).into()),
+                        predictive: Some(rgba(0x556b81ff).into()),
                         success: Some(rgba(0xe0def4ff).into()),
                         warning: Some(rgba(0xf5c177ff).into()),
                         ..Default::default()

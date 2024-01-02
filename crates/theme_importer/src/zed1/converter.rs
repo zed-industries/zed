@@ -83,6 +83,7 @@ impl Zed1ThemeConverter {
             warning: convert(diagnostic_summary.icon_color_warning),
             error: convert(diagnostic_summary.icon_color_error),
             hint: editor.hint.color.map(zed1_color_to_hsla),
+            predictive: editor.suggestion.color.map(zed1_color_to_hsla),
             ..Default::default()
         })
     }
