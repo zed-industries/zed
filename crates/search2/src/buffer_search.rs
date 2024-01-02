@@ -181,7 +181,11 @@ impl Render for BufferSearchBar {
         if in_replace {
             key_context.add("in_replace");
         }
-
+        let editor_border = if self.query_contains_error {
+            Color::Error.color(cx)
+        } else {
+            cx.theme().colors().border
+        };
         h_stack()
             .w_full()
             .gap_2()
@@ -217,7 +221,7 @@ impl Render for BufferSearchBar {
                     .py_1()
                     .gap_2()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(editor_border)
                     .rounded_lg()
                     .child(IconElement::new(Icon::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx))
@@ -852,6 +856,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
+                            self.active_match_index = None;
                             cx.notify();
                             return done_rx;
                         }
@@ -868,6 +873,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
+                            self.active_match_index = None;
                             cx.notify();
                             return done_rx;
                         }
