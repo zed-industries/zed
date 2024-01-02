@@ -16,20 +16,6 @@ fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -
 
 /// Extends [`Styled`](gpui::Styled) with Zed specific styling methods.
 pub trait StyledExt: Styled + Sized {
-    /// Sets the width of the element as a percentage of the viewport's width.
-    ///
-    /// `percent` should be a value between `0.0` and `1.0`.
-    fn w_vw(self, percent: f32, cx: &mut WindowContext) -> Self {
-        self.w(cx.viewport_size().width * percent)
-    }
-
-    /// Sets the height of the element as a percentage of the viewport's height.
-    ///
-    /// `percent` should be a value between `0.0` and `1.0`.
-    fn h_vh(self, percent: f32, cx: &mut WindowContext) -> Self {
-        self.h(cx.viewport_size().height * percent)
-    }
-
     /// Horizontally stacks elements.
     ///
     /// Sets `flex()`, `flex_row()`, `items_center()`
