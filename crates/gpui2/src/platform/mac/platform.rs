@@ -225,7 +225,12 @@ impl MacPlatform {
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
-                menu.addItem_(self.create_menu_item(item_config, delegate, actions, keymap));
+                menu.addItem_(Self::create_menu_item(
+                    item_config,
+                    delegate,
+                    actions,
+                    keymap,
+                ));
             }
 
             let menu_item = NSMenuItem::new(nil).autorelease();
@@ -242,7 +247,6 @@ impl MacPlatform {
     }
 
     unsafe fn create_menu_item(
-        &self,
         item: MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
@@ -348,7 +352,7 @@ impl MacPlatform {
                 let submenu = NSMenu::new(nil).autorelease();
                 submenu.setDelegate_(delegate);
                 for item in items {
-                    submenu.addItem_(self.create_menu_item(item, delegate, actions, keymap));
+                    submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                 }
                 item.setSubmenu_(submenu);
                 item.setTitle_(ns_string(name));

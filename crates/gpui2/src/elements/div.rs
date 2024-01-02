@@ -235,7 +235,7 @@ impl Interactivity {
 
     pub fn on_boxed_action(
         &mut self,
-        action: &Box<dyn Action>,
+        action: &dyn Action,
         listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
     ) {
         let action = action.boxed_clone();
@@ -510,7 +510,7 @@ pub trait InteractiveElement: Sized {
 
     fn on_boxed_action(
         mut self,
-        action: &Box<dyn Action>,
+        action: &dyn Action,
         listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().on_boxed_action(action, listener);
@@ -877,6 +877,7 @@ impl DivState {
     }
 }
 
+#[derive(Default)]
 pub struct Interactivity {
     pub element_id: Option<ElementId>,
     pub key_context: Option<KeyContext>,
@@ -1686,46 +1687,6 @@ impl Interactivity {
         });
 
         style
-    }
-}
-
-impl Default for Interactivity {
-    fn default() -> Self {
-        Self {
-            element_id: None,
-            key_context: None,
-            focusable: false,
-            tracked_focus_handle: None,
-            scroll_handle: None,
-            // scroll_offset: Point::default(),
-            group: None,
-            base_style: Box::<StyleRefinement>::default(),
-            focus_style: None,
-            in_focus_style: None,
-            hover_style: None,
-            group_hover_style: None,
-            active_style: None,
-            group_active_style: None,
-            drag_over_styles: Vec::new(),
-            group_drag_over_styles: Vec::new(),
-            mouse_down_listeners: Vec::new(),
-            mouse_up_listeners: Vec::new(),
-            mouse_move_listeners: Vec::new(),
-            scroll_wheel_listeners: Vec::new(),
-            key_down_listeners: Vec::new(),
-            key_up_listeners: Vec::new(),
-            action_listeners: Vec::new(),
-            drop_listeners: Vec::new(),
-            can_drop_predicate: None,
-            click_listeners: Vec::new(),
-            drag_listener: None,
-            hover_listener: None,
-            tooltip_builder: None,
-            block_mouse: false,
-
-            #[cfg(debug_assertions)]
-            location: None,
-        }
     }
 }
 

@@ -2922,10 +2922,7 @@ impl<V> Copy for WindowHandle<V> {}
 
 impl<V> Clone for WindowHandle<V> {
     fn clone(&self) -> Self {
-        WindowHandle {
-            any_handle: self.any_handle,
-            state_type: PhantomData,
-        }
+        *self
     }
 }
 

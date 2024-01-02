@@ -66,12 +66,10 @@ impl MetalRenderer {
             .expect("error building metal library");
 
         fn to_float2_bits(point: crate::PointF) -> u64 {
-            unsafe {
-                let mut output = mem::transmute::<_, u32>(point.y.to_bits()) as u64;
-                output <<= 32;
-                output |= mem::transmute::<_, u32>(point.x.to_bits()) as u64;
-                output
-            }
+            let mut output = point.y.to_bits() as u64;
+            output <<= 32;
+            output |= point.x.to_bits() as u64;
+            output
         }
 
         let unit_vertices = [
