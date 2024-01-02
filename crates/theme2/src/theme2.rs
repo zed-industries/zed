@@ -134,32 +134,11 @@ impl Theme {
         self.syntax().color(name)
     }
 
-    /// Returns the [`DiagnosticStyle`] for the theme.
-    #[inline(always)]
-    pub fn diagnostic_style(&self) -> DiagnosticStyle {
-        DiagnosticStyle {
-            error: self.status().error,
-            warning: self.status().warning,
-            info: self.status().info,
-            hint: self.status().info,
-            ignored: self.status().ignored,
-        }
-    }
-
     /// Returns the [`Appearance`] for the theme.
     #[inline(always)]
     pub fn appearance(&self) -> Appearance {
         self.appearance
     }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct DiagnosticStyle {
-    pub error: Hsla,
-    pub warning: Hsla,
-    pub info: Hsla,
-    pub hint: Hsla,
-    pub ignored: Hsla,
 }
 
 pub fn color_alpha(color: Hsla, alpha: f32) -> Hsla {
