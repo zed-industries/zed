@@ -176,10 +176,12 @@ impl Interactivity {
     {
         self.mouse_move_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture && cx
+                if phase == DispatchPhase::Capture
+                    && cx
                         .active_drag
                         .as_ref()
-                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>()) {
+                        .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
+                {
                     (listener)(
                         &DragMoveEvent {
                             event: event.clone(),
@@ -1020,7 +1022,6 @@ impl Interactivity {
                                     {
                                         let command_held = cx.modifiers().command;
                                         cx.on_key_event({
-                                            let text_bounds = text_bounds;
                                             move |e: &crate::ModifiersChangedEvent, _phase, cx| {
                                                 if e.modifiers.command != command_held
                                                     && text_bounds.contains(&cx.mouse_position())
@@ -1033,7 +1034,9 @@ impl Interactivity {
                                         let hovered = bounds.contains(&cx.mouse_position());
                                         cx.on_mouse_event(
                                             move |event: &MouseMoveEvent, phase, cx| {
-                                                if phase == DispatchPhase::Capture && bounds.contains(&event.position) != hovered {
+                                                if phase == DispatchPhase::Capture
+                                                    && bounds.contains(&event.position) != hovered
+                                                {
                                                     cx.notify();
                                                 }
                                             },
@@ -1041,7 +1044,6 @@ impl Interactivity {
 
                                         cx.on_mouse_event({
                                             let location = self.location.unwrap();
-                                            let text_bounds = text_bounds;
                                             move |e: &crate::MouseDownEvent, phase, cx| {
                                                 if text_bounds.contains(&e.position)
                                                     && phase.capture()
@@ -1182,7 +1184,9 @@ impl Interactivity {
                         if let Some(group_bounds) = hover_group_bounds {
                             let hovered = group_bounds.contains(&cx.mouse_position());
                             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                                if phase == DispatchPhase::Capture && group_bounds.contains(&event.position) != hovered {
+                                if phase == DispatchPhase::Capture
+                                    && group_bounds.contains(&event.position) != hovered
+                                {
                                     cx.notify();
                                 }
                             });
@@ -1195,7 +1199,9 @@ impl Interactivity {
                             let bounds = bounds.intersect(&cx.content_mask().bounds);
                             let hovered = bounds.contains(&cx.mouse_position());
                             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                                if phase == DispatchPhase::Capture && bounds.contains(&event.position) != hovered {
+                                if phase == DispatchPhase::Capture
+                                    && bounds.contains(&event.position) != hovered
+                                {
                                     cx.notify();
                                 }
                             });

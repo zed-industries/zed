@@ -171,7 +171,6 @@ impl TextState {
         let line_height = text_style
             .line_height
             .to_pixels(font_size.into(), cx.rem_size());
-        let text = text;
 
         let runs = if let Some(runs) = runs {
             runs
