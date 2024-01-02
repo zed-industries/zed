@@ -6,6 +6,10 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
+/// Implemented by types that participate in laying out and painting the contents of a window.
+/// Elements form a tree and are laid out according to web-based layout rules.
+/// Rather than calling methods on implementers of this trait directly, you'll usually call `into_any` to convert  them into an AnyElement, which manages state internally.
+/// You can create custom elements by implementing this trait.
 pub trait Element: 'static + IntoElement {
     type State: 'static;
 
