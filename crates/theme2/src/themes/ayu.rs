@@ -75,6 +75,7 @@ pub fn ayu() -> UserThemeFamily {
                         error: Some(rgba(0xef7178ff).into()),
                         hint: Some(rgba(0x638c81ff).into()),
                         modified: Some(rgba(0xfeb454ff).into()),
+                        predictive: Some(rgba(0x5b728cff).into()),
                         success: Some(rgba(0xbfbdb6ff).into()),
                         warning: Some(rgba(0xfeb454ff).into()),
                         ..Default::default()
@@ -458,6 +459,7 @@ pub fn ayu() -> UserThemeFamily {
                         error: Some(rgba(0xef7271ff).into()),
                         hint: Some(rgba(0x8ca7c2ff).into()),
                         modified: Some(rgba(0xf1ae4aff).into()),
+                        predictive: Some(rgba(0x9eb9d3ff).into()),
                         success: Some(rgba(0x5c6166ff).into()),
                         warning: Some(rgba(0xf1ae4aff).into()),
                         ..Default::default()
@@ -841,6 +843,7 @@ pub fn ayu() -> UserThemeFamily {
                         error: Some(rgba(0xf18779ff).into()),
                         hint: Some(rgba(0x7399a3ff).into()),
                         modified: Some(rgba(0xfed073ff).into()),
+                        predictive: Some(rgba(0x6d839bff).into()),
                         success: Some(rgba(0xcccac2ff).into()),
                         warning: Some(rgba(0xfed073ff).into()),
                         ..Default::default()

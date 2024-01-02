@@ -210,7 +210,7 @@ impl TextStyle {
     pub fn font(&self) -> Font {
         Font {
             family: self.font_family.clone(),
-            features: self.font_features.clone(),
+            features: self.font_features,
             weight: self.font_weight,
             style: self.font_style,
         }
@@ -232,7 +232,7 @@ impl TextStyle {
             },
             color: self.color,
             background_color: self.background_color,
-            underline: self.underline.clone(),
+            underline: self.underline,
         }
     }
 }
@@ -386,12 +386,14 @@ impl Style {
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
             cx.with_z_index(1, |cx| {
+                let mut border_color = background_color.unwrap_or_default();
+                border_color.a = 0.;
                 cx.paint_quad(quad(
                     bounds,
                     self.corner_radii.to_pixels(bounds.size, rem_size),
                     background_color.unwrap_or_default(),
                     Edges::default(),
-                    Hsla::transparent_black(),
+                    border_color,
                 ));
             });
         }
@@ -426,10 +428,12 @@ impl Style {
                     bottom_bounds.upper_right(),
                 );
 
+                let mut background = self.border_color.unwrap_or_default();
+                background.a = 0.;
                 let quad = quad(
                     bounds,
                     corner_radii,
-                    Hsla::transparent_black(),
+                    background,
                     border_widths,
                     self.border_color.unwrap_or_default(),
                 );
@@ -570,7 +574,7 @@ impl From<&TextStyle> for HighlightStyle {
             font_weight: Some(other.font_weight),
             font_style: Some(other.font_style),
             background_color: other.background_color,
-            underline: other.underline.clone(),
+            underline: other.underline,
             fade_out: None,
         }
     }

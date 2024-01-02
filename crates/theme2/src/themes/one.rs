@@ -75,6 +75,7 @@ pub fn one() -> UserThemeFamily {
                         error: Some(rgba(0xd36151ff).into()),
                         hint: Some(rgba(0x9295beff).into()),
                         modified: Some(rgba(0xdec184ff).into()),
+                        predictive: Some(rgba(0x9c9fc7ff).into()),
                         success: Some(rgba(0x383a41ff).into()),
                         warning: Some(rgba(0xdec184ff).into()),
                         ..Default::default()
@@ -465,6 +466,7 @@ pub fn one() -> UserThemeFamily {
                         error: Some(rgba(0xd07277ff).into()),
                         hint: Some(rgba(0x5b708aff).into()),
                         modified: Some(rgba(0xdec184ff).into()),
+                        predictive: Some(rgba(0x5b6b88ff).into()),
                         success: Some(rgba(0xc8ccd4ff).into()),
                         warning: Some(rgba(0xdec184ff).into()),
                         ..Default::default()

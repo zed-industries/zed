@@ -23,6 +23,12 @@ pub struct MacDispatcher {
     parker: Arc<Mutex<Parker>>,
 }
 
+impl Default for MacDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MacDispatcher {
     pub fn new() -> Self {
         MacDispatcher {

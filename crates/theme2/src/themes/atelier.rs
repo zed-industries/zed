@@ -75,6 +75,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xba6337ff).into()),
                         hint: Some(rgba(0x768962ff).into()),
                         modified: Some(rgba(0xa59810ff).into()),
+                        predictive: Some(rgba(0x879a72ff).into()),
                         success: Some(rgba(0x22221bff).into()),
                         warning: Some(rgba(0xa59810ff).into()),
                         ..Default::default()
@@ -479,6 +480,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xf22d40ff).into()),
                         hint: Some(rgba(0xa87187ff).into()),
                         modified: Some(rgba(0xc38419ff).into()),
+                        predictive: Some(rgba(0x8f5b71ff).into()),
                         success: Some(rgba(0xf1efeeff).into()),
                         warning: Some(rgba(0xc38419ff).into()),
                         ..Default::default()
@@ -883,6 +885,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xb1623aff).into()),
                         hint: Some(rgba(0x66847cff).into()),
                         modified: Some(rgba(0xa07e3cff).into()),
+                        predictive: Some(rgba(0x76958cff).into()),
                         success: Some(rgba(0x171c19ff).into()),
                         warning: Some(rgba(0xa07e3cff).into()),
                         ..Default::default()
@@ -1287,6 +1290,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xbe4678ff).into()),
                         hint: Some(rgba(0x716998ff).into()),
                         modified: Some(rgba(0xa06e3bff).into()),
+                        predictive: Some(rgba(0x625887ff).into()),
                         success: Some(rgba(0xefecf4ff).into()),
                         warning: Some(rgba(0xa06e3bff).into()),
                         ..Default::default()
@@ -1691,6 +1695,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xba6237ff).into()),
                         hint: Some(rgba(0x70825bff).into()),
                         modified: Some(rgba(0xa59810ff).into()),
+                        predictive: Some(rgba(0x5f724cff).into()),
                         success: Some(rgba(0xf4f3ecff).into()),
                         warning: Some(rgba(0xa59810ff).into()),
                         ..Default::default()
@@ -2095,6 +2100,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xc94923ff).into()),
                         hint: Some(rgba(0x6d82a6ff).into()),
                         modified: Some(rgba(0xc08b31ff).into()),
+                        predictive: Some(rgba(0x58709aff).into()),
                         success: Some(rgba(0xf5f7ffff).into()),
                         warning: Some(rgba(0xc08b31ff).into()),
                         ..Default::default()
@@ -2499,6 +2505,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xc94a23ff).into()),
                         hint: Some(rgba(0x7087b2ff).into()),
                         modified: Some(rgba(0xc08b31ff).into()),
+                        predictive: Some(rgba(0x8599beff).into()),
                         success: Some(rgba(0x202746ff).into()),
                         warning: Some(rgba(0xc08b31ff).into()),
                         ..Default::default()
@@ -2903,6 +2910,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xd73837ff).into()),
                         hint: Some(rgba(0xb17272ff).into()),
                         modified: Some(rgba(0xae9515ff).into()),
+                        predictive: Some(rgba(0x9c6262ff).into()),
                         success: Some(rgba(0xfefbecff).into()),
                         warning: Some(rgba(0xae9515ff).into()),
                         ..Default::default()
@@ -3307,6 +3315,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xe61c3cff).into()),
                         hint: Some(rgba(0x008b9fff).into()),
                         modified: Some(rgba(0x98981cff).into()),
+                        predictive: Some(rgba(0x00788bff).into()),
                         success: Some(rgba(0xf4fbf4ff).into()),
                         warning: Some(rgba(0x98981cff).into()),
                         ..Default::default()
@@ -3711,6 +3720,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xbe4778ff).into()),
                         hint: Some(rgba(0x786e9dff).into()),
                         modified: Some(rgba(0xa06e3cff).into()),
+                        predictive: Some(rgba(0x887fafff).into()),
                         success: Some(rgba(0x19171cff).into()),
                         warning: Some(rgba(0xa06e3cff).into()),
                         ..Default::default()
@@ -4115,6 +4125,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xca4949ff).into()),
                         hint: Some(rgba(0x8a647aff).into()),
                         modified: Some(rgba(0xa06e3bff).into()),
+                        predictive: Some(rgba(0x795369ff).into()),
                         success: Some(rgba(0xf4ececff).into()),
                         warning: Some(rgba(0xa06e3bff).into()),
                         ..Default::default()
@@ -4519,6 +4530,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xca402cff).into()),
                         hint: Some(rgba(0x8d70a8ff).into()),
                         modified: Some(rgba(0xbb8a36ff).into()),
+                        predictive: Some(rgba(0x765990ff).into()),
                         success: Some(rgba(0xf7f3f7ff).into()),
                         warning: Some(rgba(0xbb8a36ff).into()),
                         ..Default::default()
@@ -4923,6 +4935,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xd22e72ff).into()),
                         hint: Some(rgba(0x52809aff).into()),
                         modified: Some(rgba(0x8a8a11ff).into()),
+                        predictive: Some(rgba(0x427088ff).into()),
                         success: Some(rgba(0xebf8ffff).into()),
                         warning: Some(rgba(0x8a8a11ff).into()),
                         ..Default::default()
@@ -5327,6 +5340,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xf22e41ff).into()),
                         hint: Some(rgba(0xa67287ff).into()),
                         modified: Some(rgba(0xc3841aff).into()),
+                        predictive: Some(rgba(0xbe899eff).into()),
                         success: Some(rgba(0x1b1918ff).into()),
                         warning: Some(rgba(0xc3841aff).into()),
                         ..Default::default()
@@ -5731,6 +5745,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xd73838ff).into()),
                         hint: Some(rgba(0xb37979ff).into()),
                         modified: Some(rgba(0xae9515ff).into()),
+                        predictive: Some(rgba(0xc88a8aff).into()),
                         success: Some(rgba(0x20201dff).into()),
                         warning: Some(rgba(0xae9515ff).into()),
                         ..Default::default()
@@ -6135,6 +6150,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xca4a4aff).into()),
                         hint: Some(rgba(0x916a80ff).into()),
                         modified: Some(rgba(0xa06e3cff).into()),
+                        predictive: Some(rgba(0xa27a91ff).into()),
                         success: Some(rgba(0x1b1818ff).into()),
                         warning: Some(rgba(0xa06e3cff).into()),
                         ..Default::default()
@@ -6539,6 +6555,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xe61c3dff).into()),
                         hint: Some(rgba(0x008fa1ff).into()),
                         modified: Some(rgba(0x98981dff).into()),
+                        predictive: Some(rgba(0x00a2b5ff).into()),
                         success: Some(rgba(0x131513ff).into()),
                         warning: Some(rgba(0x98981dff).into()),
                         ..Default::default()
@@ -6943,6 +6960,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xb16139ff).into()),
                         hint: Some(rgba(0x607e76ff).into()),
                         modified: Some(rgba(0xa07e3bff).into()),
+                        predictive: Some(rgba(0x506d66ff).into()),
                         success: Some(rgba(0xecf4eeff).into()),
                         warning: Some(rgba(0xa07e3bff).into()),
                         ..Default::default()
@@ -7347,6 +7365,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xca412cff).into()),
                         hint: Some(rgba(0x8c70a6ff).into()),
                         modified: Some(rgba(0xbb8a36ff).into()),
+                        predictive: Some(rgba(0xa587bfff).into()),
                         success: Some(rgba(0x1b181bff).into()),
                         warning: Some(rgba(0xbb8a36ff).into()),
                         ..Default::default()
@@ -7751,6 +7770,7 @@ pub fn atelier() -> UserThemeFamily {
                         error: Some(rgba(0xd22f72ff).into()),
                         hint: Some(rgba(0x5a87a0ff).into()),
                         modified: Some(rgba(0x8a8a11ff).into()),
+                        predictive: Some(rgba(0x6a97b2ff).into()),
                         success: Some(rgba(0x161b1dff).into()),
                         warning: Some(rgba(0x8a8a11ff).into()),
                         ..Default::default()

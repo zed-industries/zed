@@ -232,13 +232,13 @@ impl<'a> Statement<'a> {
             .last_error()
             .with_context(|| format!("Failed to read text length at {index}"))?;
 
-        let slice = unsafe { slice::from_raw_parts(pointer as *const u8, len) };
+        let slice = unsafe { slice::from_raw_parts(pointer, len) };
         Ok(str::from_utf8(slice)?)
     }
 
     pub fn bind<T: Bind>(&self, value: &T, index: i32) -> Result<i32> {
         debug_assert!(index > 0);
-        Ok(value.bind(self, index)?)
+        value.bind(self, index)
     }
 
     pub fn column<T: Column>(&mut self) -> Result<T> {

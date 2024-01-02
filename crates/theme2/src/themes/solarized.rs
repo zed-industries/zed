@@ -75,6 +75,7 @@ pub fn solarized() -> UserThemeFamily {
                         error: Some(rgba(0xdc3330ff).into()),
                         hint: Some(rgba(0x5889a3ff).into()),
                         modified: Some(rgba(0xb58904ff).into()),
+                        predictive: Some(rgba(0x679aafff).into()),
                         success: Some(rgba(0x002b36ff).into()),
                         warning: Some(rgba(0xb58904ff).into()),
                         ..Default::default()
@@ -458,6 +459,7 @@ pub fn solarized() -> UserThemeFamily {
                         error: Some(rgba(0xdc3330ff).into()),
                         hint: Some(rgba(0x4f8297ff).into()),
                         modified: Some(rgba(0xb58903ff).into()),
+                        predictive: Some(rgba(0x40728bff).into()),
                         success: Some(rgba(0xfdf6e3ff).into()),
                         warning: Some(rgba(0xb58903ff).into()),
                         ..Default::default()

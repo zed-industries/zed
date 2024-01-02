@@ -1,5 +1,5 @@
-///! Macos screen have a y axis that goings up from the bottom of the screen and
-///! an origin at the bottom left of the main display.
+//! Macos screen have a y axis that goings up from the bottom of the screen and
+//! an origin at the bottom left of the main display.
 mod dispatcher;
 mod display;
 mod display_linker;

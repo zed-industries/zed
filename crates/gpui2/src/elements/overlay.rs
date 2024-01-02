@@ -71,9 +71,11 @@ impl Element for Overlay {
             .map(|child| child.layout(cx))
             .collect::<SmallVec<_>>();
 
-        let mut overlay_style = Style::default();
-        overlay_style.position = Position::Absolute;
-        overlay_style.display = Display::Flex;
+        let overlay_style = Style {
+            position: Position::Absolute,
+            display: Display::Flex,
+            ..Style::default()
+        };
 
         let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
 

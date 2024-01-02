@@ -74,6 +74,7 @@ pub fn summercamp() -> UserThemeFamily {
                     error: Some(rgba(0xe35142ff).into()),
                     hint: Some(rgba(0x246e61ff).into()),
                     modified: Some(rgba(0xf1fe29ff).into()),
+                    predictive: Some(rgba(0x79434bff).into()),
                     success: Some(rgba(0xf8f5deff).into()),
                     warning: Some(rgba(0xf1fe29ff).into()),
                     ..Default::default()

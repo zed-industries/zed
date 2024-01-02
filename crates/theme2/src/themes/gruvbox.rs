@@ -75,6 +75,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         error: Some(rgba(0x9d0408ff).into()),
                         hint: Some(rgba(0x677562ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
+                        predictive: Some(rgba(0x7d9881ff).into()),
                         success: Some(rgba(0x282828ff).into()),
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
@@ -465,6 +466,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         error: Some(rgba(0xfb4a35ff).into()),
                         hint: Some(rgba(0x8d957eff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
+                        predictive: Some(rgba(0x717363ff).into()),
                         success: Some(rgba(0xfbf1c7ff).into()),
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
@@ -855,6 +857,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         error: Some(rgba(0x9d0408ff).into()),
                         hint: Some(rgba(0x677562ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
+                        predictive: Some(rgba(0x7d9881ff).into()),
                         success: Some(rgba(0x282828ff).into()),
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
@@ -1245,6 +1248,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         error: Some(rgba(0xfb4a35ff).into()),
                         hint: Some(rgba(0x8d957eff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
+                        predictive: Some(rgba(0x717363ff).into()),
                         success: Some(rgba(0xfbf1c7ff).into()),
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
@@ -1635,6 +1639,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         error: Some(rgba(0x9d0408ff).into()),
                         hint: Some(rgba(0x677562ff).into()),
                         modified: Some(rgba(0xb57616ff).into()),
+                        predictive: Some(rgba(0x7d9881ff).into()),
                         success: Some(rgba(0x282828ff).into()),
                         warning: Some(rgba(0xb57616ff).into()),
                         ..Default::default()
@@ -2025,6 +2030,7 @@ pub fn gruvbox() -> UserThemeFamily {
                         error: Some(rgba(0xfb4a35ff).into()),
                         hint: Some(rgba(0x8d957eff).into()),
                         modified: Some(rgba(0xf9bd30ff).into()),
+                        predictive: Some(rgba(0x717363ff).into()),
                         success: Some(rgba(0xfbf1c7ff).into()),
                         warning: Some(rgba(0xf9bd30ff).into()),
                         ..Default::default()
