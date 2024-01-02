@@ -65,19 +65,15 @@ impl KeyBinding {
     }
 
     fn icon_for_key(keystroke: &Keystroke) -> Option<Icon> {
-        let mut icon: Option<Icon> = None;
-
-        if keystroke.key == "left".to_string() {
-            icon = Some(Icon::ArrowLeft);
-        } else if keystroke.key == "right".to_string() {
-            icon = Some(Icon::ArrowRight);
-        } else if keystroke.key == "up".to_string() {
-            icon = Some(Icon::ArrowUp);
-        } else if keystroke.key == "down".to_string() {
-            icon = Some(Icon::ArrowDown);
+        match keystroke.key.as_str() {
+            "left" => Some(Icon::ArrowLeft),
+            "right" => Some(Icon::ArrowRight),
+            "up" => Some(Icon::ArrowUp),
+            "down" => Some(Icon::ArrowDown),
+            "backspace" => Some(Icon::Backspace),
+            "delete" => Some(Icon::Delete),
+            _ => None,
         }
-
-        icon
     }
 
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
