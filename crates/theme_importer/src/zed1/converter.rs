@@ -125,16 +125,7 @@ impl Zed1ThemeConverter {
         let middle = &base_theme.middle;
         let highest = &base_theme.highest;
 
-        let picker = &self.theme.picker;
-        let title_bar = &self.theme.titlebar;
-        let status_bar = &self.theme.workspace.status_bar;
-        let project_panel = &self.theme.project_panel;
-        let tab_bar = &self.theme.workspace.tab_bar;
-        let active_tab = &self.theme.workspace.tab_bar.tab_style(true, true);
-        let inactive_tab = &self.theme.workspace.tab_bar.tab_style(true, false);
-        let toolbar = &self.theme.workspace.toolbar;
         let editor = &self.theme.editor;
-        let scrollbar = &self.theme.editor.scrollbar;
         let terminal = &self.theme.terminal;
 
         Ok(ThemeColorsRefinement {
@@ -144,87 +135,42 @@ impl Zed1ThemeConverter {
             border_selected: convert(lowest.accent.default.border),
             border_transparent: Some(gpui::transparent_black()),
             border_disabled: convert(lowest.base.disabled.border),
-            elevated_surface_background: editor
-                .hover_popover
-                .container
-                .background_color
-                .map(zed1_color_to_hsla),
+            elevated_surface_background: convert(middle.base.default.background),
             surface_background: convert(middle.base.default.background),
-            background: convert(self.theme.workspace.background),
+            background: convert(lowest.base.default.background),
             element_background: convert(lowest.on.default.background),
-            element_hover: picker
-                .item
-                .hovered
-                .as_ref()
-                .and_then(|hovered| hovered.container.background_color)
-                .map(zed1_color_to_hsla),
+            element_hover: convert(lowest.on.hovered.background),
             element_active: convert(lowest.on.active.background),
-            element_selected: picker
-                .item
-                .active_state()
-                .container
-                .background_color
-                .map(zed1_color_to_hsla),
+            element_selected: convert(lowest.on.active.background), // TODO: Check what this should be
             element_disabled: convert(lowest.on.disabled.background),
             drop_target_background: convert(self.theme.workspace.drop_target_overlay_color),
             ghost_element_background: Some(gpui::transparent_black()),
-            ghost_element_hover: picker
-                .item
-                .hovered
-                .as_ref()
-                .and_then(|hovered| hovered.container.background_color)
-                .map(zed1_color_to_hsla),
+            ghost_element_hover: convert(lowest.on.hovered.background),
             ghost_element_active: convert(lowest.on.active.background),
-            ghost_element_selected: picker
-                .item
-                .active_state()
-                .container
-                .background_color
-                .map(zed1_color_to_hsla),
+            ghost_element_selected: convert(lowest.on.active.background), // TODO: Check what this should be
             ghost_element_disabled: convert(lowest.on.disabled.background),
             icon: convert(lowest.base.default.foreground),
             icon_muted: convert(lowest.variant.default.foreground),
             icon_placeholder: convert(lowest.variant.default.foreground), // TODO: What should placeholder be?
             icon_disabled: convert(lowest.base.disabled.foreground),
             icon_accent: convert(lowest.accent.default.foreground),
-            text: convert(self.theme.collab_panel.channel_name.text.color),
-            text_muted: convert(tab_bar.pane_button.default_style().color),
-            text_placeholder: picker
-                .empty_input_editor
-                .placeholder_text
-                .as_ref()
-                .map(|placeholder_text| placeholder_text.color)
-                .map(zed1_color_to_hsla),
-            text_disabled: convert(status_bar.panel_buttons.button.disabled_style().icon_color),
-            text_accent: convert(status_bar.panel_buttons.button.active_state().icon_color),
-            status_bar_background: status_bar
-                .container
-                .background_color
-                .map(zed1_color_to_hsla)
-                .or_else(|| title_bar.container.background_color.map(zed1_color_to_hsla)),
-            title_bar_background: title_bar.container.background_color.map(zed1_color_to_hsla),
-            toolbar_background: toolbar.container.background_color.map(zed1_color_to_hsla),
-            tab_bar_background: tab_bar.container.background_color.map(zed1_color_to_hsla),
-            tab_inactive_background: inactive_tab
-                .container
-                .background_color
-                .map(zed1_color_to_hsla),
-            tab_active_background: active_tab
-                .container
-                .background_color
-                .map(zed1_color_to_hsla),
-            panel_background: project_panel
-                .container
-                .background_color
-                .map(zed1_color_to_hsla),
-            scrollbar_thumb_background: scrollbar.thumb.background_color.map(zed1_color_to_hsla),
-            scrollbar_thumb_hover_background: scrollbar
-                .thumb
-                .background_color
-                .map(zed1_color_to_hsla),
-            scrollbar_thumb_border: convert(scrollbar.thumb.border.color),
+            text: convert(lowest.base.default.foreground),
+            text_muted: convert(lowest.variant.default.foreground),
+            text_placeholder: convert(lowest.base.disabled.foreground),
+            text_disabled: convert(lowest.base.disabled.foreground),
+            text_accent: convert(lowest.accent.default.foreground),
+            status_bar_background: convert(lowest.base.default.background),
+            title_bar_background: convert(lowest.base.default.background),
+            toolbar_background: convert(highest.base.default.background),
+            tab_bar_background: convert(middle.base.default.background),
+            tab_inactive_background: convert(middle.base.default.background),
+            tab_active_background: convert(highest.base.default.background),
+            panel_background: convert(middle.base.default.background),
+            scrollbar_thumb_background: convert(middle.base.default.background),
+            scrollbar_thumb_hover_background: convert(middle.base.hovered.background),
+            scrollbar_thumb_border: convert(middle.base.default.border),
             scrollbar_track_background: convert(highest.base.default.background),
-            scrollbar_track_border: convert(scrollbar.track.border.color),
+            scrollbar_track_border: convert(highest.variant.default.border),
             editor_foreground: convert(editor.text_color),
             editor_background: convert(editor.background),
             editor_gutter_background: convert(editor.gutter_background),
