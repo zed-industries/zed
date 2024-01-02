@@ -98,7 +98,7 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, ThemeColors, ThemeSettings};
-use ui::{h_stack, ButtonSize, ButtonStyle, Icon, IconButton, Popover, Tooltip};
+use ui::{h_stack, ButtonSize, ButtonStyle, Icon, IconButton, List, Popover, Tooltip};
 use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
@@ -1202,6 +1202,7 @@ impl CompletionsMenu {
                     .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
             })
         };
+
         let list = uniform_list(
             cx.view().clone(),
             "completions",
@@ -1239,19 +1240,27 @@ impl CompletionsMenu {
                             .with_highlights(&style.text, highlights);
                         let documentation_label =
                             if let Some(Documentation::SingleLine(text)) = documentation {
-                                Some(SharedString::from(text.clone()))
-                                    .filter(|text| !text.trim().is_empty())
+                                if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        h_stack()
+                                            .flex_grow()
+                                            .child(div().flex_grow())
+                                            .child(Label::new(text.clone())),
+                                    )
+                                }
                             } else {
                                 None
                             };
 
-                        div()
+                        h_stack()
                             .id(mat.candidate_id)
-                            .min_w(px(220.))
-                            .max_w(px(540.))
+                            .w(px(540.))
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_ui()
+                            .gap_2()
                             .px_1()
                             .rounded(px(4.))
                             .bg(cx.theme().colors().ghost_element_background)
