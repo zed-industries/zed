@@ -2165,9 +2165,20 @@ impl CollabPanel {
                             .id(channel_id as usize)
                             .child(Label::new(channel.name.clone()))
                             .children(face_pile.map(|face_pile| face_pile.render(cx))),
-                    )
-                    .end_slot(
+                    ),
+            )
+            .child(
+                h_stack()
+                    .absolute()
+                    .right_0()
+                    // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
+                    .z_index(10)
+                    .bg(cx.theme().colors().panel_background)
+                    .child(
                         h_stack()
+                            .group_hover("", |style| {
+                                style.bg(cx.theme().colors().ghost_element_hover)
+                            })
                             .child(
                                 IconButton::new("channel_chat", Icon::MessageBubbles)
                                     .icon_size(IconSize::Small)
