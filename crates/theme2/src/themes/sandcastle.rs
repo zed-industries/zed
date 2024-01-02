@@ -74,6 +74,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     error: Some(rgba(0xb4637aff).into()),
                     hint: Some(rgba(0x727d68ff).into()),
                     modified: Some(rgba(0xa07e3bff).into()),
+                    predictive: Some(rgba(0x5c6152ff).into()),
                     success: Some(rgba(0xfdf4c1ff).into()),
                     warning: Some(rgba(0xa07e3bff).into()),
                     ..Default::default()
