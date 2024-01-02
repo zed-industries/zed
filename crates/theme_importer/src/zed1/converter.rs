@@ -149,23 +149,26 @@ impl Zed1ThemeConverter {
             ghost_element_active: convert(lowest.on.active.background),
             ghost_element_selected: convert(lowest.on.active.background), // TODO: Check what this should be
             ghost_element_disabled: convert(lowest.on.disabled.background),
-            icon: convert(lowest.base.default.foreground),
-            icon_muted: convert(lowest.variant.default.foreground),
-            icon_placeholder: convert(lowest.variant.default.foreground), // TODO: What should placeholder be?
-            icon_disabled: convert(lowest.base.disabled.foreground),
-            icon_accent: convert(lowest.accent.default.foreground),
             text: convert(lowest.base.default.foreground),
             text_muted: convert(lowest.variant.default.foreground),
-            text_placeholder: convert(lowest.base.disabled.foreground),
+            text_placeholder: convert(lowest.base.disabled.foreground), // TODO: What should placeholder be?
             text_disabled: convert(lowest.base.disabled.foreground),
             text_accent: convert(lowest.accent.default.foreground),
+            icon: convert(lowest.base.default.foreground),
+            icon_muted: convert(lowest.variant.default.foreground),
+            icon_disabled: convert(lowest.base.disabled.foreground),
+            icon_placeholder: convert(lowest.variant.default.foreground),
+            icon_accent: convert(lowest.accent.default.foreground),
             status_bar_background: convert(lowest.base.default.background),
             title_bar_background: convert(lowest.base.default.background),
             toolbar_background: convert(highest.base.default.background),
             tab_bar_background: convert(middle.base.default.background),
             tab_inactive_background: convert(middle.base.default.background),
             tab_active_background: convert(highest.base.default.background),
+            search_match_background: convert(highest.accent.default.background),
             panel_background: convert(middle.base.default.background),
+            panel_focused_border: convert(lowest.accent.hovered.border),
+            pane_focused_border: convert(lowest.accent.hovered.border),
             scrollbar_thumb_background: convert(middle.base.default.background),
             scrollbar_thumb_hover_background: convert(middle.base.hovered.background),
             scrollbar_thumb_border: convert(middle.base.default.border),
@@ -174,10 +177,20 @@ impl Zed1ThemeConverter {
             editor_foreground: convert(editor.text_color),
             editor_background: convert(editor.background),
             editor_gutter_background: convert(editor.gutter_background),
+            editor_subheader_background: convert(middle.base.default.background),
+            editor_active_line_background: convert(editor.active_line_background),
+            editor_highlighted_line_background: convert(editor.highlighted_line_background),
             editor_line_number: convert(editor.line_number),
             editor_active_line_number: convert(editor.line_number_active),
+            editor_invisible: convert(highest.variant.default.foreground), // TODO: Is this light enough?
             editor_wrap_guide: convert(editor.wrap_guide),
             editor_active_wrap_guide: convert(editor.active_wrap_guide),
+            editor_document_highlight_read_background: convert(
+                editor.document_highlight_read_background,
+            ),
+            editor_document_highlight_write_background: convert(
+                editor.document_highlight_write_background,
+            ),
             terminal_background: convert(terminal.background),
             terminal_ansi_bright_black: convert(terminal.bright_black),
             terminal_ansi_bright_red: convert(terminal.bright_red),
@@ -195,7 +208,7 @@ impl Zed1ThemeConverter {
             terminal_ansi_magenta: convert(terminal.magenta),
             terminal_ansi_cyan: convert(terminal.cyan),
             terminal_ansi_white: convert(terminal.white),
-            ..Default::default()
+            link_text_hover: convert(highest.accent.default.foreground),
         })
     }
 
