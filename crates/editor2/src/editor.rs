@@ -98,7 +98,9 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, ThemeColors, ThemeSettings};
-use ui::{h_stack, ButtonSize, ButtonStyle, Icon, IconButton, List, Popover, Tooltip};
+use ui::{
+    h_stack, ButtonSize, ButtonStyle, Icon, IconButton, ListItem, ListItemSpacing, Popover, Tooltip,
+};
 use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
@@ -1243,34 +1245,18 @@ impl CompletionsMenu {
                                 if text.trim().is_empty() {
                                     None
                                 } else {
-                                    Some(
-                                        h_stack()
-                                            .flex_grow()
-                                            .child(div().flex_grow())
-                                            .child(Label::new(text.clone())),
-                                    )
+                                    Some(h_stack().ml_2().child(Label::new(text.clone())))
                                 }
                             } else {
                                 None
                             };
 
-                        h_stack()
-                            .id(mat.candidate_id)
-                            .w(px(540.))
-                            .whitespace_nowrap()
-                            .overflow_hidden()
-                            .text_ui()
-                            .gap_2()
-                            .px_1()
-                            .rounded(px(4.))
-                            .bg(cx.theme().colors().ghost_element_background)
-                            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                            .when(item_ix == selected_item, |div| {
-                                div.bg(cx.theme().colors().ghost_element_selected)
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |editor, _event, cx| {
+                        div().min_w(px(220.)).max_w(px(540.)).child(
+                            ListItem::new(mat.candidate_id)
+                                .inset(true)
+                                .spacing(ListItemSpacing::Sparse)
+                                .selected(item_ix == selected_item)
+                                .on_click(cx.listener(move |editor, _event, cx| {
                                     cx.stop_propagation();
                                     editor
                                         .confirm_completion(
@@ -1280,10 +1266,10 @@ impl CompletionsMenu {
                                             cx,
                                         )
                                         .map(|task| task.detach_and_log_err(cx));
-                                }),
-                            )
-                            .child(completion_label)
-                            .children(documentation_label)
+                                }))
+                                .child(div().text_ui().child(completion_label))
+                                .end_slot::<Div>(documentation_label),
+                        )
                     })
                     .collect()
             },
