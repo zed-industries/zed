@@ -74,9 +74,9 @@ impl ParentElement for StoryContainer {
 }
 
 impl RenderOnce for StoryContainer {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         div()
             .size_full()
             .flex()
@@ -294,9 +294,9 @@ impl StoryItem {
 }
 
 impl RenderOnce for StoryItem {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         div()
             .my_2()
             .flex()
@@ -358,9 +358,9 @@ impl StorySection {
 }
 
 impl RenderOnce for StorySection {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         let children: SmallVec<[AnyElement; 2]> = SmallVec::from_iter(Itertools::intersperse_with(
             self.children.into_iter(),
             || Story::divider().into_any_element(),

@@ -9,9 +9,9 @@ pub struct FacePile {
 }
 
 impl RenderOnce for FacePile {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Output {
         let player_count = self.faces.len();
         let player_list = self.faces.into_iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;

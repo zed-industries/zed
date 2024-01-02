@@ -40,9 +40,9 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    type Rendered = LabelLike;
+    type Output = LabelLike;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         self.base.child(self.label)
     }
 }

@@ -60,7 +60,7 @@ impl ParentElement for Overlay {
 impl Element for Overlay {
     type State = OverlayState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,

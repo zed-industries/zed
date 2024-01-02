@@ -6,9 +6,9 @@ use crate::prelude::*;
 pub struct ListSeparator;
 
 impl RenderOnce for ListSeparator {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .h_px()
             .w_full()

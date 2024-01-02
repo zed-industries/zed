@@ -130,7 +130,7 @@ pub struct PopoverMenuState<M> {
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type State = PopoverMenuState<M>;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
         cx: &mut WindowContext,

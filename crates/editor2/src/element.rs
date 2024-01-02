@@ -2757,7 +2757,7 @@ enum Invisible {
 impl Element for EditorElement {
     type State = ();
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _element_state: Option<Self::State>,
         cx: &mut gpui::WindowContext,

@@ -136,9 +136,9 @@ impl QuickActionBarButton {
 }
 
 impl RenderOnce for QuickActionBarButton {
-    type Rendered = IconButton;
+    type Output = IconButton;
 
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Output {
         let tooltip = self.tooltip.clone();
         let action = self.action.boxed_clone();
 

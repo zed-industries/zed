@@ -26,9 +26,9 @@ impl ListSubHeader {
 }
 
 impl RenderOnce for ListSubHeader {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
