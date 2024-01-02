@@ -3487,7 +3487,7 @@ impl FocusableView for Workspace {
 struct DraggedDock(DockPosition);
 
 impl Render for Workspace {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut context = KeyContext::default();
         context.add("Workspace");
 

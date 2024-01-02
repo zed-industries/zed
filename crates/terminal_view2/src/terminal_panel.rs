@@ -3,9 +3,9 @@ use std::{path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, div, serde_json, AppContext, AsyncWindowContext, Element, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, serde_json, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
+    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
 use serde::{Deserialize, Serialize};
@@ -329,7 +329,7 @@ impl TerminalPanel {
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().size_full().child(self.pane.clone())
     }
 }

@@ -219,7 +219,7 @@ pub mod simple_message_notification {
     }
 
     impl Render for MessageNotification {
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
             v_stack()
                 .elevation_3(cx)
                 .p_4()

@@ -540,7 +540,7 @@ impl NotificationPanel {
 }
 
 impl Render for NotificationPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
             .size_full()
             .child(
@@ -704,7 +704,7 @@ impl NotificationToast {
 }
 
 impl Render for NotificationToast {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let user = self.actor.clone();
 
         h_stack()

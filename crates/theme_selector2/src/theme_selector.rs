@@ -67,7 +67,7 @@ impl FocusableView for ThemeSelector {
 }
 
 impl Render for ThemeSelector {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }

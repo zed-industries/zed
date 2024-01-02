@@ -205,7 +205,7 @@ impl ExternalPaths {
 }
 
 impl Render for ExternalPaths {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         div() // Intentionally left empty because the platform will render icons for the dragged files
     }
 }

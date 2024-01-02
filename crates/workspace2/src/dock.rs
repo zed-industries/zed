@@ -505,7 +505,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
@@ -592,7 +592,7 @@ impl PanelButtons {
 }
 
 impl Render for PanelButtons {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         // todo!()
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
@@ -713,7 +713,7 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
             div()
         }
     }

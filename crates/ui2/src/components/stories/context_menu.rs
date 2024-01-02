@@ -20,7 +20,7 @@ fn build_menu(cx: &mut WindowContext, header: impl Into<SharedString>) -> View<C
 pub struct ContextMenuStory;
 
 impl Render for ContextMenuStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container()
             .on_action(|_: &PrintCurrentDate, _| {
                 println!("printing unix time!");

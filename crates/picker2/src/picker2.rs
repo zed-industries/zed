@@ -235,7 +235,7 @@ impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let picker_editor = h_stack()
             .overflow_hidden()
             .flex_none()

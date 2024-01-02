@@ -103,7 +103,7 @@ impl FocusableView for RecentProjects {
 }
 
 impl Render for RecentProjects {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
             .w(rems(self.rem_width))
             .child(self.picker.clone())

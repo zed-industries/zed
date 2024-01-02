@@ -200,7 +200,7 @@ impl PickerStory {
 }
 
 impl Render for PickerStory {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().styles.colors.background)
             .size_full()

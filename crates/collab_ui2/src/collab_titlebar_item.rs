@@ -56,7 +56,7 @@ pub struct CollabTitlebarItem {
 }
 
 impl Render for CollabTitlebarItem {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();

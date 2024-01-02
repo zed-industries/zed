@@ -107,7 +107,7 @@ pub trait IntoElement: Sized {
 }
 
 pub trait Render: 'static + Sized {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element;
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement;
 }
 
 /// You can derive [IntoElement] on any type that implements this trait.

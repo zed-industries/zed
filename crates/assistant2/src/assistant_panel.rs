@@ -1101,7 +1101,7 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 }
 
 impl Render for AssistantPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
             v_stack()
                 .on_action(cx.listener(AssistantPanel::save_credentials))

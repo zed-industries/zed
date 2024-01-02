@@ -7,7 +7,7 @@ use crate::{Icon, IconButton};
 pub struct IconButtonStory;
 
 impl Render for IconButtonStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         let default_button = StoryItem::new(
             "Default",
             IconButton::new("default_icon_button", Icon::Hash),

@@ -3,7 +3,7 @@ use client::UserId;
 use collections::HashMap;
 use editor::{AnchorRangeExt, Editor};
 use gpui::{
-    AsyncWindowContext, Element, FocusableView, Model, Render, SharedString, Task, View,
+    AsyncWindowContext, FocusableView, IntoElement, Model, Render, SharedString, Task, View,
     ViewContext, WeakView,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry};
@@ -196,7 +196,7 @@ impl MessageEditor {
 }
 
 impl Render for MessageEditor {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.editor.to_any()
     }
 }

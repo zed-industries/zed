@@ -304,7 +304,7 @@ impl ActivityIndicator {
 impl EventEmitter<Event> for ActivityIndicator {}
 
 impl Render for ActivityIndicator {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let content = self.content_to_render(cx);
 
         let mut result = h_stack()

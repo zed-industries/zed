@@ -36,7 +36,7 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };

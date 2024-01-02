@@ -7,7 +7,7 @@ use ui::prelude::*;
 pub struct ZIndexStory;
 
 impl Render for ZIndexStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container().child(Story::title("z-index")).child(
             div()
                 .flex()

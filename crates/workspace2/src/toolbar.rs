@@ -93,7 +93,7 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if !self.has_any_visible_items() {
             return div();
         }
