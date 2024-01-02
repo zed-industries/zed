@@ -1,3 +1,4 @@
+use client::{telemetry::Telemetry, TelemetrySettings};
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
@@ -19,7 +20,8 @@ pub fn init(cx: &mut AppContext) {
 pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     workspace.toggle_modal(cx, |workspace, cx| {
         let fs = workspace.app_state().fs.clone();
-        cx.add_view(|cx| ThemeSelector::new(ThemeSelectorDelegate::new(fs, cx), cx))
+        let telemetry = workspace.client().telemetry().clone();
+        cx.add_view(|cx| ThemeSelector::new(ThemeSelectorDelegate::new(fs, telemetry, cx), cx))
     });
 }
 
@@ -48,10 +50,15 @@ pub struct ThemeSelectorDelegate {
     original_theme: Arc<Theme>,
     selection_completed: bool,
     selected_index: usize,
+    telemetry: Arc<Telemetry>,
 }
 
 impl ThemeSelectorDelegate {
-    fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<ThemeSelector>) -> Self {
+    fn new(
+        fs: Arc<dyn Fs>,
+        telemetry: Arc<Telemetry>,
+        cx: &mut ViewContext<ThemeSelector>,
+    ) -> Self {
         let original_theme = theme::current(cx).clone();
 
         let staff_mode = cx.is_staff();
@@ -74,6 +81,7 @@ impl ThemeSelectorDelegate {
             original_theme: original_theme.clone(),
             selected_index: 0,
             selection_completed: false,
+            telemetry,
         };
         this.select_if_matching(&original_theme.meta.name);
         this
@@ -124,6 +132,11 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.selection_completed = true;
 
         let theme_name = theme::current(cx).meta.name.clone();
+
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+        self.telemetry
+            .report_setting_event(telemetry_settings, "theme", theme_name.to_string());
+
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, |settings| {
             settings.theme = Some(theme_name);
         });
