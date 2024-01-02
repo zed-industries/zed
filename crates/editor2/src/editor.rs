@@ -97,7 +97,9 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
-use theme::{ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, ThemeColors, ThemeSettings};
+use theme::{
+    color_alpha, ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, ThemeColors, ThemeSettings,
+};
 use ui::{h_stack, ButtonSize, ButtonStyle, Icon, IconButton, Popover, Tooltip};
 use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
@@ -7673,7 +7675,10 @@ impl Editor {
                                                     ..HighlightStyle::default()
                                                 },
                                                 suggestions_style: HighlightStyle {
-                                                    color: Some(cx.theme().status().predictive),
+                                                    color: Some(color_alpha(
+                                                        cx.theme().colors().editor_foreground,
+                                                        0.5,
+                                                    )),
                                                     ..HighlightStyle::default()
                                                 },
                                             },
