@@ -1,3 +1,4 @@
+use client::{telemetry::Telemetry, TelemetrySettings};
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
@@ -6,7 +7,7 @@ use gpui::{
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_stack, ListItem};
@@ -26,9 +27,10 @@ pub fn init(cx: &mut AppContext) {
 
 pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     let fs = workspace.app_state().fs.clone();
+    let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
         ThemeSelector::new(
-            ThemeSelectorDelegate::new(cx.view().downgrade(), fs, cx),
+            ThemeSelectorDelegate::new(cx.view().downgrade(), fs, telemetry, cx),
             cx,
         )
     });
@@ -88,6 +90,7 @@ pub struct ThemeSelectorDelegate {
     original_theme: Arc<Theme>,
     selection_completed: bool,
     selected_index: usize,
+    telemetry: Arc<Telemetry>,
     view: WeakView<ThemeSelector>,
 }
 
@@ -95,6 +98,7 @@ impl ThemeSelectorDelegate {
     fn new(
         weak_view: WeakView<ThemeSelector>,
         fs: Arc<dyn Fs>,
+        telemetry: Arc<Telemetry>,
         cx: &mut ViewContext<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
@@ -124,6 +128,7 @@ impl ThemeSelectorDelegate {
             original_theme: original_theme.clone(),
             selected_index: 0,
             selection_completed: false,
+            telemetry,
             view: weak_view,
         };
         this.select_if_matching(&original_theme.name);
@@ -177,6 +182,11 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.selection_completed = true;
 
         let theme_name = cx.theme().name.clone();
+
+        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
+        self.telemetry
+            .report_setting_event(telemetry_settings, "theme", theme_name.to_string());
+
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings| {
             settings.theme = Some(theme_name.to_string());
         });

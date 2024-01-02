@@ -9856,6 +9856,7 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
+ "client",
  "editor",
  "feature_flags",
  "fs",
@@ -9876,6 +9877,7 @@ dependencies = [
 name = "theme_selector2"
 version = "0.1.0"
 dependencies = [
+ "client2",
  "editor2",
  "feature_flags2",
  "fs2",

@@ -113,6 +113,11 @@ pub enum ClickhouseEvent {
         operation: &'static str,
         milliseconds_since_first_event: i64,
     },
+    Setting {
+        setting: &'static str,
+        value: String,
+        milliseconds_since_first_event: i64,
+    },
 }
 
 #[cfg(debug_assertions)]
@@ -351,6 +356,21 @@ impl Telemetry {
         };
 
         self.report_clickhouse_event(event, telemetry_settings, true)
+    }
+
+    pub fn report_setting_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        setting: &'static str,
+        value: String,
+    ) {
+        let event = ClickhouseEvent::Setting {
+            setting,
+            value,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings, false)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {
