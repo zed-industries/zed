@@ -2163,18 +2163,33 @@ impl CollabPanel {
                     .child(
                         h_stack()
                             .id(channel_id as usize)
+                            // HACK: This is a dirty hack to help with the positioning of the button container.
+                            //
+                            // We're using a pixel width for the elements but then allowing the contents to
+                            // overflow. This means that the label and facepile will be shown, but will not
+                            // push the button container off the edge of the panel.
+                            .w_px()
                             .child(Label::new(channel.name.clone()))
                             .children(face_pile.map(|face_pile| face_pile.render(cx))),
                     )
                     .end_slot(
                         h_stack()
                             .absolute()
-                            .right_0()
+                            // We're using a negative coordinate for the right anchor to
+                            // counteract the padding of the `ListItem`.
+                            //
+                            // This prevents a gap from showing up between the background
+                            // of this element and the edge of the collab panel.
+                            .right(rems(-0.5))
                             // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
                             .z_index(10)
                             .bg(cx.theme().colors().panel_background)
+                            .when(is_selected || is_active, |this| {
+                                this.bg(cx.theme().colors().ghost_element_selected)
+                            })
                             .child(
                                 h_stack()
+                                    .px_1()
                                     // The element hover background has a slight transparency to it, so we
                                     // need to apply it to the inner element so that it blends with the solid
                                     // background color of the absolutely-positioned element.
