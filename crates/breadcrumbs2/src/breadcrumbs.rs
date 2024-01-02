@@ -86,8 +86,13 @@ impl ToolbarItemView for Breadcrumbs {
                 cx,
                 Box::new(move |event, cx| {
                     if let ItemEvent::UpdateBreadcrumbs = event {
-                        this.update(cx, |_, cx| {
+                        this.update(cx, |this, cx| {
                             cx.notify();
+                            if let Some(active_item) = this.active_item.as_ref() {
+                                cx.emit(ToolbarItemEvent::ChangeLocation(
+                                    active_item.breadcrumb_location(cx),
+                                ))
+                            }
                         })
                         .ok();
                     }
