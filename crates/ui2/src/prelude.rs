@@ -9,6 +9,7 @@ pub use crate::clickable::*;
 pub use crate::disableable::*;
 pub use crate::fixed::*;
 pub use crate::selectable::*;
+pub use crate::styles::{vh, vw};
 pub use crate::visible_on_hover::*;
 pub use crate::{h_stack, v_stack};
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton};
