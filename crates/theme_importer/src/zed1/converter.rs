@@ -3,9 +3,9 @@ use gpui::{serde_json, Hsla, Rgba};
 use gpui1::color::Color as Zed1Color;
 use gpui1::fonts::HighlightStyle as Zed1HighlightStyle;
 use theme::{
-    Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, ThemeColorsRefinement,
-    UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme, UserTheme,
-    UserThemeStylesRefinement,
+    color_alpha, Appearance, PlayerColor, PlayerColors, StatusColorsRefinement,
+    ThemeColorsRefinement, UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme,
+    UserTheme, UserThemeStylesRefinement,
 };
 use theme1::{ColorScheme, Theme as Zed1Theme};
 
@@ -175,7 +175,8 @@ impl Zed1ThemeConverter {
             panel_background: convert(middle.base.default.background),
             panel_focused_border: convert(lowest.accent.hovered.border),
             pane_focused_border: convert(lowest.accent.hovered.border),
-            scrollbar_thumb_background: convert(middle.base.default.background),
+            scrollbar_thumb_background: convert(middle.base.inverted.background)
+                .map(|color| color_alpha(color, 0.3)),
             scrollbar_thumb_hover_background: convert(middle.base.hovered.background),
             scrollbar_thumb_border: convert(middle.base.default.border),
             scrollbar_track_background: convert(highest.base.default.background),

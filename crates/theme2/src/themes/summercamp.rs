@@ -56,7 +56,7 @@ pub fn summercamp() -> UserThemeFamily {
                     tab_bar_background: Some(rgba(0x231f16ff).into()),
                     tab_inactive_background: Some(rgba(0x231f16ff).into()),
                     tab_active_background: Some(rgba(0x1c1810ff).into()),
-                    scrollbar_thumb_background: Some(rgba(0x231f16ff).into()),
+                    scrollbar_thumb_background: Some(rgba(0xf8f5de4c).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x29251bff).into()),
                     scrollbar_thumb_border: Some(rgba(0x29251bff).into()),
                     scrollbar_track_background: Some(rgba(0x1c1810ff).into()),
