@@ -6,12 +6,13 @@ use crate::{
 };
 use futures::FutureExt;
 use gpui::{
-    actions, div, px, AnyElement, CursorStyle, InteractiveElement, IntoElement, Model, MouseButton,
-    ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
-    ViewContext, WeakView,
+    actions, div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, Model,
+    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
+    Task, ViewContext, WeakView,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 
+use lsp::DiagnosticSeverity;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
@@ -514,16 +515,51 @@ impl DiagnosticPopover {
             None => self.local_diagnostic.diagnostic.message.clone(),
         };
 
-        let container_bg = crate::diagnostic_style(
-            self.local_diagnostic.diagnostic.severity,
-            true,
-            &style.diagnostic_style,
-        );
+        struct DiagnosticColors {
+            pub text: Hsla,
+            pub background: Hsla,
+            pub border: Hsla,
+        }
+
+        let diagnostic_colors = match self.local_diagnostic.diagnostic.severity {
+            DiagnosticSeverity::ERROR => DiagnosticColors {
+                text: style.status.error,
+                background: style.status.error_background,
+                border: style.status.error_border,
+            },
+            DiagnosticSeverity::WARNING => DiagnosticColors {
+                text: style.status.warning,
+                background: style.status.warning_background,
+                border: style.status.warning_border,
+            },
+            DiagnosticSeverity::INFORMATION => DiagnosticColors {
+                text: style.status.info,
+                background: style.status.info_background,
+                border: style.status.info_border,
+            },
+            DiagnosticSeverity::HINT => DiagnosticColors {
+                text: style.status.hint,
+                background: style.status.hint_background,
+                border: style.status.hint_border,
+            },
+            _ => DiagnosticColors {
+                text: style.status.ignored,
+                background: style.status.ignored_background,
+                border: style.status.ignored_border,
+            },
+        };
 
         div()
             .id("diagnostic")
             .overflow_y_scroll()
-            .bg(container_bg)
+            .px_2()
+            .py_1()
+            .bg(diagnostic_colors.background)
+            .text_ui()
+            .text_color(diagnostic_colors.text)
+            .border_1()
+            .border_color(diagnostic_colors.border)
+            .rounded_md()
             .max_w(max_size.width)
             .max_h(max_size.height)
             .cursor(CursorStyle::PointingHand)
