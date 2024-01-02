@@ -95,13 +95,19 @@ pub fn summercamp() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    conflict: Some(rgba(0xf1fe29ff).into()),
                     created: Some(rgba(0x5dea5aff).into()),
-                    deleted: Some(rgba(0xb93f36ff).into()),
+                    deleted: Some(rgba(0xe35142ff).into()),
                     error: Some(rgba(0xe35142ff).into()),
-                    hint: Some(rgba(0x246e61ff).into()),
+                    hidden: Some(rgba(0x4c4735ff).into()),
+                    hint: Some(rgba(0x499befff).into()),
+                    ignored: Some(rgba(0x736e55ff).into()),
+                    info: Some(rgba(0x499befff).into()),
                     modified: Some(rgba(0xf1fe29ff).into()),
-                    predictive: Some(rgba(0x79434bff).into()),
-                    success: Some(rgba(0xf8f5deff).into()),
+                    predictive: Some(rgba(0x5dea5aff).into()),
+                    renamed: Some(rgba(0x499befff).into()),
+                    success: Some(rgba(0x5dea5aff).into()),
+                    unreachable: Some(rgba(0x736e55ff).into()),
                     warning: Some(rgba(0xf1fe29ff).into()),
                     ..Default::default()
                 },

@@ -95,13 +95,19 @@ pub fn andromeda() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    conflict: Some(rgba(0xfee56dff).into()),
                     created: Some(rgba(0x96df72ff).into()),
-                    deleted: Some(rgba(0xcd1d5aff).into()),
+                    deleted: Some(rgba(0xf82872ff).into()),
                     error: Some(rgba(0xf82872ff).into()),
-                    hint: Some(rgba(0x618399ff).into()),
+                    hidden: Some(rgba(0x6b6b73ff).into()),
+                    hint: Some(rgba(0x11a793ff).into()),
+                    ignored: Some(rgba(0xaca8aeff).into()),
+                    info: Some(rgba(0x11a793ff).into()),
                     modified: Some(rgba(0xfee56dff).into()),
-                    predictive: Some(rgba(0x315f70ff).into()),
-                    success: Some(rgba(0xf7f7f8ff).into()),
+                    predictive: Some(rgba(0x96df72ff).into()),
+                    renamed: Some(rgba(0x11a793ff).into()),
+                    success: Some(rgba(0x96df72ff).into()),
+                    unreachable: Some(rgba(0xaca8aeff).into()),
                     warning: Some(rgba(0xfee56dff).into()),
                     ..Default::default()
                 },

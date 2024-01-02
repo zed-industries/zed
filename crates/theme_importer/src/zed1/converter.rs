@@ -71,20 +71,26 @@ impl Zed1ThemeConverter {
             Some(zed1_color_to_hsla(color))
         }
 
-        let editor = &self.theme.editor;
-        let diff_style = &self.theme.editor.diff;
-        let diagnostic_summary = &self.theme.workspace.status_bar.diagnostic_summary;
+        let base_theme: ColorScheme = serde_json::from_value(self.theme.base_theme.clone())
+            .with_context(|| "failed to parse `theme.base_theme`")?;
+
+        let lowest = &base_theme.lowest;
 
         Ok(StatusColorsRefinement {
-            created: convert(diff_style.inserted),
-            modified: convert(diff_style.modified),
-            deleted: convert(diff_style.deleted),
-            success: convert(diagnostic_summary.icon_color_ok),
-            warning: convert(diagnostic_summary.icon_color_warning),
-            error: convert(diagnostic_summary.icon_color_error),
-            hint: editor.hint.color.map(zed1_color_to_hsla),
-            predictive: editor.suggestion.color.map(zed1_color_to_hsla),
-            ..Default::default()
+            created: convert(lowest.positive.default.foreground),
+            modified: convert(lowest.warning.default.foreground),
+            deleted: convert(lowest.negative.default.foreground),
+            success: convert(lowest.positive.default.foreground),
+            warning: convert(lowest.warning.default.foreground),
+            error: convert(lowest.negative.default.foreground),
+            hint: convert(lowest.accent.default.foreground),
+            predictive: convert(lowest.positive.default.foreground),
+            conflict: convert(lowest.warning.default.foreground),
+            hidden: convert(lowest.base.disabled.foreground),
+            ignored: convert(lowest.variant.default.foreground),
+            info: convert(lowest.accent.default.foreground),
+            renamed: convert(lowest.accent.default.foreground),
+            unreachable: convert(lowest.variant.default.foreground), // TODO: Should this be transparent?
         })
     }
 

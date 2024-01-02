@@ -95,13 +95,19 @@ pub fn sandcastle() -> UserThemeFamily {
                     ..Default::default()
                 },
                 status: StatusColorsRefinement {
+                    conflict: Some(rgba(0xa07e3bff).into()),
                     created: Some(rgba(0x83a598ff).into()),
-                    deleted: Some(rgba(0x8d4f61ff).into()),
+                    deleted: Some(rgba(0xb4637aff).into()),
                     error: Some(rgba(0xb4637aff).into()),
-                    hint: Some(rgba(0x727d68ff).into()),
+                    hidden: Some(rgba(0x827568ff).into()),
+                    hint: Some(rgba(0x528b8bff).into()),
+                    ignored: Some(rgba(0xa69782ff).into()),
+                    info: Some(rgba(0x528b8bff).into()),
                     modified: Some(rgba(0xa07e3bff).into()),
-                    predictive: Some(rgba(0x5c6152ff).into()),
-                    success: Some(rgba(0xfdf4c1ff).into()),
+                    predictive: Some(rgba(0x83a598ff).into()),
+                    renamed: Some(rgba(0x528b8bff).into()),
+                    success: Some(rgba(0x83a598ff).into()),
+                    unreachable: Some(rgba(0xa69782ff).into()),
                     warning: Some(rgba(0xa07e3bff).into()),
                     ..Default::default()
                 },
