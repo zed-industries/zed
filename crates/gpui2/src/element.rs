@@ -193,11 +193,7 @@ impl<C: RenderOnce> Element for Component<C> {
                 ((), element_state)
             });
         } else {
-            element.paint(
-                bounds,
-                state.rendered_element_state.as_mut().unwrap(),
-                cx,
-            );
+            element.paint(bounds, state.rendered_element_state.as_mut().unwrap(), cx);
         }
     }
 }

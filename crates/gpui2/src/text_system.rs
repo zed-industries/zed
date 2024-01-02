@@ -438,8 +438,7 @@ impl FontWeight {
 }
 
 /// Allows italic or oblique faces to be selected.
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
-#[derive(Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default)]
 pub enum FontStyle {
     /// A face that is neither italic not obliqued.
     #[default]
@@ -449,8 +448,6 @@ pub enum FontStyle {
     /// A typically-sloped version of the regular face.
     Oblique,
 }
-
-
 
 impl Display for FontStyle {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {

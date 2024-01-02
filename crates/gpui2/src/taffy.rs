@@ -29,8 +29,7 @@ pub struct TaffyLayoutEngine {
     >,
 }
 
-static EXPECT_MESSAGE: &str =
-    "we should avoid taffy layout errors by construction if possible";
+static EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {

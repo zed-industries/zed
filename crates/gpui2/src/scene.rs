@@ -27,8 +27,6 @@ pub(crate) struct SceneBuilder {
     surfaces: Vec<Surface>,
 }
 
-
-
 impl SceneBuilder {
     pub fn build(&mut self) -> Scene {
         let mut orders = vec![0; self.layers_by_order.len()];
