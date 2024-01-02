@@ -663,6 +663,7 @@ impl Item for ProjectDiagnosticsEditor {
                 .when(self.summary.warning_count > 0, |then| {
                     then.child(
                         h_stack()
+                            .gap_1()
                             .child(
                                 IconElement::new(Icon::ExclamationTriangle).color(Color::Warning),
                             )
