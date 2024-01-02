@@ -80,9 +80,7 @@ struct ZIndexExample {
 }
 
 impl RenderOnce for ZIndexExample {
-    type Output = Div;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div()
             .relative()
             .size_full()

@@ -1,4 +1,4 @@
-use gpui::{Div, Position};
+use gpui::Position;
 
 use crate::prelude::*;
 
@@ -45,9 +45,7 @@ impl Indicator {
 }
 
 impl RenderOnce for Indicator {
-    type Output = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         div()
             .flex_none()
             .map(|this| match self.style {

@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Div};
+use gpui::AnyElement;
 use smallvec::SmallVec;
 
 use crate::{prelude::*, v_stack, Label, ListHeader};
@@ -46,9 +46,7 @@ impl ParentElement for List {
 }
 
 impl RenderOnce for List {
-    type Output = Div;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         v_stack().w_full().py_1().children(self.header).map(|this| {
             match (self.children.is_empty(), self.toggle) {
                 (false, _) => this.children(self.children),

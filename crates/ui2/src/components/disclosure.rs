@@ -28,9 +28,7 @@ impl Disclosure {
 }
 
 impl RenderOnce for Disclosure {
-    type Output = IconButton;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         IconButton::new(
             self.id,
             match self.is_open {

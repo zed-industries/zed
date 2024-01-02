@@ -1,5 +1,5 @@
 use gpui::{
-    div, AnyElement, Div, Element, ElementId, IntoElement, ParentElement, RenderOnce, Styled,
+    div, AnyElement, Element, ElementId, IntoElement, ParentElement, RenderOnce, Styled,
     WindowContext,
 };
 use smallvec::SmallVec;
@@ -41,9 +41,7 @@ pub struct Popover {
 }
 
 impl RenderOnce for Popover {
-    type Output = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         div()
             .flex()
             .gap_1()

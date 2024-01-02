@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{img, Div, Hsla, ImageSource, Img, IntoElement, Styled};
+use gpui::{img, Hsla, ImageSource, Img, IntoElement, Styled};
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub enum Shape {
@@ -16,9 +16,7 @@ pub struct Avatar {
 }
 
 impl RenderOnce for Avatar {
-    type Output = Div;
-
-    fn render(mut self, cx: &mut WindowContext) -> Self::Output {
+    fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
         if self.image.style().corner_radii.top_left.is_none() {
             self = self.shape(Shape::Circle);
         }

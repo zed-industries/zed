@@ -1,4 +1,4 @@
-use gpui::{rems, svg, IntoElement, Rems, Svg};
+use gpui::{rems, svg, IntoElement, Rems};
 use strum::EnumIter;
 
 use crate::prelude::*;
@@ -200,9 +200,7 @@ pub struct IconElement {
 }
 
 impl RenderOnce for IconElement {
-    type Output = Svg;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         svg()
             .size(self.size.rems())
             .flex_none()

@@ -1,6 +1,5 @@
-use gpui::{AnyElement, ClickEvent, Div, Stateful};
-
 use crate::{h_stack, prelude::*, Disclosure, Label};
+use gpui::{AnyElement, ClickEvent};
 
 #[derive(IntoElement)]
 pub struct ListHeader {
@@ -76,9 +75,7 @@ impl Selectable for ListHeader {
 }
 
 impl RenderOnce for ListHeader {
-    type Output = Stateful<Div>;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_stack()
             .id(self.label.clone())
             .w_full()

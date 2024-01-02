@@ -1,5 +1,5 @@
 use gpui::{relative, DefiniteLength, MouseButton};
-use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Div, Hsla, Rems, Stateful};
+use gpui::{rems, transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -363,9 +363,7 @@ impl ParentElement for ButtonLike {
 }
 
 impl RenderOnce for ButtonLike {
-    type Output = Stateful<Div>;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         self.base
             .h_flex()
             .id(self.id.clone())

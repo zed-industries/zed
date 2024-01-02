@@ -81,7 +81,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             overlay = overlay.position(*position.borrow());
 
             let mut element = overlay.child(menu.clone()).into_any();
-            menu_layout_id = Some(element.layout(cx));
+            menu_layout_id = Some(element.request_layout(cx));
             element
         });
 
@@ -92,7 +92,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
         let child_layout_id = child_element
             .as_mut()
-            .map(|child_element| child_element.layout(cx));
+            .map(|child_element| child_element.request_layout(cx));
 
         let layout_id = cx.request_layout(
             &gpui::Style::default(),

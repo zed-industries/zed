@@ -4305,7 +4305,7 @@ impl Element for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.",
             ))
             .into_any();
-        (overlay.layout(cx), overlay)
+        (overlay.request_layout(cx), overlay)
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, overlay: &mut Self::State, cx: &mut WindowContext) {

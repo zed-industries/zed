@@ -46,9 +46,7 @@ impl LabelCommon for HighlightedLabel {
 }
 
 impl RenderOnce for HighlightedLabel {
-    type Output = LabelLike;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let highlight_color = cx.theme().colors().text_accent;
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();

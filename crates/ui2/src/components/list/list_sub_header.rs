@@ -1,5 +1,3 @@
-use gpui::Div;
-
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconElement, IconSize, Label};
 
@@ -26,9 +24,7 @@ impl ListSubHeader {
 }
 
 impl RenderOnce for ListSubHeader {
-    type Output = Div;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()

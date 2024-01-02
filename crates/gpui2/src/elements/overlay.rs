@@ -68,7 +68,7 @@ impl Element for Overlay {
         let child_layout_ids = self
             .children
             .iter_mut()
-            .map(|child| child.layout(cx))
+            .map(|child| child.request_layout(cx))
             .collect::<SmallVec<_>>();
 
         let mut overlay_style = Style::default();

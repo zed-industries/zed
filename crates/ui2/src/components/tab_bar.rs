@@ -1,4 +1,4 @@
-use gpui::{AnyElement, ScrollHandle, Stateful};
+use gpui::{AnyElement, ScrollHandle};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -89,9 +89,7 @@ impl ParentElement for TabBar {
 }
 
 impl RenderOnce for TabBar {
-    type Output = Stateful<Div>;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         const HEIGHT_IN_REMS: f32 = 30. / 16.;
 
         div()

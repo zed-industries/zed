@@ -136,9 +136,8 @@ impl ButtonCommon for Button {
 }
 
 impl RenderOnce for Button {
-    type Output = ButtonLike;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    #[allow(refining_impl_trait)]
+    fn render(self, _cx: &mut WindowContext) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 

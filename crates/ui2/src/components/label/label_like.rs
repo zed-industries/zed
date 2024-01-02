@@ -1,4 +1,4 @@
-use gpui::{relative, AnyElement, Div, Styled};
+use gpui::{relative, AnyElement, Styled};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -76,9 +76,7 @@ impl ParentElement for LabelLike {
 }
 
 impl RenderOnce for LabelLike {
-    type Output = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         div()
             .when(self.strikethrough, |this| {
                 this.relative().child(
