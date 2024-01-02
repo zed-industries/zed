@@ -1099,7 +1099,7 @@ impl Room {
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {
                     if let Some(project) = project.upgrade() {
-                        !project.read(cx).is_read_only()
+                        !project.read(cx).is_disconnected()
                     } else {
                         false
                     }

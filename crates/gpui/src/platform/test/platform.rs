@@ -19,7 +19,7 @@ pub struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
-    active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+    pub(crate) active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
@@ -106,7 +106,7 @@ impl Platform for TestPlatform {
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
-        unimplemented!()
+        //
     }
 
     fn hide(&self) {
@@ -142,6 +142,7 @@ impl Platform for TestPlatform {
         *self.active_window.lock() = Some(handle);
         Box::new(TestWindow::new(
             options,
+            handle,
             self.weak.clone(),
             self.active_display.clone(),
         ))

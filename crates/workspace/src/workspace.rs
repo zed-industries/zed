@@ -1184,7 +1184,7 @@ impl Workspace {
         mut save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        if self.project.read(cx).is_read_only() {
+        if self.project.read(cx).is_disconnected() {
             return Task::ready(Ok(true));
         }
         let dirty_items = self
@@ -2508,7 +2508,7 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
-        let is_edited = !self.project.read(cx).is_read_only()
+        let is_edited = !self.project.read(cx).is_disconnected()
             && self
                 .items(cx)
                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
@@ -3632,7 +3632,7 @@ impl Render for Workspace {
                     })),
             )
             .child(self.status_bar.clone())
-            .children(if self.project.read(cx).is_read_only() {
+            .children(if self.project.read(cx).is_disconnected() {
                 Some(DisconnectedOverlay)
             } else {
                 None

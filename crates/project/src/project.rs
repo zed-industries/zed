@@ -1659,7 +1659,7 @@ impl Project {
         cx.emit(Event::Closed);
     }
 
-    pub fn is_read_only(&self) -> bool {
+    pub fn is_disconnected(&self) -> bool {
         match &self.client_state {
             Some(ProjectClientState::Remote {
                 sharing_has_stopped,
@@ -1667,6 +1667,10 @@ impl Project {
             }) => *sharing_has_stopped,
             _ => false,
         }
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.is_disconnected()
     }
 
     pub fn is_local(&self) -> bool {
@@ -6015,7 +6019,7 @@ impl Project {
             this.upgrade().context("project dropped")?;
             let response = rpc.request(message).await?;
             let this = this.upgrade().context("project dropped")?;
-            if this.update(&mut cx, |this, _| this.is_read_only())? {
+            if this.update(&mut cx, |this, _| this.is_disconnected())? {
                 Err(anyhow!("disconnected before completing request"))
             } else {
                 request
@@ -7942,7 +7946,7 @@ impl Project {
 
                 if let Some(buffer) = buffer {
                     break buffer;
-                } else if this.update(&mut cx, |this, _| this.is_read_only())? {
+                } else if this.update(&mut cx, |this, _| this.is_disconnected())? {
                     return Err(anyhow!("disconnected before buffer {} could be opened", id));
                 }
 

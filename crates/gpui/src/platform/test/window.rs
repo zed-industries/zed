@@ -1,7 +1,7 @@
 use crate::{
-    px, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBounds, WindowOptions,
+    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId,
+    WindowAppearance, WindowBounds, WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -20,6 +20,7 @@ pub(crate) struct TestWindowHandlers {
 
 pub struct TestWindow {
     pub(crate) bounds: WindowBounds,
+    pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
@@ -32,6 +33,7 @@ pub struct TestWindow {
 impl TestWindow {
     pub fn new(
         options: WindowOptions,
+        handle: AnyWindowHandle,
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
     ) -> Self {
@@ -39,6 +41,7 @@ impl TestWindow {
             bounds: options.bounds,
             display,
             platform,
+            handle,
             input_handler: None,
             sprite_atlas: Arc::new(TestAtlas::new()),
             handlers: Default::default(),
@@ -107,7 +110,12 @@ impl PlatformWindow for TestWindow {
     }
 
     fn activate(&self) {
-        unimplemented!()
+        *self
+            .platform
+            .upgrade()
+            .expect("platform dropped")
+            .active_window
+            .lock() = Some(self.handle);
     }
 
     fn set_title(&mut self, title: &str) {

@@ -2,6 +2,7 @@ use call::Room;
 use gpui::{Model, TestAppContext};
 
 mod channel_buffer_tests;
+mod channel_guest_tests;
 mod channel_message_tests;
 mod channel_tests;
 mod editor_tests;

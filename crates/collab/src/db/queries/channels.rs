@@ -132,34 +132,34 @@ impl Database {
                     debug_assert!(
                         self.channel_role_for_user(&channel, user_id, &*tx).await? == role
                     );
+                } else if channel.visibility == ChannelVisibility::Public {
+                    role = Some(ChannelRole::Guest);
+                    let channel_to_join = self
+                        .public_ancestors_including_self(&channel, &*tx)
+                        .await?
+                        .first()
+                        .cloned()
+                        .unwrap_or(channel.clone());
+
+                    channel_member::Entity::insert(channel_member::ActiveModel {
+                        id: ActiveValue::NotSet,
+                        channel_id: ActiveValue::Set(channel_to_join.id),
+                        user_id: ActiveValue::Set(user_id),
+                        accepted: ActiveValue::Set(true),
+                        role: ActiveValue::Set(ChannelRole::Guest),
+                    })
+                    .exec(&*tx)
+                    .await?;
+
+                    accept_invite_result = Some(
+                        self.calculate_membership_updated(&channel_to_join, user_id, &*tx)
+                            .await?,
+                    );
+
+                    debug_assert!(
+                        self.channel_role_for_user(&channel, user_id, &*tx).await? == role
+                    );
                 }
-            }
-
-            if channel.visibility == ChannelVisibility::Public {
-                role = Some(ChannelRole::Guest);
-                let channel_to_join = self
-                    .public_ancestors_including_self(&channel, &*tx)
-                    .await?
-                    .first()
-                    .cloned()
-                    .unwrap_or(channel.clone());
-
-                channel_member::Entity::insert(channel_member::ActiveModel {
-                    id: ActiveValue::NotSet,
-                    channel_id: ActiveValue::Set(channel_to_join.id),
-                    user_id: ActiveValue::Set(user_id),
-                    accepted: ActiveValue::Set(true),
-                    role: ActiveValue::Set(ChannelRole::Guest),
-                })
-                .exec(&*tx)
-                .await?;
-
-                accept_invite_result = Some(
-                    self.calculate_membership_updated(&channel_to_join, user_id, &*tx)
-                        .await?,
-                );
-
-                debug_assert!(self.channel_role_for_user(&channel, user_id, &*tx).await? == role);
             }
 
             if role.is_none() || role == Some(ChannelRole::Banned) {
