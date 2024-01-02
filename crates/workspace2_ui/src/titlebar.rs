@@ -29,8 +29,8 @@ pub struct Titlebar<D: TitlebarDelegate = ()> {
     pub delegate: View<D>,
     pub full_screen: bool,
     pub project_host: Option<ProjectHost<D>>,
-    pub recent_projects: Projects<D>,
-    pub branch: Option<Branches>,
+    pub projects: Projects<D>,
+    pub branches: Option<Branches>,
     pub collaborators: Vec<FacePile>,
 }
 
@@ -58,7 +58,7 @@ pub struct Project {
 pub struct ProjectsMenu<D> {
     delegate: View<D>,
     focus: FocusHandle,
-    recent_projects: Vec<Project>,
+    recent: Vec<Project>,
 }
 
 pub struct Branches {
@@ -116,8 +116,8 @@ impl<D: TitlebarDelegate> RenderOnce for Titlebar<D> {
                     .flex_row()
                     .gap_1()
                     .children(self.project_host)
-                    .child(self.recent_projects), // .children(self.render_project_branch(cx))
-                                                  // .children(self.render_collaborators(cx)),
+                    .child(self.projects), // .children(self.render_project_branch(cx))
+                                           // .children(self.render_collaborators(cx)),
             )
         // right side
         // .child(
@@ -248,7 +248,7 @@ impl<D: TitlebarDelegate> Render for ProjectsMenu<D> {
 }
 
 impl<D: TitlebarDelegate> FocusableView for ProjectsMenu<D> {
-    fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, _cx: &gpui::AppContext) -> gpui::FocusHandle {
         self.focus.clone()
     }
 }
@@ -274,7 +274,7 @@ impl<D: TitlebarDelegate> RenderOnce for Projects<D> {
                     Some(cx.build_view(|cx| ProjectsMenu {
                         delegate: delegate.clone(),
                         focus: cx.focus_handle(),
-                        recent_projects: recent_projects.clone(),
+                        recent: recent_projects.clone(),
                     }))
                 }
             })

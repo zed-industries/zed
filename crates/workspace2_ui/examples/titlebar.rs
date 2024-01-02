@@ -8,7 +8,7 @@ use settings::Settings;
 use simplelog::SimpleLogger;
 use std::sync::Arc;
 use theme::{LoadThemes, ThemeRegistry, ThemeSettings};
-use workspace2_ui::{Branches, PeerId, ProjectHost, Titlebar};
+use workspace2_ui::{Branches, PeerId, ProjectHost, Projects, Titlebar};
 
 #[derive(Parser)]
 struct Args {
@@ -69,14 +69,14 @@ impl Render for TitlebarExample {
                 delegate: delegate.clone(),
                 id: PeerId(1),
                 login: "nathansobo".into(),
-                peer_index: todo!(),
+                peer_index: 0,
             }),
-            recent_projects: RecentProjects {
+            projects: Projects {
                 delegate: delegate.clone(),
-                current_project: "zed",
-                recent_projects: (),
+                current: "zed".into(),
+                recent: vec![],
             },
-            branch: Some(Branches {
+            branches: Some(Branches {
                 current: "main".into(),
             }),
             collaborators: vec![],

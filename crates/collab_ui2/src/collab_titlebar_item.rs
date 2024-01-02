@@ -9,7 +9,7 @@ use gpui::{
     WindowBounds,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::RecentProjectsMenu;
+use recent_projects::RecentProjects;
 use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
@@ -343,7 +343,7 @@ impl CollabTitlebarItem {
                     .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
             )
-            .menu(move |cx| Some(RecentProjectsMenu::new(cx)))
+            .menu(move |cx| Some(Self::render_project_popover(workspace.clone(), cx)))
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -466,8 +466,8 @@ impl CollabTitlebarItem {
     pub fn render_project_popover(
         workspace: WeakView<Workspace>,
         cx: &mut WindowContext<'_>,
-    ) -> View<RecentProjectsMenu> {
-        let view = RecentProjectsMenu::open_popover(workspace, cx);
+    ) -> View<RecentProjects> {
+        let view = RecentProjects::open_popover(workspace, cx);
 
         let focus_handle = view.focus_handle(cx);
         cx.focus(&focus_handle);
