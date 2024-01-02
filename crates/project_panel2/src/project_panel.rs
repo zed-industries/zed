@@ -168,7 +168,7 @@ struct DraggedProjectEntryView {
 impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
-        let project_panel = cx.build_view(|cx: &mut ViewContext<Self>| {
+        let project_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             cx.observe(&project, |this, _, cx| {
                 this.update_visible_entries(None, cx);
                 cx.notify();
@@ -200,7 +200,7 @@ impl ProjectPanel {
             })
             .detach();
 
-            let filename_editor = cx.build_view(|cx| Editor::single_line(cx));
+            let filename_editor = cx.new_view(|cx| Editor::single_line(cx));
 
             cx.subscribe(&filename_editor, |this, _, event, cx| match event {
                 editor::EditorEvent::BufferEdited
@@ -1384,7 +1384,7 @@ impl ProjectPanel {
         div()
             .id(entry_id.to_proto() as usize)
             .on_drag(entry_id, move |entry_id, cx| {
-                cx.build_view(|_| DraggedProjectEntryView {
+                cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),
                     width,
                     entry_id: *entry_id,

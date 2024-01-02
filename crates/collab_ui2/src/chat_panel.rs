@@ -81,18 +81,18 @@ impl ChatPanel {
         let channel_store = ChannelStore::global(cx);
         let languages = workspace.app_state().languages.clone();
 
-        let input_editor = cx.build_view(|cx| {
+        let input_editor = cx.new_view(|cx| {
             MessageEditor::new(
                 languages.clone(),
                 channel_store.clone(),
-                cx.build_view(|cx| Editor::auto_height(4, cx)),
+                cx.new_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
         });
 
         let workspace_handle = workspace.weak_handle();
 
-        cx.build_view(|cx: &mut ViewContext<Self>| {
+        cx.new_view(|cx: &mut ViewContext<Self>| {
             let view = cx.view().downgrade();
             let message_list =
                 ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {

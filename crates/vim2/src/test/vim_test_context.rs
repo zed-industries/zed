@@ -57,7 +57,7 @@ impl<'a> VimTestContext<'a> {
             observe_keystrokes(cx);
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = cx.build_view(BufferSearchBar::new);
+                    let buffer_search_bar = cx.new_view(BufferSearchBar::new);
                     toolbar.add_item(buffer_search_bar, cx);
                     // todo!();
                     // let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
@@ -65,7 +65,7 @@ impl<'a> VimTestContext<'a> {
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = cx.build_view(ModeIndicator::new);
+                let vim_mode_indicator = cx.new_view(ModeIndicator::new);
                 status_bar.add_right_item(vim_mode_indicator, cx);
             });
         });

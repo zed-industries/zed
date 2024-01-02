@@ -99,7 +99,7 @@ impl ChannelChat {
         let messages = messages_from_proto(response.messages, &user_store, &mut cx).await?;
         let loaded_all_messages = response.done;
 
-        Ok(cx.build_model(|cx| {
+        Ok(cx.new_model(|cx| {
             cx.on_release(Self::release).detach();
             let mut this = Self {
                 channel_id: channel.id,

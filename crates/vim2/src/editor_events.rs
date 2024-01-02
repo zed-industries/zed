@@ -77,7 +77,7 @@ mod test {
     async fn test_blur_focus(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let buffer = cx.build_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
+        let buffer = cx.new_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
         let window2 = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
         let editor2 = cx
             .update(|cx| {

@@ -27,7 +27,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &Welcome, cx| {
-            let welcome_page = cx.build_view(|cx| WelcomePage::new(workspace, cx));
+            let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
             workspace.add_item(Box::new(welcome_page), cx)
         });
     })
@@ -39,7 +39,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn show_welcome_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
-        let welcome_page = cx.build_view(|cx| WelcomePage::new(workspace, cx));
+        let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
         cx.focus_view(&welcome_page);
         cx.notify();
@@ -270,7 +270,7 @@ impl Item for WelcomePage {
         _workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        Some(cx.build_view(|cx| WelcomePage {
+        Some(cx.new_view(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),

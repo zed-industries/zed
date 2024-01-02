@@ -246,7 +246,7 @@ impl Room {
         cx.spawn(move |mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.build_model(|cx| {
+            let room = cx.new_model(|cx| {
                 Self::new(
                     room_proto.id,
                     None,
@@ -343,7 +343,7 @@ impl Room {
         mut cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-        let room = cx.build_model(|cx| {
+        let room = cx.new_model(|cx| {
             Self::new(
                 room_proto.id,
                 response.channel_id,

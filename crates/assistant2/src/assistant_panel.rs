@@ -126,7 +126,7 @@ impl AssistantPanel {
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
-                cx.build_view::<Self>(|cx| {
+                cx.new_view::<Self>(|cx| {
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
                     let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
                         let mut events = fs
@@ -147,10 +147,10 @@ impl AssistantPanel {
                         anyhow::Ok(())
                     });
 
-                    let toolbar = cx.build_view(|cx| {
+                    let toolbar = cx.new_view(|cx| {
                         let mut toolbar = Toolbar::new();
                         toolbar.set_can_navigate(false, cx);
-                        toolbar.add_item(cx.build_view(|cx| BufferSearchBar::new(cx)), cx);
+                        toolbar.add_item(cx.new_view(|cx| BufferSearchBar::new(cx)), cx);
                         toolbar
                     });
 
@@ -306,7 +306,7 @@ impl AssistantPanel {
         // Retrieve Credentials Authenticates the Provider
         provider.retrieve_credentials(cx);
 
-        let codegen = cx.build_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
         });
 
@@ -332,7 +332,7 @@ impl AssistantPanel {
         }
 
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
-        let inline_assistant = cx.build_view(|cx| {
+        let inline_assistant = cx.new_view(|cx| {
             InlineAssistant::new(
                 inline_assist_id,
                 measurements.clone(),
@@ -790,7 +790,7 @@ impl AssistantPanel {
     }
 
     fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             ConversationEditor::new(
                 self.completion_provider.clone(),
                 self.languages.clone(),
@@ -1058,7 +1058,7 @@ impl AssistantPanel {
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = fs.load(&path).await?;
             let saved_conversation = serde_json::from_str(&saved_conversation)?;
-            let conversation = cx.build_model(|cx| {
+            let conversation = cx.new_model(|cx| {
                 Conversation::deserialize(saved_conversation, path.clone(), languages, cx)
             })?;
             this.update(&mut cx, |this, cx| {
@@ -1067,7 +1067,7 @@ impl AssistantPanel {
                 if let Some(ix) = this.editor_index_for_path(&path, cx) {
                     this.set_active_editor_index(Some(ix), cx);
                 } else {
-                    let editor = cx.build_view(|cx| {
+                    let editor = cx.new_view(|cx| {
                         ConversationEditor::for_conversation(conversation, fs, workspace, cx)
                     });
                     this.add_conversation(editor, cx);
@@ -1093,7 +1093,7 @@ impl AssistantPanel {
 }
 
 fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
-    cx.build_view(|cx| {
+    cx.new_view(|cx| {
         let mut editor = Editor::single_line(cx);
         editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
         editor
@@ -1335,7 +1335,7 @@ impl Conversation {
         completion_provider: Arc<dyn CompletionProvider>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), "");
             buffer.set_language_registry(language_registry);
             cx.spawn(|buffer, mut cx| async move {
@@ -1430,7 +1430,7 @@ impl Conversation {
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), saved_conversation.text);
             for message in saved_conversation.messages {
                 message_anchors.push(MessageAnchor {
@@ -2081,7 +2081,7 @@ impl ConversationEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let conversation =
-            cx.build_model(|cx| Conversation::new(language_registry, cx, completion_provider));
+            cx.new_model(|cx| Conversation::new(language_registry, cx, completion_provider));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
@@ -2091,7 +2091,7 @@ impl ConversationEditor {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
@@ -2708,7 +2708,7 @@ impl InlineAssistant {
         semantic_index: Option<Model<SemanticIndex>>,
         project: Model<Project>,
     ) -> Self {
-        let prompt_editor = cx.build_view(|cx| {
+        let prompt_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             let placeholder = match codegen.read(cx).kind() {
                 CodegenKind::Transform { .. } => "Enter transformation prompt…",
@@ -3129,8 +3129,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
 
         let completion_provider = Arc::new(FakeCompletionProvider::new());
-        let conversation =
-            cx.build_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3261,8 +3260,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
 
-        let conversation =
-            cx.build_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3360,8 +3358,7 @@ mod tests {
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
-        let conversation =
-            cx.build_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3446,7 +3443,7 @@ mod tests {
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation =
-            cx.build_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
+            cx.new_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
         let message_0 = conversation.read(cx).message_anchors[0].id;
         let message_1 = conversation.update(cx, |conversation, cx| {
@@ -3479,7 +3476,7 @@ mod tests {
             ]
         );
 
-        let deserialized_conversation = cx.build_model(|cx| {
+        let deserialized_conversation = cx.new_model(|cx| {
             Conversation::deserialize(
                 conversation.read(cx).serialize(cx),
                 Default::default(),

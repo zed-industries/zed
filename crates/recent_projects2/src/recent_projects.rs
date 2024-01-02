@@ -30,7 +30,7 @@ impl ModalView for RecentProjects {}
 
 impl RecentProjects {
     fn new(delegate: RecentProjectsDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lenghty call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
@@ -90,7 +90,7 @@ impl RecentProjects {
         }))
     }
     pub fn open_popover(workspace: WeakView<Workspace>, cx: &mut WindowContext<'_>) -> View<Self> {
-        cx.build_view(|cx| Self::new(RecentProjectsDelegate::new(workspace, false), 20., cx))
+        cx.new_view(|cx| Self::new(RecentProjectsDelegate::new(workspace, false), 20., cx))
     }
 }
 

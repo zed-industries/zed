@@ -154,7 +154,7 @@ impl FeedbackModal {
         buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let email_address_editor = cx.build_view(|cx| {
+        let email_address_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Email address (optional)", cx);
 
@@ -169,7 +169,7 @@ impl FeedbackModal {
         let placeholder_text =
             "You can use markdown to organize your feedback with code and links.";
 
-        let feedback_editor = cx.build_view(|cx| {
+        let feedback_editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_placeholder_text(placeholder_text, cx);
             // editor.set_show_gutter(false, cx);

@@ -636,7 +636,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.build_model(|cx: &mut ModelContext<Self>| {
+        cx.new_model(|cx: &mut ModelContext<Self>| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
@@ -712,7 +712,7 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
-        let this = cx.build_model(|cx| {
+        let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
             let mut worktrees = Vec::new();
@@ -868,7 +868,7 @@ impl Project {
         languages.set_executor(cx.executor());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let project = cx.update(|cx| {
             Project::local(
                 client,
@@ -1690,7 +1690,7 @@ impl Project {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
         let id = post_inc(&mut self.next_buffer_id);
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             Buffer::new(self.replica_id(), id, text)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
@@ -7193,7 +7193,7 @@ impl Project {
                     }
 
                     let buffer_id = state.id;
-                    let buffer = cx.build_model(|_| {
+                    let buffer = cx.new_model(|_| {
                         Buffer::from_proto(this.replica_id(), state, buffer_file).unwrap()
                     });
                     this.incomplete_remote_buffers

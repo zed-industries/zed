@@ -1579,15 +1579,15 @@ mod tests {
                 async { Ok(()) }
             },
         );
-        let model1 = cx.build_model(|_| TestModel {
+        let model1 = cx.new_model(|_| TestModel {
             id: 1,
             subscription: None,
         });
-        let model2 = cx.build_model(|_| TestModel {
+        let model2 = cx.new_model(|_| TestModel {
             id: 2,
             subscription: None,
         });
-        let model3 = cx.build_model(|_| TestModel {
+        let model3 = cx.new_model(|_| TestModel {
             id: 3,
             subscription: None,
         });
@@ -1620,7 +1620,7 @@ mod tests {
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.build_model(|_| TestModel::default());
+        let model = cx.new_model(|_| TestModel::default());
         let (done_tx1, _done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
@@ -1648,7 +1648,7 @@ mod tests {
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.build_model(|_| TestModel::default());
+        let model = cx.new_model(|_| TestModel::default());
         let (done_tx, mut done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),

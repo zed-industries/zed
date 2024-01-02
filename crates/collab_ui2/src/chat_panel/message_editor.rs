@@ -219,7 +219,7 @@ mod tests {
             MessageEditor::new(
                 language_registry,
                 ChannelStore::global(cx),
-                cx.build_view(|cx| Editor::auto_height(4, cx)),
+                cx.new_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
         });
@@ -273,7 +273,7 @@ mod tests {
         cx.update(|cx| {
             let http = FakeHttpClient::with_404_response();
             let client = Client::new(http.clone(), cx);
-            let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
+            let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
             theme::init(theme::LoadThemes::JustBase, cx);

@@ -194,7 +194,7 @@ impl FakeServer {
         client: Arc<Client>,
         cx: &mut TestAppContext,
     ) -> Model<UserStore> {
-        let user_store = cx.build_model(|cx| UserStore::new(client, cx));
+        let user_store = cx.new_model(|cx| UserStore::new(client, cx));
         assert_eq!(
             self.receive::<proto::GetUsers>()
                 .await

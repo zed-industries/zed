@@ -87,7 +87,7 @@ impl NotificationPanel {
         let user_store = workspace.app_state().user_store.clone();
         let workspace_handle = workspace.weak_handle();
 
-        cx.build_view(|cx: &mut ViewContext<Self>| {
+        cx.new_view(|cx: &mut ViewContext<Self>| {
             let mut status = client.status();
             cx.spawn(|this, mut cx| async move {
                 while let Some(_) = status.next().await {
@@ -503,7 +503,7 @@ impl NotificationPanel {
                 workspace.dismiss_notification::<NotificationToast>(0, cx);
                 workspace.show_notification(0, cx, |cx| {
                     let workspace = cx.view().downgrade();
-                    cx.build_view(|_| NotificationToast {
+                    cx.new_view(|_| NotificationToast {
                         notification_id,
                         actor,
                         text,

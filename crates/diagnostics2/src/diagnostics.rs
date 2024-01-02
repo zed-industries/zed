@@ -151,8 +151,8 @@ impl ProjectDiagnosticsEditor {
         let focus_in_subscription =
             cx.on_focus_in(&focus_handle, |diagnostics, cx| diagnostics.focus_in(cx));
 
-        let excerpts = cx.build_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
-        let editor = cx.build_view(|cx| {
+        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
+        let editor = cx.new_view(|cx| {
             let mut editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
@@ -194,7 +194,7 @@ impl ProjectDiagnosticsEditor {
             workspace.activate_item(&existing, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
-            let diagnostics = cx.build_view(|cx| {
+            let diagnostics = cx.new_view(|cx| {
                 ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
             workspace.add_item(Box::new(diagnostics), cx);
@@ -705,7 +705,7 @@ impl Item for ProjectDiagnosticsEditor {
     where
         Self: Sized,
     {
-        Some(cx.build_view(|cx| {
+        Some(cx.new_view(|cx| {
             ProjectDiagnosticsEditor::new(self.project.clone(), self.workspace.clone(), cx)
         }))
     }
@@ -778,7 +778,7 @@ impl Item for ProjectDiagnosticsEditor {
         _item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
     ) -> Task<Result<View<Self>>> {
-        Task::ready(Ok(cx.build_view(|cx| Self::new(project, workspace, cx))))
+        Task::ready(Ok(cx.new_view(|cx| Self::new(project, workspace, cx))))
     }
 }
 

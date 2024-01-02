@@ -118,7 +118,7 @@ impl TerminalView {
             .notify_err(workspace, cx);
 
         if let Some(terminal) = terminal {
-            let view = cx.build_view(|cx| {
+            let view = cx.new_view(|cx| {
                 TerminalView::new(
                     terminal,
                     workspace.weak_handle(),
@@ -765,7 +765,7 @@ impl Item for TerminalView {
                 project.create_terminal(cwd, window, cx)
             })??;
             pane.update(&mut cx, |_, cx| {
-                cx.build_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
+                cx.new_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
             })
         })
     }

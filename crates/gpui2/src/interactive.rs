@@ -327,7 +327,7 @@ mod test {
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |cx| {
-                cx.build_view(|cx| TestView {
+                cx.new_view(|cx| TestView {
                     saw_key_down: false,
                     saw_action: false,
                     focus_handle: cx.focus_handle(),

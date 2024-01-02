@@ -53,7 +53,7 @@ pub struct TerminalPanel {
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let terminal_panel = cx.view().clone();
-        let pane = cx.build_view(|cx| {
+        let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
                 workspace.project().clone(),
@@ -147,7 +147,7 @@ impl TerminalPanel {
             .flatten();
 
         let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
-            let panel = cx.build_view(|cx| TerminalPanel::new(workspace, cx));
+            let panel = cx.new_view(|cx| TerminalPanel::new(workspace, cx));
             let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
                 panel.update(cx, |panel, cx| {
                     cx.notify();
@@ -272,7 +272,7 @@ impl TerminalPanel {
                         .create_terminal(working_directory, window, cx)
                         .log_err()
                 }) {
-                    let terminal = Box::new(cx.build_view(|cx| {
+                    let terminal = Box::new(cx.new_view(|cx| {
                         TerminalView::new(
                             terminal,
                             workspace.weak_handle(),

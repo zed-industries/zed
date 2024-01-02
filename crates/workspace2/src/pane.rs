@@ -361,7 +361,7 @@ impl Pane {
                 pane: handle.clone(),
                 next_timestamp,
             }))),
-            toolbar: cx.build_view(|_| Toolbar::new()),
+            toolbar: cx.new_view(|_| Toolbar::new()),
             new_item_menu: None,
             split_item_menu: None,
             tab_bar_scroll_handle: ScrollHandle::new(),
@@ -1540,7 +1540,7 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, cx| cx.build_view(|_| tab.clone()),
+                |tab, cx| cx.new_view(|_| tab.clone()),
             )
             .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().drop_target_background))
             .drag_over::<ProjectEntryId>(|tab| tab.bg(cx.theme().colors().drop_target_background))
@@ -2241,7 +2241,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new_view(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(0),
@@ -2254,7 +2254,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new_view(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(2),
@@ -2267,7 +2267,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new_view(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(5),
@@ -2281,7 +2281,7 @@ mod tests {
         set_labeled_items(&pane, ["A*", "B", "C"], cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new_view(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -2294,7 +2294,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*"], cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new_view(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -2391,7 +2391,7 @@ mod tests {
         // singleton view
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| {
+                Box::new(cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
@@ -2408,7 +2408,7 @@ mod tests {
         // new singleton view with the same project entry
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| {
+                Box::new(cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
@@ -2425,7 +2425,7 @@ mod tests {
         // new singleton view with different project entry
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| {
+                Box::new(cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 2")
@@ -2442,7 +2442,7 @@ mod tests {
         // new multibuffer view with the same project entry
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| {
+                Box::new(cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1")
@@ -2459,7 +2459,7 @@ mod tests {
         // another multibuffer view with the same project entry
         pane.update(cx, |pane, cx| {
             pane.add_item(
-                Box::new(cx.build_view(|cx| {
+                Box::new(cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1b")
@@ -2673,7 +2673,7 @@ mod tests {
     ) -> Box<View<TestItem>> {
         pane.update(cx, |pane, cx| {
             let labeled_item = Box::new(
-                cx.build_view(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)),
+                cx.new_view(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)),
             );
             pane.add_item(labeled_item.clone(), false, false, None, cx);
             labeled_item
@@ -2696,8 +2696,7 @@ mod tests {
                     active_item_index = index;
                 }
 
-                let labeled_item =
-                    Box::new(cx.build_view(|cx| TestItem::new(cx).with_label(label)));
+                let labeled_item = Box::new(cx.new_view(|cx| TestItem::new(cx).with_label(label)));
                 pane.add_item(labeled_item.clone(), false, false, None, cx);
                 index += 1;
                 labeled_item

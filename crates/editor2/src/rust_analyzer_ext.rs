@@ -102,11 +102,11 @@ pub fn expand_macro_recursively(
             project.create_buffer(&macro_expansion.expansion, Some(rust_language), cx)
         })??;
         workspace.update(&mut cx, |workspace, cx| {
-            let buffer = cx.build_model(|cx| {
+            let buffer = cx.new_model(|cx| {
                 MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
             });
             workspace.add_item(
-                Box::new(cx.build_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
+                Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
                 cx,
             );
         })

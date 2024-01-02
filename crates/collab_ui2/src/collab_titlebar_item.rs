@@ -36,7 +36,7 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let titlebar_item = cx.build_view(|cx| CollabTitlebarItem::new(workspace, cx));
+        let titlebar_item = cx.new_view(|cx| CollabTitlebarItem::new(workspace, cx));
         workspace.set_titlebar_item(titlebar_item.into(), cx)
     })
     .detach();

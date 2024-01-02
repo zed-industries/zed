@@ -49,7 +49,7 @@ impl GoToLine {
     }
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let line_editor = cx.build_view(|cx| Editor::single_line(cx));
+        let line_editor = cx.new_view(|cx| Editor::single_line(cx));
         let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
 
         let editor = active_editor.read(cx);

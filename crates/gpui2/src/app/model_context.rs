@@ -215,11 +215,11 @@ impl<'a, T> ModelContext<'a, T> {
 impl<'a, T> Context for ModelContext<'a, T> {
     type Result<U> = U;
 
-    fn build_model<U: 'static>(
+    fn new_model<U: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, U>) -> U,
     ) -> Model<U> {
-        self.app.build_model(build_model)
+        self.app.new_model(build_model)
     }
 
     fn update_model<U: 'static, R>(

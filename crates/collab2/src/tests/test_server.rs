@@ -209,8 +209,8 @@ impl TestServer {
             });
 
         let fs = FakeFs::new(cx.executor());
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let mut language_registry = LanguageRegistry::test();
         language_registry.set_executor(cx.executor());
         let app_state = Arc::new(workspace::AppState {

@@ -53,7 +53,7 @@ impl ModalLayer {
                 return;
             }
         }
-        let new_modal = cx.build_view(build_view);
+        let new_modal = cx.new_view(build_view);
         self.show_modal(new_modal, cx);
     }
 

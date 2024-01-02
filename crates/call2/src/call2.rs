@@ -24,7 +24,7 @@ pub use room::Room;
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     CallSettings::register(cx);
 
-    let active_call = cx.build_model(|cx| ActiveCall::new(client, user_store, cx));
+    let active_call = cx.new_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }
 

@@ -51,7 +51,7 @@ pub fn init(
     node_runtime: Arc<dyn NodeRuntime>,
     cx: &mut AppContext,
 ) {
-    let copilot = cx.build_model({
+    let copilot = cx.new_model({
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
@@ -382,7 +382,7 @@ impl Copilot {
             LanguageServer::fake("copilot".into(), Default::default(), cx.to_async());
         let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
-        let this = cx.build_model(|cx| Self {
+        let this = cx.new_model(|cx| Self {
             server_id: LanguageServerId(0),
             http: http.clone(),
             node_runtime,
@@ -1033,7 +1033,7 @@ mod tests {
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Hello"));
+        let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Hello"));
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1051,7 +1051,7 @@ mod tests {
             }
         );
 
-        let buffer_2 = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Goodbye"));
+        let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Goodbye"));
         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();

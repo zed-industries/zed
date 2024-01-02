@@ -434,7 +434,7 @@ impl BufferSearchBar {
                         });
                         return;
                     }
-                    let view = cx.build_view(|cx| BufferSearchBar::new(cx));
+                    let view = cx.new_view(|cx| BufferSearchBar::new(cx));
                     this.add_item(view.clone(), cx);
                     view.update(cx, |this, cx| this.deploy(deploy, cx));
                     cx.notify();
@@ -506,10 +506,10 @@ impl BufferSearchBar {
         });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let query_editor = cx.build_view(|cx| Editor::single_line(cx));
+        let query_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.build_view(|cx| Editor::single_line(cx));
+        let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&replacement_editor, Self::on_query_editor_event)
             .detach();
         Self {
@@ -1044,7 +1044,7 @@ mod tests {
         &mut VisualTestContext<'_>,
     ) {
         init_globals(cx);
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             Buffer::new(
                 0,
                 cx.entity_id().as_u64(),
@@ -1058,9 +1058,9 @@ mod tests {
             )
         });
         let (_, cx) = cx.add_window_view(|_| EmptyView {});
-        let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.build_view(|cx| {
+        let search_bar = cx.new_view(|cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1405,7 +1405,7 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
         let window = cx.add_window(|_| EmptyView {});
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
@@ -1602,12 +1602,12 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
         let (_, cx) = cx.add_window_view(|_| EmptyView {});
 
-        let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.build_view(|cx| {
+        let search_bar = cx.new_view(|cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);

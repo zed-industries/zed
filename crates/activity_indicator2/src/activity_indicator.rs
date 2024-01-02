@@ -55,7 +55,7 @@ impl ActivityIndicator {
     ) -> View<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
-        let this = cx.build_view(|cx: &mut ViewContext<Self>| {
+        let this = cx.new_view(|cx: &mut ViewContext<Self>| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(|this, mut cx| async move {
                 while let Some((language, event)) = status_events.next().await {
@@ -101,9 +101,9 @@ impl ActivityIndicator {
                         );
                     });
                     workspace.add_item(
-                        Box::new(cx.build_view(|cx| {
-                            Editor::for_buffer(buffer, Some(project.clone()), cx)
-                        })),
+                        Box::new(
+                            cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                        ),
                         cx,
                     );
                 }

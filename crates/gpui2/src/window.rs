@@ -1463,7 +1463,7 @@ impl<'a> WindowContext<'a> {
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
                             value: Box::new(files.clone()),
-                            view: self.build_view(|_| files).into(),
+                            view: self.new_view(|_| files).into(),
                             cursor_offset: position,
                         });
                     }
@@ -1842,10 +1842,7 @@ impl<'a> WindowContext<'a> {
 impl Context for WindowContext<'_> {
     type Result<T> = T;
 
-    fn build_model<T>(
-        &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Model<T>
+    fn new_model<T>(&mut self, build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T) -> Model<T>
     where
         T: 'static,
     {
@@ -1916,7 +1913,7 @@ impl Context for WindowContext<'_> {
 }
 
 impl VisualContext for WindowContext<'_> {
-    fn build_view<V>(
+    fn new_view<V>(
         &mut self,
         build_view_state: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> Self::Result<View<V>>
@@ -1962,7 +1959,7 @@ impl VisualContext for WindowContext<'_> {
     where
         V: 'static + Render,
     {
-        let view = self.build_view(build_view);
+        let view = self.new_view(build_view);
         self.window.root_view = Some(view.clone().into());
         self.notify();
         view
@@ -2728,11 +2725,11 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 impl<V> Context for ViewContext<'_, V> {
     type Result<U> = U;
 
-    fn build_model<T: 'static>(
+    fn new_model<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Model<T> {
-        self.window_cx.build_model(build_model)
+        self.window_cx.new_model(build_model)
     }
 
     fn update_model<T: 'static, R>(
@@ -2774,11 +2771,11 @@ impl<V> Context for ViewContext<'_, V> {
 }
 
 impl<V: 'static> VisualContext for ViewContext<'_, V> {
-    fn build_view<W: Render + 'static>(
+    fn new_view<W: Render + 'static>(
         &mut self,
         build_view_state: impl FnOnce(&mut ViewContext<'_, W>) -> W,
     ) -> Self::Result<View<W>> {
-        self.window_cx.build_view(build_view_state)
+        self.window_cx.new_view(build_view_state)
     }
 
     fn update_view<V2: 'static, R>(

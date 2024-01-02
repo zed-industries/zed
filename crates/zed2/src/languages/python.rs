@@ -198,7 +198,7 @@ mod tests {
             });
         });
 
-        cx.build_model(|cx| {
+        cx.new_model(|cx| {
             let mut buffer =
                 Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
