@@ -15,6 +15,7 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<Task<()>>,
     confirm_on_update: Option<bool>,
     width: Option<Length>,
+    max_height: Option<Length>,
 
     /// Whether the `Picker` is rendered as a self-contained modal.
     ///
@@ -72,6 +73,7 @@ impl<D: PickerDelegate> Picker<D> {
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
+            max_height: None,
             is_modal: true,
         };
         this.update_matches("".to_string(), cx);
@@ -80,6 +82,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
         self.width = Some(width.into());
+        self
+    }
+
+    pub fn max_height(mut self, max_height: impl Into<gpui::Length>) -> Self {
+        self.max_height = Some(max_height.into());
         self
     }
 
@@ -260,6 +267,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     v_stack()
                         .flex_grow()
                         .py_2()
+                        .max_h(self.max_height.unwrap_or(rems(18.).into()))
+                        .overflow_hidden()
                         .children(self.delegate.render_header(cx))
                         .child(
                             uniform_list(
@@ -296,8 +305,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             .track_scroll(self.scroll_handle.clone())
                         )
 
-                        .max_h_72()
-                        .overflow_hidden(),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
