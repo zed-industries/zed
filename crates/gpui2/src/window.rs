@@ -26,6 +26,7 @@ use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
     cell::RefCell,
+    collections::hash_map::Entry,
     fmt::Debug,
     future::Future,
     hash::{Hash, Hasher},
@@ -637,7 +638,8 @@ impl<'a> WindowContext<'a> {
         let handle = self.window.handle;
         let display_id = self.window.display_id;
 
-        if !self.frame_consumers.contains_key(&display_id) {
+        let mut frame_consumers = std::mem::take(&mut self.app.frame_consumers);
+        if let Entry::Vacant(e) = frame_consumers.entry(display_id) {
             let (tx, mut rx) = mpsc::unbounded::<()>();
             self.platform.set_display_link_output_callback(
                 display_id,
@@ -669,8 +671,10 @@ impl<'a> WindowContext<'a> {
                     .ok();
                 }
             });
-            self.frame_consumers.insert(display_id, consumer_task);
+            e.insert(consumer_task);
         }
+        debug_assert!(self.app.frame_consumers.is_empty());
+        self.app.frame_consumers = frame_consumers;
 
         if self.next_frame_callbacks.is_empty() {
             self.platform.start_display_link(display_id);
