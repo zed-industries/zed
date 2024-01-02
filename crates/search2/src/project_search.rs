@@ -1224,6 +1224,14 @@ impl ProjectSearchView {
             cx.theme().colors().border
         }
     }
+    fn move_focus_to_results(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.results_editor.focus_handle(cx).is_focused(cx)
+            && !self.model.read(cx).match_ranges.is_empty()
+        {
+            cx.stop_propagation();
+            return self.focus_results_editor(cx);
+        }
+    }
 }
 
 impl Default for ProjectSearchBar {
@@ -1395,6 +1403,15 @@ impl ProjectSearchBar {
             true
         } else {
             false
+        }
+    }
+
+    fn move_focus_to_results(&self, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.move_focus_to_results(cx);
+            });
+            cx.notify();
         }
     }
 
@@ -1754,6 +1771,7 @@ impl Render for ProjectSearchBar {
             .key_context(key_context)
             .flex_grow()
             .gap_2()
+            .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
             }))
