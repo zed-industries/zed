@@ -179,6 +179,7 @@ impl Zed1ThemeConverter {
                 .container
                 .background_color
                 .map(zed1_color_to_hsla),
+            drop_target_background: convert(self.theme.workspace.drop_target_overlay_color),
             toolbar_background: toolbar.container.background_color.map(zed1_color_to_hsla),
             editor_foreground: convert(editor.text_color),
             editor_background: convert(editor.background),
