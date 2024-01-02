@@ -563,7 +563,6 @@ impl Copilot {
         }
     }
 
-    #[allow(dead_code)] // todo!()
     fn sign_out(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
@@ -1126,7 +1125,6 @@ mod tests {
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .await
             .unwrap();
-        // todo!() po: these notifications now happen in reverse order?
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,

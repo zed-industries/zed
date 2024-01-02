@@ -260,8 +260,6 @@ impl TestServer {
             .store(true, SeqCst);
     }
 
-    //todo!(workspace)
-    #[allow(dead_code)]
     pub fn simulate_long_connection_interruption(
         &self,
         peer_id: PeerId,
