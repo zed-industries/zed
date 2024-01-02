@@ -2170,6 +2170,7 @@ impl CollabPanel {
                         h_stack()
                             .child(
                                 IconButton::new("channel_chat", Icon::MessageBubbles)
+                                    .icon_size(IconSize::Small)
                                     .icon_color(if has_messages_notification {
                                         Color::Default
                                     } else {
@@ -2185,6 +2186,7 @@ impl CollabPanel {
                             )
                             .child(
                                 IconButton::new("channel_notes", Icon::File)
+                                    .icon_size(IconSize::Small)
                                     .icon_color(if has_notes_notification {
                                         Color::Default
                                     } else {
