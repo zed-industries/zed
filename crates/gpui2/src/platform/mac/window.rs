@@ -74,7 +74,6 @@ const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
 // https://developer.apple.com/documentation/appkit/nsdragoperation
-#[allow(non_upper_case_globals)]
 type NSDragOperation = NSUInteger;
 #[allow(non_upper_case_globals)]
 const NSDragOperationNone: NSDragOperation = 0;

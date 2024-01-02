@@ -4285,7 +4285,7 @@ struct DisconnectedOverlay;
 impl Element for DisconnectedOverlay {
     type State = AnyElement;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,

@@ -41,9 +41,9 @@ pub struct Popover {
 }
 
 impl RenderOnce for Popover {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .flex()
             .gap_1()

@@ -196,9 +196,9 @@ pub struct IconElement {
 }
 
 impl RenderOnce for IconElement {
-    type Rendered = Svg;
+    type Output = Svg;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         svg()
             .size(self.size.rems())
             .flex_none()

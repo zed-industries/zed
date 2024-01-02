@@ -99,9 +99,9 @@ impl ButtonCommon for ToggleButton {
 }
 
 impl RenderOnce for ToggleButton {
-    type Rendered = ButtonLike;
+    type Output = ButtonLike;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 

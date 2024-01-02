@@ -116,7 +116,7 @@ pub struct UniformListState {
 impl Element for UniformList {
     type State = UniformListState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,

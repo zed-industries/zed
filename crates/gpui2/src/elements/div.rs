@@ -765,7 +765,7 @@ impl ParentElement for Div {
 impl Element for Div {
     type State = DivState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
         cx: &mut WindowContext,
@@ -1808,12 +1808,12 @@ where
 {
     type State = E::State;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        self.element.layout(state, cx)
+        self.element.request_layout(state, cx)
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
@@ -1882,12 +1882,12 @@ where
 {
     type State = E::State;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        self.element.layout(state, cx)
+        self.element.request_layout(state, cx)
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {

@@ -13,23 +13,13 @@ mod window;
 mod window_appearence;
 
 use crate::{px, size, GlobalPixels, Pixels, Size};
-use anyhow::anyhow;
 use cocoa::{
     base::{id, nil},
-    foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger, NSURL},
+    foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger},
 };
 use metal_renderer::*;
-use objc::{
-    msg_send,
-    runtime::{BOOL, NO, YES},
-    sel, sel_impl,
-};
-use std::{
-    ffi::{c_char, CStr, OsStr},
-    ops::Range,
-    os::unix::prelude::OsStrExt,
-    path::PathBuf,
-};
+use objc::runtime::{BOOL, NO, YES};
+use std::ops::Range;
 
 pub use dispatcher::*;
 pub use display::*;
@@ -147,19 +137,3 @@ impl From<NSRect> for Size<GlobalPixels> {
 //             && self.origin.y + self.size.height >= other.origin.y
 //     }
 // }
-
-// todo!
-#[allow(unused)]
-unsafe fn ns_url_to_path(url: id) -> crate::Result<PathBuf> {
-    let path: *mut c_char = msg_send![url, fileSystemRepresentation];
-    if path.is_null() {
-        Err(anyhow!(
-            "url is not a file path: {}",
-            CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
-        ))
-    } else {
-        Ok(PathBuf::from(OsStr::from_bytes(
-            CStr::from_ptr(path).to_bytes(),
-        )))
-    }
-}

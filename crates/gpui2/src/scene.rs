@@ -159,7 +159,6 @@ pub struct Scene {
 }
 
 impl Scene {
-    #[allow(dead_code)]
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
         &self.paths
     }
