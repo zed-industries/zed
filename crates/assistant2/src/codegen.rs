@@ -395,14 +395,14 @@ mod tests {
             }
         "};
         let buffer =
-            cx.build_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
         let provider = Arc::new(FakeCompletionProvider::new());
-        let codegen = cx.build_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
                 CodegenKind::Transform { range },
@@ -461,14 +461,14 @@ mod tests {
             }
         "};
         let buffer =
-            cx.build_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let position = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
         let provider = Arc::new(FakeCompletionProvider::new());
-        let codegen = cx.build_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
                 CodegenKind::Generate { position },
@@ -526,14 +526,14 @@ mod tests {
             "}\n" //
         );
         let buffer =
-            cx.build_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let position = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
         let provider = Arc::new(FakeCompletionProvider::new());
-        let codegen = cx.build_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
                 CodegenKind::Generate { position },

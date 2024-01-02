@@ -2,7 +2,7 @@ use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{
-    img, px, AppContext, Div, ParentElement, Render, RenderOnce, Styled, ViewContext,
+    img, px, AppContext, ParentElement, Render, RenderOnce, Styled, ViewContext,
     VisualContext as _, WindowHandle,
 };
 use settings::Settings;
@@ -39,7 +39,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                     let options = notification_window_options(screen, window_size);
                     let window = cx
                         .open_window(options, |cx| {
-                            cx.build_view(|_| {
+                            cx.new_view(|_| {
                                 IncomingCallNotification::new(
                                     incoming_call.clone(),
                                     app_state.clone(),
@@ -117,9 +117,7 @@ impl IncomingCallNotification {
 }
 
 impl Render for IncomingCallNotification {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);

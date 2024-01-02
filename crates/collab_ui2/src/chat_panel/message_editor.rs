@@ -3,7 +3,7 @@ use client::UserId;
 use collections::HashMap;
 use editor::{AnchorRangeExt, Editor};
 use gpui::{
-    AnyView, AsyncWindowContext, FocusableView, Model, Render, SharedString, Task, View,
+    AsyncWindowContext, Element, FocusableView, Model, Render, SharedString, Task, View,
     ViewContext, WeakView,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry};
@@ -196,9 +196,7 @@ impl MessageEditor {
 }
 
 impl Render for MessageEditor {
-    type Element = AnyView;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         self.editor.to_any()
     }
 }
@@ -221,7 +219,7 @@ mod tests {
             MessageEditor::new(
                 language_registry,
                 ChannelStore::global(cx),
-                cx.build_view(|cx| Editor::auto_height(4, cx)),
+                cx.new_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
         });
@@ -275,7 +273,7 @@ mod tests {
         cx.update(|cx| {
             let http = FakeHttpClient::with_404_response();
             let client = Client::new(http.clone(), cx);
-            let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
+            let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
             theme::init(theme::LoadThemes::JustBase, cx);

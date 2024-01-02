@@ -2,7 +2,7 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView, Model,
+    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -106,7 +106,7 @@ impl FileFinder {
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            picker: cx.build_view(|cx| Picker::new(delegate, cx)),
+            picker: cx.new_view(|cx| Picker::new(delegate, cx)),
         }
     }
 }
@@ -118,9 +118,7 @@ impl FocusableView for FileFinder {
     }
 }
 impl Render for FileFinder {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }

@@ -29,7 +29,7 @@ impl IntoElement for Canvas {
 impl Element for Canvas {
     type State = Style;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,

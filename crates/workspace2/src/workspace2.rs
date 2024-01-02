@@ -261,7 +261,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     let builders = cx.default_global::<ProjectItemBuilders>();
     builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
         let item = model.downcast::<I::Item>().unwrap();
-        Box::new(cx.build_view(|cx| I::for_project_item(project, item, cx)))
+        Box::new(cx.new_view(|cx| I::for_project_item(project, item, cx)))
     });
 }
 
@@ -358,8 +358,8 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
-        let user_store = cx.build_model(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
@@ -519,7 +519,7 @@ impl Workspace {
                 }
 
                 project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
-                    cx.build_view(|_| MessageNotification::new(message.clone()))
+                    cx.new_view(|_| MessageNotification::new(message.clone()))
                 }),
 
                 _ => {}
@@ -537,7 +537,7 @@ impl Workspace {
         let weak_handle = cx.view().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
-        let center_pane = cx.build_view(|cx| {
+        let center_pane = cx.new_view(|cx| {
             Pane::new(
                 weak_handle.clone(),
                 project.clone(),
@@ -589,10 +589,10 @@ impl Workspace {
         let left_dock = Dock::new(DockPosition::Left, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, cx);
         let right_dock = Dock::new(DockPosition::Right, cx);
-        let left_dock_buttons = cx.build_view(|cx| PanelButtons::new(left_dock.clone(), cx));
-        let bottom_dock_buttons = cx.build_view(|cx| PanelButtons::new(bottom_dock.clone(), cx));
-        let right_dock_buttons = cx.build_view(|cx| PanelButtons::new(right_dock.clone(), cx));
-        let status_bar = cx.build_view(|cx| {
+        let left_dock_buttons = cx.new_view(|cx| PanelButtons::new(left_dock.clone(), cx));
+        let bottom_dock_buttons = cx.new_view(|cx| PanelButtons::new(bottom_dock.clone(), cx));
+        let right_dock_buttons = cx.new_view(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let status_bar = cx.new_view(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_dock_buttons, cx);
             status_bar.add_right_item(right_dock_buttons, cx);
@@ -600,7 +600,7 @@ impl Workspace {
             status_bar
         });
 
-        let modal_layer = cx.build_view(|_| ModalLayer::new());
+        let modal_layer = cx.new_view(|_| ModalLayer::new());
 
         let mut active_call = None;
         if cx.has_global::<Model<ActiveCall>>() {
@@ -800,7 +800,7 @@ impl Workspace {
                     let workspace_id = workspace_id.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
-                        cx.build_view(|cx| {
+                        cx.new_view(|cx| {
                             Workspace::new(workspace_id, project_handle, app_state, cx)
                         })
                     }
@@ -1718,7 +1718,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
-        let pane = cx.build_view(|cx| {
+        let pane = cx.new_view(|cx| {
             Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
@@ -1915,8 +1915,7 @@ impl Workspace {
             return item;
         }
 
-        let item =
-            cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
         self.add_item(Box::new(item.clone()), cx);
         item
     }
@@ -1940,8 +1939,7 @@ impl Workspace {
             return item;
         }
 
-        let item =
-            cx.build_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
         self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
         item
     }
@@ -2852,7 +2850,7 @@ impl Workspace {
             }
         }
 
-        Some(cx.build_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
+        Some(cx.new_view(|cx| SharedScreen::new(&track, peer_id, user.clone(), cx)))
     }
 
     pub fn on_window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
@@ -3265,7 +3263,7 @@ impl Workspace {
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
 
-        let workspace_store = cx.build_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
@@ -3468,7 +3466,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .update(cx, |workspace, cx| {
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 workspace.show_notification_once(0, cx, |cx| {
-                    cx.build_view(|_| {
+                    cx.new_view(|_| {
                         MessageNotification::new("Failed to load the database file.")
                             .with_click_message("Click to let us know about this error")
                             .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
@@ -3489,9 +3487,7 @@ impl FocusableView for Workspace {
 struct DraggedDock(DockPosition);
 
 impl Render for Workspace {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let mut context = KeyContext::default();
         context.add("Workspace");
 
@@ -4182,7 +4178,7 @@ pub fn join_remote_project(
             cx.update(|cx| {
                 let options = (app_state.build_window_options)(window_bounds_override, None, cx);
                 cx.open_window(options, |cx| {
-                    cx.build_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
+                    cx.new_view(|cx| Workspace::new(0, project, app_state.clone(), cx))
                 })
             })?
         };
@@ -4287,7 +4283,7 @@ struct DisconnectedOverlay;
 impl Element for DisconnectedOverlay {
     type State = AnyElement;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,
@@ -4356,7 +4352,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.build_view(|cx| {
+        let item1 = cx.new_view(|cx| {
             let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
@@ -4368,7 +4364,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.build_view(|cx| {
+        let item2 = cx.new_view(|cx| {
             let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -4382,7 +4378,7 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.build_view(|cx| {
+        let item3 = cx.new_view(|cx| {
             let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -4423,10 +4419,10 @@ mod tests {
             project.worktrees().next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.build_view(|cx| {
+        let item1 = cx.new_view(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
-        let item2 = cx.build_view(|cx| {
+        let item2 = cx.new_view(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
@@ -4495,15 +4491,15 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.build_view(|cx| TestItem::new(cx));
+        let item1 = cx.new_view(|cx| TestItem::new(cx));
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.build_view(|cx| TestItem::new(cx).with_dirty(true));
-        let item3 = cx.build_view(|cx| {
+        let item2 = cx.new_view(|cx| TestItem::new(cx).with_dirty(true));
+        let item3 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -4531,24 +4527,24 @@ mod tests {
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
-        let item1 = cx.build_view(|cx| {
+        let item1 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
-        let item2 = cx.build_view(|cx| {
+        let item2 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
         });
-        let item3 = cx.build_view(|cx| {
+        let item3 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
-        let item4 = cx.build_view(|cx| {
+        let item4 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
@@ -4640,7 +4636,7 @@ mod tests {
         // workspace items with multiple project entries.
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
-                cx.build_view(|cx| {
+                cx.new_view(|cx| {
                     TestItem::new(cx)
                         .with_dirty(true)
                         .with_project_items(&[TestProjectItem::new(
@@ -4651,7 +4647,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let item_2_3 = cx.build_view(|cx| {
+        let item_2_3 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -4660,7 +4656,7 @@ mod tests {
                     single_entry_items[3].read(cx).project_items[0].clone(),
                 ])
         });
-        let item_3_4 = cx.build_view(|cx| {
+        let item_3_4 = cx.new_view(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -4747,7 +4743,7 @@ mod tests {
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let item = cx.build_view(|cx| {
+        let item = cx.new_view(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.entity_id();
@@ -4866,7 +4862,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
-        let item = cx.build_view(|cx| {
+        let item = cx.new_view(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());

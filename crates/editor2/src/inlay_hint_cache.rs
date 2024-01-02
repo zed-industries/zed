@@ -2458,7 +2458,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.build_model(|cx| {
+        let multibuffer = cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -2798,7 +2798,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.build_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),

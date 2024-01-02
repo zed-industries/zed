@@ -3,8 +3,8 @@ use crate::{
     ListSeparator, ListSubHeader,
 };
 use gpui::{
-    px, Action, AnyElement, AppContext, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, IntoElement, Render, Subscription, View, VisualContext,
+    px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    IntoElement, Render, Subscription, View, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use std::{rc::Rc, time::Duration};
@@ -46,7 +46,7 @@ impl ContextMenu {
         cx: &mut WindowContext,
         f: impl FnOnce(Self, &mut WindowContext) -> Self,
     ) -> View<Self> {
-        cx.build_view(|cx| {
+        cx.new_view(|cx| {
             let focus_handle = cx.focus_handle();
             let _on_blur_subscription = cx.on_blur(&focus_handle, |this: &mut ContextMenu, cx| {
                 this.cancel(&menu::Cancel, cx)
@@ -232,9 +232,7 @@ impl ContextMenuItem {
 }
 
 impl Render for ContextMenu {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         div().elevation_2(cx).flex().flex_row().child(
             v_stack()
                 .min_w(px(200.))

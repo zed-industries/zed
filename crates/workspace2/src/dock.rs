@@ -1,7 +1,7 @@
 use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
-    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Div, Entity, EntityId,
+    div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity, EntityId,
     EventEmitter, FocusHandle, FocusableView, IntoElement, MouseButton, ParentElement, Render,
     SharedString, Styled, Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -195,7 +195,7 @@ impl Dock {
     pub fn new(position: DockPosition, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let focus_handle = cx.focus_handle();
 
-        let dock = cx.build_view(|cx: &mut ViewContext<Self>| {
+        let dock = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_subscription = cx.on_focus(&focus_handle, |dock, cx| {
                 if let Some(active_entry) = dock.panel_entries.get(dock.active_panel_index) {
                     active_entry.panel.focus_handle(cx).focus(cx)
@@ -505,9 +505,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(cx);
 
@@ -516,7 +514,7 @@ impl Render for Dock {
                 .id("resize-handle")
                 .on_drag(DraggedDock(position), |dock, cx| {
                     cx.stop_propagation();
-                    cx.build_view(|_| dock.clone())
+                    cx.new_view(|_| dock.clone())
                 })
                 .on_click(cx.listener(|v, e: &ClickEvent, cx| {
                     if e.down.button == MouseButton::Left && e.down.click_count == 2 {
@@ -594,9 +592,7 @@ impl PanelButtons {
 }
 
 impl Render for PanelButtons {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         // todo!()
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
@@ -691,7 +687,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{actions, div, Div, ViewContext, WindowContext};
+    use gpui::{actions, div, ViewContext, WindowContext};
 
     pub struct TestPanel {
         pub position: DockPosition,
@@ -717,9 +713,7 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        type Element = Div;
-
-        fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
             div()
         }
     }

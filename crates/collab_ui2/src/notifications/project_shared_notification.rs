@@ -2,9 +2,7 @@ use crate::notification_window_options;
 use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
-use gpui::{
-    img, px, AppContext, Div, ParentElement, Render, Size, Styled, ViewContext, VisualContext,
-};
+use gpui::{img, px, AppContext, ParentElement, Render, Size, Styled, ViewContext, VisualContext};
 use settings::Settings;
 use std::sync::{Arc, Weak};
 use theme::ThemeSettings;
@@ -29,7 +27,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for screen in cx.displays() {
                 let options = notification_window_options(screen, window_size);
                 let window = cx.open_window(options, |cx| {
-                    cx.build_view(|_| {
+                    cx.new_view(|_| {
                         ProjectSharedNotification::new(
                             owner.clone(),
                             *project_id,
@@ -120,9 +118,7 @@ impl ProjectSharedNotification {
 }
 
 impl Render for ProjectSharedNotification {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);

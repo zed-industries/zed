@@ -1637,20 +1637,20 @@ impl InlayHintRefreshReason {
 
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, cx)
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, cx)
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), String::new()));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
     }
 
@@ -1659,7 +1659,7 @@ impl Editor {
         project: Option<Model<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.build_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, project, cx)
     }
 
@@ -1693,13 +1693,13 @@ impl Editor {
     ) -> Self {
         let style = cx.text_style();
         let font_size = style.font_size.to_pixels(cx.rem_size());
-        let display_map = cx.build_model(|cx| {
+        let display_map = cx.new_model(|cx| {
             DisplayMap::new(buffer.clone(), style.font(), font_size, None, 2, 1, cx)
         });
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
-        let blink_manager = cx.build_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
+        let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
         let soft_wrap_mode_override =
             (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
@@ -1881,7 +1881,7 @@ impl Editor {
             .log_err()
         {
             workspace.add_item(
-                Box::new(cx.build_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
                 cx,
             );
         }
@@ -1901,7 +1901,7 @@ impl Editor {
         {
             workspace.split_item(
                 action.0,
-                Box::new(cx.build_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
                 cx,
             );
         }
@@ -3787,7 +3787,7 @@ impl Editor {
         }
 
         let mut ranges_to_highlight = Vec::new();
-        let excerpt_buffer = cx.build_model(|cx| {
+        let excerpt_buffer = cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
             for (buffer_handle, transaction) in &entries {
                 let buffer = buffer_handle.read(cx);
@@ -3809,7 +3809,7 @@ impl Editor {
         workspace.update(&mut cx, |workspace, cx| {
             let project = workspace.project().clone();
             let editor =
-                cx.build_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
+                cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
             workspace.add_item(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
@@ -7494,7 +7494,7 @@ impl Editor {
         let mut locations = locations.into_iter().peekable();
         let mut ranges_to_highlight = Vec::new();
 
-        let excerpt_buffer = cx.build_model(|cx| {
+        let excerpt_buffer = cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new(replica_id);
             while let Some(location) = locations.next() {
                 let buffer = location.buffer.read(cx);
@@ -7523,7 +7523,7 @@ impl Editor {
             multibuffer.with_title(title)
         });
 
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), cx)
         });
         editor.update(cx, |editor, cx| {
@@ -7608,7 +7608,7 @@ impl Editor {
 
                     // Position the selection in the rename editor so that it matches the current selection.
                     this.show_local_selections = false;
-                    let rename_editor = cx.build_view(|cx| {
+                    let rename_editor = cx.new_view(|cx| {
                         let mut editor = Editor::single_line(cx);
                         editor.buffer.update(cx, |buffer, cx| {
                             buffer.edit([(0..0, old_name.clone())], None, cx)
@@ -9291,9 +9291,7 @@ impl FocusableView for Editor {
 }
 
 impl Render for Editor {
-    type Element = EditorElement;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render<'a>(&mut self, cx: &mut ViewContext<'a, Self>) -> impl 'static + Element {
         let settings = ThemeSettings::get_global(cx);
         let text_style = match self.mode {
             EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {

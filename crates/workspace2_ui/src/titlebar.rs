@@ -84,9 +84,9 @@ pub enum AvatarShape {
 }
 
 impl<D: TitlebarDelegate> RenderOnce for Titlebar<D> {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut ui::prelude::WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut ui::prelude::WindowContext) -> Self::Output {
         div()
             .flex()
             .flex_col()
@@ -221,9 +221,9 @@ impl<D: TitlebarDelegate> RenderOnce for Titlebar<D> {
 }
 
 impl<D: TitlebarDelegate> RenderOnce for ProjectHost<D> {
-    type Rendered = Button;
+    type Output = Button;
 
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Output {
         let delegate = self.delegate;
         Button::new("project-host", self.login)
             .color(Color::Player(self.peer_index))
@@ -240,9 +240,7 @@ impl<D: TitlebarDelegate> RenderOnce for ProjectHost<D> {
 impl<D: 'static> EventEmitter<DismissEvent> for ProjectsMenu<D> {}
 
 impl<D: TitlebarDelegate> Render for ProjectsMenu<D> {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         todo!()
     }
 }
@@ -254,9 +252,9 @@ impl<D: TitlebarDelegate> FocusableView for ProjectsMenu<D> {
 }
 
 impl<D: TitlebarDelegate> RenderOnce for Projects<D> {
-    type Rendered = PopoverMenu<ProjectsMenu<D>>;
+    type Output = PopoverMenu<ProjectsMenu<D>>;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         let delegate = self.delegate;
         let recent_projects = self.recent;
 
@@ -271,7 +269,7 @@ impl<D: TitlebarDelegate> RenderOnce for Projects<D> {
                 if recent_projects.is_empty() {
                     None
                 } else {
-                    Some(cx.build_view(|cx| ProjectsMenu {
+                    Some(cx.new_view(|cx| ProjectsMenu {
                         delegate: delegate.clone(),
                         focus: cx.focus_handle(),
                         recent: recent_projects.clone(),
@@ -282,9 +280,9 @@ impl<D: TitlebarDelegate> RenderOnce for Projects<D> {
 }
 
 impl RenderOnce for FacePile {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Output {
         let face_count = self.faces.len();
         div()
             .p_1()
@@ -301,9 +299,9 @@ impl RenderOnce for FacePile {
 }
 
 impl RenderOnce for Avatar {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         div()
             .map(|this| match self.shape {
                 AvatarShape::Square => this.rounded_md(),

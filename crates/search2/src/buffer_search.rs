@@ -10,7 +10,7 @@ use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, AppContext, ClickEvent, Div, EventEmitter, FocusableView,
+    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
     FontStyle, FontWeight, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
     Render, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
     WhiteSpace, WindowContext,
@@ -101,9 +101,7 @@ impl BufferSearchBar {
 impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if self.dismissed {
             return div();
         }
@@ -183,7 +181,11 @@ impl Render for BufferSearchBar {
         if in_replace {
             key_context.add("in_replace");
         }
-
+        let editor_border = if self.query_contains_error {
+            Color::Error.color(cx)
+        } else {
+            cx.theme().colors().border
+        };
         h_stack()
             .w_full()
             .gap_2()
@@ -219,7 +221,7 @@ impl Render for BufferSearchBar {
                     .py_1()
                     .gap_2()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(editor_border)
                     .rounded_lg()
                     .child(IconElement::new(Icon::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx))
@@ -432,7 +434,7 @@ impl BufferSearchBar {
                         });
                         return;
                     }
-                    let view = cx.build_view(|cx| BufferSearchBar::new(cx));
+                    let view = cx.new_view(|cx| BufferSearchBar::new(cx));
                     this.add_item(view.clone(), cx);
                     view.update(cx, |this, cx| this.deploy(deploy, cx));
                     cx.notify();
@@ -504,10 +506,10 @@ impl BufferSearchBar {
         });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let query_editor = cx.build_view(|cx| Editor::single_line(cx));
+        let query_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.build_view(|cx| Editor::single_line(cx));
+        let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&replacement_editor, Self::on_query_editor_event)
             .detach();
         Self {
@@ -854,6 +856,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
+                            self.active_match_index = None;
                             cx.notify();
                             return done_rx;
                         }
@@ -870,6 +873,7 @@ impl BufferSearchBar {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
+                            self.active_match_index = None;
                             cx.notify();
                             return done_rx;
                         }
@@ -1040,7 +1044,7 @@ mod tests {
         &mut VisualTestContext<'_>,
     ) {
         init_globals(cx);
-        let buffer = cx.build_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             Buffer::new(
                 0,
                 cx.entity_id().as_u64(),
@@ -1054,9 +1058,9 @@ mod tests {
             )
         });
         let (_, cx) = cx.add_window_view(|_| EmptyView {});
-        let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.build_view(|cx| {
+        let search_bar = cx.new_view(|cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);
@@ -1401,7 +1405,7 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
         let window = cx.add_window(|_| EmptyView {});
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
@@ -1598,12 +1602,12 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
         let (_, cx) = cx.add_window_view(|_| EmptyView {});
 
-        let editor = cx.build_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
+        let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.build_view(|cx| {
+        let search_bar = cx.new_view(|cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(cx);

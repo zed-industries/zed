@@ -760,9 +760,9 @@ pub mod test {
     use super::{Item, ItemEvent};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
-        AnyElement, AppContext, Context as _, Div, EntityId, EventEmitter, Focusable,
-        FocusableView, InteractiveElement, IntoElement, Model, Render, SharedString, Task, View,
-        ViewContext, VisualContext, WeakView,
+        AnyElement, AppContext, Context as _, Element, EntityId, EventEmitter, FocusableView,
+        InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
+        VisualContext, WeakView,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
@@ -831,14 +831,14 @@ pub mod test {
                 worktree_id: WorktreeId::from_usize(0),
                 path: Path::new(path).into(),
             });
-            cx.build_model(|_| Self {
+            cx.new_model(|_| Self {
                 entry_id,
                 project_path,
             })
         }
 
         pub fn new_untitled(cx: &mut AppContext) -> Model<Self> {
-            cx.build_model(|_| Self {
+            cx.new_model(|_| Self {
                 project_path: None,
                 entry_id: None,
             })
@@ -910,9 +910,7 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        type Element = Focusable<Div>;
-
-        fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
             gpui::div().track_focus(&self.focus_handle)
         }
     }
@@ -989,7 +987,7 @@ pub mod test {
         where
             Self: Sized,
         {
-            Some(cx.build_view(|cx| Self {
+            Some(cx.new_view(|cx| Self {
                 state: self.state.clone(),
                 label: self.label.clone(),
                 save_count: self.save_count,
@@ -1065,7 +1063,7 @@ pub mod test {
             _item_id: ItemId,
             cx: &mut ViewContext<Pane>,
         ) -> Task<anyhow::Result<View<Self>>> {
-            let view = cx.build_view(|cx| Self::new_deserialized(workspace_id, cx));
+            let view = cx.new_view(|cx| Self::new_deserialized(workspace_id, cx));
             Task::Ready(Some(anyhow::Ok(view)))
         }
     }

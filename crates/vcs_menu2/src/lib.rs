@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Result};
 use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AnyElement, AppContext, DismissEvent, Div, Element, EventEmitter, FocusHandle,
+    actions, rems, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusHandle,
     FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
     Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
@@ -35,7 +35,7 @@ pub struct BranchList {
 
 impl BranchList {
     fn new(delegate: BranchListDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         Self {
             picker,
@@ -65,9 +65,7 @@ impl FocusableView for BranchList {
 }
 
 impl Render for BranchList {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
@@ -86,7 +84,7 @@ pub fn build_branch_list(
     let delegate = workspace.update(cx, |workspace, cx| {
         BranchListDelegate::new(workspace, cx.view().clone(), 29, cx)
     })?;
-    Ok(cx.build_view(move |cx| BranchList::new(delegate, 20., cx)))
+    Ok(cx.new_view(move |cx| BranchList::new(delegate, 20., cx)))
 }
 
 pub struct BranchListDelegate {

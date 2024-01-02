@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, white, Div, KeyBinding, ParentElement, Render, Styled, View, ViewContext, VisualContext,
-    WindowContext,
+    div, white, Element, KeyBinding, ParentElement, Render, Styled, View, ViewContext,
+    VisualContext, WindowContext,
 };
 
 pub struct AutoHeightEditorStory {
@@ -11,8 +11,8 @@ pub struct AutoHeightEditorStory {
 impl AutoHeightEditorStory {
     pub fn new(cx: &mut WindowContext) -> View<Self> {
         cx.bind_keys([KeyBinding::new("enter", editor::Newline, Some("Editor"))]);
-        cx.build_view(|cx| Self {
-            editor: cx.build_view(|cx| {
+        cx.new_view(|cx| Self {
+            editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(3, cx);
                 editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
                 editor
@@ -22,9 +22,7 @@ impl AutoHeightEditorStory {
 }
 
 impl Render for AutoHeightEditorStory {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         div()
             .size_full()
             .bg(white())

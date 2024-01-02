@@ -1,8 +1,8 @@
 use editor::Editor;
 use gpui::{
-    div, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, Length, MouseButton, MouseDownEvent, Render, Task,
-    UniformListScrollHandle, View, ViewContext, WindowContext,
+    div, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
+    View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
 use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
@@ -59,7 +59,7 @@ impl<D: PickerDelegate> FocusableView for Picker<D> {
 
 impl<D: PickerDelegate> Picker<D> {
     pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text(delegate.placeholder_text(), cx);
             editor
@@ -228,9 +228,7 @@ impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let picker_editor = h_stack()
             .overflow_hidden()
             .flex_none()

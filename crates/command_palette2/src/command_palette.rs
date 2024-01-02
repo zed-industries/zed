@@ -6,7 +6,7 @@ use std::{
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, Action, AppContext, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
+    actions, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -69,7 +69,7 @@ impl CommandPalette {
         let delegate =
             CommandPaletteDelegate::new(cx.view().downgrade(), commands, previous_focus_handle);
 
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         Self { picker }
     }
 }
@@ -83,9 +83,7 @@ impl FocusableView for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
@@ -396,7 +394,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_text("abc", cx);
             editor

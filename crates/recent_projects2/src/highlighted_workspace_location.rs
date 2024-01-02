@@ -43,9 +43,9 @@ impl HighlightedText {
 }
 
 impl RenderOnce for HighlightedText {
-    type Rendered = HighlightedLabel;
+    type Output = HighlightedLabel;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         HighlightedLabel::new(self.text, self.highlight_positions)
     }
 }

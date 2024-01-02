@@ -61,14 +61,14 @@ impl ChannelBuffer {
             .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let buffer = cx.build_model(|_| {
+        let buffer = cx.new_model(|_| {
             language::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
         })?;
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
 
         let subscription = client.subscribe_to_entity(channel.id)?;
 
-        anyhow::Ok(cx.build_model(|cx| {
+        anyhow::Ok(cx.new_model(|cx| {
             cx.subscribe(&buffer, Self::on_buffer_update).detach();
             cx.on_release(Self::release).detach();
             let mut this = Self {

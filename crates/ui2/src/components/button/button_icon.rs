@@ -63,9 +63,9 @@ impl Selectable for ButtonIcon {
 }
 
 impl RenderOnce for ButtonIcon {
-    type Rendered = IconElement;
+    type Output = IconElement;
 
-    fn render(self, _cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _cx: &mut WindowContext) -> Self::Output {
         let icon = self
             .selected_icon
             .filter(|_| self.selected)

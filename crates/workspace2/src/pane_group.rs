@@ -773,7 +773,7 @@ mod element {
     impl Element for PaneAxisElement {
         type State = Rc<RefCell<Option<usize>>>;
 
-        fn layout(
+        fn request_layout(
             &mut self,
             state: Option<Self::State>,
             cx: &mut ui::prelude::WindowContext,

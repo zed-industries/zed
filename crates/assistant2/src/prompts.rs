@@ -254,7 +254,7 @@ pub(crate) mod tests {
             }
         "};
         let buffer =
-            cx.build_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
         let snapshot = buffer.read(cx).snapshot();
 
         assert_eq!(

@@ -105,7 +105,7 @@ impl ChannelView {
                     }
                 }
 
-                let view = cx.build_view(|cx| {
+                let view = cx.new_view(|cx| {
                     let mut this = Self::new(project, channel_store, channel_buffer, cx);
                     this.acknowledge_buffer_version(cx);
                     this
@@ -133,7 +133,7 @@ impl ChannelView {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, None, cx);
             editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
                 channel_buffer.clone(),
@@ -222,10 +222,8 @@ impl ChannelView {
 impl EventEmitter<EditorEvent> for ChannelView {}
 
 impl Render for ChannelView {
-    type Element = AnyView;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
-        self.editor.clone().into()
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+        self.editor.clone()
     }
 }
 
@@ -276,7 +274,7 @@ impl Item for ChannelView {
     }
 
     fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<View<Self>> {
-        Some(cx.build_view(|cx| {
+        Some(cx.new_view(|cx| {
             Self::new(
                 self.project.clone(),
                 self.channel_store.clone(),

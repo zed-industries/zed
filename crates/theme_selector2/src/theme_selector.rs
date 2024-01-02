@@ -2,7 +2,7 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, Div, EventEmitter, FocusableView, Render, View, ViewContext,
+    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, View, ViewContext,
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
@@ -67,16 +67,14 @@ impl FocusableView for ThemeSelector {
 }
 
 impl Render for ThemeSelector {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
 
 impl ThemeSelector {
     pub fn new(delegate: ThemeSelectorDelegate, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.build_view(|cx| Picker::new(delegate, cx));
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         Self { picker }
     }
 }

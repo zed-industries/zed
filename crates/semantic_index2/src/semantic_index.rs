@@ -341,7 +341,7 @@ impl SemanticIndex {
             t0.elapsed().as_millis()
         );
 
-        cx.build_model(|cx| {
+        cx.new_model(|cx| {
             let t0 = Instant::now();
             let embedding_queue =
                 EmbeddingQueue::new(embedding_provider.clone(), cx.background_executor().clone());

@@ -4,9 +4,9 @@ mod base_keymap_setting;
 use client::TelemetrySettings;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    svg, AnyElement, AppContext, Div, EventEmitter, FocusHandle, Focusable, FocusableView,
-    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    ParentElement, Render, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &Welcome, cx| {
-            let welcome_page = cx.build_view(|cx| WelcomePage::new(workspace, cx));
+            let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
             workspace.add_item(Box::new(welcome_page), cx)
         });
     })
@@ -39,7 +39,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn show_welcome_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
-        let welcome_page = cx.build_view(|cx| WelcomePage::new(workspace, cx));
+        let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
         cx.focus_view(&welcome_page);
         cx.notify();
@@ -58,9 +58,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    type Element = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
         h_stack().full().track_focus(&self.focus_handle).child(
             v_stack()
                 .w_96()
@@ -272,7 +270,7 @@ impl Item for WelcomePage {
         _workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        Some(cx.build_view(|cx| WelcomePage {
+        Some(cx.new_view(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),

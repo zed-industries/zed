@@ -12,10 +12,10 @@ use editor::{
 };
 use editor::{EditorElement, EditorStyle};
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context as _, Div, Element, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
-    IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString,
-    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
+    actions, div, AnyElement, AnyView, AppContext, Context as _, Element, EntityId, EventEmitter,
+    FocusHandle, FocusableView, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
     WhiteSpace, WindowContext,
 };
 use menu::Confirm;
@@ -134,7 +134,7 @@ impl ProjectSearch {
         let replica_id = project.read(cx).replica_id();
         Self {
             project,
-            excerpts: cx.build_model(|_| MultiBuffer::new(replica_id)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -145,11 +145,11 @@ impl ProjectSearch {
     }
 
     fn clone(&self, cx: &mut ModelContext<Self>) -> Model<Self> {
-        cx.build_model(|cx| Self {
+        cx.new_model(|cx| Self {
             project: self.project.clone(),
             excerpts: self
                 .excerpts
-                .update(cx, |excerpts, cx| cx.build_model(|cx| excerpts.clone(cx))),
+                .update(cx, |excerpts, cx| cx.new_model(|cx| excerpts.clone(cx))),
             pending_search: Default::default(),
             match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
@@ -279,9 +279,7 @@ pub enum ViewEvent {
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
-    type Element = AnyElement;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         if self.has_matches() {
             div()
                 .flex_1()
@@ -506,7 +504,7 @@ impl Item for ProjectSearchView {
         Self: Sized,
     {
         let model = self.model.update(cx, |model, cx| model.clone(cx));
-        Some(cx.build_view(|cx| Self::new(model, cx, None)))
+        Some(cx.new_view(|cx| Self::new(model, cx, None)))
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
@@ -807,7 +805,7 @@ impl ProjectSearchView {
         }
         subscriptions.push(cx.observe(&model, |this, _, cx| this.model_changed(cx)));
 
-        let query_editor = cx.build_view(|cx| {
+        let query_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Text search all files", cx);
             editor.set_text(query_text, cx);
@@ -819,7 +817,7 @@ impl ProjectSearchView {
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
             }),
         );
-        let replacement_editor = cx.build_view(|cx| {
+        let replacement_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Replace in project..", cx);
             if let Some(text) = replacement_text {
@@ -827,7 +825,7 @@ impl ProjectSearchView {
             }
             editor
         });
-        let results_editor = cx.build_view(|cx| {
+        let results_editor = cx.new_view(|cx| {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), cx);
             editor.set_searchable(false);
             editor
@@ -844,7 +842,7 @@ impl ProjectSearchView {
             }),
         );
 
-        let included_files_editor = cx.build_view(|cx| {
+        let included_files_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Include: crates/**/*.toml", cx);
 
@@ -857,7 +855,7 @@ impl ProjectSearchView {
             }),
         );
 
-        let excluded_files_editor = cx.build_view(|cx| {
+        let excluded_files_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
 
@@ -931,8 +929,8 @@ impl ProjectSearchView {
             return;
         };
 
-        let model = cx.build_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.build_view(|cx| ProjectSearchView::new(model, cx, None));
+        let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, None));
         workspace.add_item(Box::new(search.clone()), cx);
         search.update(cx, |search, cx| {
             search
@@ -975,8 +973,8 @@ impl ProjectSearchView {
             None
         };
 
-        let model = cx.build_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.build_view(|cx| ProjectSearchView::new(model, cx, settings));
+        let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
 
         workspace.add_item(Box::new(search.clone()), cx);
 
@@ -1009,33 +1007,46 @@ impl ProjectSearchView {
     }
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
+        // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
         let text = self.query_editor.read(cx).text(cx);
         let included_files =
             match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
                 Ok(included_files) => {
-                    self.panels_with_errors.remove(&InputPanel::Include);
+                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Include);
+                    if should_unmark_error {
+                        cx.notify();
+                    }
                     included_files
                 }
                 Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Include);
-                    cx.notify();
-                    return None;
+                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Include);
+                    if should_mark_error {
+                        cx.notify();
+                    }
+                    vec![]
                 }
             };
         let excluded_files =
             match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
                 Ok(excluded_files) => {
-                    self.panels_with_errors.remove(&InputPanel::Exclude);
+                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Exclude);
+                    if should_unmark_error {
+                        cx.notify();
+                    }
+
                     excluded_files
                 }
                 Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Exclude);
-                    cx.notify();
-                    return None;
+                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Exclude);
+                    if should_mark_error {
+                        cx.notify();
+                    }
+                    vec![]
                 }
             };
+
         let current_mode = self.current_mode;
-        match current_mode {
+        let query = match current_mode {
             SearchMode::Regex => {
                 match SearchQuery::regex(
                     text,
@@ -1046,12 +1057,20 @@ impl ProjectSearchView {
                     excluded_files,
                 ) {
                     Ok(query) => {
-                        self.panels_with_errors.remove(&InputPanel::Query);
+                        let should_unmark_error =
+                            self.panels_with_errors.remove(&InputPanel::Query);
+                        if should_unmark_error {
+                            cx.notify();
+                        }
+
                         Some(query)
                     }
                     Err(_e) => {
-                        self.panels_with_errors.insert(InputPanel::Query);
-                        cx.notify();
+                        let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
+                        if should_mark_error {
+                            cx.notify();
+                        }
+
                         None
                     }
                 }
@@ -1065,16 +1084,27 @@ impl ProjectSearchView {
                 excluded_files,
             ) {
                 Ok(query) => {
-                    self.panels_with_errors.remove(&InputPanel::Query);
+                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
+                    if should_unmark_error {
+                        cx.notify();
+                    }
+
                     Some(query)
                 }
                 Err(_e) => {
-                    self.panels_with_errors.insert(InputPanel::Query);
-                    cx.notify();
+                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
+                    if should_mark_error {
+                        cx.notify();
+                    }
+
                     None
                 }
             },
+        };
+        if !self.panels_with_errors.is_empty() {
+            return None;
         }
+        query
     }
 
     fn parse_path_matches(text: &str) -> anyhow::Result<Vec<PathMatcher>> {
@@ -1187,6 +1217,21 @@ impl ProjectSearchView {
             SearchMode::Semantic => "\nSimply explain the code you are looking to find. ex. 'prompt user for permissions to index their project'".into()
         }
     }
+    fn border_color_for(&self, panel: InputPanel, cx: &WindowContext) -> Hsla {
+        if self.panels_with_errors.contains(&panel) {
+            Color::Error.color(cx)
+        } else {
+            cx.theme().colors().border
+        }
+    }
+    fn move_focus_to_results(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.results_editor.focus_handle(cx).is_focused(cx)
+            && !self.model.read(cx).match_ranges.is_empty()
+        {
+            cx.stop_propagation();
+            return self.focus_results_editor(cx);
+        }
+    }
 }
 
 impl Default for ProjectSearchBar {
@@ -1248,13 +1293,13 @@ impl ProjectSearchBar {
                 new_query
             });
             if let Some(new_query) = new_query {
-                let model = cx.build_model(|cx| {
+                let model = cx.new_model(|cx| {
                     let mut model = ProjectSearch::new(workspace.project().clone(), cx);
                     model.search(new_query, cx);
                     model
                 });
                 workspace.add_item(
-                    Box::new(cx.build_view(|cx| ProjectSearchView::new(model, cx, None))),
+                    Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
                     cx,
                 );
             }
@@ -1358,6 +1403,15 @@ impl ProjectSearchBar {
             true
         } else {
             false
+        }
+    }
+
+    fn move_focus_to_results(&self, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.move_focus_to_results(cx);
+            });
+            cx.notify();
         }
     }
 
@@ -1494,9 +1548,7 @@ impl ProjectSearchBar {
 }
 
 impl Render for ProjectSearchBar {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let Some(search) = self.active_project_search.clone() else {
             return div();
         };
@@ -1511,6 +1563,7 @@ impl Render for ProjectSearchBar {
         }
         let search = search.read(cx);
         let semantic_is_available = SemanticIndex::enabled(cx);
+
         let query_column = v_stack().child(
             h_stack()
                 .min_w(rems(512. / 16.))
@@ -1519,7 +1572,7 @@ impl Render for ProjectSearchBar {
                 .gap_2()
                 .bg(cx.theme().colors().editor_background)
                 .border_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(search.border_color_for(InputPanel::Query, cx))
                 .rounded_lg()
                 .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
@@ -1718,6 +1771,7 @@ impl Render for ProjectSearchBar {
             .key_context(key_context)
             .flex_grow()
             .gap_2()
+            .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {
                 this.toggle_filters(cx);
             }))
@@ -1793,7 +1847,7 @@ impl Render for ProjectSearchBar {
                                 .px_2()
                                 .py_1()
                                 .border_1()
-                                .border_color(cx.theme().colors().border)
+                                .border_color(search.border_color_for(InputPanel::Include, cx))
                                 .rounded_lg()
                                 .child(self.render_text_input(&search.included_files_editor, cx))
                                 .when(search.current_mode != SearchMode::Semantic, |this| {
@@ -1819,7 +1873,7 @@ impl Render for ProjectSearchBar {
                                 .px_2()
                                 .py_1()
                                 .border_1()
-                                .border_color(cx.theme().colors().border)
+                                .border_color(search.border_color_for(InputPanel::Exclude, cx))
                                 .rounded_lg()
                                 .child(self.render_text_input(&search.excluded_files_editor, cx)),
                         ),
@@ -1890,7 +1944,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let search = cx.build_model(|cx| ProjectSearch::new(project, cx));
+        let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
 
         search_view

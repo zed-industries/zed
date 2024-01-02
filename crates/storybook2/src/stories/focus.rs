@@ -1,6 +1,5 @@
 use gpui::{
-    actions, div, prelude::*, Div, FocusHandle, Focusable, KeyBinding, Render, Stateful,
-    Subscription, View, WindowContext,
+    actions, div, prelude::*, FocusHandle, KeyBinding, Render, Subscription, View, WindowContext,
 };
 use ui::prelude::*;
 
@@ -21,7 +20,7 @@ impl FocusStory {
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
 
-        cx.build_view(move |cx| {
+        cx.new_view(move |cx| {
             let parent_focus = cx.focus_handle();
             let child_1_focus = cx.focus_handle();
             let child_2_focus = cx.focus_handle();
@@ -57,9 +56,7 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    type Element = Focusable<Stateful<Div>>;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;

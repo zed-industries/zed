@@ -1,10 +1,10 @@
 use collections::{HashMap, VecDeque};
-use editor::{Editor, EditorElement, EditorEvent, MoveToEnd};
+use editor::{Editor, EditorEvent, MoveToEnd};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, AnchorCorner, AnyElement, AppContext, Context, Div, EventEmitter, FocusHandle,
-    FocusableView, IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription,
-    View, ViewContext, VisualContext, WeakModel, WindowContext,
+    actions, div, AnchorCorner, AnyElement, AppContext, Context, Element, EventEmitter,
+    FocusHandle, FocusableView, IntoElement, Model, ModelContext, ParentElement, Render, Styled,
+    Subscription, View, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use language::{LanguageServerId, LanguageServerName};
 use lsp::IoKind;
@@ -78,7 +78,7 @@ pub(crate) struct LogMenuItem {
 actions!(debug, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
-    let log_store = cx.build_model(|cx| LogStore::new(cx));
+    let log_store = cx.new_model(|cx| LogStore::new(cx));
 
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let project = workspace.project();
@@ -93,7 +93,7 @@ pub fn init(cx: &mut AppContext) {
             let project = workspace.project().read(cx);
             if project.is_local() {
                 workspace.add_item(
-                    Box::new(cx.build_view(|cx| {
+                    Box::new(cx.new_view(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
                     cx,
@@ -444,7 +444,7 @@ impl LspLogView {
         log_contents: String,
         cx: &mut ViewContext<Self>,
     ) -> (View<Editor>, Subscription) {
-        let editor = cx.build_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::multi_line(cx);
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);
@@ -595,10 +595,9 @@ fn log_contents(lines: &VecDeque<String>) -> String {
 }
 
 impl Render for LspLogView {
-    type Element = EditorElement;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
-        self.editor.update(cx, |editor, cx| editor.render(cx))
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        self.editor
+            .update(cx, |editor, cx| editor.render(cx).into_any())
     }
 }
 
@@ -709,9 +708,7 @@ impl ToolbarItemView for LspLogToolbarItemView {
 }
 
 impl Render for LspLogToolbarItemView {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let Some(log_view) = self.log_view.clone() else {
             return div();
         };

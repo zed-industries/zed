@@ -1,4 +1,4 @@
-use gpui::{overlay, Action, AnyView, IntoElement, Overlay, Render, VisualContext};
+use gpui::{overlay, Action, AnyView, IntoElement, Render, VisualContext};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -13,7 +13,7 @@ pub struct Tooltip {
 
 impl Tooltip {
     pub fn text(title: impl Into<SharedString>, cx: &mut WindowContext) -> AnyView {
-        cx.build_view(|_cx| Self {
+        cx.new_view(|_cx| Self {
             title: title.into(),
             meta: None,
             key_binding: None,
@@ -26,7 +26,7 @@ impl Tooltip {
         action: &dyn Action,
         cx: &mut WindowContext,
     ) -> AnyView {
-        cx.build_view(|cx| Self {
+        cx.new_view(|cx| Self {
             title: title.into(),
             meta: None,
             key_binding: KeyBinding::for_action(action, cx),
@@ -40,7 +40,7 @@ impl Tooltip {
         meta: impl Into<SharedString>,
         cx: &mut WindowContext,
     ) -> AnyView {
-        cx.build_view(|cx| Self {
+        cx.new_view(|cx| Self {
             title: title.into(),
             meta: Some(meta.into()),
             key_binding: action.and_then(|action| KeyBinding::for_action(action, cx)),
@@ -68,9 +68,7 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    type Element = Overlay;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         overlay().child(
             // padding to avoid mouse cursor

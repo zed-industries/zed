@@ -16,11 +16,9 @@ pub struct Avatar {
 }
 
 impl RenderOnce for Avatar {
-    type Rendered = Div;
+    type Output = Div;
 
-    fn render(mut self, cx: &mut WindowContext) -> Self::Rendered {
-        cx.theme();
-
+    fn render(mut self, cx: &mut WindowContext) -> Self::Output {
         if self.image.style().corner_radii.top_left.is_none() {
             self = self.shape(Shape::Circle);
         }
@@ -39,8 +37,7 @@ impl RenderOnce for Avatar {
             .child(
                 self.image
                     .size(size)
-                    // todo!(Pull the avatar fallback background from the theme.)
-                    .bg(gpui::red()),
+                    .bg(cx.theme().colors().ghost_element_background),
             )
             .children(self.is_available.map(|is_free| {
                 // HACK: non-integer sizes result in oval indicators.

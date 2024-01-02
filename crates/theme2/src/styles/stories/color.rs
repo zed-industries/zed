@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{div, px, Div, ViewContext};
+use gpui::{div, px, ViewContext};
 use story::Story;
 
 use crate::{default_color_scales, ColorScaleStep};
@@ -7,9 +7,7 @@ use crate::{default_color_scales, ColorScaleStep};
 pub struct ColorsStory;
 
 impl Render for ColorsStory {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let color_scales = default_color_scales();
 
         Story::container().child(Story::title("Colors")).child(

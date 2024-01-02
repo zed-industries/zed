@@ -1,8 +1,7 @@
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext,
+    actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -50,7 +49,7 @@ impl GoToLine {
     }
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let line_editor = cx.build_view(|cx| Editor::single_line(cx));
+        let line_editor = cx.new_view(|cx| Editor::single_line(cx));
         let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
 
         let editor = active_editor.read(cx);
@@ -153,9 +152,7 @@ impl GoToLine {
 }
 
 impl Render for GoToLine {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         div()
             .elevation_2(cx)
             .key_context("GoToLine")

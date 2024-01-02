@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    div, point, AnyElement, AppContext, AsyncWindowContext, Context, Div, Entity, EntityId,
+    div, point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId,
     EventEmitter, IntoElement, Model, ParentElement, Pixels, Render, SharedString, Styled,
     Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -96,7 +96,7 @@ impl FollowableItem for Editor {
                 editor
             } else {
                 pane.update(&mut cx, |_, cx| {
-                    let multibuffer = cx.build_model(|cx| {
+                    let multibuffer = cx.new_model(|cx| {
                         let mut multibuffer;
                         if state.singleton && buffers.len() == 1 {
                             multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
@@ -129,7 +129,7 @@ impl FollowableItem for Editor {
                         multibuffer
                     });
 
-                    cx.build_view(|cx| {
+                    cx.new_view(|cx| {
                         let mut editor =
                             Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
                         editor.remote_id = Some(remote_id);
@@ -632,7 +632,7 @@ impl Item for Editor {
     where
         Self: Sized,
     {
-        Some(cx.build_view(|cx| self.clone(cx)))
+        Some(cx.new_view(|cx| self.clone(cx)))
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
@@ -911,7 +911,7 @@ impl Item for Editor {
                         .downcast::<Buffer>()
                         .map_err(|_| anyhow!("Project item at stored path was not a buffer"))?;
                     Ok(pane.update(&mut cx, |_, cx| {
-                        cx.build_view(|cx| {
+                        cx.new_view(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
 
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
@@ -1193,9 +1193,7 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    type Element = Div;
-
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",

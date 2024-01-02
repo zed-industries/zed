@@ -1,7 +1,7 @@
 use assets::Assets;
 use clap::Parser;
 use gpui::{
-    px, App, Bounds, IntoElement, Render, Size, VisualContext, WindowBounds, WindowOptions,
+    px, App, Bounds, Element, IntoElement, Render, Size, VisualContext, WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use settings::Settings;
@@ -46,7 +46,7 @@ fn main() {
             move |cx| {
                 let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
                 cx.set_rem_size(ui_font_size);
-                cx.build_view(|_cx| TitlebarExample)
+                cx.new_view(|_cx| TitlebarExample)
             },
         );
 
@@ -57,10 +57,8 @@ fn main() {
 struct TitlebarExample;
 
 impl Render for TitlebarExample {
-    type Element = <Titlebar as IntoElement>::Element;
-
-    fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> Self::Element {
-        let delegate = cx.build_view(|_| ());
+    fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> impl Element {
+        let delegate = cx.new_view(|_| ());
 
         Titlebar {
             delegate: delegate.clone(),

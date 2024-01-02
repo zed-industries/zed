@@ -5,8 +5,7 @@ use assets::Assets;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, Bounds, Div, Render, ViewContext, VisualContext, WindowBounds,
-    WindowOptions,
+    div, px, size, AnyView, Bounds, Render, ViewContext, VisualContext, WindowBounds, WindowOptions,
 };
 pub use indoc::indoc;
 use log::LevelFilter;
@@ -83,7 +82,7 @@ fn main() {
                 let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
                 cx.set_rem_size(ui_font_size);
 
-                cx.build_view(|cx| StoryWrapper::new(selector.story(cx)))
+                cx.new_view(|cx| StoryWrapper::new(selector.story(cx)))
             },
         );
 
@@ -103,9 +102,7 @@ impl StoryWrapper {
 }
 
 impl Render for StoryWrapper {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         div()
             .flex()
             .flex_col()

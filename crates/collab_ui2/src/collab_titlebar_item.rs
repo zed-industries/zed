@@ -3,8 +3,8 @@ use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
 use gpui::{
-    actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Div, Element, Hsla,
-    InteractiveElement, IntoElement, Model, ParentElement, Path, Render, Stateful,
+    actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Element, Hsla,
+    InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
     WindowBounds,
 };
@@ -36,7 +36,7 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let titlebar_item = cx.build_view(|cx| CollabTitlebarItem::new(workspace, cx));
+        let titlebar_item = cx.new_view(|cx| CollabTitlebarItem::new(workspace, cx));
         workspace.set_titlebar_item(titlebar_item.into(), cx)
     })
     .detach();
@@ -56,9 +56,7 @@ pub struct CollabTitlebarItem {
 }
 
 impl Render for CollabTitlebarItem {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();

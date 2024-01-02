@@ -1,6 +1,6 @@
 use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div,
+    actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div, Element,
     EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
@@ -24,7 +24,7 @@ pub fn init(cx: &mut AppContext) {
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();
             let syntax_tree_view =
-                cx.build_view(|cx| SyntaxTreeView::new(workspace_handle, active_item, cx));
+                cx.new_view(|cx| SyntaxTreeView::new(workspace_handle, active_item, cx));
             workspace.split_item(SplitDirection::Right, Box::new(syntax_tree_view), cx)
         });
     })
@@ -305,9 +305,7 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> impl Element {
         let settings = ThemeSettings::get_global(cx);
         let line_height = cx
             .text_style()
@@ -419,7 +417,7 @@ impl Item for SyntaxTreeView {
     where
         Self: Sized,
     {
-        Some(cx.build_view(|cx| {
+        Some(cx.new_view(|cx| {
             let mut clone = Self::new(self.workspace_handle.clone(), None, cx);
             if let Some(editor) = &self.editor {
                 clone.set_editor(editor.editor.clone(), cx)
@@ -507,9 +505,7 @@ fn format_node_range(node: Node) -> String {
 }
 
 impl Render for SyntaxTreeToolbarItemView {
-    type Element = PopoverMenu<ContextMenu>;
-
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> PopoverMenu<ContextMenu> {
+    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> impl Element {
         self.render_menu(cx)
             .unwrap_or_else(|| popover_menu("Empty Syntax Tree"))
     }

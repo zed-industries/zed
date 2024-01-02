@@ -1,5 +1,5 @@
 use gpui::NoAction;
-use gpui::{Div, Render};
+use gpui::Render;
 use itertools::Itertools;
 use story::Story;
 
@@ -13,9 +13,7 @@ pub fn binding(key: &str) -> gpui::KeyBinding {
 }
 
 impl Render for KeybindingStory {
-    type Element = Div;
-
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
         let all_modifier_permutations = ["ctrl", "alt", "cmd", "shift"].into_iter().permutations(2);
 
         Story::container()

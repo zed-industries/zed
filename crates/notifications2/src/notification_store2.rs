@@ -11,7 +11,7 @@ use time::OffsetDateTime;
 use util::ResultExt;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
-    let notification_store = cx.build_model(|cx| NotificationStore::new(client, user_store, cx));
+    let notification_store = cx.new_model(|cx| NotificationStore::new(client, user_store, cx));
     cx.set_global(notification_store);
 }
 

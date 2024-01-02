@@ -2,8 +2,8 @@ use assistant::{AssistantPanel, InlineAssist};
 use editor::Editor;
 
 use gpui::{
-    Action, ClickEvent, Div, ElementId, EventEmitter, InteractiveElement, ParentElement, Render,
-    Stateful, Styled, Subscription, View, ViewContext, WeakView,
+    Action, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Styled,
+    Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use ui::{prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, Tooltip};
@@ -36,9 +36,7 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
@@ -138,9 +136,9 @@ impl QuickActionBarButton {
 }
 
 impl RenderOnce for QuickActionBarButton {
-    type Rendered = IconButton;
+    type Output = IconButton;
 
-    fn render(self, _: &mut WindowContext) -> Self::Rendered {
+    fn render(self, _: &mut WindowContext) -> Self::Output {
         let tooltip = self.tooltip.clone();
         let action = self.action.boxed_clone();
 

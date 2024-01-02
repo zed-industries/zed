@@ -2,8 +2,8 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    actions, svg, AppContext, CursorStyle, Div, EventEmitter, InteractiveElement as _, Model,
-    ParentElement as _, Render, SharedString, Stateful, StatefulInteractiveElement, Styled, View,
+    actions, svg, AppContext, CursorStyle, EventEmitter, InteractiveElement as _, Model,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement, Styled, View,
     ViewContext, VisualContext as _,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
@@ -55,7 +55,7 @@ impl ActivityIndicator {
     ) -> View<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
-        let this = cx.build_view(|cx: &mut ViewContext<Self>| {
+        let this = cx.new_view(|cx: &mut ViewContext<Self>| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(|this, mut cx| async move {
                 while let Some((language, event)) = status_events.next().await {
@@ -101,9 +101,9 @@ impl ActivityIndicator {
                         );
                     });
                     workspace.add_item(
-                        Box::new(cx.build_view(|cx| {
-                            Editor::for_buffer(buffer, Some(project.clone()), cx)
-                        })),
+                        Box::new(
+                            cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                        ),
                         cx,
                     );
                 }
@@ -304,9 +304,7 @@ impl ActivityIndicator {
 impl EventEmitter<Event> for ActivityIndicator {}
 
 impl Render for ActivityIndicator {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let content = self.content_to_render(cx);
 
         let mut result = h_stack()

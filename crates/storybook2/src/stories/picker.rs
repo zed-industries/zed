@@ -1,7 +1,5 @@
 use fuzzy::StringMatchCandidate;
-use gpui::{
-    div, prelude::*, Div, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext,
-};
+use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
@@ -118,7 +116,7 @@ impl PickerDelegate for Delegate {
 
 impl PickerStory {
     pub fn new(cx: &mut WindowContext) -> View<Self> {
-        cx.build_view(|cx| {
+        cx.new_view(|cx| {
             cx.bind_keys([
                 KeyBinding::new("up", menu::SelectPrev, Some("picker")),
                 KeyBinding::new("pageup", menu::SelectFirst, Some("picker")),
@@ -138,7 +136,7 @@ impl PickerStory {
             ]);
 
             PickerStory {
-                picker: cx.build_view(|cx| {
+                picker: cx.new_view(|cx| {
                     let mut delegate = Delegate::new(&[
                         "Baguette (France)",
                         "Baklava (Turkey)",
@@ -202,9 +200,7 @@ impl PickerStory {
 }
 
 impl Render for PickerStory {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
         div()
             .bg(cx.theme().styles.colors.background)
             .size_full()

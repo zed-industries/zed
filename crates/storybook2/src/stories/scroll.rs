@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, px, Div, Render, SharedString, Stateful, Styled, View, WindowContext};
+use gpui::{div, prelude::*, px, Render, SharedString, Styled, View, WindowContext};
 use ui::prelude::*;
 use ui::Tooltip;
 
@@ -6,14 +6,12 @@ pub struct ScrollStory;
 
 impl ScrollStory {
     pub fn view(cx: &mut WindowContext) -> View<ScrollStory> {
-        cx.build_view(|_cx| ScrollStory)
+        cx.new_view(|_cx| ScrollStory)
     }
 }
 
 impl Render for ScrollStory {
-    type Element = Stateful<Div>;
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;

@@ -293,7 +293,7 @@ mod tests {
         });
         let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
 
-        cx.build_model(|cx| {
+        cx.new_model(|cx| {
             let mut buffer =
                 Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
 

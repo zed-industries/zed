@@ -6,9 +6,9 @@ pub mod terminal_panel;
 // use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
-    div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, Div, EventEmitter,
-    FocusHandle, Focusable, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View, VisualContext, WeakView,
+    div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, Pixels,
+    Render, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -118,7 +118,7 @@ impl TerminalView {
             .notify_err(workspace, cx);
 
         if let Some(terminal) = terminal {
-            let view = cx.build_view(|cx| {
+            let view = cx.new_view(|cx| {
                 TerminalView::new(
                     terminal,
                     workspace.weak_handle(),
@@ -617,9 +617,7 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    type Element = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let terminal_handle = self.terminal.clone();
 
         let focused = self.focus_handle.is_focused(cx);
@@ -767,7 +765,7 @@ impl Item for TerminalView {
                 project.create_terminal(cwd, window, cx)
             })??;
             pane.update(&mut cx, |_, cx| {
-                cx.build_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
+                cx.new_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
             })
         })
     }

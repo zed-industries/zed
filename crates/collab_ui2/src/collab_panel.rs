@@ -17,9 +17,9 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, serde_json, AnyElement,
     AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, Focusable, FocusableView, InteractiveElement, IntoElement, ListOffset, ListState,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
-    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, ListOffset, ListState, Model,
+    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, SharedString,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -177,8 +177,8 @@ enum ListEntry {
 
 impl CollabPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        cx.build_view(|cx| {
-            let filter_editor = cx.build_view(|cx| {
+        cx.new_view(|cx| {
+            let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
@@ -201,7 +201,7 @@ impl CollabPanel {
             })
             .detach();
 
-            let channel_name_editor = cx.build_view(|cx| Editor::single_line(cx));
+            let channel_name_editor = cx.new_view(|cx| Editor::single_line(cx));
 
             cx.subscribe(&channel_name_editor, |this: &mut Self, _, event, cx| {
                 if let editor::EditorEvent::Blurred = event {
@@ -2118,7 +2118,7 @@ impl CollabPanel {
             .flex()
             .w_full()
             .on_drag(channel.clone(), move |channel, cx| {
-                cx.build_view(|_| DraggedChannelView {
+                cx.new_view(|_| DraggedChannelView {
                     channel: channel.clone(),
                     width,
                 })
@@ -2263,9 +2263,7 @@ fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement
 }
 
 impl Render for CollabPanel {
-    type Element = Focusable<Div>;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
@@ -2453,9 +2451,7 @@ struct DraggedChannelView {
 }
 
 impl Render for DraggedChannelView {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_stack()
             .font(ui_font)

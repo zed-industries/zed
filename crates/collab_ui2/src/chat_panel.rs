@@ -8,8 +8,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, Div, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent,
-    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    ClickEvent, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState,
+    Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -81,18 +81,18 @@ impl ChatPanel {
         let channel_store = ChannelStore::global(cx);
         let languages = workspace.app_state().languages.clone();
 
-        let input_editor = cx.build_view(|cx| {
+        let input_editor = cx.new_view(|cx| {
             MessageEditor::new(
                 languages.clone(),
                 channel_store.clone(),
-                cx.build_view(|cx| Editor::auto_height(4, cx)),
+                cx.new_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
         });
 
         let workspace_handle = workspace.weak_handle();
 
-        cx.build_view(|cx: &mut ViewContext<Self>| {
+        cx.new_view(|cx: &mut ViewContext<Self>| {
             let view = cx.view().downgrade();
             let message_list =
                 ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {
@@ -549,9 +549,7 @@ impl ChatPanel {
 impl EventEmitter<Event> for ChatPanel {}
 
 impl Render for ChatPanel {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         div()
             .full()
             .child(if self.client.user_id().is_some() {

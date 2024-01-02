@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    Div, Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
+    Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
     ViewContext,
 };
 use itertools::Itertools;
@@ -30,9 +30,7 @@ impl Breadcrumbs {
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    type Element = Div;
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Self::Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let element = h_stack().text_ui();
         let Some(active_item) = self.active_item.as_ref() else {
             return element;
@@ -88,8 +86,13 @@ impl ToolbarItemView for Breadcrumbs {
                 cx,
                 Box::new(move |event, cx| {
                     if let ItemEvent::UpdateBreadcrumbs = event {
-                        this.update(cx, |_, cx| {
+                        this.update(cx, |this, cx| {
                             cx.notify();
+                            if let Some(active_item) = this.active_item.as_ref() {
+                                cx.emit(ToolbarItemEvent::ChangeLocation(
+                                    active_item.breadcrumb_location(cx),
+                                ))
+                            }
                         })
                         .ok();
                     }

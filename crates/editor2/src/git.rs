@@ -182,7 +182,7 @@ mod tests {
 
         cx.background_executor.run_until_parked();
 
-        let multibuffer = cx.build_model(|cx| {
+        let multibuffer = cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
             multibuffer.push_excerpts(
                 buffer_1.clone(),

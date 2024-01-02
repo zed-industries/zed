@@ -576,7 +576,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let display_map =
-            cx.build_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
+            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
 
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;
@@ -763,9 +763,9 @@ mod tests {
 
             let font = font("Helvetica");
 
-            let buffer = cx
-                .build_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abc\ndefg\nhijkl\nmn"));
-            let multibuffer = cx.build_model(|cx| {
+            let buffer =
+                cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abc\ndefg\nhijkl\nmn"));
+            let multibuffer = cx.new_model(|cx| {
                 let mut multibuffer = MultiBuffer::new(0);
                 multibuffer.push_excerpts(
                     buffer.clone(),
@@ -784,7 +784,7 @@ mod tests {
                 multibuffer
             });
             let display_map =
-                cx.build_model(|cx| DisplayMap::new(multibuffer, font, px(14.0), None, 2, 2, cx));
+                cx.new_model(|cx| DisplayMap::new(multibuffer, font, px(14.0), None, 2, 2, cx));
             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
