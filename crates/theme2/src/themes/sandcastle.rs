@@ -56,7 +56,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     tab_bar_background: Some(rgba(0x2b3039ff).into()),
                     tab_inactive_background: Some(rgba(0x2b3039ff).into()),
                     tab_active_background: Some(rgba(0x282c34ff).into()),
-                    scrollbar_thumb_background: Some(rgba(0x2b3039ff).into()),
+                    scrollbar_thumb_background: Some(rgba(0xfdf4c14c).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x313741ff).into()),
                     scrollbar_thumb_border: Some(rgba(0x313741ff).into()),
                     scrollbar_track_background: Some(rgba(0x282c34ff).into()),

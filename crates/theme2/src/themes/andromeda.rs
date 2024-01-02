@@ -56,7 +56,7 @@ pub fn andromeda() -> UserThemeFamily {
                     tab_bar_background: Some(rgba(0x21242bff).into()),
                     tab_inactive_background: Some(rgba(0x21242bff).into()),
                     tab_active_background: Some(rgba(0x1e2025ff).into()),
-                    scrollbar_thumb_background: Some(rgba(0x21242bff).into()),
+                    scrollbar_thumb_background: Some(rgba(0xf7f7f84c).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x252931ff).into()),
                     scrollbar_thumb_border: Some(rgba(0x252931ff).into()),
                     scrollbar_track_background: Some(rgba(0x1e2025ff).into()),
