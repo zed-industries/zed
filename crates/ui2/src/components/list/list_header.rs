@@ -76,9 +76,9 @@ impl Selectable for ListHeader {
 }
 
 impl RenderOnce for ListHeader {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         h_stack()
             .id(self.label.clone())
             .w_full()

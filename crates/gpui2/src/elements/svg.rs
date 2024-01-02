@@ -26,7 +26,7 @@ impl Svg {
 impl Element for Svg {
     type State = InteractiveElementState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
         cx: &mut WindowContext,

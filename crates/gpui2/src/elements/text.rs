@@ -12,7 +12,7 @@ use util::ResultExt;
 impl Element for &'static str {
     type State = TextState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,
@@ -42,7 +42,7 @@ impl IntoElement for &'static str {
 impl Element for SharedString {
     type State = TextState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,
@@ -118,7 +118,7 @@ impl StyledText {
 impl Element for StyledText {
     type State = TextState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _: Option<Self::State>,
         cx: &mut WindowContext,
@@ -331,7 +331,7 @@ impl InteractiveText {
 impl Element for InteractiveText {
     type State = InteractiveTextState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         state: Option<Self::State>,
         cx: &mut WindowContext,
@@ -340,14 +340,14 @@ impl Element for InteractiveText {
             mouse_down_index, ..
         }) = state
         {
-            let (layout_id, text_state) = self.text.layout(None, cx);
+            let (layout_id, text_state) = self.text.request_layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
                 mouse_down_index,
             };
             (layout_id, element_state)
         } else {
-            let (layout_id, text_state) = self.text.layout(None, cx);
+            let (layout_id, text_state) = self.text.request_layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
                 mouse_down_index: Rc::default(),

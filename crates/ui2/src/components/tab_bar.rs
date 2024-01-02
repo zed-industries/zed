@@ -89,9 +89,9 @@ impl ParentElement for TabBar {
 }
 
 impl RenderOnce for TabBar {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         const HEIGHT_IN_REMS: f32 = 30. / 16.;
 
         div()

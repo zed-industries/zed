@@ -81,12 +81,12 @@ impl<V: 'static> View<V> {
 impl<V: Render> Element for View<V> {
     type State = Option<AnyElement>;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.update(cx, |view, cx| view.render(cx).into_any());
+        let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
         let layout_id = element.layout(cx);
         (layout_id, Some(element))
     }
@@ -229,7 +229,7 @@ impl<V: Render> From<View<V>> for AnyView {
 impl Element for AnyView {
     type State = Option<AnyElement>;
 
-    fn layout(
+    fn request_layout(
         &mut self,
         _state: Option<Self::State>,
         cx: &mut WindowContext,
@@ -313,14 +313,14 @@ impl std::fmt::Debug for AnyWeakView {
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, Element, LayoutId, Render, WindowContext};
+    use crate::{AnyElement, AnyView, IntoElement, LayoutId, Render, WindowContext};
 
     pub(crate) fn layout<V: 'static + Render>(
         view: &AnyView,
         cx: &mut WindowContext,
     ) -> (LayoutId, AnyElement) {
         let view = view.clone().downcast::<V>().unwrap();
-        let mut element = view.update(cx, |view, cx| view.render(cx).into_any());
+        let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
         let layout_id = element.layout(cx);
         (layout_id, element)
     }

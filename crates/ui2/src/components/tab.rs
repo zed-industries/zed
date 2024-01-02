@@ -93,9 +93,9 @@ impl ParentElement for Tab {
 }
 
 impl RenderOnce for Tab {
-    type Rendered = Stateful<Div>;
+    type Output = Stateful<Div>;
 
-    fn render(self, cx: &mut WindowContext) -> Self::Rendered {
+    fn render(self, cx: &mut WindowContext) -> Self::Output {
         let (text_color, tab_bg, _tab_hover_bg, _tab_active_bg) = match self.selected {
             false => (
                 cx.theme().colors().text_muted,
