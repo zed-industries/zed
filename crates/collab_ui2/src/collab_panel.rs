@@ -2168,35 +2168,51 @@ impl CollabPanel {
                     )
                     .end_slot(
                         h_stack()
+                            .absolute()
+                            .right_0()
+                            // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
+                            .z_index(10)
+                            .bg(cx.theme().colors().panel_background)
                             .child(
-                                IconButton::new("channel_chat", Icon::MessageBubbles)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_messages_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
+                                h_stack()
+                                    // The element hover background has a slight transparency to it, so we
+                                    // need to apply it to the inner element so that it blends with the solid
+                                    // background color of the absolutely-positioned element.
+                                    .group_hover("", |style| {
+                                        style.bg(cx.theme().colors().ghost_element_hover)
                                     })
-                                    .when(!has_messages_notification, |this| {
-                                        this.visible_on_hover("")
-                                    })
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.join_channel_chat(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
-                            )
-                            .child(
-                                IconButton::new("channel_notes", Icon::File)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(if has_notes_notification {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    })
-                                    .when(!has_notes_notification, |this| this.visible_on_hover(""))
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.open_channel_notes(channel_id, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx)),
+                                    .child(
+                                        IconButton::new("channel_chat", Icon::MessageBubbles)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(if has_messages_notification {
+                                                Color::Default
+                                            } else {
+                                                Color::Muted
+                                            })
+                                            .when(!has_messages_notification, |this| {
+                                                this.visible_on_hover("")
+                                            })
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.join_channel_chat(channel_id, cx)
+                                            }))
+                                            .tooltip(|cx| Tooltip::text("Open channel chat", cx)),
+                                    )
+                                    .child(
+                                        IconButton::new("channel_notes", Icon::File)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(if has_notes_notification {
+                                                Color::Default
+                                            } else {
+                                                Color::Muted
+                                            })
+                                            .when(!has_notes_notification, |this| {
+                                                this.visible_on_hover("")
+                                            })
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.open_channel_notes(channel_id, cx)
+                                            }))
+                                            .tooltip(|cx| Tooltip::text("Open channel notes", cx)),
+                                    ),
                             ),
                     ),
             )
