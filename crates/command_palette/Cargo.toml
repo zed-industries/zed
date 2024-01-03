@@ -10,23 +10,28 @@ doctest = false
 
 [dependencies]
 collections = { path = "../collections" }
-editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
-gpui = { path = "../gpui" }
-picker = { path = "../picker" }
-project = { path = "../project" }
-settings = { path = "../settings" }
+editor = { package = "editor2", path = "../editor2" }
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+picker = { package = "picker2", path = "../picker2" }
+project = { package = "project2", path = "../project2" }
+settings = { package = "settings2", path = "../settings2" }
+ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
-theme = { path = "../theme" }
-workspace = { path = "../workspace" }
-zed-actions = { path = "../zed-actions" }
+theme = { package = "theme2", path = "../theme2" }
+workspace = { package="workspace2", path = "../workspace2" }
+zed_actions = { package = "zed_actions2", path = "../zed_actions2" }
+anyhow.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+language = { package="language2", path = "../language2", features = ["test-support"] }
+project = { package="project2", path = "../project2", features = ["test-support"] }
+menu = { package = "menu2", path = "../menu2" }
+go_to_line = { path = "../go_to_line" }
 serde_json.workspace = true
-workspace = { path = "../workspace", features = ["test-support"] }
+workspace = { package="workspace2", path = "../workspace2", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true

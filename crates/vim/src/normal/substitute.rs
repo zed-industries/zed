@@ -1,5 +1,5 @@
 use editor::movement;
-use gpui::{actions, AppContext, WindowContext};
+use gpui::{actions, ViewContext, WindowContext};
 use language::Point;
 use workspace::Workspace;
 
@@ -7,8 +7,8 @@ use crate::{motion::Motion, utils::copy_selections_content, Mode, Vim};
 
 actions!(vim, [Substitute, SubstituteLine]);
 
-pub(crate) fn init(cx: &mut AppContext) {
-    cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &Substitute, cx| {
         Vim::update(cx, |vim, cx| {
             vim.start_recording(cx);
             let count = vim.take_count(cx);
@@ -16,7 +16,7 @@ pub(crate) fn init(cx: &mut AppContext) {
         })
     });
 
-    cx.add_action(|_: &mut Workspace, _: &SubstituteLine, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &SubstituteLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.start_recording(cx);
             if matches!(vim.state().mode, Mode::VisualBlock | Mode::Visual) {

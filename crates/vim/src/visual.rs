@@ -8,7 +8,7 @@ use editor::{
     scroll::autoscroll::Autoscroll,
     Bias, DisplayPoint, Editor,
 };
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, ViewContext, WindowContext};
 use language::{Selection, SelectionGoal};
 use workspace::Workspace;
 
@@ -34,24 +34,28 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(|_, _: &ToggleVisual, cx: &mut ViewContext<Workspace>| {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_, _: &ToggleVisual, cx: &mut ViewContext<Workspace>| {
         toggle_mode(Mode::Visual, cx)
     });
-    cx.add_action(|_, _: &ToggleVisualLine, cx: &mut ViewContext<Workspace>| {
+    workspace.register_action(|_, _: &ToggleVisualLine, cx: &mut ViewContext<Workspace>| {
         toggle_mode(Mode::VisualLine, cx)
     });
-    cx.add_action(
+    workspace.register_action(
         |_, _: &ToggleVisualBlock, cx: &mut ViewContext<Workspace>| {
             toggle_mode(Mode::VisualBlock, cx)
         },
     );
-    cx.add_action(other_end);
-    cx.add_action(delete);
-    cx.add_action(yank);
+    workspace.register_action(other_end);
+    workspace.register_action(delete);
+    workspace.register_action(yank);
 
-    cx.add_action(select_next);
-    cx.add_action(select_previous);
+    workspace.register_action(|workspace, action, cx| {
+        select_next(workspace, action, cx).ok();
+    });
+    workspace.register_action(|workspace, action, cx| {
+        select_previous(workspace, action, cx).ok();
+    });
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
@@ -146,13 +150,13 @@ pub fn visual_block_motion(
         let mut head = s.newest_anchor().head().to_display_point(map);
         let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
-        let mut head_x = map.x_for_point(head, &text_layout_details);
-        let mut tail_x = map.x_for_point(tail, &text_layout_details);
+        let mut head_x = map.x_for_display_point(head, &text_layout_details);
+        let mut tail_x = map.x_for_display_point(tail, &text_layout_details);
 
         let (start, end) = match s.newest_anchor().goal {
             SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
             SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
-            _ => (tail_x, head_x),
+            _ => (tail_x.0, head_x.0),
         };
         let mut goal = SelectionGoal::HorizontalRange { start, end };
 
@@ -165,19 +169,19 @@ pub fn visual_block_motion(
             return;
         };
         head = new_head;
-        head_x = map.x_for_point(head, &text_layout_details);
+        head_x = map.x_for_display_point(head, &text_layout_details);
 
         let is_reversed = tail_x > head_x;
         if was_reversed && !is_reversed {
             tail = movement::saturating_left(map, tail);
-            tail_x = map.x_for_point(tail, &text_layout_details);
+            tail_x = map.x_for_display_point(tail, &text_layout_details);
         } else if !was_reversed && is_reversed {
             tail = movement::saturating_right(map, tail);
-            tail_x = map.x_for_point(tail, &text_layout_details);
+            tail_x = map.x_for_display_point(tail, &text_layout_details);
         }
         if !is_reversed && !preserve_goal {
             head = movement::saturating_right(map, head);
-            head_x = map.x_for_point(head, &text_layout_details);
+            head_x = map.x_for_display_point(head, &text_layout_details);
         }
 
         let positions = if is_reversed {
@@ -188,8 +192,8 @@ pub fn visual_block_motion(
 
         if !preserve_goal {
             goal = SelectionGoal::HorizontalRange {
-                start: positions.start,
-                end: positions.end,
+                start: positions.start.0,
+                end: positions.end.0,
             };
         }
 
@@ -197,7 +201,7 @@ pub fn visual_block_motion(
         let mut row = tail.row();
 
         loop {
-            let layed_out_line = map.lay_out_line_for_row(row, &text_layout_details);
+            let layed_out_line = map.layout_row(row, &text_layout_details);
             let start = DisplayPoint::new(
                 row,
                 layed_out_line.closest_index_for_x(positions.start) as u32,
@@ -214,7 +218,7 @@ pub fn visual_block_motion(
                 }
             }
 
-            if positions.start <= layed_out_line.width() {
+            if positions.start <= layed_out_line.width {
                 let selection = Selection {
                     id: s.new_selection_id(),
                     start: start.to_point(map),
@@ -749,7 +753,12 @@ mod test {
                     fox jumps over
                     the lazy dog"})
             .await;
-        cx.assert_clipboard_content(Some("The q"));
+        assert_eq!(
+            cx.read_from_clipboard()
+                .map(|item| item.text().clone())
+                .unwrap(),
+            "The q"
+        );
 
         cx.set_shared_state(indoc! {"
                     The quick brown

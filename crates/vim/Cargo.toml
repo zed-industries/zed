@@ -26,28 +26,28 @@ serde_json.workspace = true
 
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-search = { path = "../search" }
-settings = { path = "../settings" }
-workspace = { path = "../workspace" }
-theme = { path = "../theme" }
-language_selector = { path = "../language_selector"}
+editor = { package = "editor2", path = "../editor2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+language = { package = "language2", path = "../language2" }
+search = { package = "search2", path = "../search2" }
+settings = { package = "settings2", path = "../settings2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+theme = { package = "theme2", path = "../theme2" }
+ui = { package = "ui2", path = "../ui2"}
 diagnostics = { path = "../diagnostics" }
-zed-actions = { path = "../zed-actions" }
+zed_actions = { package = "zed_actions2", path = "../zed_actions2" }
 
 [dev-dependencies]
 indoc.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
 
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
-settings = { path = "../settings" }
-workspace = { path = "../workspace", features = ["test-support"] }
-theme = { path = "../theme", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2" }
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }

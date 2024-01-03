@@ -1907,34 +1907,13 @@ dependencies = [
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
- "collections",
- "ctor",
- "editor",
- "env_logger",
- "fuzzy",
- "gpui",
- "language",
- "picker",
- "project",
- "serde_json",
- "settings",
- "theme",
- "util",
- "workspace",
- "zed-actions",
-]
-
-[[package]]
-name = "command_palette2"
-version = "0.1.0"
-dependencies = [
  "anyhow",
  "collections",
  "ctor",
  "editor2",
  "env_logger",
  "fuzzy2",
- "go_to_line2",
+ "go_to_line",
  "gpui2",
  "language2",
  "menu2",
@@ -2625,33 +2604,6 @@ name = "diagnostics"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
- "collections",
- "editor",
- "futures 0.3.28",
- "gpui",
- "language",
- "log",
- "lsp",
- "postage",
- "project",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "smallvec",
- "theme",
- "unindent",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "diagnostics2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "client2",
  "collections",
  "editor2",
@@ -3165,29 +3117,6 @@ dependencies = [
 
 [[package]]
 name = "file_finder"
-version = "0.1.0"
-dependencies = [
- "collections",
- "ctor",
- "editor",
- "env_logger",
- "fuzzy",
- "gpui",
- "language",
- "menu",
- "picker",
- "postage",
- "project",
- "serde_json",
- "settings",
- "text",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "file_finder2"
 version = "0.1.0"
 dependencies = [
  "collections",
@@ -3744,21 +3673,6 @@ dependencies = [
 
 [[package]]
 name = "go_to_line"
-version = "0.1.0"
-dependencies = [
- "editor",
- "gpui",
- "menu",
- "postage",
- "settings",
- "text",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "go_to_line2"
 version = "0.1.0"
 dependencies = [
  "editor2",
@@ -10540,40 +10454,6 @@ dependencies = [
  "collections",
  "command_palette",
  "diagnostics",
- "editor",
- "futures 0.3.28",
- "gpui",
- "indoc",
- "itertools 0.10.5",
- "language",
- "language_selector",
- "log",
- "lsp",
- "nvim-rs",
- "parking_lot 0.11.2",
- "project",
- "search",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "theme",
- "tokio",
- "util",
- "workspace",
- "zed-actions",
-]
-
-[[package]]
-name = "vim2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-compat",
- "async-trait",
- "collections",
- "command_palette2",
- "diagnostics2",
  "editor2",
  "futures 0.3.28",
  "gpui2",
@@ -11007,7 +10887,7 @@ dependencies = [
  "theme_selector",
  "ui2",
  "util",
- "vim2",
+ "vim",
  "workspace2",
 ]
 
@@ -11429,21 +11309,21 @@ dependencies = [
  "client2",
  "collab_ui",
  "collections",
- "command_palette2",
+ "command_palette",
  "copilot2",
  "copilot_button2",
  "ctor",
  "db2",
- "diagnostics2",
+ "diagnostics",
  "editor2",
  "env_logger",
  "feature_flags2",
  "feedback2",
- "file_finder2",
+ "file_finder",
  "fs2",
  "fsevent",
  "futures 0.3.28",
- "go_to_line2",
+ "go_to_line",
  "gpui2",
  "ignore",
  "image",
@@ -11530,7 +11410,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid 1.4.1",
- "vim2",
+ "vim",
  "welcome",
  "workspace2",
  "zed_actions2",

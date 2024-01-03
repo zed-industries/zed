@@ -25,21 +25,21 @@ channel = { package = "channel2", path = "../channel2" }
 cli = { path = "../cli" }
 collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
-command_palette = { package="command_palette2", path = "../command_palette2" }
+command_palette = { path = "../command_palette" }
 # component_test = { path = "../component_test" }
 client = { package = "client2", path = "../client2" }
 # clock = { path = "../clock" }
 copilot = { package = "copilot2", path = "../copilot2" }
 copilot_button = { package = "copilot_button2", path = "../copilot_button2" }
-diagnostics = { package = "diagnostics2", path = "../diagnostics2" }
+diagnostics = { path = "../diagnostics" }
 db = { package = "db2", path = "../db2" }
 editor = { package="editor2", path = "../editor2" }
 feedback = { package="feedback2", path = "../feedback2" }
-file_finder = { package="file_finder2", path = "../file_finder2" }
+file_finder = { path = "../file_finder" }
 search = { package = "search2", path = "../search2" }
 fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
-go_to_line = { package = "go_to_line2", path = "../go_to_line2" }
+go_to_line = { path = "../go_to_line" }
 gpui = { package = "gpui2", path = "../gpui2" }
 install_cli = { package = "install_cli2", path = "../install_cli2" }
 journal = { package = "journal2", path = "../journal2" }
@@ -70,7 +70,7 @@ theme = { package = "theme2", path = "../theme2" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
-vim = { package = "vim2", path = "../vim2" }
+vim = { path = "../vim" }
 workspace = { package = "workspace2", path = "../workspace2" }
 welcome = { path = "../welcome" }
 zed_actions = {package = "zed_actions2", path = "../zed_actions2"}

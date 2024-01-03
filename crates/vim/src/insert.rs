@@ -1,13 +1,13 @@
 use crate::{normal::repeat, state::Mode, Vim};
 use editor::{scroll::autoscroll::Autoscroll, Bias};
-use gpui::{actions, Action, AppContext, ViewContext};
+use gpui::{actions, Action, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
 
 actions!(vim, [NormalBefore]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(normal_before);
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(normal_before);
 }
 
 fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<Workspace>) {
@@ -38,10 +38,6 @@ fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
-    use gpui::executor::Deterministic;
-
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
@@ -60,76 +56,70 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_insert_with_counts(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_insert_with_counts(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes(["5", "i", "-", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("----ˇ-hello\n").await;
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes(["5", "a", "-", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("h----ˇ-ello\n").await;
 
         cx.simulate_shared_keystrokes(["4", "shift-i", "-", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("---ˇ-h-----ello\n").await;
 
         cx.simulate_shared_keystrokes(["3", "shift-a", "-", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("----h-----ello--ˇ-\n").await;
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes(["3", "o", "o", "i", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("hello\noi\noi\noˇi\n").await;
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes(["3", "shift-o", "o", "i", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("oi\noi\noˇi\nhello\n").await;
     }
 
     #[gpui::test]
-    async fn test_insert_with_repeat(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_insert_with_repeat(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes(["3", "i", "-", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("--ˇ-hello\n").await;
         cx.simulate_shared_keystrokes(["."]).await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("----ˇ--hello\n").await;
         cx.simulate_shared_keystrokes(["2", "."]).await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("-----ˇ---hello\n").await;
 
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes(["2", "o", "k", "k", "escape"])
             .await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("hello\nkk\nkˇk\n").await;
         cx.simulate_shared_keystrokes(["."]).await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("hello\nkk\nkk\nkk\nkˇk\n").await;
         cx.simulate_shared_keystrokes(["1", "."]).await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_shared_state("hello\nkk\nkk\nkk\nkk\nkˇk\n").await;
     }
 }
