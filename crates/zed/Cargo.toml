@@ -18,7 +18,7 @@ path = "src/main.rs"
 ai = { package = "ai2", path = "../ai2"}
 audio = { package = "audio2", path = "../audio2" }
 activity_indicator = { path = "../activity_indicator"}
-auto_update = { package = "auto_update2", path = "../auto_update2" }
+auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { package = "call2", path = "../call2" }
 channel = { package = "channel2", path = "../channel2" }
@@ -36,7 +36,7 @@ db = { package = "db2", path = "../db2" }
 editor = { package="editor2", path = "../editor2" }
 feedback = { package="feedback2", path = "../feedback2" }
 file_finder = { path = "../file_finder" }
-search = { package = "search2", path = "../search2" }
+search = { path = "../search" }
 fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
 go_to_line = { path = "../go_to_line" }
@@ -47,7 +47,7 @@ language = { package = "language2", path = "../language2" }
 language_selector = { path = "../language_selector" }
 lsp = { package = "lsp2", path = "../lsp2" }
 menu = { package = "menu2", path = "../menu2" }
-language_tools = { package = "language_tools2", path = "../language_tools2" }
+language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 notifications = { package = "notifications2", path = "../notifications2" }
 assistant = { package = "assistant2", path = "../assistant2" }
@@ -65,7 +65,7 @@ feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 shellexpand = "2.1.0"
 text = { package = "text2", path = "../text2" }
-terminal_view = { package = "terminal_view2", path = "../terminal_view2" }
+terminal_view = { path = "../terminal_view" }
 theme = { package = "theme2", path = "../theme2" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }

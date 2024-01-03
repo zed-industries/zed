@@ -12,7 +12,7 @@ doctest = false
 assistant = { package = "assistant2", path = "../assistant2" }
 editor = { package = "editor2", path = "../editor2" }
 gpui = { package = "gpui2", path = "../gpui2" }
-search = { package = "search2", path = "../search2" }
+search = { path = "../search" }
 workspace = { package = "workspace2", path = "../workspace2" }
 ui = { package = "ui2", path = "../ui2" }
 

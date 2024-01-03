@@ -9,7 +9,7 @@ path = "src/activity_indicator.rs"
 doctest = false
 
 [dependencies]
-auto_update = { path = "../auto_update2", package = "auto_update2" }
+auto_update = { path = "../auto_update" }
 editor = { path = "../editor2", package = "editor2" }
 language = { path = "../language2", package = "language2" }
 gpui = { path = "../gpui2", package = "gpui2" }

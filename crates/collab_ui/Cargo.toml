@@ -22,7 +22,7 @@ test-support = [
 ]
 
 [dependencies]
-auto_update = { package = "auto_update2", path = "../auto_update2" }
+auto_update = { path = "../auto_update" }
 db = { package = "db2", path = "../db2" }
 call = { package = "call2", path = "../call2" }
 client = { package = "client2", path = "../client2" }

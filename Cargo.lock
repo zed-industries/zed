@@ -7,7 +7,7 @@ name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auto_update2",
+ "auto_update",
  "editor2",
  "futures 0.3.28",
  "gpui2",
@@ -392,7 +392,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "schemars",
- "search2",
+ "search",
  "semantic_index2",
  "serde",
  "serde_json",
@@ -754,30 +754,6 @@ name = "auto_update"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
- "db",
- "gpui",
- "isahc",
- "lazy_static",
- "log",
- "menu",
- "project",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "smol",
- "tempdir",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "auto_update2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "client2",
  "db2",
  "gpui2",
@@ -1119,7 +1095,7 @@ dependencies = [
  "language2",
  "outline2",
  "project2",
- "search2",
+ "search",
  "settings2",
  "theme2",
  "ui2",
@@ -1799,7 +1775,7 @@ name = "collab_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auto_update2",
+ "auto_update",
  "call2",
  "channel2",
  "client2",
@@ -3047,7 +3023,7 @@ dependencies = [
  "postage",
  "project2",
  "regex",
- "search2",
+ "search",
  "serde",
  "serde_derive",
  "settings2",
@@ -4557,29 +4533,6 @@ dependencies = [
 
 [[package]]
 name = "language_tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "editor",
- "env_logger",
- "futures 0.3.28",
- "gpui",
- "language",
- "lsp",
- "project",
- "serde",
- "settings",
- "theme",
- "tree-sitter",
- "unindent",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "language_tools2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6562,7 +6515,7 @@ dependencies = [
  "pretty_assertions",
  "project2",
  "schemars",
- "search2",
+ "search",
  "serde",
  "serde_derive",
  "serde_json",
@@ -6761,7 +6714,7 @@ dependencies = [
  "assistant2",
  "editor2",
  "gpui2",
- "search2",
+ "search",
  "ui2",
  "workspace2",
 ]
@@ -7767,35 +7720,6 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "search"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags 1.3.2",
- "client",
- "collections",
- "editor",
- "futures 0.3.28",
- "gpui",
- "language",
- "log",
- "menu",
- "postage",
- "project",
- "semantic_index",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "smallvec",
- "smol",
- "theme",
- "unindent",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "search2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -9084,7 +9008,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "terminal_view2"
+name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -10345,7 +10269,7 @@ dependencies = [
  "nvim-rs",
  "parking_lot 0.11.2",
  "project2",
- "search2",
+ "search",
  "serde",
  "serde_derive",
  "serde_json",
@@ -11179,7 +11103,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "audio2",
- "auto_update2",
+ "auto_update",
  "backtrace",
  "breadcrumbs",
  "call2",
@@ -11213,7 +11137,7 @@ dependencies = [
  "journal2",
  "language2",
  "language_selector",
- "language_tools2",
+ "language_tools",
  "lazy_static",
  "libc",
  "log",
@@ -11237,7 +11161,7 @@ dependencies = [
  "rsa 0.4.0",
  "rust-embed",
  "schemars",
- "search2",
+ "search",
  "semantic_index2",
  "serde",
  "serde_derive",
@@ -11249,7 +11173,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
- "terminal_view2",
+ "terminal_view",
  "text2",
  "theme2",
  "theme_selector",
