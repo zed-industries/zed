@@ -52,7 +52,7 @@ use std::{
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
-use ui::{h_stack, ButtonLike, ButtonStyle, IconButton, Label, Tooltip};
+use ui::{h_stack, ButtonLike, ButtonStyle, IconButton, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2305,13 +2305,17 @@ impl EditorElement {
                                         h_stack().gap_3().child(
                                             h_stack()
                                                 .gap_2()
-                                                .child(Label::new(
+                                                .child(
                                                     filename
                                                         .map(SharedString::from)
                                                         .unwrap_or_else(|| "untitled".into()),
-                                                ))
+                                                )
                                                 .when_some(parent_path, |then, path| {
-                                                    then.child(Label::new(path).color(Color::Muted))
+                                                    then.child(
+                                                        div().child(path).text_color(
+                                                            cx.theme().colors().text_muted,
+                                                        ),
+                                                    )
                                                 }),
                                         ),
                                     )
@@ -2373,8 +2377,6 @@ impl EditorElement {
                                     this.child(div().size_full().bg(gpui::green()))
                                 }
                             })
-                        // .child("⋯")
-                        // .children(jump_icon) // .p_x(gutter_padding)
                     };
                     element.into_any()
                 }

@@ -13,7 +13,7 @@ use editor::{
 };
 use futures::future::try_join_all;
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
+    actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
     SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
@@ -800,12 +800,20 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 h_stack()
                     .gap_3()
                     .map(|stack| {
-                        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-                            IconElement::new(Icon::XCircle).color(Color::Error)
-                        } else {
-                            IconElement::new(Icon::ExclamationTriangle).color(Color::Warning)
-                        };
-                        stack.child(icon)
+                        stack.child(
+                            svg()
+                                .size(cx.text_style().font_size)
+                                .flex_none()
+                                .map(|icon| {
+                                    if diagnostic.severity == DiagnosticSeverity::ERROR {
+                                        icon.path(Icon::XCircle.path())
+                                            .text_color(Color::Error.color(cx))
+                                    } else {
+                                        icon.path(Icon::ExclamationTriangle.path())
+                                            .text_color(Color::Warning.color(cx))
+                                    }
+                                }),
+                        )
                     })
                     .child(
                         h_stack()
@@ -819,7 +827,11 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                 ),
                             )
                             .when_some(diagnostic.code.as_ref(), |stack, code| {
-                                stack.child(Label::new(format!("({code})")).color(Color::Muted))
+                                stack.child(
+                                    div()
+                                        .child(SharedString::from(format!("({code})")))
+                                        .text_color(cx.theme().colors().text_muted),
+                                )
                             }),
                     ),
             )
@@ -827,7 +839,11 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 h_stack()
                     .gap_1()
                     .when_some(diagnostic.source.as_ref(), |stack, source| {
-                        stack.child(Label::new(format!("{source}")).color(Color::Muted))
+                        stack.child(
+                            div()
+                                .child(SharedString::from(source.clone()))
+                                .text_color(cx.theme().colors().text_muted),
+                        )
                     }),
             )
             .into_any_element()
