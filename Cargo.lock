@@ -329,46 +329,6 @@ checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 name = "assistant"
 version = "0.1.0"
 dependencies = [
- "ai",
- "anyhow",
- "chrono",
- "client",
- "collections",
- "ctor",
- "editor",
- "env_logger",
- "fs",
- "futures 0.3.28",
- "gpui",
- "indoc",
- "isahc",
- "language",
- "log",
- "menu",
- "multi_buffer",
- "ordered-float 2.10.0",
- "parking_lot 0.11.2",
- "project",
- "rand 0.8.5",
- "regex",
- "schemars",
- "search",
- "semantic_index",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "theme",
- "tiktoken-rs",
- "util",
- "uuid 1.4.1",
- "workspace",
-]
-
-[[package]]
-name = "assistant2"
-version = "0.1.0"
-dependencies = [
  "ai2",
  "anyhow",
  "chrono",
@@ -4198,24 +4158,6 @@ dependencies = [
  "chrono",
  "dirs 4.0.0",
  "editor",
- "gpui",
- "log",
- "schemars",
- "serde",
- "settings",
- "shellexpand",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "journal2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "dirs 4.0.0",
- "editor",
  "gpui2",
  "log",
  "schemars",
@@ -6516,7 +6458,7 @@ dependencies = [
 name = "quick_action_bar"
 version = "0.1.0"
 dependencies = [
- "assistant2",
+ "assistant",
  "editor",
  "gpui2",
  "search",
@@ -10862,7 +10804,7 @@ dependencies = [
  "activity_indicator",
  "ai2",
  "anyhow",
- "assistant2",
+ "assistant",
  "async-compression",
  "async-recursion 0.3.2",
  "async-tar",
@@ -10899,7 +10841,7 @@ dependencies = [
  "indexmap 1.9.3",
  "install_cli2",
  "isahc",
- "journal2",
+ "journal",
  "language2",
  "language_selector",
  "language_tools",

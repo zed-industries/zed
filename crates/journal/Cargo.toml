@@ -10,10 +10,10 @@ doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-settings = { path = "../settings" }
+settings2 = { path = "../settings2" }
 
 anyhow.workspace = true
 chrono = "0.4"

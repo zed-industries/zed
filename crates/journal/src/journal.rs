@@ -1,15 +1,15 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use editor::{scroll::autoscroll::Autoscroll, Editor};
-use gpui::{actions, AppContext};
+use gpui::{actions, AppContext, ViewContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings2::Settings;
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::AppState;
+use workspace::{AppState, Workspace};
 
 actions!(journal, [NewJournalEntry]);
 
@@ -36,24 +36,35 @@ pub enum HourFormat {
     Hour24,
 }
 
-impl settings::Setting for JournalSettings {
+impl settings2::Settings for JournalSettings {
     const KEY: Option<&'static str> = Some("journal");
 
     type FileContent = Self;
 
-    fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(
+        defaults: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &mut AppContext,
+    ) -> Result<Self> {
+        Self::load_via_json_merge(defaults, user_values)
     }
 }
 
-pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-    settings::register::<JournalSettings>(cx);
+pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
+    JournalSettings::register(cx);
 
-    cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
+    cx.observe_new_views(
+        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+            workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
+                new_journal_entry(workspace.app_state().clone(), cx);
+            });
+        },
+    )
+    .detach();
 }
 
 pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
-    let settings = settings::get::<JournalSettings>(cx);
+    let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
         None => {
@@ -68,9 +79,9 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
         .join(format!("{:02}", now.month()));
     let entry_path = month_dir.join(format!("{:02}.md", now.day()));
     let now = now.time();
-    let entry_heading = heading_entry(now, &settings.hour_format);
+    let _entry_heading = heading_entry(now, &settings.hour_format);
 
-    let create_entry = cx.background().spawn(async move {
+    let create_entry = cx.background_executor().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
             .create(true)
@@ -82,30 +93,31 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
         let (workspace, _) = cx
-            .update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))
+            .update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))?
             .await?;
 
-        let opened = workspace
+        let _opened = workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.open_paths(vec![entry_path], true, cx)
             })?
             .await;
 
-        if let Some(Some(Ok(item))) = opened.first() {
-            if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-                editor.update(&mut cx, |editor, cx| {
-                    let len = editor.buffer().read(cx).len(cx);
-                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                        s.select_ranges([len..len])
-                    });
-                    if len > 0 {
-                        editor.insert("\n\n", cx);
-                    }
-                    editor.insert(&entry_heading, cx);
-                    editor.insert("\n\n", cx);
-                })?;
-            }
-        }
+        // todo!("editor")
+        // if let Some(Some(Ok(item))) = opened.first() {
+        //     if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
+        //         editor.update(&mut cx, |editor, cx| {
+        //             let len = editor.buffer().read(cx).len(cx);
+        //             editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+        //                 s.select_ranges([len..len])
+        //             });
+        //             if len > 0 {
+        //                 editor.insert("\n\n", cx);
+        //             }
+        //             editor.insert(&entry_heading, cx);
+        //             editor.insert("\n\n", cx);
+        //         })?;
+        //     }
+        // }
 
         anyhow::Ok(())
     })
