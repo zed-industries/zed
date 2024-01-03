@@ -22,7 +22,7 @@ install_cli = { package = "install_cli2", path = "../install_cli2" }
 project = { package = "project2", path = "../project2" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
-theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
+theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 picker = { package = "picker2", path = "../picker2" }
 workspace = { package = "workspace2", path = "../workspace2" }

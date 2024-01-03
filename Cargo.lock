@@ -1864,7 +1864,7 @@ dependencies = [
  "settings2",
  "smallvec",
  "theme2",
- "theme_selector2",
+ "theme_selector",
  "time",
  "tree-sitter-markdown",
  "ui2",
@@ -6765,29 +6765,6 @@ name = "project_symbols"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "editor",
- "futures 0.3.28",
- "fuzzy",
- "gpui",
- "language",
- "lsp",
- "ordered-float 2.10.0",
- "picker",
- "postage",
- "project",
- "settings",
- "smol",
- "text",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "project_symbols2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "editor2",
  "futures 0.3.28",
  "fuzzy2",
@@ -9465,27 +9442,6 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
- "client",
- "editor",
- "feature_flags",
- "fs",
- "fuzzy",
- "gpui",
- "log",
- "parking_lot 0.11.2",
- "picker",
- "postage",
- "settings",
- "smol",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "theme_selector2"
-version = "0.1.0"
-dependencies = [
  "client2",
  "editor2",
  "feature_flags2",
@@ -11048,7 +11004,7 @@ dependencies = [
  "serde",
  "settings2",
  "theme2",
- "theme_selector2",
+ "theme_selector",
  "ui2",
  "util",
  "vim2",
@@ -11511,7 +11467,7 @@ dependencies = [
  "postage",
  "project2",
  "project_panel2",
- "project_symbols2",
+ "project_symbols",
  "quick_action_bar",
  "rand 0.8.5",
  "recent_projects2",
@@ -11536,7 +11492,7 @@ dependencies = [
  "terminal_view2",
  "text2",
  "theme2",
- "theme_selector2",
+ "theme_selector",
  "thiserror",
  "tiny_http",
  "toml 0.5.11",

@@ -55,7 +55,7 @@ outline = { package = "outline2", path = "../outline2" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { package = "project2", path = "../project2" }
 project_panel = { package = "project_panel2", path = "../project_panel2" }
-project_symbols = { package = "project_symbols2", path = "../project_symbols2" }
+project_symbols = { path = "../project_symbols" }
 quick_action_bar = { path = "../quick_action_bar" }
 recent_projects = { package = "recent_projects2", path = "../recent_projects2" }
 rope = { package = "rope2", path = "../rope2"}
@@ -67,7 +67,7 @@ shellexpand = "2.1.0"
 text = { package = "text2", path = "../text2" }
 terminal_view = { package = "terminal_view2", path = "../terminal_view2" }
 theme = { package = "theme2", path = "../theme2" }
-theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
+theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
 vim = { package = "vim2", path = "../vim2" }

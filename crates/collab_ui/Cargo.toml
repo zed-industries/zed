@@ -46,7 +46,7 @@ rpc = { package ="rpc2",  path = "../rpc2" }
 settings = { package = "settings2", path = "../settings2" }
 feature_flags = { package = "feature_flags2", path = "../feature_flags2"}
 theme = { package = "theme2", path = "../theme2" }
-theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
+theme_selector = { path = "../theme_selector" }
 vcs_menu = { path = "../vcs_menu" }
 ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }

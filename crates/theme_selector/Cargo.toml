@@ -9,21 +9,22 @@ path = "src/theme_selector.rs"
 doctest = false
 
 [dependencies]
-client = { path = "../client" }
-editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
-fs = { path = "../fs" }
-gpui = { path = "../gpui" }
-picker = { path = "../picker" }
-theme = { path = "../theme" }
-settings = { path = "../settings" }
-feature_flags = { path = "../feature_flags" }
-workspace = { path = "../workspace" }
+client = { package = "client2", path = "../client2" }
+editor = { package = "editor2", path = "../editor2" }
+feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
+fs = { package = "fs2", path = "../fs2" }
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+picker = { package = "picker2", path = "../picker2" }
+settings = { package = "settings2", path = "../settings2" }
+theme = { package = "theme2", path = "../theme2" }
+ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
+workspace = { package = "workspace2", path = "../workspace2" }
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 smol.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }

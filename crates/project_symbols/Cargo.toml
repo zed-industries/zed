@@ -9,15 +9,15 @@ path = "src/project_symbols.rs"
 doctest = false
 
 [dependencies]
-editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
-gpui = { path = "../gpui" }
-picker = { path = "../picker" }
-project = { path = "../project" }
-text = { path = "../text" }
-settings = { path = "../settings" }
-workspace = { path = "../workspace" }
-theme = { path = "../theme" }
+editor = { package = "editor2", path = "../editor2" }
+fuzzy = {package = "fuzzy2",  path = "../fuzzy2" }
+gpui = {package = "gpui2",  path = "../gpui2" }
+picker = {package = "picker2",  path = "../picker2" }
+project = { package = "project2", path = "../project2" }
+text = {package = "text2",  path = "../text2" }
+settings = {package = "settings2",  path = "../settings2" }
+workspace = {package = "workspace2",  path = "../workspace2" }
+theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -27,11 +27,11 @@ smol.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
-editor = { path = "../editor", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-theme = { path = "../theme", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
+lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
+theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+workspace = { package = "workspace2",  path = "../workspace2", features = ["test-support"] }
