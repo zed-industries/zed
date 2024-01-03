@@ -303,22 +303,38 @@ impl CollabTitlebarItem {
     // resolve if you are in a room -> render_project_owner
     // render_project_owner -> resolve if you are in a room -> Option<foo>
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let host = self.project.read(cx).host()?;
-        let host = self.user_store.read(cx).get_cached_user(host.user_id)?;
+        let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
             .user_store
             .read(cx)
             .participant_indices()
-            .get(&host.id)?;
+            .get(&host_user.id)?;
         Some(
-            div().border().border_color(gpui::red()).child(
-                Button::new("project_owner_trigger", host.github_login.clone())
-                    .color(Color::Player(participant_index.0))
-                    .style(ButtonStyle::Subtle)
-                    .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
-            ),
+            Button::new("project_owner_trigger", host_user.github_login.clone())
+                .color(Color::Player(participant_index.0))
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .tooltip(move |cx| {
+                    Tooltip::text(
+                        format!(
+                            "{} is sharing this project. Click to follow.",
+                            host_user.github_login.clone()
+                        ),
+                        cx,
+                    )
+                })
+                .on_click({
+                    let host_peer_id = host.peer_id.clone();
+                    cx.listener(move |this, _, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.follow(host_peer_id, cx);
+                            })
+                            .log_err();
+                    })
+                }),
         )
     }
 
