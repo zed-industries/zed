@@ -149,8 +149,7 @@ impl Element for Overlay {
             desired.origin.y = limits.origin.y;
         }
 
-        let offset = point(desired.origin.x.round(), desired.origin.y.round());
-        cx.with_absolute_element_offset(offset, |cx| {
+        cx.with_element_offset(desired.origin - bounds.origin, |cx| {
             cx.break_content_mask(|cx| {
                 for child in &mut self.children {
                     child.paint(cx);
