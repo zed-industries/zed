@@ -97,7 +97,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
-use theme::{ActiveTheme, DiagnosticStyle, PlayerColor, SyntaxTheme, ThemeColors, ThemeSettings};
+use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
     h_stack, ButtonSize, ButtonStyle, Icon, IconButton, ListItem, ListItemSpacing, Popover, Tooltip,
 };
@@ -514,7 +514,7 @@ pub struct EditorStyle {
     pub text: TextStyle,
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
-    pub diagnostic_style: DiagnosticStyle,
+    pub status: StatusColors,
     pub inlays_style: HighlightStyle,
     pub suggestions_style: HighlightStyle,
 }
@@ -1197,7 +1197,6 @@ impl CompletionsMenu {
                     .min_w(px(260.))
                     .max_w(px(640.))
                     .w(px(500.))
-                    .text_ui()
                     .overflow_y_scroll()
                     // Prevent a mouse down on documentation from being propagated to the editor,
                     // because that would move the cursor.
@@ -1420,7 +1419,6 @@ impl CodeActionsMenu {
                         let colors = cx.theme().colors();
                         div()
                             .px_2()
-                            .text_ui()
                             .text_color(colors.text)
                             .when(selected, |style| {
                                 style
@@ -7657,10 +7655,7 @@ impl Editor {
                                                 text: text_style,
                                                 scrollbar_width: cx.editor_style.scrollbar_width,
                                                 syntax: cx.editor_style.syntax.clone(),
-                                                diagnostic_style: cx
-                                                    .editor_style
-                                                    .diagnostic_style
-                                                    .clone(),
+                                                status: cx.editor_style.status.clone(),
                                                 // todo!("what about the rest of the highlight style parts for inlays and suggestions?")
                                                 inlays_style: HighlightStyle {
                                                     color: Some(cx.theme().status().hint),
@@ -9330,7 +9325,7 @@ impl Render for Editor {
                 text: text_style,
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
-                diagnostic_style: cx.theme().diagnostic_style(),
+                status: cx.theme().status().clone(),
                 // todo!("what about the rest of the highlight style parts?")
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
@@ -9784,21 +9779,17 @@ pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, V
     (text_without_backticks.into(), code_ranges)
 }
 
-pub fn diagnostic_style(
-    severity: DiagnosticSeverity,
-    valid: bool,
-    style: &DiagnosticStyle,
-) -> Hsla {
+pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, colors: &StatusColors) -> Hsla {
     match (severity, valid) {
-        (DiagnosticSeverity::ERROR, true) => style.error,
-        (DiagnosticSeverity::ERROR, false) => style.error,
-        (DiagnosticSeverity::WARNING, true) => style.warning,
-        (DiagnosticSeverity::WARNING, false) => style.warning,
-        (DiagnosticSeverity::INFORMATION, true) => style.info,
-        (DiagnosticSeverity::INFORMATION, false) => style.info,
-        (DiagnosticSeverity::HINT, true) => style.info,
-        (DiagnosticSeverity::HINT, false) => style.info,
-        _ => style.ignored,
+        (DiagnosticSeverity::ERROR, true) => colors.error,
+        (DiagnosticSeverity::ERROR, false) => colors.error,
+        (DiagnosticSeverity::WARNING, true) => colors.warning,
+        (DiagnosticSeverity::WARNING, false) => colors.warning,
+        (DiagnosticSeverity::INFORMATION, true) => colors.info,
+        (DiagnosticSeverity::INFORMATION, false) => colors.info,
+        (DiagnosticSeverity::HINT, true) => colors.info,
+        (DiagnosticSeverity::HINT, false) => colors.info,
+        _ => colors.ignored,
     }
 }
 

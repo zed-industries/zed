@@ -536,7 +536,7 @@ impl DisplaySnapshot {
                 // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
                 if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
                     let diagnostic_color =
-                        super::diagnostic_style(severity, true, &editor_style.diagnostic_style);
+                        super::diagnostic_style(severity, true, &editor_style.status);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
                         thickness: 1.0.into(),

@@ -1281,6 +1281,10 @@ impl Panel for AssistantPanel {
         Some(Icon::Ai)
     }
 
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        Some("Assistant Panel")
+    }
+
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
