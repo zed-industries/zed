@@ -110,7 +110,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     hidden: Some(rgba(0x827568ff).into()),
                     hidden_background: Some(rgba(0x333944ff).into()),
                     hidden_border: Some(rgba(0x393f4aff).into()),
-                    hint: Some(rgba(0x528b8bff).into()),
+                    hint: Some(rgba(0x727d68ff).into()),
                     hint_background: Some(rgba(0x171f1fff).into()),
                     hint_border: Some(rgba(0x223232ff).into()),
                     ignored: Some(rgba(0xa69782ff).into()),

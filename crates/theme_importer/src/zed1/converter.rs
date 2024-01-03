@@ -76,6 +76,8 @@ impl Zed1ThemeConverter {
 
         let lowest = &base_theme.lowest;
 
+        let editor = &self.theme.editor;
+
         Ok(StatusColorsRefinement {
             created: convert(lowest.positive.default.foreground),
             created_background: convert(lowest.positive.default.background),
@@ -95,7 +97,12 @@ impl Zed1ThemeConverter {
             error: convert(lowest.negative.default.foreground),
             error_background: convert(lowest.negative.default.background),
             error_border: convert(lowest.negative.default.border),
-            hint: convert(lowest.accent.default.foreground),
+            // The `hint` color used in Zed1 is inlined from the syntax colors.
+            hint: editor
+                .hint
+                .color
+                .map(zed1_color_to_hsla)
+                .or(convert(lowest.accent.default.foreground)),
             hint_background: convert(lowest.accent.default.background),
             hint_border: convert(lowest.accent.default.border),
             predictive: convert(lowest.positive.default.foreground),

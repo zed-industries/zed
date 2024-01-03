@@ -110,7 +110,7 @@ pub fn andromeda() -> UserThemeFamily {
                     hidden: Some(rgba(0x6b6b73ff).into()),
                     hidden_background: Some(rgba(0x262a33ff).into()),
                     hidden_border: Some(rgba(0x292d37ff).into()),
-                    hint: Some(rgba(0x11a793ff).into()),
+                    hint: Some(rgba(0x618399ff).into()),
                     hint_background: Some(rgba(0x122420ff).into()),
                     hint_border: Some(rgba(0x183a34ff).into()),
                     ignored: Some(rgba(0xaca8aeff).into()),
