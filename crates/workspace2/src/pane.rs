@@ -720,6 +720,10 @@ impl Pane {
         self.items.iter()
     }
 
+    pub fn item_of_type<T: Item>(&self) -> Option<View<T>> {
+        self.items_of_type().max_by_key(|item| item.item_id())
+    }
+
     pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = View<T>> {
         self.items
             .iter()

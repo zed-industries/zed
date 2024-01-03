@@ -280,13 +280,12 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        if self.has_matches() {
+        let search_view = if self.has_matches() {
             div()
                 .flex_1()
                 .size_full()
                 .track_focus(&self.focus_handle)
                 .child(self.results_editor.clone())
-                .into_any()
         } else {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
@@ -302,40 +301,40 @@ impl Render for ProjectSearchView {
             let mut show_minor_text = true;
             let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
                 let status = semantic.index_status;
-                                match status {
-                                    SemanticIndexStatus::NotAuthenticated => {
-                                        major_text = Label::new("Not Authenticated");
-                                        show_minor_text = false;
-                                        Some(
-                                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables. If you authenticated using the Assistant Panel, please restart Zed to Authenticate.".to_string())
-                                    }
-                                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
-                                    SemanticIndexStatus::Indexing {
-                                        remaining_files,
-                                        rate_limit_expiry,
-                                    } => {
-                                        if remaining_files == 0 {
-                                            Some("Indexing...".to_string())
-                                        } else {
-                                            if let Some(rate_limit_expiry) = rate_limit_expiry {
-                                                let remaining_seconds =
-                                                    rate_limit_expiry.duration_since(Instant::now());
-                                                if remaining_seconds > Duration::from_secs(0) {
-                                                    Some(format!(
-                                                        "Remaining files to index (rate limit resets in {}s): {}",
-                                                        remaining_seconds.as_secs(),
-                                                        remaining_files
-                                                    ))
-                                                } else {
-                                                    Some(format!("Remaining files to index: {}", remaining_files))
-                                                }
-                                            } else {
-                                                Some(format!("Remaining files to index: {}", remaining_files))
-                                            }
-                                        }
-                                    }
-                                    SemanticIndexStatus::NotIndexed => None,
+                match status {
+                    SemanticIndexStatus::NotAuthenticated => {
+                        major_text = Label::new("Not Authenticated");
+                        show_minor_text = false;
+                        Some(
+                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables. If you authenticated using the Assistant Panel, please restart Zed to Authenticate.".to_string())
+                    }
+                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
+                    SemanticIndexStatus::Indexing {
+                        remaining_files,
+                        rate_limit_expiry,
+                    } => {
+                        if remaining_files == 0 {
+                            Some("Indexing...".to_string())
+                        } else {
+                            if let Some(rate_limit_expiry) = rate_limit_expiry {
+                                let remaining_seconds =
+                                    rate_limit_expiry.duration_since(Instant::now());
+                                if remaining_seconds > Duration::from_secs(0) {
+                                    Some(format!(
+                                        "Remaining files to index (rate limit resets in {}s): {}",
+                                        remaining_seconds.as_secs(),
+                                        remaining_files
+                                    ))
+                                } else {
+                                    Some(format!("Remaining files to index: {}", remaining_files))
                                 }
+                            } else {
+                                Some(format!("Remaining files to index: {}", remaining_files))
+                            }
+                        }
+                    }
+                    SemanticIndexStatus::NotIndexed => None,
+                }
             });
             let major_text = div().justify_center().max_w_96().child(major_text);
 
@@ -372,8 +371,10 @@ impl Render for ProjectSearchView {
                         .child(v_stack().child(major_text).children(minor_text))
                         .child(h_stack().flex_1()),
                 )
-                .into_any()
-        }
+        };
+        search_view.on_action(cx.listener(|this, _: &workspace::NewSearch, cx| {
+            this.focus_query_editor(cx);
+        }))
     }
 }
 
@@ -962,21 +963,29 @@ impl ProjectSearchView {
             }
         });
 
-        let settings = cx
-            .global::<ActiveSettings>()
-            .0
-            .get(&workspace.project().downgrade());
-
-        let settings = if let Some(settings) = settings {
-            Some(settings.clone())
+        let active_pane = workspace.active_pane();
+        let search = if let Some(search) = active_pane.read(cx).item_of_type::<ProjectSearchView>()
+        {
+            // Re-use project search if one already exists for the active pane.
+            workspace.activate_item(&search, cx);
+            search
         } else {
-            None
+            let settings = cx
+                .global::<ActiveSettings>()
+                .0
+                .get(&workspace.project().downgrade());
+
+            let settings = if let Some(settings) = settings {
+                Some(settings.clone())
+            } else {
+                None
+            };
+            let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+            let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
+
+            workspace.add_item(Box::new(search.clone()), cx);
+            search
         };
-
-        let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
-
-        workspace.add_item(Box::new(search.clone()), cx);
 
         search.update(cx, |search, cx| {
             if let Some(query) = query {
