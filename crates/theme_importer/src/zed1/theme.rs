@@ -67,11 +67,42 @@ pub struct TextStyle {
     pub color: Color,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct HighlightStyle {
     pub color: Option<Color>,
     pub weight: Option<Weight>,
     pub italic: Option<bool>,
+}
+
+impl<'de> Deserialize<'de> for HighlightStyle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct HighlightStyleJson {
+            color: Option<Color>,
+            weight: Option<Weight>,
+            italic: Option<bool>,
+        }
+
+        let json = serde_json::Value::deserialize(deserializer)?;
+        if json.is_object() {
+            let style: HighlightStyleJson =
+                serde_json::from_value(json).map_err(de::Error::custom)?;
+
+            Ok(Self {
+                color: style.color,
+                weight: style.weight,
+                italic: style.italic,
+            })
+        } else {
+            Ok(Self {
+                color: serde_json::from_value(json).map_err(de::Error::custom)?,
+                ..Default::default()
+            })
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]
