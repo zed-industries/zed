@@ -1619,19 +1619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "component_test"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui",
- "project",
- "settings",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1664,17 +1651,6 @@ name = "const-oid"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28c122c3980598d243d63d9a704629a2d748d101f278052ff068be5a4423ab6f"
-
-[[package]]
-name = "context_menu"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "menu",
- "settings",
- "smallvec",
- "theme",
-]
 
 [[package]]
 name = "convert_case"
@@ -2353,14 +2329,6 @@ name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
-
-[[package]]
-name = "drag_and_drop"
-version = "0.1.0"
-dependencies = [
- "collections",
- "gpui",
-]
 
 [[package]]
 name = "dwrote"
@@ -3185,7 +3153,7 @@ dependencies = [
  "font-kit",
  "foreign-types",
  "futures 0.3.28",
- "gpui2_macros",
+ "gpui_macros",
  "image",
  "itertools 0.10.5",
  "lazy_static",
@@ -3226,19 +3194,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui2_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "gpui_macros"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -7677,6 +7635,7 @@ dependencies = [
  "story",
  "strum",
  "theme",
+ "ui",
  "util",
 ]
 
@@ -9935,17 +9894,6 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
-
-[[package]]
-name = "xtask"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap 4.4.4",
- "schemars",
- "serde_json",
- "theme",
-]
 
 [[package]]
 name = "yaml-rust"

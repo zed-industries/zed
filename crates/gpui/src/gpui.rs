@@ -47,7 +47,7 @@ pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
-pub use gpui2_macros::*;
+pub use gpui_macros::*;
 pub use image_cache::*;
 pub use input::*;
 pub use interactive::*;

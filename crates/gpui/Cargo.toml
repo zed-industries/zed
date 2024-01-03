@@ -15,7 +15,7 @@ doctest = false
 
 [dependencies]
 collections = { path = "../collections" }
-gpui2_macros = { path = "../gpui2_macros" }
+gpui_macros = { path = "../gpui_macros" }
 util = { path = "../util" }
 sum_tree = { path = "../sum_tree" }
 sqlez = { path = "../sqlez" }

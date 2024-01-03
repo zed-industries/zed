@@ -1,11 +1,9 @@
-use gpui2::{actions, impl_actions};
-use gpui2_macros::register_action;
+use gpui::{actions, impl_actions};
+use gpui_macros::register_action;
 use serde_derive::Deserialize;
 
 #[test]
 fn test_action_macros() {
-    use gpui2 as gpui;
-
     actions!(test, [TestAction]);
 
     #[derive(PartialEq, Clone, Deserialize)]

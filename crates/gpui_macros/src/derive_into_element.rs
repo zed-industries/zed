@@ -13,7 +13,7 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
         {
             type Element = gpui::Component<Self>;
 
-            fn element_id(&self) -> Option<ElementId> {
+            fn element_id(&self) -> Option<gpui::ElementId> {
                 None
             }
 

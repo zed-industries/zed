@@ -10,7 +10,7 @@ use taffy::style::Overflow;
 pub trait Styled: Sized {
     fn style(&mut self) -> &mut StyleRefinement;
 
-    gpui2_macros::style_helpers!();
+    gpui_macros::style_helpers!();
 
     fn z_index(mut self, z_index: u8) -> Self {
         self.style().z_index = Some(z_index);

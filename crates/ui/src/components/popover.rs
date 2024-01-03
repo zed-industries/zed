@@ -1,9 +1,8 @@
 use gpui::{
-    div, AnyElement, Element, ElementId, IntoElement, ParentElement, RenderOnce, Styled,
+    div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled,
     WindowContext,
 };
 use smallvec::SmallVec;
-
 use crate::prelude::*;
 use crate::v_stack;
 
