@@ -7778,7 +7778,6 @@ dependencies = [
  "story",
  "strum",
  "theme",
- "ui",
  "util",
 ]
 
@@ -10089,7 +10088,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.119.0"
+version = "0.120.0"
 dependencies = [
  "activity_indicator",
  "ai",

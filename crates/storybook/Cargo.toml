@@ -14,6 +14,7 @@ anyhow.workspace = true
 backtrace-on-stack-overflow = "0.3.0"
 chrono = "0.4"
 clap = { version = "4.4", features = ["derive", "string"] }
+strum = { version = "0.25.0", features = ["derive"] }
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
@@ -28,10 +29,8 @@ settings = { path = "../settings" }
 simplelog = "0.9"
 smallvec.workspace = true
 story = { path = "../story" }
-strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
 menu = { path = "../menu" }
-ui = { path = "../ui", features = ["stories"] }
 util = { path = "../util" }
 picker = { path = "../picker" }
 
