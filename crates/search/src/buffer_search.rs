@@ -70,7 +70,7 @@ impl BufferSearchBar {
     fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if editor.read(cx).read_only() {
+            color: if editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text

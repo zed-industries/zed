@@ -2818,8 +2818,8 @@ impl InlineAssistant {
 
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
         let is_read_only = !self.codegen.read(cx).idle();
-        self.prompt_editor.update(cx, |editor, _cx| {
-            let was_read_only = editor.read_only();
+        self.prompt_editor.update(cx, |editor, cx| {
+            let was_read_only = editor.read_only(cx);
             if was_read_only != is_read_only {
                 if is_read_only {
                     editor.set_read_only(true);
@@ -3054,7 +3054,7 @@ impl InlineAssistant {
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if self.prompt_editor.read(cx).read_only() {
+            color: if self.prompt_editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text

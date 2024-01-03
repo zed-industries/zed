@@ -54,10 +54,10 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel,
-    Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language,
-    LanguageRegistry, LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal,
-    TransactionId,
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
+    CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
+    Language, LanguageRegistry, LanguageServerName, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TransactionId,
 };
 
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
@@ -2050,8 +2050,8 @@ impl Editor {
         }
     }
 
-    pub fn read_only(&self) -> bool {
-        self.read_only
+    pub fn read_only(&self, cx: &AppContext) -> bool {
+        self.read_only || self.buffer.read(cx).read_only()
     }
 
     pub fn set_read_only(&mut self, read_only: bool) {
@@ -2200,7 +2200,7 @@ impl Editor {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        if self.read_only {
+        if self.read_only(cx) {
             return;
         }
 
@@ -2214,7 +2214,7 @@ impl Editor {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        if self.read_only {
+        if self.read_only(cx) {
             return;
         }
 
@@ -2233,7 +2233,7 @@ impl Editor {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        if self.read_only {
+        if self.read_only(cx) {
             return;
         }
 
@@ -2597,7 +2597,7 @@ impl Editor {
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
 
-        if self.read_only {
+        if self.read_only(cx) {
             return;
         }
 
@@ -3050,7 +3050,7 @@ impl Editor {
         autoindent_mode: Option<AutoindentMode>,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.read_only {
+        if self.read_only(cx) {
             return;
         }
 
@@ -3787,7 +3787,8 @@ impl Editor {
 
         let mut ranges_to_highlight = Vec::new();
         let excerpt_buffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
+            let mut multibuffer =
+                MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
             for (buffer_handle, transaction) in &entries {
                 let buffer = buffer_handle.read(cx);
                 ranges_to_highlight.extend(
@@ -7492,9 +7493,10 @@ impl Editor {
         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
         let mut locations = locations.into_iter().peekable();
         let mut ranges_to_highlight = Vec::new();
+        let capability = workspace.project().read(cx).capability();
 
         let excerpt_buffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(replica_id);
+            let mut multibuffer = MultiBuffer::new(replica_id, capability);
             while let Some(location) = locations.next() {
                 let buffer = location.buffer.read(cx);
                 let mut ranges_for_buffer = Vec::new();

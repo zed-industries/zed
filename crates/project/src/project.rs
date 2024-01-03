@@ -39,11 +39,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
+    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -262,8 +262,7 @@ enum ProjectClientState {
     },
     Remote {
         sharing_has_stopped: bool,
-        // todo!() this should be represented differently!
-        is_read_only: bool,
+        capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
     },
@@ -760,7 +759,7 @@ impl Project {
                 client: client.clone(),
                 client_state: Some(ProjectClientState::Remote {
                     sharing_has_stopped: false,
-                    is_read_only: false,
+                    capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
                 }),
@@ -1625,9 +1624,13 @@ impl Project {
     }
 
     pub fn set_role(&mut self, role: proto::ChannelRole) {
-        if let Some(ProjectClientState::Remote { is_read_only, .. }) = &mut self.client_state {
-            *is_read_only =
-                !(role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin)
+        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
+            *capability = if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin
+            {
+                Capability::ReadWrite
+            } else {
+                Capability::ReadOnly
+            };
         }
     }
 
@@ -1682,12 +1685,15 @@ impl Project {
         }
     }
 
+    pub fn capability(&self) -> Capability {
+        match &self.client_state {
+            Some(ProjectClientState::Remote { capability, .. }) => *capability,
+            Some(ProjectClientState::Local { .. }) | None => Capability::ReadWrite,
+        }
+    }
+
     pub fn is_read_only(&self) -> bool {
-        self.is_disconnected()
-            || match &self.client_state {
-                Some(ProjectClientState::Remote { is_read_only, .. }) => *is_read_only,
-                _ => false,
-            }
+        self.is_disconnected() || self.capability() == Capability::ReadOnly
     }
 
     pub fn is_local(&self) -> bool {
@@ -7215,7 +7221,8 @@ impl Project {
 
                     let buffer_id = state.id;
                     let buffer = cx.new_model(|_| {
-                        Buffer::from_proto(this.replica_id(), state, buffer_file).unwrap()
+                        Buffer::from_proto(this.replica_id(), this.capability(), state, buffer_file)
+                            .unwrap()
                     });
                     this.incomplete_remote_buffers
                         .insert(buffer_id, Some(buffer));
