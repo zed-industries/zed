@@ -9434,7 +9434,6 @@ dependencies = [
  "smallvec",
  "story",
  "strum",
- "theme",
  "theme2",
  "ui2",
  "util",
