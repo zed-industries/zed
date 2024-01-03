@@ -1,33 +1,187 @@
-use std::ops::Range;
+use smallvec::SmallVec;
+use taffy::style::{Display, Position};
 
 use crate::{
-    geometry::{rect::RectF, vector::Vector2F},
-    json::ToJson,
-    AnyElement, Axis, Element, MouseRegion, SizeConstraint, ViewContext,
+    point, AnyElement, BorrowWindow, Bounds, Element, IntoElement, LayoutId, ParentElement, Pixels,
+    Point, Size, Style, WindowContext,
 };
-use serde_json::json;
 
-pub struct Overlay<V> {
-    child: AnyElement<V>,
-    anchor_position: Option<Vector2F>,
-    anchor_corner: AnchorCorner,
-    fit_mode: OverlayFitMode,
-    position_mode: OverlayPositionMode,
-    hoverable: bool,
-    z_index: Option<usize>,
+pub struct OverlayState {
+    child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
-#[derive(Copy, Clone)]
+pub struct Overlay {
+    children: SmallVec<[AnyElement; 2]>,
+    anchor_corner: AnchorCorner,
+    fit_mode: OverlayFitMode,
+    // todo!();
+    anchor_position: Option<Point<Pixels>>,
+    // position_mode: OverlayPositionMode,
+}
+
+/// overlay gives you a floating element that will avoid overflowing the window bounds.
+/// Its children should have no margin to avoid measurement issues.
+pub fn overlay() -> Overlay {
+    Overlay {
+        children: SmallVec::new(),
+        anchor_corner: AnchorCorner::TopLeft,
+        fit_mode: OverlayFitMode::SwitchAnchor,
+        anchor_position: None,
+    }
+}
+
+impl Overlay {
+    /// Sets which corner of the overlay should be anchored to the current position.
+    pub fn anchor(mut self, anchor: AnchorCorner) -> Self {
+        self.anchor_corner = anchor;
+        self
+    }
+
+    /// Sets the position in window co-ordinates
+    /// (otherwise the location the overlay is rendered is used)
+    pub fn position(mut self, anchor: Point<Pixels>) -> Self {
+        self.anchor_position = Some(anchor);
+        self
+    }
+
+    /// Snap to window edge instead of switching anchor corner when an overflow would occur.
+    pub fn snap_to_window(mut self) -> Self {
+        self.fit_mode = OverlayFitMode::SnapToWindow;
+        self
+    }
+}
+
+impl ParentElement for Overlay {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
+        &mut self.children
+    }
+}
+
+impl Element for Overlay {
+    type State = OverlayState;
+
+    fn request_layout(
+        &mut self,
+        _: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (crate::LayoutId, Self::State) {
+        let child_layout_ids = self
+            .children
+            .iter_mut()
+            .map(|child| child.request_layout(cx))
+            .collect::<SmallVec<_>>();
+
+        let overlay_style = Style {
+            position: Position::Absolute,
+            display: Display::Flex,
+            ..Style::default()
+        };
+
+        let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
+
+        (layout_id, OverlayState { child_layout_ids })
+    }
+
+    fn paint(
+        &mut self,
+        bounds: crate::Bounds<crate::Pixels>,
+        element_state: &mut Self::State,
+        cx: &mut WindowContext,
+    ) {
+        if element_state.child_layout_ids.is_empty() {
+            return;
+        }
+
+        let mut child_min = point(Pixels::MAX, Pixels::MAX);
+        let mut child_max = Point::default();
+        for child_layout_id in &element_state.child_layout_ids {
+            let child_bounds = cx.layout_bounds(*child_layout_id);
+            child_min = child_min.min(&child_bounds.origin);
+            child_max = child_max.max(&child_bounds.lower_right());
+        }
+        let size: Size<Pixels> = (child_max - child_min).into();
+        let origin = self.anchor_position.unwrap_or(bounds.origin);
+
+        let mut desired = self.anchor_corner.get_bounds(origin, size);
+        let limits = Bounds {
+            origin: Point::default(),
+            size: cx.viewport_size(),
+        };
+
+        if self.fit_mode == OverlayFitMode::SwitchAnchor {
+            let mut anchor_corner = self.anchor_corner;
+
+            if desired.left() < limits.left() || desired.right() > limits.right() {
+                let switched = anchor_corner
+                    .switch_axis(Axis::Horizontal)
+                    .get_bounds(origin, size);
+                if !(switched.left() < limits.left() || switched.right() > limits.right()) {
+                    anchor_corner = anchor_corner.switch_axis(Axis::Horizontal);
+                    desired = switched
+                }
+            }
+
+            if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
+                let switched = anchor_corner
+                    .switch_axis(Axis::Vertical)
+                    .get_bounds(origin, size);
+                if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
+                    desired = switched;
+                }
+            }
+        }
+
+        // Snap the horizontal edges of the overlay to the horizontal edges of the window if
+        // its horizontal bounds overflow, aligning to the left if it is wider than the limits.
+        if desired.right() > limits.right() {
+            desired.origin.x -= desired.right() - limits.right();
+        }
+        if desired.left() < limits.left() {
+            desired.origin.x = limits.origin.x;
+        }
+
+        // Snap the vertical edges of the overlay to the vertical edges of the window if
+        // its vertical bounds overflow, aligning to the top if it is taller than the limits.
+        if desired.bottom() > limits.bottom() {
+            desired.origin.y -= desired.bottom() - limits.bottom();
+        }
+        if desired.top() < limits.top() {
+            desired.origin.y = limits.origin.y;
+        }
+
+        let mut offset = cx.element_offset() + desired.origin - bounds.origin;
+        offset = point(offset.x.round(), offset.y.round());
+        cx.with_absolute_element_offset(offset, |cx| {
+            cx.break_content_mask(|cx| {
+                for child in &mut self.children {
+                    child.paint(cx);
+                }
+            })
+        })
+    }
+}
+
+impl IntoElement for Overlay {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Copy, Clone, PartialEq)]
 pub enum OverlayFitMode {
     SnapToWindow,
     SwitchAnchor,
-    None,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum OverlayPositionMode {
-    Window,
-    Local,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,18 +193,32 @@ pub enum AnchorCorner {
 }
 
 impl AnchorCorner {
-    fn get_bounds(&self, anchor_position: Vector2F, size: Vector2F) -> RectF {
+    fn get_bounds(&self, origin: Point<Pixels>, size: Size<Pixels>) -> Bounds<Pixels> {
+        let origin = match self {
+            Self::TopLeft => origin,
+            Self::TopRight => Point {
+                x: origin.x - size.width,
+                y: origin.y,
+            },
+            Self::BottomLeft => Point {
+                x: origin.x,
+                y: origin.y - size.height,
+            },
+            Self::BottomRight => Point {
+                x: origin.x - size.width,
+                y: origin.y - size.height,
+            },
+        };
+
+        Bounds { origin, size }
+    }
+
+    pub fn corner(&self, bounds: Bounds<Pixels>) -> Point<Pixels> {
         match self {
-            Self::TopLeft => RectF::from_points(anchor_position, anchor_position + size),
-            Self::TopRight => RectF::from_points(
-                anchor_position - Vector2F::new(size.x(), 0.),
-                anchor_position + Vector2F::new(0., size.y()),
-            ),
-            Self::BottomLeft => RectF::from_points(
-                anchor_position - Vector2F::new(0., size.y()),
-                anchor_position + Vector2F::new(size.x(), 0.),
-            ),
-            Self::BottomRight => RectF::from_points(anchor_position - size, anchor_position),
+            Self::TopLeft => bounds.origin,
+            Self::TopRight => bounds.upper_right(),
+            Self::BottomLeft => bounds.lower_left(),
+            Self::BottomRight => bounds.lower_right(),
         }
     }
 
@@ -69,192 +237,5 @@ impl AnchorCorner {
                 AnchorCorner::BottomRight => AnchorCorner::BottomLeft,
             },
         }
-    }
-}
-
-impl<V: 'static> Overlay<V> {
-    pub fn new(child: impl Element<V>) -> Self {
-        Self {
-            child: child.into_any(),
-            anchor_position: None,
-            anchor_corner: AnchorCorner::TopLeft,
-            fit_mode: OverlayFitMode::None,
-            position_mode: OverlayPositionMode::Window,
-            hoverable: false,
-            z_index: None,
-        }
-    }
-
-    pub fn with_anchor_position(mut self, position: Vector2F) -> Self {
-        self.anchor_position = Some(position);
-        self
-    }
-
-    pub fn with_anchor_corner(mut self, anchor_corner: AnchorCorner) -> Self {
-        self.anchor_corner = anchor_corner;
-        self
-    }
-
-    pub fn with_fit_mode(mut self, fit_mode: OverlayFitMode) -> Self {
-        self.fit_mode = fit_mode;
-        self
-    }
-
-    pub fn with_position_mode(mut self, position_mode: OverlayPositionMode) -> Self {
-        self.position_mode = position_mode;
-        self
-    }
-
-    pub fn with_hoverable(mut self, hoverable: bool) -> Self {
-        self.hoverable = hoverable;
-        self
-    }
-
-    pub fn with_z_index(mut self, z_index: usize) -> Self {
-        self.z_index = Some(z_index);
-        self
-    }
-}
-
-impl<V: 'static> Element<V> for Overlay<V> {
-    type LayoutState = Vector2F;
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> (Vector2F, Self::LayoutState) {
-        let constraint = if self.anchor_position.is_some() {
-            SizeConstraint::new(Vector2F::zero(), cx.window_size())
-        } else {
-            constraint
-        };
-        let size = self.child.layout(constraint, view, cx);
-        (Vector2F::zero(), size)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: RectF,
-        _: RectF,
-        size: &mut Self::LayoutState,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) {
-        let (anchor_position, mut bounds) = match self.position_mode {
-            OverlayPositionMode::Window => {
-                let anchor_position = self.anchor_position.unwrap_or_else(|| bounds.origin());
-                let bounds = self.anchor_corner.get_bounds(anchor_position, *size);
-                (anchor_position, bounds)
-            }
-            OverlayPositionMode::Local => {
-                let anchor_position = self.anchor_position.unwrap_or_default();
-                let bounds = self
-                    .anchor_corner
-                    .get_bounds(bounds.origin() + anchor_position, *size);
-                (anchor_position, bounds)
-            }
-        };
-
-        match self.fit_mode {
-            OverlayFitMode::SnapToWindow => {
-                // Snap the horizontal edges of the overlay to the horizontal edges of the window if
-                // its horizontal bounds overflow
-                if bounds.max_x() > cx.window_size().x() {
-                    let mut lower_right = bounds.lower_right();
-                    lower_right.set_x(cx.window_size().x());
-                    bounds = RectF::from_points(lower_right - *size, lower_right);
-                } else if bounds.min_x() < 0. {
-                    let mut upper_left = bounds.origin();
-                    upper_left.set_x(0.);
-                    bounds = RectF::from_points(upper_left, upper_left + *size);
-                }
-
-                // Snap the vertical edges of the overlay to the vertical edges of the window if
-                // its vertical bounds overflow.
-                if bounds.max_y() > cx.window_size().y() {
-                    let mut lower_right = bounds.lower_right();
-                    lower_right.set_y(cx.window_size().y());
-                    bounds = RectF::from_points(lower_right - *size, lower_right);
-                } else if bounds.min_y() < 0. {
-                    let mut upper_left = bounds.origin();
-                    upper_left.set_y(0.);
-                    bounds = RectF::from_points(upper_left, upper_left + *size);
-                }
-            }
-            OverlayFitMode::SwitchAnchor => {
-                let mut anchor_corner = self.anchor_corner;
-
-                if bounds.max_x() > cx.window_size().x() {
-                    anchor_corner = anchor_corner.switch_axis(Axis::Horizontal);
-                }
-
-                if bounds.max_y() > cx.window_size().y() {
-                    anchor_corner = anchor_corner.switch_axis(Axis::Vertical);
-                }
-
-                if bounds.min_x() < 0. {
-                    anchor_corner = anchor_corner.switch_axis(Axis::Horizontal)
-                }
-
-                if bounds.min_y() < 0. {
-                    anchor_corner = anchor_corner.switch_axis(Axis::Vertical)
-                }
-
-                // Update bounds if needed
-                if anchor_corner != self.anchor_corner {
-                    bounds = anchor_corner.get_bounds(anchor_position, *size)
-                }
-            }
-            OverlayFitMode::None => {}
-        }
-
-        cx.scene().push_stacking_context(None, self.z_index);
-        if self.hoverable {
-            enum OverlayHoverCapture {}
-            // Block hovers in lower stacking contexts
-            let view_id = cx.view_id();
-            cx.scene()
-                .push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
-                    view_id, view_id, bounds,
-                ));
-        }
-        self.child.paint(
-            bounds.origin(),
-            RectF::new(Vector2F::zero(), cx.window_size()),
-            view,
-            cx,
-        );
-        cx.scene().pop_stacking_context();
-    }
-
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, view, cx)
-    }
-
-    fn debug(
-        &self,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> serde_json::Value {
-        json!({
-            "type": "Overlay",
-            "abs_position": self.anchor_position.to_json(),
-            "child": self.child.debug(view, cx),
-        })
     }
 }

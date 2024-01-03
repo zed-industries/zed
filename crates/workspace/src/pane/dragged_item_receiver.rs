@@ -1,15 +1,14 @@
 use super::DraggedItem;
 use crate::{Pane, SplitDirection, Workspace};
-use drag_and_drop::DragAndDrop;
 use gpui::{
     color::Color,
-    elements::{Canvas, MouseEventHandler, ParentElement, Stack},
+    elements::{Canvas, MouseEventHandler, ParentComponent, Stack},
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,
     AppContext, Element, EventContext, MouseState, Quad, ViewContext, WeakViewHandle,
 };
-use project::ProjectEntryId;
+use project2::ProjectEntryId;
 
 pub fn dragged_item_receiver<Tag, D, F>(
     pane: &Pane,
@@ -236,5 +235,5 @@ fn drop_split_direction(
 }
 
 fn overlay_color(cx: &AppContext) -> Color {
-    theme::current(cx).workspace.drop_target_overlay_color
+    theme2::current(cx).workspace.drop_target_overlay_color
 }

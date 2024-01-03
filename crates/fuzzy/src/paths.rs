@@ -1,11 +1,10 @@
+use gpui::BackgroundExecutor;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-
-use gpui::executor;
 
 use crate::{
     matcher::{Match, MatchCandidate, Matcher},
@@ -135,7 +134,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
-    background: Arc<executor::Background>,
+    executor: BackgroundExecutor,
 ) -> Vec<PathMatch> {
     let path_count: usize = candidate_sets.iter().map(|s| s.len()).sum();
     if path_count == 0 {
@@ -149,13 +148,13 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let query = &query;
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
-    let num_cpus = background.num_cpus().min(path_count);
+    let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = (path_count + num_cpus - 1) / num_cpus;
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
-    background
+    executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
                 let relative_to = relative_to.clone();

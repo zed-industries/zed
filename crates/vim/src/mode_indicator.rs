@@ -1,58 +1,40 @@
-use gpui::{
-    elements::{Empty, Label},
-    AnyElement, Element, Entity, Subscription, View, ViewContext,
-};
+use gpui::{div, Element, Render, Subscription, ViewContext};
 use settings::SettingsStore;
-use workspace::{item::ItemHandle, StatusItemView};
+use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
-use crate::{state::Mode, Vim, VimEvent, VimModeSetting};
+use crate::{state::Mode, Vim};
 
 pub struct ModeIndicator {
     pub mode: Option<Mode>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ModeIndicator {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let handle = cx.handle().downgrade();
+        let _subscriptions = vec![
+            cx.observe_global::<Vim>(|this, cx| this.update_mode(cx)),
+            cx.observe_global::<SettingsStore>(|this, cx| this.update_mode(cx)),
+        ];
 
-        let _subscription = cx.subscribe_global::<VimEvent, _>(move |&event, cx| {
-            if let Some(mode_indicator) = handle.upgrade(cx) {
-                match event {
-                    VimEvent::ModeChanged { mode } => {
-                        mode_indicator.window().update(cx, |cx| {
-                            mode_indicator.update(cx, move |mode_indicator, cx| {
-                                mode_indicator.set_mode(mode, cx);
-                            })
-                        });
-                    }
-                }
-            }
-        });
+        let mut this = Self {
+            mode: None,
+            _subscriptions,
+        };
+        this.update_mode(cx);
+        this
+    }
 
-        cx.observe_global::<SettingsStore, _>(move |mode_indicator, cx| {
-            if settings::get::<VimModeSetting>(cx).0 {
-                mode_indicator.mode = cx
-                    .has_global::<Vim>()
-                    .then(|| cx.global::<Vim>().state().mode);
-            } else {
-                mode_indicator.mode.take();
-            }
-        })
-        .detach();
-
+    fn update_mode(&mut self, cx: &mut ViewContext<Self>) {
         // Vim doesn't exist in some tests
-        let mode = cx
-            .has_global::<Vim>()
-            .then(|| {
-                let vim = cx.global::<Vim>();
-                vim.enabled.then(|| vim.state().mode)
-            })
-            .flatten();
+        if !cx.has_global::<Vim>() {
+            return;
+        }
 
-        Self {
-            mode,
-            _subscription,
+        let vim = Vim::read(cx);
+        if vim.enabled {
+            self.mode = Some(vim.state().mode);
+        } else {
+            self.mode = None;
         }
     }
 
@@ -64,21 +46,11 @@ impl ModeIndicator {
     }
 }
 
-impl Entity for ModeIndicator {
-    type Event = ();
-}
-
-impl View for ModeIndicator {
-    fn ui_name() -> &'static str {
-        "ModeIndicatorView"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+impl Render for ModeIndicator {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(mode) = self.mode.as_ref() else {
-            return Empty::new().into_any();
+            return div().into_any();
         };
-
-        let theme = &theme::current(cx).workspace.status_bar;
 
         let text = match mode {
             Mode::Normal => "-- NORMAL --",
@@ -87,10 +59,7 @@ impl View for ModeIndicator {
             Mode::VisualLine => "-- VISUAL LINE --",
             Mode::VisualBlock => "-- VISUAL BLOCK --",
         };
-        Label::new(text, theme.vim_mode_indicator.text.clone())
-            .contained()
-            .with_style(theme.vim_mode_indicator.container)
-            .into_any()
+        Label::new(text).size(LabelSize::Small).into_any_element()
     }
 }
 

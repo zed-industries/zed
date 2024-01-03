@@ -5,14 +5,14 @@ use crate::{
     visual::visual_motion,
     Vim,
 };
-use gpui::{actions, Action, AppContext, WindowContext};
+use gpui::{actions, Action, ViewContext, WindowContext};
 use workspace::Workspace;
 
-actions!(vim, [Repeat, EndRepeat,]);
+actions!(vim, [Repeat, EndRepeat]);
 
 fn should_replay(action: &Box<dyn Action>) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::ShowCharacterPalette.id() == action.id() {
+    if editor::ShowCharacterPalette.partial_eq(&**action) {
         return false;
     }
     true
@@ -21,14 +21,14 @@ fn should_replay(action: &Box<dyn Action>) -> bool {
 fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
     match action {
         ReplayableAction::Action(action) => {
-            if super::InsertBefore.id() == action.id()
-                || super::InsertAfter.id() == action.id()
-                || super::InsertFirstNonWhitespace.id() == action.id()
-                || super::InsertEndOfLine.id() == action.id()
+            if super::InsertBefore.partial_eq(&**action)
+                || super::InsertAfter.partial_eq(&**action)
+                || super::InsertFirstNonWhitespace.partial_eq(&**action)
+                || super::InsertEndOfLine.partial_eq(&**action)
             {
                 Some(super::InsertBefore.boxed_clone())
-            } else if super::InsertLineAbove.id() == action.id()
-                || super::InsertLineBelow.id() == action.id()
+            } else if super::InsertLineAbove.partial_eq(&**action)
+                || super::InsertLineBelow.partial_eq(&**action)
             {
                 Some(super::InsertLineBelow.boxed_clone())
             } else {
@@ -39,15 +39,15 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
     }
 }
 
-pub(crate) fn init(cx: &mut AppContext) {
-    cx.add_action(|_: &mut Workspace, _: &EndRepeat, cx| {
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &EndRepeat, cx| {
         Vim::update(cx, |vim, cx| {
             vim.workspace_state.replaying = false;
             vim.switch_mode(Mode::Normal, false, cx)
         });
     });
 
-    cx.add_action(|_: &mut Workspace, _: &Repeat, cx| repeat(cx, false));
+    workspace.register_action(|_: &mut Workspace, _: &Repeat, cx| repeat(cx, false));
 }
 
 pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
@@ -142,7 +142,7 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
     // 3 times, instead it inserts the content thrice at the insert position.
     if let Some(to_repeat) = repeatable_insert(&actions[0]) {
         if let Some(ReplayableAction::Action(action)) = actions.last() {
-            if action.id() == NormalBefore.id() {
+            if NormalBefore.partial_eq(&**action) {
                 actions.pop();
             }
         }
@@ -166,50 +166,43 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
     }
 
     Vim::update(cx, |vim, _| vim.workspace_state.replaying = true);
-    let window = cx.window();
-    cx.app_context()
-        .spawn(move |mut cx| async move {
-            editor.update(&mut cx, |editor, _| {
-                editor.show_local_selections = false;
-            })?;
-            for action in actions {
-                match action {
-                    ReplayableAction::Action(action) => {
-                        if should_replay(&action) {
-                            window
-                                .dispatch_action(editor.id(), action.as_ref(), &mut cx)
-                                .ok_or_else(|| anyhow::anyhow!("window was closed"))
-                        } else {
-                            Ok(())
-                        }
+    let window = cx.window_handle();
+    cx.spawn(move |mut cx| async move {
+        editor.update(&mut cx, |editor, _| {
+            editor.show_local_selections = false;
+        })?;
+        for action in actions {
+            match action {
+                ReplayableAction::Action(action) => {
+                    if should_replay(&action) {
+                        window.update(&mut cx, |_, cx| cx.dispatch_action(action))
+                    } else {
+                        Ok(())
                     }
-                    ReplayableAction::Insertion {
-                        text,
-                        utf16_range_to_replace,
-                    } => editor.update(&mut cx, |editor, cx| {
-                        editor.replay_insert_event(&text, utf16_range_to_replace.clone(), cx)
-                    }),
-                }?
-            }
-            editor.update(&mut cx, |editor, _| {
-                editor.show_local_selections = true;
-            })?;
-            window
-                .dispatch_action(editor.id(), &EndRepeat, &mut cx)
-                .ok_or_else(|| anyhow::anyhow!("window was closed"))
-        })
-        .detach_and_log_err(cx);
+                }
+                ReplayableAction::Insertion {
+                    text,
+                    utf16_range_to_replace,
+                } => editor.update(&mut cx, |editor, cx| {
+                    editor.replay_insert_event(&text, utf16_range_to_replace.clone(), cx)
+                }),
+            }?
+        }
+        editor.update(&mut cx, |editor, _| {
+            editor.show_local_selections = true;
+        })?;
+        window.update(&mut cx, |_, cx| cx.dispatch_action(EndRepeat.boxed_clone()))
+    })
+    .detach_and_log_err(cx);
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
     use editor::test::editor_lsp_test_context::EditorLspTestContext;
     use futures::StreamExt;
     use indoc::indoc;
 
-    use gpui::{executor::Deterministic, View};
+    use gpui::InputHandler;
 
     use crate::{
         state::Mode,
@@ -217,7 +210,7 @@ mod test {
     };
 
     #[gpui::test]
-    async fn test_dot_repeat(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+    async fn test_dot_repeat(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         // "o"
@@ -226,38 +219,32 @@ mod test {
             .await;
         cx.assert_shared_state("hello\nworlˇd").await;
         cx.simulate_shared_keystrokes(["."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state("hello\nworld\nworlˇd").await;
 
         // "d"
         cx.simulate_shared_keystrokes(["^", "d", "f", "o"]).await;
         cx.simulate_shared_keystrokes(["g", "g", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state("ˇ\nworld\nrld").await;
 
         // "p" (note that it pastes the current clipboard)
         cx.simulate_shared_keystrokes(["j", "y", "y", "p"]).await;
         cx.simulate_shared_keystrokes(["shift-g", "y", "y", "."])
             .await;
-        deterministic.run_until_parked();
         cx.assert_shared_state("\nworld\nworld\nrld\nˇrld").await;
 
         // "~" (note that counts apply to the action taken, not . itself)
         cx.set_shared_state("ˇthe quick brown fox").await;
         cx.simulate_shared_keystrokes(["2", "~", "."]).await;
-        deterministic.run_until_parked();
         cx.set_shared_state("THE ˇquick brown fox").await;
         cx.simulate_shared_keystrokes(["3", "."]).await;
-        deterministic.run_until_parked();
         cx.set_shared_state("THE QUIˇck brown fox").await;
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.simulate_shared_keystrokes(["."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state("THE QUICK ˇbrown fox").await;
     }
 
     #[gpui::test]
-    async fn test_repeat_ime(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+    async fn test_repeat_ime(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("hˇllo", Mode::Normal);
@@ -271,15 +258,12 @@ mod test {
         cx.simulate_keystrokes(["escape"]);
         cx.assert_state("hˇällo", Mode::Normal);
         cx.simulate_keystrokes(["."]);
-        deterministic.run_until_parked();
         cx.assert_state("hˇäällo", Mode::Normal);
     }
 
     #[gpui::test]
-    async fn test_repeat_completion(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_repeat_completion(cx: &mut gpui::TestAppContext) {
+        VimTestContext::init(cx);
         let cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
@@ -340,7 +324,6 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes(["j", "."]);
-        deterministic.run_until_parked();
         cx.assert_state(
             indoc! {"
                 one.second!
@@ -352,7 +335,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_repeat_visual(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+    async fn test_repeat_visual(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         // single-line (3 columns)
@@ -371,7 +354,6 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["j", "w", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             "o quick brown
             fox ˇops over
@@ -379,7 +361,6 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["f", "r", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             "o quick brown
             fox ops oveˇothe lazy dog"
@@ -404,7 +385,6 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             "the ˇumps over
             fox jumps over
@@ -412,14 +392,12 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["w", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             "the umps ˇumps over
             the lazy dog"
         })
         .await;
         cx.simulate_shared_keystrokes(["j", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             "the umps umps over
             the ˇog"
@@ -442,7 +420,6 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["j", "4", "l", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             "othe quick brown
             ofoxˇo jumps over
@@ -466,7 +443,6 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["j", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             "o
             ˇo
@@ -476,10 +452,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_repeat_motion_counts(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_repeat_motion_counts(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {
@@ -496,7 +469,6 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["j", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             " brown
             ˇ over
@@ -504,7 +476,6 @@ mod test {
         })
         .await;
         cx.simulate_shared_keystrokes(["j", "2", "."]).await;
-        deterministic.run_until_parked();
         cx.assert_shared_state(indoc! {
             " brown
              over
@@ -514,15 +485,12 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_record_interrupted(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_record_interrupted(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("ˇhello\n", Mode::Normal);
-        cx.simulate_keystrokes(["4", "i", "j", "cmd-shift-p", "escape", "escape"]);
-        deterministic.run_until_parked();
+        cx.simulate_keystrokes(["4", "i", "j", "cmd-shift-p", "escape"]);
+        cx.simulate_keystrokes(["escape"]);
         cx.assert_state("ˇjhello\n", Mode::Normal);
     }
 }

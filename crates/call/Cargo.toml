@@ -35,11 +35,13 @@ util = { path = "../util" }
 anyhow.workspace = true
 async-broadcast = "0.4"
 futures.workspace = true
+image = "0.23"
 postage.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_derive.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

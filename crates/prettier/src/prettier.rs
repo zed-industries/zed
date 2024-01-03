@@ -1,16 +1,16 @@
-use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
 use anyhow::Context;
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use gpui::{AsyncAppContext, ModelHandle};
-use language::language_settings::language_settings;
-use language::{Buffer, Diff};
+use gpui::{AsyncAppContext, Model};
+use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
+use std::{
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::paths::{PathMatcher, DEFAULT_PRETTIER_DIR};
 
 #[derive(Clone)]
@@ -100,39 +100,39 @@ impl Prettier {
                     }
                 } else {
                     match package_json_contents.get("workspaces") {
-                        Some(serde_json::Value::Array(workspaces)) => {
-                            match &project_path_with_prettier_dependency {
-                                Some(project_path_with_prettier_dependency) => {
-                                    let subproject_path = project_path_with_prettier_dependency.strip_prefix(&path_to_check).expect("traversing path parents, should be able to strip prefix");
-                                    if workspaces.iter().filter_map(|value| {
-                                        if let serde_json::Value::String(s) = value {
-                                            Some(s.clone())
+                            Some(serde_json::Value::Array(workspaces)) => {
+                                match &project_path_with_prettier_dependency {
+                                    Some(project_path_with_prettier_dependency) => {
+                                        let subproject_path = project_path_with_prettier_dependency.strip_prefix(&path_to_check).expect("traversing path parents, should be able to strip prefix");
+                                        if workspaces.iter().filter_map(|value| {
+                                            if let serde_json::Value::String(s) = value {
+                                                Some(s.clone())
+                                            } else {
+                                                log::warn!("Skipping non-string 'workspaces' value: {value:?}");
+                                                None
+                                            }
+                                        }).any(|workspace_definition| {
+                                            if let Some(path_matcher) = PathMatcher::new(&workspace_definition).ok() {
+                                                path_matcher.is_match(subproject_path)
+                                            } else {
+                                                workspace_definition == subproject_path.to_string_lossy()
+                                            }
+                                        }) {
+                                            anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}, but it's not installed into workspace root's node_modules");
+                                            log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}");
+                                            return Ok(ControlFlow::Continue(Some(path_to_check)));
                                         } else {
-                                            log::warn!("Skipping non-string 'workspaces' value: {value:?}");
-                                            None
+                                            log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but is not included in its package.json workspaces {workspaces:?}");
                                         }
-                                    }).any(|workspace_definition| {
-                                        if let Some(path_matcher) = PathMatcher::new(&workspace_definition).ok() {
-                                            path_matcher.is_match(subproject_path)
-                                        } else {
-                                            workspace_definition == subproject_path.to_string_lossy()
-                                        }
-                                    }) {
-                                        anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}, but it's not installed into workspace root's node_modules");
-                                        log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {project_path_with_prettier_dependency:?}");
-                                        return Ok(ControlFlow::Continue(Some(path_to_check)));
-                                    } else {
-                                        log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but is not included in its package.json workspaces {workspaces:?}");
+                                    }
+                                    None => {
+                                        log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but has no prettier in its package.json");
                                     }
                                 }
-                                None => {
-                                    log::warn!("Skipping path {path_to_check:?} that has prettier in its 'node_modules' subdirectory, but has no prettier in its package.json");
-                                }
-                            }
-                        },
-                        Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
-                        None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
-                    }
+                            },
+                            Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
+                            None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
+                        }
                 }
             }
 
@@ -172,7 +172,7 @@ impl Prettier {
     ) -> anyhow::Result<Self> {
         use lsp::LanguageServerBinary;
 
-        let background = cx.background();
+        let executor = cx.background_executor().clone();
         anyhow::ensure!(
             prettier_dir.is_dir(),
             "Prettier dir {prettier_dir:?} is not a directory"
@@ -183,7 +183,7 @@ impl Prettier {
             "no prettier server package found at {prettier_server:?}"
         );
 
-        let node_path = background
+        let node_path = executor
             .spawn(async move { node.binary_path().await })
             .await?;
         let server = LanguageServer::new(
@@ -198,7 +198,7 @@ impl Prettier {
             cx,
         )
         .context("prettier server creation")?;
-        let server = background
+        let server = executor
             .spawn(server.initialize(None))
             .await
             .context("prettier server initialization")?;
@@ -211,124 +211,154 @@ impl Prettier {
 
     pub async fn format(
         &self,
-        buffer: &ModelHandle<Buffer>,
+        buffer: &Model<Buffer>,
         buffer_path: Option<PathBuf>,
-        cx: &AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> anyhow::Result<Diff> {
         match self {
             Self::Real(local) => {
-                let params = buffer.read_with(cx, |buffer, cx| {
-                    let buffer_language = buffer.language();
-                    let parser_with_plugins = buffer_language.and_then(|l| {
-                        let prettier_parser = l.prettier_parser_name()?;
-                        let mut prettier_plugins = l
-                            .lsp_adapters()
-                            .iter()
-                            .flat_map(|adapter| adapter.prettier_plugins())
-                            .collect::<Vec<_>>();
-                        prettier_plugins.dedup();
-                        Some((prettier_parser, prettier_plugins))
-                    });
+                let params = buffer
+                    .update(cx, |buffer, cx| {
+                        let buffer_language = buffer.language();
+                        let parser_with_plugins = buffer_language.and_then(|l| {
+                            let prettier_parser = l.prettier_parser_name()?;
+                            let mut prettier_plugins = l
+                                .lsp_adapters()
+                                .iter()
+                                .flat_map(|adapter| adapter.prettier_plugins())
+                                .collect::<Vec<_>>();
+                            prettier_plugins.dedup();
+                            Some((prettier_parser, prettier_plugins))
+                        });
 
-                    let prettier_node_modules = self.prettier_dir().join("node_modules");
-                    anyhow::ensure!(prettier_node_modules.is_dir(), "Prettier node_modules dir does not exist: {prettier_node_modules:?}");
-                    let plugin_name_into_path = |plugin_name: &str| {
-                        let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
-                        for possible_plugin_path in [
-                            prettier_plugin_dir.join("dist").join("index.mjs"),
-                            prettier_plugin_dir.join("dist").join("index.js"),
-                            prettier_plugin_dir.join("dist").join("plugin.js"),
-                            prettier_plugin_dir.join("index.mjs"),
-                            prettier_plugin_dir.join("index.js"),
-                            prettier_plugin_dir.join("plugin.js"),
-                            prettier_plugin_dir,
-                        ] {
-                            if possible_plugin_path.is_file() {
-                                return Some(possible_plugin_path);
-                            }
-                        }
-                        None
-                    };
-                    let (parser, located_plugins) = match parser_with_plugins {
-                        Some((parser, plugins)) => {
-                            // Tailwind plugin requires being added last
-                            // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
-                            let mut add_tailwind_back = false;
-
-                            let mut plugins = plugins.into_iter().filter(|&&plugin_name| {
-                                if plugin_name == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
-                                    add_tailwind_back = true;
-                                    false
-                                } else {
-                                    true
+                        let prettier_node_modules = self.prettier_dir().join("node_modules");
+                        anyhow::ensure!(
+                            prettier_node_modules.is_dir(),
+                            "Prettier node_modules dir does not exist: {prettier_node_modules:?}"
+                        );
+                        let plugin_name_into_path = |plugin_name: &str| {
+                            let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
+                            for possible_plugin_path in [
+                                prettier_plugin_dir.join("dist").join("index.mjs"),
+                                prettier_plugin_dir.join("dist").join("index.js"),
+                                prettier_plugin_dir.join("dist").join("plugin.js"),
+                                prettier_plugin_dir.join("index.mjs"),
+                                prettier_plugin_dir.join("index.js"),
+                                prettier_plugin_dir.join("plugin.js"),
+                                prettier_plugin_dir,
+                            ] {
+                                if possible_plugin_path.is_file() {
+                                    return Some(possible_plugin_path);
                                 }
-                            }).map(|plugin_name| (plugin_name, plugin_name_into_path(plugin_name))).collect::<Vec<_>>();
-                            if add_tailwind_back {
-                                plugins.push((&TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME, plugin_name_into_path(TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME)));
                             }
-                            (Some(parser.to_string()), plugins)
-                        },
-                        None => (None, Vec::new()),
-                    };
+                            None
+                        };
+                        let (parser, located_plugins) = match parser_with_plugins {
+                            Some((parser, plugins)) => {
+                                // Tailwind plugin requires being added last
+                                // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
+                                let mut add_tailwind_back = false;
 
-                    let prettier_options = if self.is_default() {
-                        let language_settings = language_settings(buffer_language, buffer.file(), cx);
-                        let mut options = language_settings.prettier.clone();
-                        if !options.contains_key("tabWidth") {
-                            options.insert(
-                                "tabWidth".to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(
-                                    language_settings.tab_size.get(),
-                                )),
-                            );
-                        }
-                        if !options.contains_key("printWidth") {
-                            options.insert(
-                                "printWidth".to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(
-                                    language_settings.preferred_line_length,
-                                )),
-                            );
-                        }
-                        Some(options)
-                    } else {
-                        None
-                    };
+                                let mut plugins = plugins
+                                    .into_iter()
+                                    .filter(|&&plugin_name| {
+                                        if plugin_name == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
+                                            add_tailwind_back = true;
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    })
+                                    .map(|plugin_name| {
+                                        (plugin_name, plugin_name_into_path(plugin_name))
+                                    })
+                                    .collect::<Vec<_>>();
+                                if add_tailwind_back {
+                                    plugins.push((
+                                        &TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME,
+                                        plugin_name_into_path(
+                                            TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME,
+                                        ),
+                                    ));
+                                }
+                                (Some(parser.to_string()), plugins)
+                            }
+                            None => (None, Vec::new()),
+                        };
 
-                    let plugins = located_plugins.into_iter().filter_map(|(plugin_name, located_plugin_path)| {
-                        match located_plugin_path {
-                            Some(path) => Some(path),
-                            None => {
-                                log::error!("Have not found plugin path for {plugin_name:?} inside {prettier_node_modules:?}");
-                                None},
-                        }
-                    }).collect();
-                    log::debug!("Formatting file {:?} with prettier, plugins :{plugins:?}, options: {prettier_options:?}", buffer.file().map(|f| f.full_path(cx)));
+                        let prettier_options = if self.is_default() {
+                            let language_settings =
+                                language_settings(buffer_language, buffer.file(), cx);
+                            let mut options = language_settings.prettier.clone();
+                            if !options.contains_key("tabWidth") {
+                                options.insert(
+                                    "tabWidth".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        language_settings.tab_size.get(),
+                                    )),
+                                );
+                            }
+                            if !options.contains_key("printWidth") {
+                                options.insert(
+                                    "printWidth".to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(
+                                        language_settings.preferred_line_length,
+                                    )),
+                                );
+                            }
+                            Some(options)
+                        } else {
+                            None
+                        };
 
-                    anyhow::Ok(FormatParams {
-                        text: buffer.text(),
-                        options: FormatOptions {
-                            parser,
+                        let plugins = located_plugins
+                            .into_iter()
+                            .filter_map(|(plugin_name, located_plugin_path)| {
+                                match located_plugin_path {
+                                    Some(path) => Some(path),
+                                    None => {
+                                        log::error!(
+                                            "Have not found plugin path for {:?} inside {:?}",
+                                            plugin_name,
+                                            prettier_node_modules
+                                        );
+                                        None
+                                    }
+                                }
+                            })
+                            .collect();
+                        log::debug!(
+                            "Formatting file {:?} with prettier, plugins :{:?}, options: {:?}",
                             plugins,
-                            path: buffer_path,
                             prettier_options,
-                        },
-                    })
-                }).context("prettier params calculation")?;
+                            buffer.file().map(|f| f.full_path(cx))
+                        );
+
+                        anyhow::Ok(FormatParams {
+                            text: buffer.text(),
+                            options: FormatOptions {
+                                parser,
+                                plugins,
+                                path: buffer_path,
+                                prettier_options,
+                            },
+                        })
+                    })?
+                    .context("prettier params calculation")?;
                 let response = local
                     .server
                     .request::<Format>(params)
                     .await
                     .context("prettier format request")?;
-                let diff_task = buffer.read_with(cx, |buffer, cx| buffer.diff(response.text, cx));
+                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
-                .read_with(cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     let formatted_text = buffer.text() + FORMAT_SUFFIX;
                     buffer.diff(formatted_text, cx)
-                })
+                })?
                 .await),
         }
     }
@@ -471,7 +501,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_finds_nothing(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -547,7 +577,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_in_simple_npm_projects(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -612,7 +642,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_for_not_installed(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -662,6 +692,7 @@ mod tests {
                 assert!(message.contains("/root/work/web_blog"), "Error message should mention which project had prettier defined");
             },
         };
+
         assert_eq!(
             Prettier::locate_prettier_installation(
                 fs.as_ref(),
@@ -704,7 +735,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_prettier_lookup_in_npm_workspaces(cx: &mut gpui::TestAppContext) {
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -785,7 +816,7 @@ mod tests {
     async fn test_prettier_lookup_in_npm_workspaces_for_not_installed(
         cx: &mut gpui::TestAppContext,
     ) {
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({

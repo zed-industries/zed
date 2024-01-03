@@ -25,15 +25,18 @@ impl FeatureFlag for ChannelsAlpha {
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut V, &mut ViewContext<V>) + 'static;
+        F: Fn(bool, &mut V, &mut ViewContext<V>) + Send + Sync + 'static;
 }
 
-impl<V: 'static> FeatureFlagViewExt<V> for ViewContext<'_, '_, V> {
+impl<V> FeatureFlagViewExt<V> for ViewContext<'_, V>
+where
+    V: 'static,
+{
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
         F: Fn(bool, &mut V, &mut ViewContext<V>) + 'static,
     {
-        self.observe_global::<FeatureFlags, _>(move |v, cx| {
+        self.observe_global::<FeatureFlags>(move |v, cx| {
             let feature_flags = cx.global::<FeatureFlags>();
             callback(feature_flags.has_flag(<T as FeatureFlag>::NAME), v, cx);
         })
@@ -49,16 +52,14 @@ pub trait FeatureFlagAppExt {
 
 impl FeatureFlagAppExt for AppContext {
     fn update_flags(&mut self, staff: bool, flags: Vec<String>) {
-        self.update_default_global::<FeatureFlags, _, _>(|feature_flags, _| {
-            feature_flags.staff = staff;
-            feature_flags.flags = flags;
-        })
+        let feature_flags = self.default_global::<FeatureFlags>();
+        feature_flags.staff = staff;
+        feature_flags.flags = flags;
     }
 
     fn set_staff(&mut self, staff: bool) {
-        self.update_default_global::<FeatureFlags, _, _>(|feature_flags, _| {
-            feature_flags.staff = staff;
-        })
+        let feature_flags = self.default_global::<FeatureFlags>();
+        feature_flags.staff = staff;
     }
 
     fn has_flag<T: FeatureFlag>(&self) -> bool {

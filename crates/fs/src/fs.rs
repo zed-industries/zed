@@ -27,8 +27,6 @@ use collections::{btree_map, BTreeMap};
 use repository::{FakeGitRepositoryState, GitFileStatus};
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::Weak;
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
@@ -290,7 +288,7 @@ impl Fs for RealFs {
 pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
     state: Mutex<FakeFsState>,
-    executor: Weak<gpui::executor::Background>,
+    executor: gpui::BackgroundExecutor,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -436,9 +434,9 @@ lazy_static::lazy_static! {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
-    pub fn new(executor: Arc<gpui::executor::Background>) -> Arc<Self> {
+    pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
         Arc::new(Self {
-            executor: Arc::downgrade(&executor),
+            executor,
             state: Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
@@ -699,12 +697,8 @@ impl FakeFs {
         self.state.lock().metadata_call_count
     }
 
-    async fn simulate_random_delay(&self) {
-        self.executor
-            .upgrade()
-            .expect("executor has been dropped")
-            .simulate_random_delay()
-            .await;
+    fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
+        self.executor.simulate_random_delay()
     }
 }
 
@@ -1103,9 +1097,7 @@ impl Fs for FakeFs {
             let result = events.iter().any(|event| event.path.starts_with(&path));
             let executor = executor.clone();
             async move {
-                if let Some(executor) = executor.clone().upgrade() {
-                    executor.simulate_random_delay().await;
-                }
+                executor.simulate_random_delay().await;
                 result
             }
         }))
@@ -1230,13 +1222,12 @@ pub fn copy_recursive<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::BackgroundExecutor;
     use serde_json::json;
 
     #[gpui::test]
-    async fn test_fake_fs(cx: &mut TestAppContext) {
-        let fs = FakeFs::new(cx.background());
-
+    async fn test_fake_fs(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
         fs.insert_tree(
             "/root",
             json!({

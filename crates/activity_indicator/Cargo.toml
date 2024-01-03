@@ -15,10 +15,12 @@ language = { path = "../language" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 theme = { path = "../theme" }
-workspace = { path = "../workspace" }
+workspace = { path = "../workspace", package = "workspace" }
 
+anyhow.workspace = true
 futures.workspace = true
 smallvec.workspace = true
 

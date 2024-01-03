@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_both_dbs;
-use gpui::executor::{Background, Deterministic};
+use gpui::TestAppContext;
 use pretty_assertions::{assert_eq, assert_ne};
 use std::sync::Arc;
 use tests::TestDb;
@@ -509,8 +509,8 @@ fn test_fuzzy_like_string() {
 }
 
 #[gpui::test]
-async fn test_fuzzy_search_users() {
-    let test_db = TestDb::postgres(build_background_executor());
+async fn test_fuzzy_search_users(cx: &mut TestAppContext) {
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -630,8 +630,4 @@ async fn test_non_matching_release_channels(db: &Arc<Database>) {
         .await;
 
     assert!(result.is_ok())
-}
-
-fn build_background_executor() -> Arc<Background> {
-    Deterministic::new(0).build_background()
 }

@@ -1,14 +1,14 @@
-use std::{
-    borrow::Cow,
-    cmp::{self, Ordering},
-    sync::{atomic::AtomicBool, Arc},
-};
-
-use gpui::executor;
-
 use crate::{
     matcher::{Match, MatchCandidate, Matcher},
     CharBag,
+};
+use gpui::BackgroundExecutor;
+use std::{
+    borrow::Cow,
+    cmp::{self, Ordering},
+    iter,
+    ops::Range,
+    sync::atomic::AtomicBool,
 };
 
 #[derive(Clone, Debug)]
@@ -56,6 +56,32 @@ pub struct StringMatch {
     pub string: String,
 }
 
+impl StringMatch {
+    pub fn ranges<'a>(&'a self) -> impl 'a + Iterator<Item = Range<usize>> {
+        let mut positions = self.positions.iter().peekable();
+        iter::from_fn(move || {
+            while let Some(start) = positions.next().copied() {
+                let mut end = start + self.char_len_at_index(start);
+                while let Some(next_start) = positions.peek() {
+                    if end == **next_start {
+                        end += self.char_len_at_index(end);
+                        positions.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                return Some(start..end);
+            }
+            None
+        })
+    }
+
+    fn char_len_at_index(&self, ix: usize) -> usize {
+        self.string[ix..].chars().next().unwrap().len_utf8()
+    }
+}
+
 impl PartialEq for StringMatch {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other).is_eq()
@@ -85,7 +111,7 @@ pub async fn match_strings(
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
-    background: Arc<executor::Background>,
+    executor: BackgroundExecutor,
 ) -> Vec<StringMatch> {
     if candidates.is_empty() || max_results == 0 {
         return Default::default();
@@ -110,13 +136,13 @@ pub async fn match_strings(
     let query = &query;
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
-    let num_cpus = background.num_cpus().min(candidates.len());
+    let num_cpus = executor.num_cpus().min(candidates.len());
     let segment_size = (candidates.len() + num_cpus - 1) / num_cpus;
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
-    background
+    executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
                 let cancel_flag = &cancel_flag;

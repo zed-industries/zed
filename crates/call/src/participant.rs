@@ -2,11 +2,11 @@ use anyhow::{anyhow, Result};
 use client::ParticipantIndex;
 use client::{proto, User};
 use collections::HashMap;
-use gpui::WeakModelHandle;
+use gpui::WeakModel;
 pub use live_kit_client::Frame;
-use live_kit_client::RemoteAudioTrack;
+pub use live_kit_client::{RemoteAudioTrack, RemoteVideoTrack};
 use project::Project;
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ParticipantLocation {
@@ -35,7 +35,7 @@ impl ParticipantLocation {
 #[derive(Clone, Default)]
 pub struct LocalParticipant {
     pub projects: Vec<proto::ParticipantProject>,
-    pub active_project: Option<WeakModelHandle<Project>>,
+    pub active_project: Option<WeakModel<Project>>,
 }
 
 #[derive(Clone, Debug)]
@@ -49,21 +49,4 @@ pub struct RemoteParticipant {
     pub speaking: bool,
     pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
     pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
-}
-
-#[derive(Clone)]
-pub struct RemoteVideoTrack {
-    pub(crate) live_kit_track: Arc<live_kit_client::RemoteVideoTrack>,
-}
-
-impl fmt::Debug for RemoteVideoTrack {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RemoteVideoTrack").finish()
-    }
-}
-
-impl RemoteVideoTrack {
-    pub fn frames(&self) -> async_broadcast::Receiver<Frame> {
-        self.live_kit_track.frames()
-    }
 }

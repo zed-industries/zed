@@ -6,14 +6,14 @@ use crate::{
 };
 use ai::test::FakeEmbeddingProvider;
 
-use gpui::{executor::Deterministic, Task, TestAppContext};
+use gpui::{Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{project_settings::ProjectSettings, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::SystemTime};
 use unindent::Unindent;
 use util::{paths::PathMatcher, RandomCharIter};
@@ -26,10 +26,10 @@ fn init_logger() {
 }
 
 #[gpui::test]
-async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+async fn test_semantic_index(cx: &mut TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/the-root",
         json!({
@@ -91,9 +91,10 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
     });
     let pending_file_count =
         semantic_index.read_with(cx, |index, _| index.pending_file_count(&project).unwrap());
-    deterministic.run_until_parked();
+    cx.background_executor.run_until_parked();
     assert_eq!(*pending_file_count.borrow(), 3);
-    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
+    cx.background_executor
+        .advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
     assert_eq!(*pending_file_count.borrow(), 0);
 
     let search_results = search_results.await.unwrap();
@@ -170,13 +171,15 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
     .await
     .unwrap();
 
-    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
+    cx.background_executor
+        .advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
 
     let prev_embedding_count = embedding_provider.embedding_count();
     let index = semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
-    deterministic.run_until_parked();
+    cx.background_executor.run_until_parked();
     assert_eq!(*pending_file_count.borrow(), 1);
-    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
+    cx.background_executor
+        .advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
     assert_eq!(*pending_file_count.borrow(), 0);
     index.await.unwrap();
 
@@ -220,13 +223,13 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
 
-    let mut queue = EmbeddingQueue::new(embedding_provider.clone(), cx.background());
+    let mut queue = EmbeddingQueue::new(embedding_provider.clone(), cx.background_executor.clone());
     for file in &files {
         queue.push(file.clone());
     }
     queue.flush();
 
-    cx.foreground().run_until_parked();
+    cx.background_executor.run_until_parked();
     let finished_files = queue.finished_files();
     let mut embedded_files: Vec<_> = files
         .iter()
@@ -1686,8 +1689,9 @@ fn test_subtract_ranges() {
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        cx.set_global(SettingsStore::test(cx));
-        settings::register::<SemanticIndexSettings>(cx);
-        settings::register::<ProjectSettings>(cx);
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        SemanticIndexSettings::register(cx);
+        ProjectSettings::register(cx);
     });
 }

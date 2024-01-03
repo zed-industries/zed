@@ -1,18 +1,19 @@
-use crate::tests::TestServer;
-use gpui::{executor::Deterministic, TestAppContext};
+use std::sync::Arc;
+
+use gpui::{BackgroundExecutor, TestAppContext};
 use notifications::NotificationEvent;
 use parking_lot::Mutex;
 use rpc::{proto, Notification};
-use std::sync::Arc;
+
+use crate::tests::TestServer;
 
 #[gpui::test]
 async fn test_notifications(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -42,7 +43,7 @@ async fn test_notifications(
 
     // Client B receives a contact request notification and responds to the
     // request, accepting it.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     client_b.notification_store().update(cx_b, |store, cx| {
         assert_eq!(store.notification_count(), 1);
         assert_eq!(store.unread_notification_count(), 1);
@@ -72,7 +73,7 @@ async fn test_notifications(
     });
 
     // Client B sees the notification is now read, and that they responded.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     client_b.notification_store().read_with(cx_b, |store, _| {
         assert_eq!(store.notification_count(), 1);
         assert_eq!(store.unread_notification_count(), 0);
@@ -127,7 +128,7 @@ async fn test_notifications(
 
     // Client B receives a channel invitation notification and responds to the
     // invitation, accepting it.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     client_b.notification_store().update(cx_b, |store, cx| {
         assert_eq!(store.notification_count(), 2);
         assert_eq!(store.unread_notification_count(), 1);
@@ -147,7 +148,7 @@ async fn test_notifications(
     });
 
     // Client B sees the notification is now read, and that they responded.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     client_b.notification_store().read_with(cx_b, |store, _| {
         assert_eq!(store.notification_count(), 2);
         assert_eq!(store.unread_notification_count(), 0);

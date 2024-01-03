@@ -1,20 +1,19 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{anyhow, Result};
 use futures::{stream::BoxStream, StreamExt};
-use gpui::{executor, ModelHandle, TestAppContext};
+use gpui::{BackgroundExecutor, Context, Model, TestAppContext};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
     ConnectionId, Peer, Receipt, TypedEnvelope,
 };
-use std::{rc::Rc, sync::Arc};
-use util::http::FakeHttpClient;
+use std::sync::Arc;
 
 pub struct FakeServer {
     peer: Arc<Peer>,
     state: Arc<Mutex<FakeServerState>>,
     user_id: u64,
-    executor: Rc<executor::Foreground>,
+    executor: BackgroundExecutor,
 }
 
 #[derive(Default)]
@@ -36,7 +35,7 @@ impl FakeServer {
             peer: Peer::new(0),
             state: Default::default(),
             user_id: client_user_id,
-            executor: cx.foreground(),
+            executor: cx.executor(),
         };
 
         client
@@ -78,10 +77,11 @@ impl FakeServer {
                             Err(EstablishConnectionError::Unauthorized)?
                         }
 
-                        let (client_conn, server_conn, _) = Connection::in_memory(cx.background());
+                        let (client_conn, server_conn, _) =
+                            Connection::in_memory(cx.background_executor().clone());
                         let (connection_id, io, incoming) =
-                            peer.add_test_connection(server_conn, cx.background());
-                        cx.background().spawn(io).detach();
+                            peer.add_test_connection(server_conn, cx.background_executor().clone());
+                        cx.background_executor().spawn(io).detach();
                         {
                             let mut state = state.lock();
                             state.connection_id = Some(connection_id);
@@ -193,9 +193,8 @@ impl FakeServer {
         &self,
         client: Arc<Client>,
         cx: &mut TestAppContext,
-    ) -> ModelHandle<UserStore> {
-        let http_client = FakeHttpClient::with_404_response();
-        let user_store = cx.add_model(|cx| UserStore::new(client, http_client, cx));
+    ) -> Model<UserStore> {
+        let user_store = cx.new_model(|cx| UserStore::new(client, cx));
         assert_eq!(
             self.receive::<proto::GetUsers>()
                 .await

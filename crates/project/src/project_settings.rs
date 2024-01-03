@@ -1,7 +1,8 @@
 use collections::HashMap;
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
+use settings::Settings;
 use std::sync::Arc;
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -34,7 +35,7 @@ pub struct LspSettings {
     pub initialization_options: Option<serde_json::Value>,
 }
 
-impl Setting for ProjectSettings {
+impl Settings for ProjectSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = Self;
@@ -42,7 +43,7 @@ impl Setting for ProjectSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }

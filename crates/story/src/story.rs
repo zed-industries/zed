@@ -1,6 +1,5 @@
 use gpui::{
-    div, hsla, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, Stateful,
-    WindowContext,
+    div, hsla, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, WindowContext,
 };
 use itertools::Itertools;
 use smallvec::SmallVec;
@@ -74,9 +73,7 @@ impl ParentElement for StoryContainer {
 }
 
 impl RenderOnce for StoryContainer {
-    type Output = Stateful<Div>;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div()
             .size_full()
             .flex()
@@ -294,9 +291,7 @@ impl StoryItem {
 }
 
 impl RenderOnce for StoryItem {
-    type Output = Div;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div()
             .my_2()
             .flex()
@@ -358,9 +353,7 @@ impl StorySection {
 }
 
 impl RenderOnce for StorySection {
-    type Output = Div;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let children: SmallVec<[AnyElement; 2]> = SmallVec::from_iter(Itertools::intersperse_with(
             self.children.into_iter(),
             || Story::divider().into_any_element(),

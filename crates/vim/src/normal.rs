@@ -20,7 +20,7 @@ use crate::{
 use collections::HashSet;
 use editor::scroll::autoscroll::Autoscroll;
 use editor::{Bias, DisplayPoint};
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, ViewContext, WindowContext};
 use language::SelectionGoal;
 use log::error;
 use workspace::Workspace;
@@ -52,38 +52,31 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    paste::init(cx);
-    repeat::init(cx);
-    scroll::init(cx);
-    search::init(cx);
-    substitute::init(cx);
-    increment::init(cx);
+pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(insert_after);
+    workspace.register_action(insert_before);
+    workspace.register_action(insert_first_non_whitespace);
+    workspace.register_action(insert_end_of_line);
+    workspace.register_action(insert_line_above);
+    workspace.register_action(insert_line_below);
+    workspace.register_action(change_case);
+    workspace.register_action(yank_line);
 
-    cx.add_action(insert_after);
-    cx.add_action(insert_before);
-    cx.add_action(insert_first_non_whitespace);
-    cx.add_action(insert_end_of_line);
-    cx.add_action(insert_line_above);
-    cx.add_action(insert_line_below);
-    cx.add_action(change_case);
-    cx.add_action(yank_line);
-
-    cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let times = vim.take_count(cx);
             delete_motion(vim, Motion::Left, times, cx);
         })
     });
-    cx.add_action(|_: &mut Workspace, _: &DeleteRight, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &DeleteRight, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let times = vim.take_count(cx);
             delete_motion(vim, Motion::Right, times, cx);
         })
     });
-    cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.start_recording(cx);
             let times = vim.take_count(cx);
@@ -97,7 +90,7 @@ pub fn init(cx: &mut AppContext) {
             );
         })
     });
-    cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let times = vim.take_count(cx);
@@ -111,7 +104,7 @@ pub fn init(cx: &mut AppContext) {
             );
         })
     });
-    cx.add_action(|_: &mut Workspace, _: &JoinLines, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &JoinLines, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let mut times = vim.take_count(cx).unwrap_or(1);
@@ -129,8 +122,15 @@ pub fn init(cx: &mut AppContext) {
                     }
                 })
             })
-        })
-    })
+        });
+    });
+
+    paste::register(workspace, cx);
+    repeat::register(workspace, cx);
+    scroll::register(workspace, cx);
+    search::register(workspace, cx);
+    substitute::register(workspace, cx);
+    increment::register(workspace, cx);
 }
 
 pub fn normal_motion(

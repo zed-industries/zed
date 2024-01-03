@@ -1,438 +1,423 @@
 use crate::{
-    color::Color,
-    fonts::{HighlightStyle, TextStyle},
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    json::{ToJson, Value},
-    text_layout::{Line, RunStyle, ShapedBoundary},
-    Element, FontCache, SizeConstraint, TextLayoutCache, ViewContext, WindowContext,
+    Bounds, DispatchPhase, Element, ElementId, HighlightStyle, IntoElement, LayoutId,
+    MouseDownEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle,
+    WhiteSpace, WindowContext, WrappedLine,
 };
-use log::warn;
-use serde_json::json;
-use std::{borrow::Cow, ops::Range, sync::Arc};
+use anyhow::anyhow;
+use parking_lot::{Mutex, MutexGuard};
+use smallvec::SmallVec;
+use std::{cell::Cell, mem, ops::Range, rc::Rc, sync::Arc};
+use util::ResultExt;
 
-pub struct Text {
-    text: Cow<'static, str>,
-    style: TextStyle,
-    soft_wrap: bool,
-    highlights: Option<Box<[(Range<usize>, HighlightStyle)]>>,
-    custom_runs: Option<(
-        Box<[Range<usize>]>,
-        Box<dyn FnMut(usize, RectF, &mut WindowContext)>,
-    )>,
-}
+impl Element for &'static str {
+    type State = TextState;
 
-pub struct LayoutState {
-    shaped_lines: Vec<Line>,
-    wrap_boundaries: Vec<Vec<ShapedBoundary>>,
-    line_height: f32,
-}
-
-impl Text {
-    pub fn new<I: Into<Cow<'static, str>>>(text: I, style: TextStyle) -> Self {
-        Self {
-            text: text.into(),
-            style,
-            soft_wrap: true,
-            highlights: None,
-            custom_runs: None,
-        }
+    fn request_layout(
+        &mut self,
+        _: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        let mut state = TextState::default();
+        let layout_id = state.layout(SharedString::from(*self), None, cx);
+        (layout_id, state)
     }
 
-    pub fn with_default_color(mut self, color: Color) -> Self {
-        self.style.color = color;
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+        state.paint(bounds, self, cx)
+    }
+}
+
+impl IntoElement for &'static str {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+impl Element for SharedString {
+    type State = TextState;
+
+    fn request_layout(
+        &mut self,
+        _: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        let mut state = TextState::default();
+        let layout_id = state.layout(self.clone(), None, cx);
+        (layout_id, state)
+    }
+
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+        let text_str: &str = self.as_ref();
+        state.paint(bounds, text_str, cx)
+    }
+}
+
+impl IntoElement for SharedString {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+/// Renders text with runs of different styles.
+///
+/// Callers are responsible for setting the correct style for each run.
+/// For text with a uniform style, you can usually avoid calling this constructor
+/// and just pass text directly.
+pub struct StyledText {
+    text: SharedString,
+    runs: Option<Vec<TextRun>>,
+}
+
+impl StyledText {
+    pub fn new(text: impl Into<SharedString>) -> Self {
+        StyledText {
+            text: text.into(),
+            runs: None,
+        }
     }
 
     pub fn with_highlights(
         mut self,
-        runs: impl Into<Box<[(Range<usize>, HighlightStyle)]>>,
+        default_style: &TextStyle,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
     ) -> Self {
-        self.highlights = Some(runs.into());
-        self
-    }
-
-    pub fn with_custom_runs(
-        mut self,
-        runs: impl Into<Box<[Range<usize>]>>,
-        callback: impl 'static + FnMut(usize, RectF, &mut WindowContext),
-    ) -> Self {
-        self.custom_runs = Some((runs.into(), Box::new(callback)));
-        self
-    }
-
-    pub fn with_soft_wrap(mut self, soft_wrap: bool) -> Self {
-        self.soft_wrap = soft_wrap;
+        let mut runs = Vec::new();
+        let mut ix = 0;
+        for (range, highlight) in highlights {
+            if ix < range.start {
+                runs.push(default_style.clone().to_run(range.start - ix));
+            }
+            runs.push(
+                default_style
+                    .clone()
+                    .highlight(highlight)
+                    .to_run(range.len()),
+            );
+            ix = range.end;
+        }
+        if ix < self.text.len() {
+            runs.push(default_style.to_run(self.text.len() - ix));
+        }
+        self.runs = Some(runs);
         self
     }
 }
 
-impl<V: 'static> Element<V> for Text {
-    type LayoutState = LayoutState;
-    type PaintState = ();
+impl Element for StyledText {
+    type State = TextState;
 
-    fn layout(
+    fn request_layout(
         &mut self,
-        constraint: SizeConstraint,
-        _: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> (Vector2F, Self::LayoutState) {
-        // Convert the string and highlight ranges into an iterator of highlighted chunks.
-
-        let mut offset = 0;
-        let mut highlight_ranges = self
-            .highlights
-            .as_ref()
-            .map_or(Default::default(), AsRef::as_ref)
-            .iter()
-            .peekable();
-        let chunks = std::iter::from_fn(|| {
-            let result;
-            if let Some((range, highlight_style)) = highlight_ranges.peek() {
-                if offset < range.start {
-                    result = Some((&self.text[offset..range.start], None));
-                    offset = range.start;
-                } else if range.end <= self.text.len() {
-                    result = Some((&self.text[range.clone()], Some(*highlight_style)));
-                    highlight_ranges.next();
-                    offset = range.end;
-                } else {
-                    warn!(
-                        "Highlight out of text range. Text len: {}, Highlight range: {}..{}",
-                        self.text.len(),
-                        range.start,
-                        range.end
-                    );
-                    result = None;
-                }
-            } else if offset < self.text.len() {
-                result = Some((&self.text[offset..], None));
-                offset = self.text.len();
-            } else {
-                result = None;
-            }
-            result
-        });
-
-        // Perform shaping on these highlighted chunks
-        let shaped_lines = layout_highlighted_chunks(
-            chunks,
-            &self.style,
-            cx.text_layout_cache(),
-            &cx.font_cache,
-            usize::MAX,
-            self.text.matches('\n').count() + 1,
-        );
-
-        // If line wrapping is enabled, wrap each of the shaped lines.
-        let font_id = self.style.font_id;
-        let mut line_count = 0;
-        let mut max_line_width = 0_f32;
-        let mut wrap_boundaries = Vec::new();
-        let mut wrapper = cx.font_cache.line_wrapper(font_id, self.style.font_size);
-        for (line, shaped_line) in self.text.split('\n').zip(&shaped_lines) {
-            if self.soft_wrap {
-                let boundaries = wrapper
-                    .wrap_shaped_line(line, shaped_line, constraint.max.x())
-                    .collect::<Vec<_>>();
-                line_count += boundaries.len() + 1;
-                wrap_boundaries.push(boundaries);
-            } else {
-                line_count += 1;
-            }
-            max_line_width = max_line_width.max(shaped_line.width());
-        }
-
-        let line_height = cx.font_cache.line_height(self.style.font_size);
-        let size = vec2f(
-            max_line_width
-                .ceil()
-                .max(constraint.min.x())
-                .min(constraint.max.x()),
-            (line_height * line_count as f32).ceil(),
-        );
-        (
-            size,
-            LayoutState {
-                shaped_lines,
-                wrap_boundaries,
-                line_height,
-            },
-        )
+        _: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        let mut state = TextState::default();
+        let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
+        (layout_id, state)
     }
 
-    fn paint(
-        &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
-        _: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> Self::PaintState {
-        let mut origin = bounds.origin();
-        let empty = Vec::new();
-        let mut callback = |_, _, _: &mut WindowContext| {};
-
-        let mouse_runs;
-        let custom_run_callback;
-        if let Some((runs, build_region)) = &mut self.custom_runs {
-            mouse_runs = runs.iter();
-            custom_run_callback = build_region.as_mut();
-        } else {
-            mouse_runs = [].iter();
-            custom_run_callback = &mut callback;
-        }
-        let mut custom_runs = mouse_runs.enumerate().peekable();
-
-        let mut offset = 0;
-        for (ix, line) in layout.shaped_lines.iter().enumerate() {
-            let wrap_boundaries = layout.wrap_boundaries.get(ix).unwrap_or(&empty);
-            let boundaries = RectF::new(
-                origin,
-                vec2f(
-                    bounds.width(),
-                    (wrap_boundaries.len() + 1) as f32 * layout.line_height,
-                ),
-            );
-
-            if boundaries.intersects(visible_bounds) {
-                if self.soft_wrap {
-                    line.paint_wrapped(
-                        origin,
-                        visible_bounds,
-                        layout.line_height,
-                        wrap_boundaries,
-                        cx,
-                    );
-                } else {
-                    line.paint(origin, visible_bounds, layout.line_height, cx);
-                }
-            }
-
-            // Paint any custom runs that intersect this line.
-            let end_offset = offset + line.len();
-            if let Some((custom_run_ix, custom_run_range)) = custom_runs.peek().cloned() {
-                if custom_run_range.start < end_offset {
-                    let mut current_custom_run = None;
-                    if custom_run_range.start <= offset {
-                        current_custom_run = Some((custom_run_ix, custom_run_range.end, origin));
-                    }
-
-                    let mut glyph_origin = origin;
-                    let mut prev_position = 0.;
-                    let mut wrap_boundaries = wrap_boundaries.iter().copied().peekable();
-                    for (run_ix, glyph_ix, glyph) in
-                        line.runs().iter().enumerate().flat_map(|(run_ix, run)| {
-                            run.glyphs()
-                                .iter()
-                                .enumerate()
-                                .map(move |(ix, glyph)| (run_ix, ix, glyph))
-                        })
-                    {
-                        glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
-                        prev_position = glyph.position.x();
-
-                        // If we've reached a soft wrap position, move down one line. If there
-                        // is a custom run in-progress, paint it.
-                        if wrap_boundaries
-                            .peek()
-                            .map_or(false, |b| b.run_ix == run_ix && b.glyph_ix == glyph_ix)
-                        {
-                            if let Some((run_ix, _, run_origin)) = &mut current_custom_run {
-                                let bounds = RectF::from_points(
-                                    *run_origin,
-                                    glyph_origin + vec2f(0., layout.line_height),
-                                );
-                                custom_run_callback(*run_ix, bounds, cx);
-                                *run_origin =
-                                    vec2f(origin.x(), glyph_origin.y() + layout.line_height);
-                            }
-                            wrap_boundaries.next();
-                            glyph_origin = vec2f(origin.x(), glyph_origin.y() + layout.line_height);
-                        }
-
-                        // If we've reached the end of the current custom run, paint it.
-                        if let Some((run_ix, run_end_offset, run_origin)) = current_custom_run {
-                            if offset + glyph.index == run_end_offset {
-                                current_custom_run.take();
-                                let bounds = RectF::from_points(
-                                    run_origin,
-                                    glyph_origin + vec2f(0., layout.line_height),
-                                );
-                                custom_run_callback(run_ix, bounds, cx);
-                                custom_runs.next();
-                            }
-
-                            if let Some((_, run_range)) = custom_runs.peek() {
-                                if run_range.start >= end_offset {
-                                    break;
-                                }
-                                if run_range.start == offset + glyph.index {
-                                    current_custom_run =
-                                        Some((run_ix, run_range.end, glyph_origin));
-                                }
-                            }
-                        }
-
-                        // If we've reached the start of a new custom run, start tracking it.
-                        if let Some((run_ix, run_range)) = custom_runs.peek() {
-                            if offset + glyph.index == run_range.start {
-                                current_custom_run = Some((*run_ix, run_range.end, glyph_origin));
-                            }
-                        }
-                    }
-
-                    // If a custom run extends beyond the end of the line, paint it.
-                    if let Some((run_ix, run_end_offset, run_origin)) = current_custom_run {
-                        let line_end = glyph_origin + vec2f(line.width() - prev_position, 0.);
-                        let bounds = RectF::from_points(
-                            run_origin,
-                            line_end + vec2f(0., layout.line_height),
-                        );
-                        custom_run_callback(run_ix, bounds, cx);
-                        if end_offset == run_end_offset {
-                            custom_runs.next();
-                        }
-                    }
-                }
-            }
-
-            offset = end_offset + 1;
-            origin.set_y(boundaries.max_y());
-        }
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        state.paint(bounds, &self.text, cx)
     }
+}
 
-    fn rect_for_text_range(
-        &self,
-        _: Range<usize>,
-        _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &V,
-        _: &ViewContext<V>,
-    ) -> Option<RectF> {
+impl IntoElement for StyledText {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn debug(
-        &self,
-        bounds: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &V,
-        _: &ViewContext<V>,
-    ) -> Value {
-        json!({
-            "type": "Text",
-            "bounds": bounds.to_json(),
-            "text": &self.text,
-            "style": self.style.to_json(),
-        })
+    fn into_element(self) -> Self::Element {
+        self
     }
 }
 
-/// Perform text layout on a series of highlighted chunks of text.
-pub fn layout_highlighted_chunks<'a>(
-    chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
-    text_style: &TextStyle,
-    text_layout_cache: &TextLayoutCache,
-    font_cache: &Arc<FontCache>,
-    max_line_len: usize,
-    max_line_count: usize,
-) -> Vec<Line> {
-    let mut layouts = Vec::with_capacity(max_line_count);
-    let mut line = String::new();
-    let mut styles = Vec::new();
-    let mut row = 0;
-    let mut line_exceeded_max_len = false;
-    for (chunk, highlight_style) in chunks.chain([("\n", Default::default())]) {
-        for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
-            if ix > 0 {
-                layouts.push(text_layout_cache.layout_str(&line, text_style.font_size, &styles));
-                line.clear();
-                styles.clear();
-                row += 1;
-                line_exceeded_max_len = false;
-                if row == max_line_count {
-                    return layouts;
-                }
-            }
+#[derive(Default, Clone)]
+pub struct TextState(Arc<Mutex<Option<TextStateInner>>>);
 
-            if !line_chunk.is_empty() && !line_exceeded_max_len {
-                let text_style = if let Some(style) = highlight_style {
-                    text_style
-                        .clone()
-                        .highlight(style, font_cache)
-                        .map(Cow::Owned)
-                        .unwrap_or_else(|_| Cow::Borrowed(text_style))
+struct TextStateInner {
+    lines: SmallVec<[WrappedLine; 1]>,
+    line_height: Pixels,
+    wrap_width: Option<Pixels>,
+    size: Option<Size<Pixels>>,
+}
+
+impl TextState {
+    fn lock(&self) -> MutexGuard<Option<TextStateInner>> {
+        self.0.lock()
+    }
+
+    fn layout(
+        &mut self,
+        text: SharedString,
+        runs: Option<Vec<TextRun>>,
+        cx: &mut WindowContext,
+    ) -> LayoutId {
+        let text_style = cx.text_style();
+        let font_size = text_style.font_size.to_pixels(cx.rem_size());
+        let line_height = text_style
+            .line_height
+            .to_pixels(font_size.into(), cx.rem_size());
+
+        let runs = if let Some(runs) = runs {
+            runs
+        } else {
+            vec![text_style.to_run(text.len())]
+        };
+
+        let layout_id = cx.request_measured_layout(Default::default(), {
+            let element_state = self.clone();
+
+            move |known_dimensions, available_space, cx| {
+                let wrap_width = if text_style.white_space == WhiteSpace::Normal {
+                    known_dimensions.width.or(match available_space.width {
+                        crate::AvailableSpace::Definite(x) => Some(x),
+                        _ => None,
+                    })
                 } else {
-                    Cow::Borrowed(text_style)
+                    None
                 };
 
-                if line.len() + line_chunk.len() > max_line_len {
-                    let mut chunk_len = max_line_len - line.len();
-                    while !line_chunk.is_char_boundary(chunk_len) {
-                        chunk_len -= 1;
+                if let Some(text_state) = element_state.0.lock().as_ref() {
+                    if text_state.size.is_some()
+                        && (wrap_width.is_none() || wrap_width == text_state.wrap_width)
+                    {
+                        return text_state.size.unwrap();
                     }
-                    line_chunk = &line_chunk[..chunk_len];
-                    line_exceeded_max_len = true;
                 }
 
-                line.push_str(line_chunk);
-                styles.push((
-                    line_chunk.len(),
-                    RunStyle {
-                        font_id: text_style.font_id,
-                        color: text_style.color,
-                        underline: text_style.underline,
-                    },
-                ));
+                let Some(lines) = cx
+                    .text_system()
+                    .shape_text(
+                        &text, font_size, &runs, wrap_width, // Wrap if we know the width.
+                    )
+                    .log_err()
+                else {
+                    element_state.lock().replace(TextStateInner {
+                        lines: Default::default(),
+                        line_height,
+                        wrap_width,
+                        size: Some(Size::default()),
+                    });
+                    return Size::default();
+                };
+
+                let mut size: Size<Pixels> = Size::default();
+                for line in &lines {
+                    let line_size = line.size(line_height);
+                    size.height += line_size.height;
+                    size.width = size.width.max(line_size.width).ceil();
+                }
+
+                element_state.lock().replace(TextStateInner {
+                    lines,
+                    line_height,
+                    wrap_width,
+                    size: Some(size),
+                });
+
+                size
+            }
+        });
+
+        layout_id
+    }
+
+    fn paint(&mut self, bounds: Bounds<Pixels>, text: &str, cx: &mut WindowContext) {
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
+            .unwrap();
+
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines {
+            line.paint(line_origin, line_height, cx).log_err();
+            line_origin.y += line.size(line_height).height;
+        }
+    }
+
+    fn index_for_position(&self, bounds: Bounds<Pixels>, position: Point<Pixels>) -> Option<usize> {
+        if !bounds.contains(&position) {
+            return None;
+        }
+
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
+        for line in &element_state.lines {
+            let line_bottom = line_origin.y + line.size(line_height).height;
+            if position.y > line_bottom {
+                line_origin.y = line_bottom;
+                line_start_ix += line.len() + 1;
+            } else {
+                let position_within_line = position - line_origin;
+                let index_within_line =
+                    line.index_for_position(position_within_line, line_height)?;
+                return Some(line_start_ix + index_within_line);
             }
         }
-    }
 
-    layouts
+        None
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{elements::Empty, fonts, AnyElement, AppContext, Entity, View, ViewContext};
+pub struct InteractiveText {
+    element_id: ElementId,
+    text: StyledText,
+    click_listener:
+        Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
+    clickable_ranges: Vec<Range<usize>>,
+}
 
-    #[crate::test(self)]
-    fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {
-        cx.add_window(Default::default(), |cx| {
-            let mut view = TestView;
-            fonts::with_font_cache(cx.font_cache().clone(), || {
-                let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
-                let (_, state) = text.layout(
-                    SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
-                    &mut view,
-                    cx,
-                );
-                assert_eq!(state.shaped_lines.len(), 2);
-                assert_eq!(state.wrap_boundaries.len(), 2);
-            });
-            view
-        });
+struct InteractiveTextClickEvent {
+    mouse_down_index: usize,
+    mouse_up_index: usize,
+}
+
+pub struct InteractiveTextState {
+    text_state: TextState,
+    mouse_down_index: Rc<Cell<Option<usize>>>,
+}
+
+impl InteractiveText {
+    pub fn new(id: impl Into<ElementId>, text: StyledText) -> Self {
+        Self {
+            element_id: id.into(),
+            text,
+            click_listener: None,
+            clickable_ranges: Vec::new(),
+        }
     }
 
-    struct TestView;
+    pub fn on_click(
+        mut self,
+        ranges: Vec<Range<usize>>,
+        listener: impl Fn(usize, &mut WindowContext<'_>) + 'static,
+    ) -> Self {
+        self.click_listener = Some(Box::new(move |ranges, event, cx| {
+            for (range_ix, range) in ranges.iter().enumerate() {
+                if range.contains(&event.mouse_down_index) && range.contains(&event.mouse_up_index)
+                {
+                    listener(range_ix, cx);
+                }
+            }
+        }));
+        self.clickable_ranges = ranges;
+        self
+    }
+}
 
-    impl Entity for TestView {
-        type Event = ();
+impl Element for InteractiveText {
+    type State = InteractiveTextState;
+
+    fn request_layout(
+        &mut self,
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        if let Some(InteractiveTextState {
+            mouse_down_index, ..
+        }) = state
+        {
+            let (layout_id, text_state) = self.text.request_layout(None, cx);
+            let element_state = InteractiveTextState {
+                text_state,
+                mouse_down_index,
+            };
+            (layout_id, element_state)
+        } else {
+            let (layout_id, text_state) = self.text.request_layout(None, cx);
+            let element_state = InteractiveTextState {
+                text_state,
+                mouse_down_index: Rc::default(),
+            };
+            (layout_id, element_state)
+        }
     }
 
-    impl View for TestView {
-        fn ui_name() -> &'static str {
-            "TestView"
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        if let Some(click_listener) = self.click_listener.take() {
+            let mouse_position = cx.mouse_position();
+            if let Some(ix) = state.text_state.index_for_position(bounds, mouse_position) {
+                if self
+                    .clickable_ranges
+                    .iter()
+                    .any(|range| range.contains(&ix))
+                    && cx.was_top_layer(&mouse_position, cx.stacking_order())
+                {
+                    cx.set_cursor_style(crate::CursorStyle::PointingHand)
+                }
+            }
+
+            let text_state = state.text_state.clone();
+            let mouse_down = state.mouse_down_index.clone();
+            if let Some(mouse_down_index) = mouse_down.get() {
+                let clickable_ranges = mem::take(&mut self.clickable_ranges);
+                cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        if let Some(mouse_up_index) =
+                            text_state.index_for_position(bounds, event.position)
+                        {
+                            click_listener(
+                                &clickable_ranges,
+                                InteractiveTextClickEvent {
+                                    mouse_down_index,
+                                    mouse_up_index,
+                                },
+                                cx,
+                            )
+                        }
+
+                        mouse_down.take();
+                        cx.notify();
+                    }
+                });
+            } else {
+                cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        if let Some(mouse_down_index) =
+                            text_state.index_for_position(bounds, event.position)
+                        {
+                            mouse_down.set(Some(mouse_down_index));
+                            cx.notify();
+                        }
+                    }
+                });
+            }
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-            Empty::new().into_any()
-        }
+        self.text.paint(bounds, &mut state.text_state, cx)
+    }
+}
+
+impl IntoElement for InteractiveText {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.element_id.clone())
+    }
+
+    fn into_element(self) -> Self::Element {
+        self
     }
 }

@@ -3,15 +3,16 @@ use super::{
     Highlights,
 };
 use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
-use gpui::{color::Color, fonts::HighlightStyle};
+use gpui::{ElementId, HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
     iter,
-    ops::{Add, AddAssign, Range, Sub},
+    ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
+use util::post_inc;
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct FoldPoint(pub Point);
@@ -90,12 +91,16 @@ impl<'a> FoldMapWriter<'a> {
             }
 
             // For now, ignore any ranges that span an excerpt boundary.
-            let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
-            if fold.0.start.excerpt_id != fold.0.end.excerpt_id {
+            let fold_range =
+                FoldRange(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
+            if fold_range.0.start.excerpt_id != fold_range.0.end.excerpt_id {
                 continue;
             }
 
-            folds.push(fold);
+            folds.push(Fold {
+                id: FoldId(post_inc(&mut self.0.next_fold_id.0)),
+                range: fold_range,
+            });
 
             let inlay_range =
                 snapshot.to_inlay_offset(range.start)..snapshot.to_inlay_offset(range.end);
@@ -106,13 +111,13 @@ impl<'a> FoldMapWriter<'a> {
         }
 
         let buffer = &snapshot.buffer;
-        folds.sort_unstable_by(|a, b| sum_tree::SeekTarget::cmp(a, b, buffer));
+        folds.sort_unstable_by(|a, b| sum_tree::SeekTarget::cmp(&a.range, &b.range, buffer));
 
         self.0.snapshot.folds = {
             let mut new_tree = SumTree::new();
-            let mut cursor = self.0.snapshot.folds.cursor::<Fold>();
+            let mut cursor = self.0.snapshot.folds.cursor::<FoldRange>();
             for fold in folds {
-                new_tree.append(cursor.slice(&fold, Bias::Right, buffer), buffer);
+                new_tree.append(cursor.slice(&fold.range, Bias::Right, buffer), buffer);
                 new_tree.push(fold, buffer);
             }
             new_tree.append(cursor.suffix(buffer), buffer);
@@ -138,7 +143,8 @@ impl<'a> FoldMapWriter<'a> {
             let mut folds_cursor =
                 intersecting_folds(&snapshot, &self.0.snapshot.folds, range, inclusive);
             while let Some(fold) = folds_cursor.item() {
-                let offset_range = fold.0.start.to_offset(buffer)..fold.0.end.to_offset(buffer);
+                let offset_range =
+                    fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer);
                 if offset_range.end > offset_range.start {
                     let inlay_range = snapshot.to_inlay_offset(offset_range.start)
                         ..snapshot.to_inlay_offset(offset_range.end);
@@ -174,7 +180,8 @@ impl<'a> FoldMapWriter<'a> {
 
 pub struct FoldMap {
     snapshot: FoldSnapshot,
-    ellipses_color: Option<Color>,
+    ellipses_color: Option<Hsla>,
+    next_fold_id: FoldId,
 }
 
 impl FoldMap {
@@ -197,6 +204,7 @@ impl FoldMap {
                 ellipses_color: None,
             },
             ellipses_color: None,
+            next_fold_id: FoldId::default(),
         };
         let snapshot = this.snapshot.clone();
         (this, snapshot)
@@ -221,7 +229,7 @@ impl FoldMap {
         (FoldMapWriter(self), snapshot, edits)
     }
 
-    pub fn set_ellipses_color(&mut self, color: Color) -> bool {
+    pub fn set_ellipses_color(&mut self, color: Hsla) -> bool {
         if self.ellipses_color != Some(color) {
             self.ellipses_color = Some(color);
             true
@@ -242,8 +250,8 @@ impl FoldMap {
             while let Some(fold) = folds.next() {
                 if let Some(next_fold) = folds.peek() {
                     let comparison = fold
-                        .0
-                        .cmp(&next_fold.0, &self.snapshot.inlay_snapshot.buffer);
+                        .range
+                        .cmp(&next_fold.range, &self.snapshot.inlay_snapshot.buffer);
                     assert!(comparison.is_le());
                 }
             }
@@ -304,9 +312,9 @@ impl FoldMap {
                 let anchor = inlay_snapshot
                     .buffer
                     .anchor_before(inlay_snapshot.to_buffer_offset(edit.new.start));
-                let mut folds_cursor = self.snapshot.folds.cursor::<Fold>();
+                let mut folds_cursor = self.snapshot.folds.cursor::<FoldRange>();
                 folds_cursor.seek(
-                    &Fold(anchor..Anchor::max()),
+                    &FoldRange(anchor..Anchor::max()),
                     Bias::Left,
                     &inlay_snapshot.buffer,
                 );
@@ -315,8 +323,8 @@ impl FoldMap {
                     let inlay_snapshot = &inlay_snapshot;
                     move || {
                         let item = folds_cursor.item().map(|f| {
-                            let buffer_start = f.0.start.to_offset(&inlay_snapshot.buffer);
-                            let buffer_end = f.0.end.to_offset(&inlay_snapshot.buffer);
+                            let buffer_start = f.range.start.to_offset(&inlay_snapshot.buffer);
+                            let buffer_end = f.range.end.to_offset(&inlay_snapshot.buffer);
                             inlay_snapshot.to_inlay_offset(buffer_start)
                                 ..inlay_snapshot.to_inlay_offset(buffer_end)
                         });
@@ -469,7 +477,7 @@ pub struct FoldSnapshot {
     folds: SumTree<Fold>,
     pub inlay_snapshot: InlaySnapshot,
     pub version: usize,
-    pub ellipses_color: Option<Color>,
+    pub ellipses_color: Option<Hsla>,
 }
 
 impl FoldSnapshot {
@@ -596,13 +604,13 @@ impl FoldSnapshot {
         self.transforms.summary().output.longest_row
     }
 
-    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Range<Anchor>>
+    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
     where
         T: ToOffset,
     {
         let mut folds = intersecting_folds(&self.inlay_snapshot, &self.folds, range, false);
         iter::from_fn(move || {
-            let item = folds.item().map(|f| &f.0);
+            let item = folds.item();
             folds.next(&self.inlay_snapshot.buffer);
             item
         })
@@ -830,10 +838,39 @@ impl sum_tree::Summary for TransformSummary {
     }
 }
 
-#[derive(Clone, Debug)]
-struct Fold(Range<Anchor>);
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub struct FoldId(usize);
 
-impl Default for Fold {
+impl Into<ElementId> for FoldId {
+    fn into(self) -> ElementId {
+        ElementId::Integer(self.0)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Fold {
+    pub id: FoldId,
+    pub range: FoldRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FoldRange(Range<Anchor>);
+
+impl Deref for FoldRange {
+    type Target = Range<Anchor>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for FoldRange {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Default for FoldRange {
     fn default() -> Self {
         Self(Anchor::min()..Anchor::max())
     }
@@ -844,17 +881,17 @@ impl sum_tree::Item for Fold {
 
     fn summary(&self) -> Self::Summary {
         FoldSummary {
-            start: self.0.start.clone(),
-            end: self.0.end.clone(),
-            min_start: self.0.start.clone(),
-            max_end: self.0.end.clone(),
+            start: self.range.start.clone(),
+            end: self.range.end.clone(),
+            min_start: self.range.start.clone(),
+            max_end: self.range.end.clone(),
             count: 1,
         }
     }
 }
 
 #[derive(Clone, Debug)]
-struct FoldSummary {
+pub struct FoldSummary {
     start: Anchor,
     end: Anchor,
     min_start: Anchor,
@@ -900,14 +937,14 @@ impl sum_tree::Summary for FoldSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, FoldSummary> for Fold {
+impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
     fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
         self.0.start = summary.start.clone();
         self.0.end = summary.end.clone();
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, FoldSummary, Fold> for Fold {
+impl<'a> sum_tree::SeekTarget<'a, FoldSummary, FoldRange> for FoldRange {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         self.0.cmp(&other.0, buffer)
     }
@@ -959,7 +996,7 @@ pub struct FoldChunks<'a> {
     inlay_offset: InlayOffset,
     output_offset: usize,
     max_output_offset: usize,
-    ellipses_color: Option<Color>,
+    ellipses_color: Option<Hsla>,
 }
 
 impl<'a> Iterator for FoldChunks<'a> {
@@ -1321,7 +1358,10 @@ mod tests {
         let (snapshot, _) = map.read(inlay_snapshot.clone(), vec![]);
         let fold_ranges = snapshot
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
-            .map(|fold| fold.start.to_point(&buffer_snapshot)..fold.end.to_point(&buffer_snapshot))
+            .map(|fold| {
+                fold.range.start.to_point(&buffer_snapshot)
+                    ..fold.range.end.to_point(&buffer_snapshot)
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             fold_ranges,
@@ -1553,10 +1593,9 @@ mod tests {
                     .filter(|fold| {
                         let start = buffer_snapshot.anchor_before(start);
                         let end = buffer_snapshot.anchor_after(end);
-                        start.cmp(&fold.0.end, &buffer_snapshot) == Ordering::Less
-                            && end.cmp(&fold.0.start, &buffer_snapshot) == Ordering::Greater
+                        start.cmp(&fold.range.end, &buffer_snapshot) == Ordering::Less
+                            && end.cmp(&fold.range.start, &buffer_snapshot) == Ordering::Greater
                     })
-                    .map(|fold| fold.0)
                     .collect::<Vec<_>>();
 
                 assert_eq!(
@@ -1629,7 +1668,8 @@ mod tests {
     }
 
     fn init_test(cx: &mut gpui::AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
     }
 
     impl FoldMap {
@@ -1638,10 +1678,10 @@ mod tests {
             let buffer = &inlay_snapshot.buffer;
             let mut folds = self.snapshot.folds.items(buffer);
             // Ensure sorting doesn't change how folds get merged and displayed.
-            folds.sort_by(|a, b| a.0.cmp(&b.0, buffer));
+            folds.sort_by(|a, b| a.range.cmp(&b.range, buffer));
             let mut fold_ranges = folds
                 .iter()
-                .map(|fold| fold.0.start.to_offset(buffer)..fold.0.end.to_offset(buffer))
+                .map(|fold| fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer))
                 .peekable();
 
             let mut merged_ranges = Vec::new();

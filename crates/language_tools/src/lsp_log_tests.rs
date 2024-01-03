@@ -4,7 +4,7 @@ use crate::lsp_log::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{serde_json::json, TestAppContext};
+use gpui::{serde_json::json, Context, TestAppContext, VisualTestContext};
 use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageServerName};
 use project::{FakeFs, Project};
 use settings::SettingsStore;
@@ -32,7 +32,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         }))
         .await;
 
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/the-root",
         json!({
@@ -46,7 +46,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         project.languages().add(Arc::new(rust_language));
     });
 
-    let log_store = cx.add_model(|cx| LogStore::new(cx));
+    let log_store = cx.new_model(|cx| LogStore::new(cx));
     log_store.update(cx, |store, cx| store.add_project(&project, cx));
 
     let _rust_buffer = project
@@ -61,17 +61,17 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
 
-    let log_view = cx
-        .add_window(|cx| LspLogView::new(project.clone(), log_store.clone(), cx))
-        .root(cx);
+    let window = cx.add_window(|cx| LspLogView::new(project.clone(), log_store.clone(), cx));
+    let log_view = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(*window, cx);
 
     language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
         message: "hello from the server".into(),
         typ: lsp::MessageType::INFO,
     });
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
 
-    log_view.read_with(cx, |view, cx| {
+    log_view.update(&mut cx, |view, cx| {
         assert_eq!(
             view.menu_items(cx).unwrap(),
             &[LogMenuItem {
@@ -79,7 +79,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
                 server_name: LanguageServerName("the-rust-language-server".into()),
                 worktree_root_name: project
                     .read(cx)
-                    .worktrees(cx)
+                    .worktrees()
                     .next()
                     .unwrap()
                     .read(cx)
@@ -95,11 +95,10 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
 }
 
 fn init_test(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
-
     cx.update(|cx| {
-        cx.set_global(SettingsStore::test(cx));
-        theme::init((), cx);
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         client::init_settings(cx);
         Project::init_settings(cx);
