@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 auto_update = { path = "../auto_update" }
-editor = { path = "../editor2", package = "editor2" }
+editor = { path = "../editor" }
 language = { path = "../language2", package = "language2" }
 gpui = { path = "../gpui2", package = "gpui2" }
 project = { path = "../project2", package = "project2" }
@@ -25,4 +25,4 @@ futures.workspace = true
 smallvec.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor2", package = "editor2", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }

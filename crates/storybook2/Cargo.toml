@@ -15,7 +15,7 @@ backtrace-on-stack-overflow = "0.3.0"
 chrono = "0.4"
 clap = { version = "4.4", features = ["derive", "string"] }
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
-editor = { package = "editor2", path = "../editor2" }
+editor = { path = "../editor" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 indoc.workspace = true

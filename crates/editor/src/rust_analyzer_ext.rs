@@ -1,31 +1,50 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use gpui::{AppContext, Task, ViewContext};
+use gpui::{Context, View, ViewContext, VisualContext, WindowContext};
 use language::Language;
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
 use text::ToPointUtf16;
 
-use crate::{Editor, ExpandMacroRecursively};
+use crate::{element::register_action, Editor, ExpandMacroRecursively};
 
-pub fn apply_related_actions(cx: &mut AppContext) {
-    cx.add_async_action(expand_macro_recursively);
+pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {
+    let is_rust_related = editor.update(cx, |editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .iter()
+            .any(|b| match b.read(cx).language() {
+                Some(l) => is_rust_language(l),
+                None => false,
+            })
+    });
+
+    if is_rust_related {
+        register_action(editor, cx, expand_macro_recursively);
+    }
 }
 
 pub fn expand_macro_recursively(
     editor: &mut Editor,
     _: &ExpandMacroRecursively,
-    cx: &mut ViewContext<'_, '_, Editor>,
-) -> Option<Task<anyhow::Result<()>>> {
+    cx: &mut ViewContext<'_, Editor>,
+) {
     if editor.selections.count() == 0 {
-        return None;
+        return;
     }
-    let project = editor.project.as_ref()?;
-    let workspace = editor.workspace(cx)?;
+    let Some(project) = &editor.project else {
+        return;
+    };
+    let Some(workspace) = editor.workspace() else {
+        return;
+    };
+
     let multibuffer = editor.buffer().read(cx);
 
-    let (trigger_anchor, rust_language, server_to_query, buffer) = editor
+    let Some((trigger_anchor, rust_language, server_to_query, buffer)) = editor
         .selections
         .disjoint_anchors()
         .into_iter()
@@ -56,7 +75,10 @@ pub fn expand_macro_recursively(
                         None
                     }
                 })
-        })?;
+        })
+    else {
+        return;
+    };
 
     let project = project.clone();
     let buffer_snapshot = buffer.read(cx).snapshot();
@@ -69,7 +91,7 @@ pub fn expand_macro_recursively(
             cx,
         )
     });
-    Some(cx.spawn(|_, mut cx| async move {
+    cx.spawn(|_editor, mut cx| async move {
         let macro_expansion = expand_macro_task.await.context("expand macro")?;
         if macro_expansion.is_empty() {
             log::info!("Empty macro expansion for position {position:?}");
@@ -78,19 +100,18 @@ pub fn expand_macro_recursively(
 
         let buffer = project.update(&mut cx, |project, cx| {
             project.create_buffer(&macro_expansion.expansion, Some(rust_language), cx)
-        })?;
+        })??;
         workspace.update(&mut cx, |workspace, cx| {
-            let buffer = cx.add_model(|cx| {
+            let buffer = cx.new_model(|cx| {
                 MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
             });
             workspace.add_item(
-                Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
+                Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
                 cx,
             );
-        });
-
-        anyhow::Ok(())
-    }))
+        })
+    })
+    .detach_and_log_err(cx);
 }
 
 fn is_rust_language(language: &Language) -> bool {

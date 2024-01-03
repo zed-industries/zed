@@ -9,7 +9,7 @@ path = "src/go_to_line.rs"
 doctest = false
 
 [dependencies]
-editor = { package = "editor2", path = "../editor2" }
+editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 menu = { package = "menu2", path = "../menu2" }
 serde.workspace = true
@@ -22,4 +22,4 @@ ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 
 [dev-dependencies]
-editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }

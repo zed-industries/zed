@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 bitflags = "1"
 collections = { path = "../collections" }
-editor = { package = "editor2", path = "../editor2" }
+editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { package = "language2", path = "../language2" }
 menu = { package = "menu2", path = "../menu2" }
@@ -33,7 +33,7 @@ smol.workspace = true
 serde_json.workspace = true
 [dev-dependencies]
 client = { package = "client2", path = "../client2", features = ["test-support"] }
-editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 
 workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }

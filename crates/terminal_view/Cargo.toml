@@ -9,7 +9,7 @@ path = "src/terminal_view.rs"
 doctest = false
 
 [dependencies]
-editor = { package = "editor2", path = "../editor2" }
+editor = { path = "../editor" }
 language = { package = "language2", path = "../language2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 project = { package = "project2", path = "../project2" }
@@ -38,7 +38,7 @@ serde.workspace = true
 serde_derive.workspace = true
 
 [dev-dependencies]
-editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 client = { package = "client2", path = "../client2", features = ["test-support"]}
 project = { package = "project2", path = "../project2", features = ["test-support"]}

@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 copilot = { package = "copilot2", path = "../copilot2" }
-editor = { package = "editor2", path = "../editor2" }
+editor = { path = "../editor" }
 fs = { package = "fs2", path = "../fs2" }
 zed-actions = { package="zed_actions2", path = "../zed_actions2"}
 gpui = { package = "gpui2", path = "../gpui2" }
@@ -24,4 +24,4 @@ smol.workspace = true
 futures.workspace = true
 
 [dev-dependencies]
-editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
