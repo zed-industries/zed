@@ -1,6 +1,8 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use gpui::{actions, AppContext, ViewContext};
+use editor::scroll::autoscroll::Autoscroll;
+use editor::Editor;
+use gpui::{actions, AppContext, ViewContext, WindowContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -63,7 +65,7 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     .detach();
 }
 
-pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
@@ -79,7 +81,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
         .join(format!("{:02}", now.month()));
     let entry_path = month_dir.join(format!("{:02}.md", now.day()));
     let now = now.time();
-    let _entry_heading = heading_entry(now, &settings.hour_format);
+    let entry_heading = heading_entry(now, &settings.hour_format);
 
     let create_entry = cx.background_executor().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
@@ -93,31 +95,30 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
         let (workspace, _) = cx
-            .update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))?
+            .update(|_, cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))?
             .await?;
 
-        let _opened = workspace
+        let opened = workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.open_paths(vec![entry_path], true, cx)
             })?
             .await;
 
-        // todo!("editor")
-        // if let Some(Some(Ok(item))) = opened.first() {
-        //     if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-        //         editor.update(&mut cx, |editor, cx| {
-        //             let len = editor.buffer().read(cx).len(cx);
-        //             editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-        //                 s.select_ranges([len..len])
-        //             });
-        //             if len > 0 {
-        //                 editor.insert("\n\n", cx);
-        //             }
-        //             editor.insert(&entry_heading, cx);
-        //             editor.insert("\n\n", cx);
-        //         })?;
-        //     }
-        // }
+        if let Some(Some(Ok(item))) = opened.first() {
+            if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
+                editor.update(&mut cx, |editor, cx| {
+                    let len = editor.buffer().read(cx).len(cx);
+                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                        s.select_ranges([len..len])
+                    });
+                    if len > 0 {
+                        editor.insert("\n\n", cx);
+                    }
+                    editor.insert(&entry_heading, cx);
+                    editor.insert("\n\n", cx);
+                })?;
+            }
+        }
 
         anyhow::Ok(())
     })
