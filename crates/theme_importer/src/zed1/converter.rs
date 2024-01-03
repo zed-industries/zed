@@ -117,7 +117,11 @@ impl Zed1ThemeConverter {
                 .or(convert(lowest.accent.default.foreground)),
             hint_background: convert(lowest.accent.default.background),
             hint_border: convert(lowest.accent.default.border),
-            predictive: convert(lowest.positive.default.foreground),
+            predictive: editor
+                .suggestion
+                .color
+                .map(zed1_color_to_hsla)
+                .or(convert(lowest.positive.default.foreground)),
             predictive_background: convert(lowest.positive.default.background),
             predictive_border: convert(lowest.positive.default.border),
             conflict: convert(lowest.warning.default.foreground),
