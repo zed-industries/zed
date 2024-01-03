@@ -29,7 +29,7 @@ command_palette = { path = "../command_palette" }
 # component_test = { path = "../component_test" }
 client = { package = "client2", path = "../client2" }
 # clock = { path = "../clock" }
-copilot = { package = "copilot2", path = "../copilot2" }
+copilot = { path = "../copilot" }
 copilot_button = { path = "../copilot_button" }
 diagnostics = { path = "../diagnostics" }
 db = { package = "db2", path = "../db2" }
@@ -51,7 +51,7 @@ language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 notifications = { package = "notifications2", path = "../notifications2" }
 assistant = { package = "assistant2", path = "../assistant2" }
-outline = { package = "outline2", path = "../outline2" }
+outline = { path = "../outline" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { package = "project2", path = "../project2" }
 project_panel = { path = "../project_panel" }

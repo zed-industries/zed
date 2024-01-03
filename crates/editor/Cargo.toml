@@ -25,7 +25,7 @@ test-support = [
 [dependencies]
 client = { package = "client2", path = "../client2" }
 clock = { path = "../clock" }
-copilot = { package="copilot2", path = "../copilot2" }
+copilot = { path = "../copilot" }
 db = { package="db2", path = "../db2" }
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
@@ -34,7 +34,7 @@ git = { package = "git3", path = "../git3" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { package = "language2", path = "../language2" }
 lsp = { package = "lsp2", path = "../lsp2" }
-multi_buffer = { package = "multi_buffer2", path = "../multi_buffer2" }
+multi_buffer = { path = "../multi_buffer" }
 project = { package = "project2", path = "../project2" }
 rpc = { package = "rpc2", path = "../rpc2" }
 rich_text = { package = "rich_text2", path = "../rich_text2" }
@@ -72,7 +72,7 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 
 [dev-dependencies]
-copilot = { package="copilot2", path = "../copilot2", features = ["test-support"] }
+copilot = { path = "../copilot", features = ["test-support"] }
 text = { package="text2", path = "../text2", features = ["test-support"] }
 language = { package="language2", path = "../language2", features = ["test-support"] }
 lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
@@ -81,7 +81,7 @@ util = { path = "../util", features = ["test-support"] }
 project = { package = "project2", path = "../project2", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
-multi_buffer = { package = "multi_buffer2", path = "../multi_buffer2", features = ["test-support"] }
+multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true

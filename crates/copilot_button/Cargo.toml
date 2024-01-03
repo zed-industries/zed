@@ -9,7 +9,7 @@ path = "src/copilot_button.rs"
 doctest = false
 
 [dependencies]
-copilot = { package = "copilot2", path = "../copilot2" }
+copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 fs = { package = "fs2", path = "../fs2" }
 zed-actions = { package="zed_actions2", path = "../zed_actions2"}
