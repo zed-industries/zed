@@ -20,7 +20,7 @@ settings = { path = "../settings2", package = "settings2" }
 theme = { path = "../theme2", package = "theme2" }
 ui = { path = "../ui2", package = "ui2" }
 util = { path = "../util" }
-workspace = { path = "../workspace2", package = "workspace2" }
+workspace = { path = "../workspace", package = "workspace" }
 anyhow.workspace = true
 postage.workspace = true
 futures.workspace = true
@@ -37,5 +37,5 @@ client = { path = "../client2", package = "client2", features = ["test-support"]
 language = { path = "../language2", package = "language2", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui2", package = "gpui2", features = ["test-support"] }
-workspace = { path = "../workspace2", package = "workspace2", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
 serde_json.workspace = true

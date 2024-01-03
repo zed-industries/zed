@@ -46,7 +46,7 @@ theme = { package="theme2", path = "../theme2" }
 ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }
-workspace = { package = "workspace2", path = "../workspace2" }
+workspace = { path = "../workspace" }
 
 aho-corasick = "1.1"
 anyhow.workspace = true
@@ -80,7 +80,7 @@ gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 project = { package = "project2", path = "../project2", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
-workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
 multi_buffer = { path = "../multi_buffer", features = ["test-support"] }
 
 ctor.workspace = true

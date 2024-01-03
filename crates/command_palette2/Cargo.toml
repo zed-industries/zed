@@ -31,6 +31,6 @@ project = { package="project2", path = "../project2", features = ["test-support"
 menu = { package = "menu2", path = "../menu2" }
 go_to_line = { package = "go_to_line2", path = "../go_to_line2" }
 serde_json.workspace = true
-workspace = { package="workspace2", path = "../workspace2", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true

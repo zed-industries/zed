@@ -19,23 +19,23 @@ test-support = [
 ]
 
 [dependencies]
-db = { path = "../db" }
-call = { path = "../call" }
-client = { path = "../client" }
+db = { path = "../db2", package = "db2" }
+call = { path = "../call2", package = "call2" }
+client = { path = "../client2", package = "client2" }
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
-drag_and_drop = { path = "../drag_and_drop" }
-fs = { path = "../fs" }
-gpui = { path = "../gpui" }
-install_cli = { path = "../install_cli" }
-language = { path = "../language" }
-menu = { path = "../menu" }
+# context_menu = { path = "../context_menu" }
+fs = { path = "../fs2", package = "fs2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+install_cli = { path = "../install_cli2", package = "install_cli2" }
+language = { path = "../language2", package = "language2" }
+#menu = { path = "../menu" }
 node_runtime = { path = "../node_runtime" }
-project = { path = "../project" }
-settings = { path = "../settings" }
-terminal = { path = "../terminal" }
-theme = { path = "../theme" }
+project = { path = "../project2", package = "project2" }
+settings = { path = "../settings2", package = "settings2" }
+terminal = { path = "../terminal2", package = "terminal2" }
+theme = { path = "../theme2", package = "theme2" }
 util = { path = "../util" }
+ui = { package = "ui2", path = "../ui2" }
 
 async-recursion = "1.0.0"
 itertools = "0.10"
@@ -54,13 +54,13 @@ smallvec.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-call = { path = "../call", features = ["test-support"] }
-client = { path = "../client", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
-db = { path = "../db", features = ["test-support"] }
+call = { path = "../call2", package = "call2", features = ["test-support"] }
+client = { path = "../client2", package = "client2", features = ["test-support"] }
+gpui = { path = "../gpui2", package = "gpui2", features = ["test-support"] }
+project = { path = "../project2", package = "project2", features = ["test-support"] }
+settings = { path = "../settings2", package = "settings2", features = ["test-support"] }
+fs = { path = "../fs2", package = "fs2", features = ["test-support"] }
+db = { path = "../db2", package = "db2", features = ["test-support"] }
 
 indoc.workspace = true
 env_logger.workspace = true

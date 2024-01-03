@@ -16,7 +16,7 @@ menu = { package = "menu2", path = "../menu2" }
 settings = { package = "settings2", path = "../settings2" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }
-workspace = { package = "workspace2", path = "../workspace2"}
+workspace = { path = "../workspace"}
 
 parking_lot.workspace = true
 

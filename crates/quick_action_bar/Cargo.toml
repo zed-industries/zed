@@ -13,10 +13,10 @@ assistant = { package = "assistant2", path = "../assistant2" }
 editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 search = { path = "../search" }
-workspace = { package = "workspace2", path = "../workspace2" }
+workspace = { path = "../workspace" }
 ui = { package = "ui2", path = "../ui2" }
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
-workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }

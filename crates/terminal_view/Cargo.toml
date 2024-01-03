@@ -17,7 +17,7 @@ project = { package = "project2", path = "../project2" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
-workspace = { package = "workspace2", path = "../workspace2" }
+workspace = { path = "../workspace" }
 db = { package = "db2", path = "../db2" }
 procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "5cd757e5f2eb039ed0c6bb6512223e69d5efc64d", default-features = false }
 terminal = { package = "terminal2", path = "../terminal2" }
@@ -42,5 +42,5 @@ editor = { path = "../editor", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 client = { package = "client2", path = "../client2", features = ["test-support"]}
 project = { package = "project2", path = "../project2", features = ["test-support"]}
-workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
 rand.workspace = true

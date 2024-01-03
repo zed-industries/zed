@@ -79,7 +79,7 @@ project = { package = "project2", path = "../project2", features = ["test-suppor
 rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 theme = { package = "theme2", path = "../theme2" }
-workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
 
 collab_ui = { path = "../collab_ui", features = ["test-support"] }
 

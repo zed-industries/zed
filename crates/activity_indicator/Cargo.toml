@@ -18,7 +18,7 @@ settings = { path = "../settings2", package = "settings2" }
 ui = { path = "../ui2", package = "ui2" }
 util = { path = "../util" }
 theme = { path = "../theme2", package = "theme2" }
-workspace = { path = "../workspace2", package = "workspace2" }
+workspace = { path = "../workspace", package = "workspace" }
 
 anyhow.workspace = true
 futures.workspace = true

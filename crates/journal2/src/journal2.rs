@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace2::{AppState, Workspace};
+use workspace::{AppState, Workspace};
 
 actions!(journal, [NewJournalEntry]);
 
@@ -93,7 +93,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
         let (workspace, _) = cx
-            .update(|cx| workspace2::open_paths(&[journal_dir], &app_state, None, cx))?
+            .update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))?
             .await?;
 
         let _opened = workspace

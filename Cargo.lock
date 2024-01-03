@@ -18,7 +18,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -403,7 +403,7 @@ dependencies = [
  "ui2",
  "util",
  "uuid 1.4.1",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -770,7 +770,7 @@ dependencies = [
  "tempdir",
  "theme2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -1099,7 +1099,7 @@ dependencies = [
  "settings2",
  "theme2",
  "ui2",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -1767,7 +1767,7 @@ dependencies = [
  "unindent",
  "util",
  "uuid 1.4.1",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -1812,7 +1812,7 @@ dependencies = [
  "ui2",
  "util",
  "vcs_menu",
- "workspace2",
+ "workspace",
  "zed_actions2",
 ]
 
@@ -1867,7 +1867,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
  "zed_actions2",
 ]
 
@@ -1986,7 +1986,7 @@ dependencies = [
  "smol",
  "theme2",
  "util",
- "workspace2",
+ "workspace",
  "zed_actions2",
 ]
 
@@ -2520,7 +2520,7 @@ dependencies = [
  "ui2",
  "unindent",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -2706,7 +2706,7 @@ dependencies = [
  "ui2",
  "unindent",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -2924,7 +2924,7 @@ dependencies = [
  "ui2",
  "urlencoding",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -2949,7 +2949,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -3497,7 +3497,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -4223,7 +4223,7 @@ dependencies = [
  "settings2",
  "shellexpand",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -4417,7 +4417,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -4441,7 +4441,7 @@ dependencies = [
  "ui2",
  "unindent",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -5680,7 +5680,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -5901,7 +5901,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -6330,7 +6330,7 @@ dependencies = [
  "ui2",
  "unicase",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -6353,7 +6353,7 @@ dependencies = [
  "text2",
  "theme2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -6521,7 +6521,7 @@ dependencies = [
  "gpui2",
  "search",
  "ui2",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -6703,7 +6703,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -7550,7 +7550,7 @@ dependencies = [
  "ui2",
  "unindent",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -7678,7 +7678,7 @@ dependencies = [
  "tree-sitter-typescript",
  "unindent",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -8843,7 +8843,7 @@ dependencies = [
  "thiserror",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -8980,7 +8980,7 @@ dependencies = [
  "theme2",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -10044,7 +10044,7 @@ dependencies = [
  "picker",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -10083,7 +10083,7 @@ dependencies = [
  "tokio",
  "ui2",
  "util",
- "workspace2",
+ "workspace",
  "zed_actions2",
 ]
 
@@ -10497,7 +10497,7 @@ dependencies = [
  "ui2",
  "util",
  "vim",
- "workspace2",
+ "workspace",
 ]
 
 [[package]]
@@ -10746,46 +10746,6 @@ dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
  "bincode",
- "call",
- "client",
- "collections",
- "context_menu",
- "db",
- "drag_and_drop",
- "env_logger",
- "fs",
- "futures 0.3.28",
- "gpui",
- "indoc",
- "install_cli",
- "itertools 0.10.5",
- "language",
- "lazy_static",
- "log",
- "menu",
- "node_runtime",
- "parking_lot 0.11.2",
- "postage",
- "project",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "smallvec",
- "terminal",
- "theme",
- "util",
- "uuid 1.4.1",
-]
-
-[[package]]
-name = "workspace2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-recursion 1.0.5",
- "bincode",
  "call2",
  "client2",
  "collections",
@@ -11021,7 +10981,7 @@ dependencies = [
  "uuid 1.4.1",
  "vim",
  "welcome",
- "workspace2",
+ "workspace",
  "zed_actions2",
 ]
 

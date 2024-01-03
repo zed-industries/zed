@@ -71,7 +71,7 @@ theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
 vim = { path = "../vim" }
-workspace = { package = "workspace2", path = "../workspace2" }
+workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }
 zed_actions = {package = "zed_actions2", path = "../zed_actions2"}
 anyhow.workspace = true

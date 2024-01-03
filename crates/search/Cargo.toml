@@ -20,7 +20,7 @@ settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 ui = {package = "ui2", path = "../ui2"}
-workspace = { package = "workspace2", path = "../workspace2" }
+workspace = { path = "../workspace" }
 semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
 anyhow.workspace = true
 futures.workspace = true
@@ -36,5 +36,5 @@ client = { package = "client2", path = "../client2", features = ["test-support"]
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 
-workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
 unindent.workspace = true

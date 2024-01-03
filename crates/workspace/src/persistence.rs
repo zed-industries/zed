@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+//#![allow(dead_code)]
 
 pub mod model;
 
@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{platform::WindowBounds, Axis};
+use gpui::{Axis, WindowBounds};
 
 use util::{unzip_option, ResultExt};
 use uuid::Uuid;
@@ -403,7 +403,7 @@ impl WorkspaceDb {
         .map(|(group_id, axis, pane_id, active, flexes)| {
             if let Some((group_id, axis)) = group_id.zip(axis) {
                 let flexes = flexes
-                    .map(|flexes| serde_json::from_str::<Vec<f32>>(&flexes))
+                    .map(|flexes: String| serde_json::from_str::<Vec<f32>>(&flexes))
                     .transpose()?;
 
                 Ok(SerializedPaneGroup::Group {
@@ -553,6 +553,7 @@ impl WorkspaceDb {
 mod tests {
     use super::*;
     use db::open_test_db;
+    use gpui;
 
     #[gpui::test]
     async fn test_next_id_stability() {
@@ -612,13 +613,13 @@ mod tests {
             conn.migrate(
                 "test_table",
                 &[sql!(
-                    CREATE TABLE test_table(
-                        text TEXT,
-                        workspace_id INTEGER,
-                        FOREIGN KEY(workspace_id)
-                            REFERENCES workspaces(workspace_id)
-                        ON DELETE CASCADE
-                    ) STRICT;)],
+                        CREATE TABLE test_table(
+                            text TEXT,
+                            workspace_id INTEGER,
+                            FOREIGN KEY(workspace_id)
+                                REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                        ) STRICT;)],
             )
         })
         .await
@@ -680,7 +681,7 @@ mod tests {
         assert_eq!(test_text_1, "test-text-1");
     }
 
-    fn group(axis: gpui::Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
+    fn group(axis: Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
         SerializedPaneGroup::Group {
             axis,
             flexes: None,
@@ -700,10 +701,10 @@ mod tests {
         //  | 3,4   |       |
         //  -----------------
         let center_group = group(
-            gpui::Axis::Horizontal,
+            Axis::Horizontal,
             vec![
                 group(
-                    gpui::Axis::Vertical,
+                    Axis::Vertical,
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -859,10 +860,10 @@ mod tests {
         //  | 3,4   |       |
         //  -----------------
         let center_pane = group(
-            gpui::Axis::Horizontal,
+            Axis::Horizontal,
             vec![
                 group(
-                    gpui::Axis::Vertical,
+                    Axis::Vertical,
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -906,10 +907,10 @@ mod tests {
         let db = WorkspaceDb(open_test_db("test_cleanup_panes").await);
 
         let center_pane = group(
-            gpui::Axis::Horizontal,
+            Axis::Horizontal,
             vec![
                 group(
-                    gpui::Axis::Vertical,
+                    Axis::Vertical,
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -944,7 +945,7 @@ mod tests {
         db.save_workspace(workspace.clone()).await;
 
         workspace.center_group = group(
-            gpui::Axis::Vertical,
+            Axis::Vertical,
             vec![
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
