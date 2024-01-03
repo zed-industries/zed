@@ -1,7 +1,7 @@
-use gpui::Hsla;
+use gpui::{hsla, Hsla};
 use serde_derive::Deserialize;
 
-use crate::{amber, blue, jade, lime, orange, pink, purple, red};
+use crate::{amber, blue, gray, jade, lime, orange, pink, purple, red};
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
 pub struct PlayerColor {
@@ -129,6 +129,15 @@ impl PlayerColors {
     pub fn absent(&self) -> PlayerColor {
         // todo!("use a valid color");
         *self.0.last().unwrap()
+    }
+
+    pub fn read_only(&self) -> PlayerColor {
+        let local = self.local();
+        PlayerColor {
+            cursor: local.cursor.grayscale(),
+            background: local.background.grayscale(),
+            selection: local.selection.grayscale(),
+        }
     }
 
     pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
