@@ -41,7 +41,7 @@ notifications = { package = "notifications2",  path = "../notifications2" }
 rich_text = { package = "rich_text2", path = "../rich_text2" }
 picker = { package = "picker2", path = "../picker2" }
 project = { package = "project2", path = "../project2" }
-recent_projects = { package = "recent_projects2", path = "../recent_projects2" }
+recent_projects = { path = "../recent_projects" }
 rpc = { package ="rpc2",  path = "../rpc2" }
 settings = { package = "settings2", path = "../settings2" }
 feature_flags = { package = "feature_flags2", path = "../feature_flags2"}

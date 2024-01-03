@@ -9,18 +9,20 @@ path = "src/activity_indicator.rs"
 doctest = false
 
 [dependencies]
-auto_update = { path = "../auto_update" }
-editor = { path = "../editor" }
-language = { path = "../language" }
-gpui = { path = "../gpui" }
-project = { path = "../project" }
-settings = { path = "../settings" }
+auto_update = { path = "../auto_update2", package = "auto_update2" }
+editor = { path = "../editor2", package = "editor2" }
+language = { path = "../language2", package = "language2" }
+gpui = { path = "../gpui2", package = "gpui2" }
+project = { path = "../project2", package = "project2" }
+settings = { path = "../settings2", package = "settings2" }
+ui = { path = "../ui2", package = "ui2" }
 util = { path = "../util" }
-theme = { path = "../theme" }
-workspace = { path = "../workspace" }
+theme = { path = "../theme2", package = "theme2" }
+workspace = { path = "../workspace2", package = "workspace2" }
 
+anyhow.workspace = true
 futures.workspace = true
 smallvec.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
+editor = { path = "../editor2", package = "editor2", features = ["test-support"] }

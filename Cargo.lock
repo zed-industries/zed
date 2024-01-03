@@ -6,23 +6,6 @@ version = 3
 name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
- "auto_update",
- "editor",
- "futures 0.3.28",
- "gpui",
- "language",
- "project",
- "settings",
- "smallvec",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "activity_indicator2"
-version = "0.1.0"
-dependencies = [
  "anyhow",
  "auto_update2",
  "editor2",
@@ -1130,23 +1113,6 @@ name = "breadcrumbs"
 version = "0.1.0"
 dependencies = [
  "collections",
- "editor",
- "gpui",
- "itertools 0.10.5",
- "language",
- "outline",
- "project",
- "search",
- "settings",
- "theme",
- "workspace",
-]
-
-[[package]]
-name = "breadcrumbs2"
-version = "0.1.0"
-dependencies = [
- "collections",
  "editor2",
  "gpui2",
  "itertools 0.10.5",
@@ -1855,7 +1821,7 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project2",
- "recent_projects2",
+ "recent_projects",
  "rich_text2",
  "rpc2",
  "schemars",
@@ -2058,25 +2024,6 @@ dependencies = [
 
 [[package]]
 name = "copilot_button"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "context_menu",
- "copilot",
- "editor",
- "fs",
- "futures 0.3.28",
- "gpui",
- "language",
- "settings",
- "smol",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "copilot_button2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4595,23 +4542,6 @@ name = "language_selector"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "editor",
- "fuzzy",
- "gpui",
- "language",
- "picker",
- "project",
- "settings",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "language_selector2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "editor2",
  "fuzzy2",
  "gpui2",
@@ -6620,35 +6550,6 @@ name = "project_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
- "collections",
- "context_menu",
- "db",
- "drag_and_drop",
- "editor",
- "futures 0.3.28",
- "gpui",
- "language",
- "menu",
- "postage",
- "pretty_assertions",
- "project",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "theme",
- "unicase",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "project_panel2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "client2",
  "collections",
  "db2",
@@ -7028,27 +6929,6 @@ dependencies = [
 
 [[package]]
 name = "recent_projects"
-version = "0.1.0"
-dependencies = [
- "db",
- "editor",
- "futures 0.3.28",
- "fuzzy",
- "gpui",
- "language",
- "ordered-float 2.10.0",
- "picker",
- "postage",
- "settings",
- "smol",
- "text",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "recent_projects2"
 version = "0.1.0"
 dependencies = [
  "editor2",
@@ -11290,7 +11170,7 @@ dependencies = [
 name = "zed"
 version = "0.119.0"
 dependencies = [
- "activity_indicator2",
+ "activity_indicator",
  "ai2",
  "anyhow",
  "assistant2",
@@ -11301,7 +11181,7 @@ dependencies = [
  "audio2",
  "auto_update2",
  "backtrace",
- "breadcrumbs2",
+ "breadcrumbs",
  "call2",
  "channel2",
  "chrono",
@@ -11311,7 +11191,7 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot2",
- "copilot_button2",
+ "copilot_button",
  "ctor",
  "db2",
  "diagnostics",
@@ -11332,7 +11212,7 @@ dependencies = [
  "isahc",
  "journal2",
  "language2",
- "language_selector2",
+ "language_selector",
  "language_tools2",
  "lazy_static",
  "libc",
@@ -11346,11 +11226,11 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project2",
- "project_panel2",
+ "project_panel",
  "project_symbols",
  "quick_action_bar",
  "rand 0.8.5",
- "recent_projects2",
+ "recent_projects",
  "regex",
  "rope2",
  "rpc2",

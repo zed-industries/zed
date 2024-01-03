@@ -10,18 +10,19 @@ doctest = false
 
 [dependencies]
 collections = { path = "../collections" }
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-project = { path = "../project" }
-search = { path = "../search" }
-settings = { path = "../settings" }
-theme = { path = "../theme" }
-workspace = { path = "../workspace" }
-outline = { path = "../outline" }
+editor = { package = "editor2", path = "../editor2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+ui = { package = "ui2", path = "../ui2" }
+language = { package = "language2", path = "../language2" }
+project = { package = "project2", path = "../project2" }
+search = { package = "search2", path = "../search2" }
+settings = { package = "settings2", path = "../settings2" }
+theme = { package = "theme2", path = "../theme2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+outline = { package = "outline2", path = "../outline2" }
 itertools = "0.10"
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }

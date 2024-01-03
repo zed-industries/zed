@@ -1,15 +1,14 @@
 use editor::Editor;
-use gpui::{
-    elements::*,
-    platform::{CursorStyle, MouseButton},
-    Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
-};
+use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView};
 use std::sync::Arc;
+use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
+
+use crate::LanguageSelector;
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<Arc<str>>>,
-    workspace: WeakViewHandle<Workspace>,
+    workspace: WeakView<Workspace>,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -22,7 +21,7 @@ impl ActiveBufferLanguage {
         }
     }
 
-    fn update_language(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+    fn update_language(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         self.active_language = Some(None);
 
         let editor = editor.read(cx);
@@ -36,44 +35,28 @@ impl ActiveBufferLanguage {
     }
 }
 
-impl Entity for ActiveBufferLanguage {
-    type Event = ();
-}
-
-impl View for ActiveBufferLanguage {
-    fn ui_name() -> &'static str {
-        "ActiveBufferLanguage"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if let Some(active_language) = self.active_language.as_ref() {
+impl Render for ActiveBufferLanguage {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()
             } else {
                 "Unknown".to_string()
             };
-            let theme = theme::current(cx).clone();
 
-            MouseEventHandler::new::<Self, _>(0, cx, |state, cx| {
-                let theme = &theme::current(cx).workspace.status_bar;
-                let style = theme.active_language.style_for(state);
-                Label::new(active_language_text, style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, this, cx| {
-                if let Some(workspace) = this.workspace.upgrade(cx) {
-                    workspace.update(cx, |workspace, cx| {
-                        crate::toggle(workspace, &Default::default(), cx)
-                    });
-                }
-            })
-            .with_tooltip::<Self>(0, "Select Language", None, theme.tooltip.clone(), cx)
-            .into_any()
-        } else {
-            Empty::new().into_any()
-        }
+            el.child(
+                Button::new("change-language", active_language_text)
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                LanguageSelector::toggle(workspace, cx)
+                            });
+                        }
+                    }))
+                    .tooltip(|cx| Tooltip::text("Select Language", cx)),
+            )
+        })
     }
 }
 
