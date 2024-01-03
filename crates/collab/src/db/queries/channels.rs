@@ -165,15 +165,16 @@ impl Database {
             if role.is_none() || role == Some(ChannelRole::Banned) {
                 Err(anyhow!("not allowed"))?
             }
+            let role = role.unwrap();
 
             let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
             let room_id = self
                 .get_or_create_channel_room(channel_id, &live_kit_room, environment, &*tx)
                 .await?;
 
-            self.join_channel_room_internal(room_id, user_id, connection, &*tx)
+            self.join_channel_room_internal(room_id, user_id, connection, role, &*tx)
                 .await
-                .map(|jr| (jr, accept_invite_result, role.unwrap()))
+                .map(|jr| (jr, accept_invite_result, role))
         })
         .await
     }

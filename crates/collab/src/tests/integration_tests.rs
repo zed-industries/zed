@@ -19,6 +19,7 @@ use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
+use rpc::proto::ChannelRole;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -3550,6 +3551,7 @@ async fn test_leaving_project(
             client_b.user_store().clone(),
             client_b.language_registry().clone(),
             FakeFs::new(cx.background_executor().clone()),
+            ChannelRole::Member,
             cx,
         )
     })

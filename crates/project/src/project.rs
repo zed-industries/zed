@@ -262,6 +262,8 @@ enum ProjectClientState {
     },
     Remote {
         sharing_has_stopped: bool,
+        // todo!() this should be represented differently!
+        is_read_only: bool,
         remote_id: u64,
         replica_id: ReplicaId,
     },
@@ -702,6 +704,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        role: proto::ChannelRole,
         mut cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
@@ -757,6 +760,7 @@ impl Project {
                 client: client.clone(),
                 client_state: Some(ProjectClientState::Remote {
                     sharing_has_stopped: false,
+                    is_read_only: false,
                     remote_id,
                     replica_id,
                 }),
@@ -797,6 +801,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
             };
+            this.set_role(role);
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
             }
@@ -1619,6 +1624,13 @@ impl Project {
         cx.notify();
     }
 
+    pub fn set_role(&mut self, role: proto::ChannelRole) {
+        if let Some(ProjectClientState::Remote { is_read_only, .. }) = &mut self.client_state {
+            *is_read_only =
+                !(role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin)
+        }
+    }
+
     fn disconnected_from_host_internal(&mut self, cx: &mut AppContext) {
         if let Some(ProjectClientState::Remote {
             sharing_has_stopped,
@@ -1672,6 +1684,10 @@ impl Project {
 
     pub fn is_read_only(&self) -> bool {
         self.is_disconnected()
+            || match &self.client_state {
+                Some(ProjectClientState::Remote { is_read_only, .. }) => *is_read_only,
+                _ => false,
+            }
     }
 
     pub fn is_local(&self) -> bool {

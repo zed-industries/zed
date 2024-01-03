@@ -36,6 +36,7 @@ impl ParticipantLocation {
 pub struct LocalParticipant {
     pub projects: Vec<proto::ParticipantProject>,
     pub active_project: Option<WeakModel<Project>>,
+    pub role: proto::ChannelRole,
 }
 
 #[derive(Clone, Debug)]

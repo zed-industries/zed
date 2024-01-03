@@ -131,7 +131,12 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 participant_index: ActiveValue::set(Some(0)),
-                ..Default::default()
+                role: ActiveValue::set(Some(ChannelRole::Admin)),
+
+                id: ActiveValue::NotSet,
+                location_kind: ActiveValue::NotSet,
+                location_project_id: ActiveValue::NotSet,
+                initial_project_id: ActiveValue::NotSet,
             }
             .insert(&*tx)
             .await?;
@@ -162,7 +167,13 @@ impl Database {
                     calling_connection.owner_id as i32,
                 ))),
                 initial_project_id: ActiveValue::set(initial_project_id),
-                ..Default::default()
+                role: ActiveValue::set(Some(ChannelRole::Member)),
+
+                id: ActiveValue::NotSet,
+                answering_connection_id: ActiveValue::NotSet,
+                answering_connection_server_id: ActiveValue::NotSet,
+                location_kind: ActiveValue::NotSet,
+                location_project_id: ActiveValue::NotSet,
             }
             .insert(&*tx)
             .await?;
@@ -384,6 +395,7 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
+        role: ChannelRole,
         tx: &DatabaseTransaction,
     ) -> Result<JoinRoom> {
         let participant_index = self
@@ -404,7 +416,11 @@ impl Database {
                 connection.owner_id as i32,
             ))),
             participant_index: ActiveValue::Set(Some(participant_index)),
-            ..Default::default()
+            role: ActiveValue::set(Some(role)),
+            id: ActiveValue::NotSet,
+            location_kind: ActiveValue::NotSet,
+            location_project_id: ActiveValue::NotSet,
+            initial_project_id: ActiveValue::NotSet,
         }])
         .on_conflict(
             OnConflict::columns([room_participant::Column::UserId])
@@ -413,6 +429,7 @@ impl Database {
                     room_participant::Column::AnsweringConnectionServerId,
                     room_participant::Column::AnsweringConnectionLost,
                     room_participant::Column::ParticipantIndex,
+                    room_participant::Column::Role,
                 ])
                 .to_owned(),
         )
