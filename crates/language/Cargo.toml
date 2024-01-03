@@ -28,7 +28,7 @@ fuzzy = {  path = "../fuzzy" }
 git = { package = "git3", path = "../git3" }
 gpui = { package = "gpui2", path = "../gpui2" }
 lsp = { path = "../lsp" }
-rpc = { package = "rpc2", path = "../rpc2" }
+rpc = { path = "../rpc" }
 settings = { package = "settings2", path = "../settings2" }
 sum_tree = { path = "../sum_tree" }
 text = { package = "text2", path = "../text2" }

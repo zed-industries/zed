@@ -12,7 +12,7 @@ doctest = false
 [dependencies]
 gpui = { package = "gpui2", path = "../gpui2" }
 settings = { package = "settings2", path = "../settings2" }
-db = { package = "db2", path = "../db2" }
+db = { path = "../db" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 

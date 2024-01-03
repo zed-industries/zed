@@ -13,14 +13,14 @@ ai = { path = "../ai" }
 client = { path = "../client" }
 collections = { path = "../collections"}
 editor = { path = "../editor" }
-fs = { package = "fs2", path = "../fs2" }
+fs = { path = "../fs" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 menu = { package = "menu2", path = "../menu2" }
 multi_buffer = { path = "../multi_buffer" }
 project = { path = "../project" }
 search = { path = "../search" }
-semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
+semantic_index = { path = "../semantic_index" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
 ui = { package = "ui2", path = "../ui2" }

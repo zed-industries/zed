@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 copilot = { path = "../copilot" }
 editor = { path = "../editor" }
-fs = { package = "fs2", path = "../fs2" }
+fs = { path = "../fs" }
 zed_actions = { path = "../zed_actions"}
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }

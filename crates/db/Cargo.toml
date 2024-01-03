@@ -13,7 +13,7 @@ test-support = []
 
 [dependencies]
 collections = { path = "../collections" }
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 sqlez = { path = "../sqlez" }
 sqlez_macros = { path = "../sqlez_macros" }
 util = { path = "../util" }
@@ -28,6 +28,6 @@ serde_derive.workspace = true
 smol.workspace = true
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 env_logger.workspace = true
 tempdir.workspace = true

@@ -18,7 +18,7 @@ clock = { path = "../clock" }
 collections = { path = "../collections" }
 live_kit_server = { path = "../live_kit_server" }
 text = { package = "text2", path = "../text2" }
-rpc = { package = "rpc2", path = "../rpc2" }
+rpc = { path = "../rpc" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -68,15 +68,15 @@ client = { path = "../client", features = ["test-support"] }
 channel = { path = "../channel" }
 editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
-fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }
 git = { package = "git3", path = "../git3", features = ["test-support"] }
 live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 node_runtime = { path = "../node_runtime" }
-notifications = { package = "notifications2", path = "../notifications2", features = ["test-support"] }
+notifications = { path = "../notifications", features = ["test-support"] }
 
 project = { path = "../project", features = ["test-support"] }
-rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 theme = { package = "theme2", path = "../theme2" }
 workspace = { path = "../workspace", features = ["test-support"] }

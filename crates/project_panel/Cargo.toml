@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 collections = { path = "../collections" }
-db = { path = "../db2", package = "db2" }
+db = { path = "../db" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui2", package = "gpui2" }
 menu = { path = "../menu2", package = "menu2" }

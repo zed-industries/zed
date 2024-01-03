@@ -21,7 +21,7 @@ theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 ui = {package = "ui2", path = "../ui2"}
 workspace = { path = "../workspace" }
-semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
+semantic_index = { path = "../semantic_index" }
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true

@@ -15,7 +15,7 @@ test-support = ["gpui/test-support", "fs/test-support"]
 collections = { path = "../collections" }
 gpui = {package = "gpui2",  path = "../gpui2" }
 sqlez = { path = "../sqlez" }
-fs = {package = "fs2",  path = "../fs2" }
+fs = { path = "../fs" }
 feature_flags = { path = "../feature_flags" }
 util = { path = "../util" }
 
@@ -36,7 +36,7 @@ tree-sitter-json = "*"
 
 [dev-dependencies]
 gpui = {package = "gpui2",  path = "../gpui2", features = ["test-support"] }
-fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true

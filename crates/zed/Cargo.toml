@@ -32,12 +32,12 @@ client = { path = "../client" }
 copilot = { path = "../copilot" }
 copilot_button = { path = "../copilot_button" }
 diagnostics = { path = "../diagnostics" }
-db = { package = "db2", path = "../db2" }
+db = { path = "../db" }
 editor = { path = "../editor" }
 feedback = { path = "../feedback" }
 file_finder = { path = "../file_finder" }
 search = { path = "../search" }
-fs = { package = "fs2", path = "../fs2" }
+fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 go_to_line = { path = "../go_to_line" }
 gpui = { package = "gpui2", path = "../gpui2" }
@@ -49,7 +49,7 @@ lsp = { path = "../lsp" }
 menu = { package = "menu2", path = "../menu2" }
 language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
-notifications = { package = "notifications2", path = "../notifications2" }
+notifications = { path = "../notifications" }
 assistant = { path = "../assistant" }
 outline = { path = "../outline" }
 # plugin_runtime = { path = "../plugin_runtime",optional = true }
@@ -59,7 +59,7 @@ project_symbols = { path = "../project_symbols" }
 quick_action_bar = { path = "../quick_action_bar" }
 recent_projects = { path = "../recent_projects" }
 rope = { package = "rope2", path = "../rope2"}
-rpc = { package = "rpc2", path = "../rpc2" }
+rpc = { path = "../rpc" }
 settings = { package = "settings2", path = "../settings2" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
@@ -69,7 +69,7 @@ terminal_view = { path = "../terminal_view" }
 theme = { package = "theme2", path = "../theme2" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
-semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
+semantic_index = { path = "../semantic_index" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 welcome = { path = "../welcome" }

@@ -15,7 +15,7 @@ test-support = []
 client = { path = "../client" }
 collections = { path = "../collections"}
 language = { path = "../language" }
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 fs = { path = "../fs" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
@@ -31,5 +31,5 @@ parking_lot.workspace = true
 
 [dev-dependencies]
 language = { path = "../language", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 fs = { path = "../fs",  features = ["test-support"] }

@@ -26,7 +26,7 @@ test-support = [
 client = { path = "../client" }
 clock = { path = "../clock" }
 copilot = { path = "../copilot" }
-db = { package="db2", path = "../db2" }
+db = { path = "../db" }
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
 fuzzy = {  path = "../fuzzy" }
@@ -36,7 +36,7 @@ language = { path = "../language" }
 lsp = { path = "../lsp" }
 multi_buffer = { path = "../multi_buffer" }
 project = { path = "../project" }
-rpc = { package = "rpc2", path = "../rpc2" }
+rpc = { path = "../rpc" }
 rich_text = { path = "../rich_text" }
 settings = { package="settings2", path = "../settings2" }
 snippet = { path = "../snippet" }

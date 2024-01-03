@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 fuzzy = { path = "../fuzzy"}
-fs = {package = "fs2", path = "../fs2"}
+fs = {path = "../fs"}
 gpui = {package = "gpui2", path = "../gpui2"}
 picker = {path = "../picker"}
 util = {path = "../util"}

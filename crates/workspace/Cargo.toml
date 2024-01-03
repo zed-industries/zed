@@ -19,12 +19,12 @@ test-support = [
 ]
 
 [dependencies]
-db = { path = "../db2", package = "db2" }
+db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
-fs = { path = "../fs2", package = "fs2" }
+fs = { path = "../fs" }
 gpui = { package = "gpui2", path = "../gpui2" }
 install_cli = { path = "../install_cli" }
 language = { path = "../language" }
@@ -59,8 +59,8 @@ client = { path = "../client", features = ["test-support"] }
 gpui = { path = "../gpui2", package = "gpui2", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings2", package = "settings2", features = ["test-support"] }
-fs = { path = "../fs2", package = "fs2", features = ["test-support"] }
-db = { path = "../db2", package = "db2", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }
+db = { path = "../db", features = ["test-support"] }
 
 indoc.workspace = true
 env_logger.workspace = true

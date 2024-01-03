@@ -25,7 +25,7 @@ collections = { path = "../collections" }
 gpui = { package = "gpui2", path = "../gpui2" }
 log.workspace = true
 live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2" }
-fs = { package = "fs2", path = "../fs2" }
+fs = { path = "../fs" }
 language = { path = "../language" }
 media = { path = "../media" }
 project = { path = "../project" }
@@ -45,7 +45,7 @@ smallvec.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
-fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }

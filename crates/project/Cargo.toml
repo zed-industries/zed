@@ -25,8 +25,8 @@ copilot = { path = "../copilot" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-db = { package = "db2", path = "../db2" }
-fs = { package = "fs2", path = "../fs2" }
+db = { path = "../db" }
+fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = {  path = "../fuzzy" }
 git = { package = "git3", path = "../git3" }
@@ -34,8 +34,8 @@ gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime" }
-prettier = { package = "prettier2", path = "../prettier2" }
-rpc = { package = "rpc2", path = "../rpc2" }
+prettier = { path = "../prettier" }
+rpc = { path = "../rpc" }
 settings = { package = "settings2", path = "../settings2" }
 sum_tree = { path = "../sum_tree" }
 terminal = { package = "terminal2", path = "../terminal2" }
@@ -71,15 +71,15 @@ env_logger.workspace = true
 pretty_assertions.workspace = true
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-db = { package = "db2", path = "../db2", features = ["test-support"] }
-fs = { package = "fs2", path = "../fs2",  features = ["test-support"] }
+db = { path = "../db", features = ["test-support"] }
+fs = { path = "../fs",  features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
-prettier = { package = "prettier2", path = "../prettier2", features = ["test-support"] }
+prettier = { path = "../prettier", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
-rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
 git2.workspace = true
 tempdir.workspace = true
 unindent.workspace = true

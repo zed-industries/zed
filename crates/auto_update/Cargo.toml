@@ -9,7 +9,7 @@ path = "src/auto_update.rs"
 doctest = false
 
 [dependencies]
-db = { package = "db2", path = "../db2" }
+db = { path = "../db" }
 client = { path = "../client" }
 gpui = { package = "gpui2", path = "../gpui2" }
 menu = { package = "menu2", path = "../menu2" }

@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [lib]
-path = "src/notification_store.rs"
+path = "src/notification_store2.rs"
 doctest = false
 
 [features]
@@ -23,11 +23,11 @@ clock = { path = "../clock" }
 collections = { path = "../collections" }
 db = { path = "../db" }
 feature_flags = { path = "../feature_flags" }
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 rpc = { path = "../rpc" }
-settings = { path = "../settings" }
+settings = { package = "settings2", path = "../settings2" }
 sum_tree = { path = "../sum_tree" }
-text = { path = "../text" }
+text = { package = "text2", path = "../text2" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -36,7 +36,7 @@ time.workspace = true
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

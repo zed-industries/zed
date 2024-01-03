@@ -12,7 +12,7 @@ doctest = false
 client = { path = "../client" }
 editor = { path = "../editor" }
 feature_flags = { path = "../feature_flags" }
-fs = { package = "fs2", path = "../fs2" }
+fs = { path = "../fs" }
 fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
 picker = { path = "../picker" }
