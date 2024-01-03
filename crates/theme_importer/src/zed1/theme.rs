@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use gpui::serde_json::{self, Value};
@@ -18,6 +18,19 @@ pub struct Color(pub ColorU);
 impl Color {
     pub fn from_u32(rgba: u32) -> Self {
         Self(ColorU::from_u32(rgba))
+    }
+}
+
+impl Deref for Color {
+    type Target = ColorU;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Color {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -55,8 +68,24 @@ pub struct TextStyle {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-struct HighlightStyle {
-    color: Option<Color>,
+pub struct HighlightStyle {
+    pub color: Option<Color>,
+    pub weight: Option<Weight>,
+    pub italic: Option<bool>,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Clone, Debug, Deserialize)]
+pub enum Weight {
+    thin,
+    extra_light,
+    light,
+    normal,
+    medium,
+    semibold,
+    bold,
+    extra_bold,
+    black,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]

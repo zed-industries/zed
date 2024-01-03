@@ -11,25 +11,23 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::Arc;
 
 use any_ascii::any_ascii;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use convert_case::{Case, Casing};
-use gpui::{serde_json, AssetSource};
+use gpui::serde_json;
 use indexmap::IndexMap;
 use json_comments::StripComments;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
 use theme::{Appearance, UserTheme, UserThemeFamily};
-use theme1::Theme as Zed1Theme;
 
-use crate::assets::Assets;
 use crate::theme_printer::UserThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
+use crate::zed1::theme::Theme as Zed1Theme;
 use crate::zed1::Zed1ThemeConverter;
 
 #[derive(Debug, Deserialize)]
@@ -210,19 +208,6 @@ fn main() -> Result<()> {
             .map(|family| (family.to_string(), Vec::new())),
     );
 
-    let platform = gpui1::platform::current::platform();
-    let zed1_font_cache = Arc::new(gpui1::FontCache::new(platform.fonts()));
-
-    let mut embedded_fonts = Vec::new();
-    for font_path in Assets.list("fonts")? {
-        if font_path.ends_with(".ttf") {
-            let font_bytes = Assets.load(&font_path)?.to_vec();
-            embedded_fonts.push(Arc::from(font_bytes));
-        }
-    }
-
-    platform.fonts().add_fonts(&embedded_fonts)?;
-
     for entry in fs::read_dir(&zed1_themes_path)? {
         let entry = entry?;
 
@@ -251,10 +236,8 @@ fn main() -> Result<()> {
 
         let theme_without_comments = StripComments::new(theme_file);
 
-        let zed1_theme: Zed1Theme = gpui1::fonts::with_font_cache(zed1_font_cache.clone(), || {
-            serde_json::from_reader(theme_without_comments)
-                .context(format!("failed to parse theme {theme_file_path:?}"))
-        })?;
+        let zed1_theme: Zed1Theme = serde_json::from_reader(theme_without_comments)
+            .context(format!("failed to parse theme {theme_file_path:?}"))?;
 
         let theme_name = zed1_theme.meta.name.clone();
 

@@ -1,4 +1,4 @@
 mod converter;
-mod theme;
+pub mod theme;
 
 pub use converter::*;
