@@ -70,7 +70,7 @@ editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
 git = { path = "../git", features = ["test-support"] }
-live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2", features = ["test-support"] }
+live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 node_runtime = { path = "../node_runtime" }
 notifications = { path = "../notifications", features = ["test-support"] }

@@ -1,7 +1,7 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use gpui::{actions, keymap_matcher::Binding, Menu, MenuItem};
+use gpui::{actions, KeyBinding};
 use live_kit_client::{
     LocalAudioTrack, LocalVideoTrack, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate, Room,
 };
@@ -9,30 +9,32 @@ use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
-actions!(capture, [Quit]);
+actions!(live_kit_client, [Quit]);
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui::App::new(()).unwrap().run(|cx| {
+    gpui::App::production(Arc::new(())).run(|cx| {
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 
         #[cfg(not(any(test, feature = "test-support")))]
         println!("USING REAL LIVEKIT");
 
-        cx.platform().activate(true);
-        cx.add_global_action(quit);
+        cx.activate(true);
 
-        cx.add_bindings([Binding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "Zed",
-            items: vec![MenuItem::Action {
-                name: "Quit",
-                action: Box::new(Quit),
-                os_action: None,
-            }],
-        }]);
+        cx.on_action(quit);
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+
+        // todo!()
+        // cx.set_menus(vec![Menu {
+        //     name: "Zed",
+        //     items: vec![MenuItem::Action {
+        //         name: "Quit",
+        //         action: Box::new(Quit),
+        //         os_action: None,
+        //     }],
+        // }]);
 
         let live_kit_url = std::env::var("LIVE_KIT_URL").unwrap_or("http://localhost:7880".into());
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());
@@ -100,7 +102,7 @@ fn main() {
             }
 
             println!("Pausing for 5 seconds to test audio, make some noise!");
-            let timer = cx.background().timer(Duration::from_secs(5));
+            let timer = cx.background_executor().timer(Duration::from_secs(5));
             timer.await;
             let remote_audio_track = room_b
                 .remote_audio_tracks("test-participant-1")
@@ -163,12 +165,12 @@ fn main() {
                 panic!("unexpected message");
             }
 
-            cx.platform().quit();
+            cx.update(|cx| cx.shutdown()).ok();
         })
         .detach();
     });
 }
 
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
-    cx.platform().quit();
+    cx.quit();
 }

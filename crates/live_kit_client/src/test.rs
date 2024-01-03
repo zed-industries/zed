@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{BTreeMap, HashMap};
 use futures::Stream;
-use gpui::executor::Background;
+use gpui::BackgroundExecutor;
 use live_kit_server::token;
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
@@ -16,7 +16,7 @@ pub struct TestServer {
     pub api_key: String,
     pub secret_key: String,
     rooms: Mutex<HashMap<String, TestServerRoom>>,
-    background: Arc<Background>,
+    executor: BackgroundExecutor,
 }
 
 impl TestServer {
@@ -24,7 +24,7 @@ impl TestServer {
         url: String,
         api_key: String,
         secret_key: String,
-        background: Arc<Background>,
+        executor: BackgroundExecutor,
     ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
         if servers.contains_key(&url) {
@@ -35,7 +35,7 @@ impl TestServer {
                 api_key,
                 secret_key,
                 rooms: Default::default(),
-                background,
+                executor,
             });
             servers.insert(url, server.clone());
             Ok(server)
@@ -65,7 +65,7 @@ impl TestServer {
     }
 
     pub async fn create_room(&self, room: String) -> Result<()> {
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let mut server_rooms = self.rooms.lock();
         if server_rooms.contains_key(&room) {
             Err(anyhow!("room {:?} already exists", room))
@@ -77,7 +77,7 @@ impl TestServer {
 
     async fn delete_room(&self, room: String) -> Result<()> {
         // TODO: clear state associated with all `Room`s.
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let mut server_rooms = self.rooms.lock();
         server_rooms
             .remove(&room)
@@ -86,7 +86,7 @@ impl TestServer {
     }
 
     async fn join_room(&self, token: String, client_room: Arc<Room>) -> Result<()> {
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
@@ -115,7 +115,7 @@ impl TestServer {
     }
 
     async fn leave_room(&self, token: String) -> Result<()> {
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
@@ -136,7 +136,7 @@ impl TestServer {
     async fn remove_participant(&self, room_name: String, identity: String) -> Result<()> {
         // TODO: clear state associated with the `Room`.
 
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
@@ -152,7 +152,7 @@ impl TestServer {
     }
 
     pub async fn disconnect_client(&self, client_identity: String) {
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let mut server_rooms = self.rooms.lock();
         for room in server_rooms.values_mut() {
             if let Some(room) = room.client_rooms.remove(&client_identity) {
@@ -162,7 +162,7 @@ impl TestServer {
     }
 
     async fn publish_video_track(&self, token: String, local_track: LocalVideoTrack) -> Result<()> {
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
@@ -200,7 +200,7 @@ impl TestServer {
         token: String,
         _local_track: &LocalAudioTrack,
     ) -> Result<()> {
-        self.background.simulate_random_delay().await;
+        self.executor.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
@@ -364,7 +364,10 @@ impl Room {
         let token = token.to_string();
         async move {
             let server = TestServer::get(&url)?;
-            server.join_room(token.clone(), this.clone()).await?;
+            server
+                .join_room(token.clone(), this.clone())
+                .await
+                .context("room join")?;
             *this.0.lock().connection.0.borrow_mut() = ConnectionState::Connected { url, token };
             Ok(())
         }
@@ -374,7 +377,7 @@ impl Room {
         let this = self.clone();
         async move {
             let server = this.test_server();
-            server.background.simulate_random_delay().await;
+            server.executor.simulate_random_delay().await;
             Ok(this.0.lock().display_sources.clone())
         }
     }
@@ -492,8 +495,8 @@ impl Drop for Room {
             ConnectionState::Disconnected,
         ) {
             if let Ok(server) = TestServer::get(&token) {
-                let background = server.background.clone();
-                background
+                let executor = server.executor.clone();
+                executor
                     .spawn(async move { server.leave_room(token).await.unwrap() })
                     .detach();
             }
@@ -547,6 +550,7 @@ impl LocalAudioTrack {
     }
 }
 
+#[derive(Debug)]
 pub struct RemoteVideoTrack {
     sid: Sid,
     publisher_id: Sid,

@@ -1114,7 +1114,7 @@ dependencies = [
  "gpui2",
  "image",
  "language",
- "live_kit_client2",
+ "live_kit_client",
  "log",
  "media",
  "postage",
@@ -1476,7 +1476,7 @@ dependencies = [
  "language",
  "lazy_static",
  "lipsum",
- "live_kit_client2",
+ "live_kit_client",
  "live_kit_server",
  "log",
  "lsp",
@@ -4167,39 +4167,6 @@ dependencies = [
 
 [[package]]
 name = "live_kit_client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-broadcast",
- "async-trait",
- "block",
- "byteorder",
- "bytes 1.5.0",
- "cocoa",
- "collections",
- "core-foundation",
- "core-graphics",
- "foreign-types",
- "futures 0.3.28",
- "gpui",
- "hmac 0.12.1",
- "jwt",
- "live_kit_server",
- "log",
- "media",
- "nanoid",
- "objc",
- "parking_lot 0.11.2",
- "postage",
- "serde",
- "serde_derive",
- "serde_json",
- "sha2 0.10.7",
- "simplelog",
-]
-
-[[package]]
-name = "live_kit_client2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
