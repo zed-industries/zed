@@ -1612,6 +1612,10 @@ impl Panel for ProjectPanel {
         Some(ui::Icon::FileTree)
     }
 
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        Some("Project Panel")
+    }
+
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }

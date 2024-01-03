@@ -10,11 +10,6 @@ fi
 environment=$1
 version=$2
 
-if [[ ${environment} == "nightly" ]]; then
-  echo "nightly is not yet supported"
-  exit 1
-fi
-
 export_vars_for_environment ${environment}
 image_id=$(image_id_for_version ${version})
 
@@ -23,6 +18,6 @@ export ZED_KUBE_NAMESPACE=${environment}
 export ZED_IMAGE_ID=${image_id}
 
 target_zed_kube_cluster
-envsubst < crates/collab/k8s/manifest.template.yml | kubectl apply -f -
+envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
 
 echo "deployed collab v${version} to ${environment}"

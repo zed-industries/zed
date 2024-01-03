@@ -200,7 +200,7 @@ impl DispatchTree {
                         return true;
                     }
                 }
-                return false;
+                false
             })
             .cloned()
             .collect()

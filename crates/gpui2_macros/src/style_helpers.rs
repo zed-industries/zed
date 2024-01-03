@@ -102,7 +102,7 @@ fn generate_methods() -> Vec<TokenStream2> {
 fn generate_predefined_setter(
     name: &'static str,
     length: &'static str,
-    fields: &Vec<TokenStream2>,
+    fields: &[TokenStream2],
     length_tokens: &TokenStream2,
     negate: bool,
     doc_string: &str,
@@ -143,12 +143,12 @@ fn generate_predefined_setter(
 fn generate_custom_value_setter(
     prefix: &'static str,
     length_type: TokenStream2,
-    fields: &Vec<TokenStream2>,
+    fields: &[TokenStream2],
     doc_string: &str,
 ) -> TokenStream2 {
     let method_name = format_ident!("{}", prefix);
 
-    let mut iter = fields.into_iter();
+    let mut iter = fields.iter();
     let last = iter.next_back().unwrap();
     let field_assignments = iter
         .map(|field_tokens| {

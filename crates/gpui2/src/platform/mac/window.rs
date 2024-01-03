@@ -487,7 +487,7 @@ impl MacWindow {
             let display = options
                 .display_id
                 .and_then(|display_id| MacDisplay::all().find(|display| display.id() == display_id))
-                .unwrap_or_else(|| MacDisplay::primary());
+                .unwrap_or_else(MacDisplay::primary);
 
             let mut target_screen = nil;
             let screens = NSScreen::screens(nil);
@@ -701,7 +701,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.0.as_ref().lock().content_size().into()
+        self.0.as_ref().lock().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
@@ -1338,12 +1338,10 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     // The following code detects the spurious event and invokes `resignKeyWindow`:
     // in theory, we're not supposed to invoke this method manually but it balances out
     // the spurious `becomeKeyWindow` event and helps us work around that bug.
-    if selector == sel!(windowDidBecomeKey:) {
-        if !is_active {
-            unsafe {
-                let _: () = msg_send![lock.native_window, resignKeyWindow];
-                return;
-            }
+    if selector == sel!(windowDidBecomeKey:) && !is_active {
+        unsafe {
+            let _: () = msg_send![lock.native_window, resignKeyWindow];
+            return;
         }
     }
 
@@ -1664,11 +1662,11 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     unsafe {
         let state = get_window_state(this);
         let lock = state.as_ref().lock();
-        return if lock.kind == WindowKind::PopUp {
+        if lock.kind == WindowKind::PopUp {
             YES
         } else {
             NO
-        };
+        }
     }
 }
 

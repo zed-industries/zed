@@ -108,25 +108,23 @@ pub mod core_video {
     impl_CFTypeDescription!(CVMetalTextureCache);
 
     impl CVMetalTextureCache {
-        pub fn new(metal_device: *mut MTLDevice) -> Result<Self> {
-            unsafe {
-                let mut this = ptr::null();
-                let result = CVMetalTextureCacheCreate(
-                    kCFAllocatorDefault,
-                    ptr::null(),
-                    metal_device,
-                    ptr::null(),
-                    &mut this,
-                );
-                if result == kCVReturnSuccess {
-                    Ok(CVMetalTextureCache::wrap_under_create_rule(this))
-                } else {
-                    Err(anyhow!("could not create texture cache, code: {}", result))
-                }
+        pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> {
+            let mut this = ptr::null();
+            let result = CVMetalTextureCacheCreate(
+                kCFAllocatorDefault,
+                ptr::null(),
+                metal_device,
+                ptr::null(),
+                &mut this,
+            );
+            if result == kCVReturnSuccess {
+                Ok(CVMetalTextureCache::wrap_under_create_rule(this))
+            } else {
+                Err(anyhow!("could not create texture cache, code: {}", result))
             }
         }
 
-        pub fn create_texture_from_image(
+        pub unsafe fn create_texture_from_image(
             &self,
             source: CVImageBufferRef,
             texture_attributes: CFDictionaryRef,
@@ -135,24 +133,22 @@ pub mod core_video {
             height: usize,
             plane_index: usize,
         ) -> Result<CVMetalTexture> {
-            unsafe {
-                let mut this = ptr::null();
-                let result = CVMetalTextureCacheCreateTextureFromImage(
-                    kCFAllocatorDefault,
-                    self.as_concrete_TypeRef(),
-                    source,
-                    texture_attributes,
-                    pixel_format,
-                    width,
-                    height,
-                    plane_index,
-                    &mut this,
-                );
-                if result == kCVReturnSuccess {
-                    Ok(CVMetalTexture::wrap_under_create_rule(this))
-                } else {
-                    Err(anyhow!("could not create texture, code: {}", result))
-                }
+            let mut this = ptr::null();
+            let result = CVMetalTextureCacheCreateTextureFromImage(
+                kCFAllocatorDefault,
+                self.as_concrete_TypeRef(),
+                source,
+                texture_attributes,
+                pixel_format,
+                width,
+                height,
+                plane_index,
+                &mut this,
+            );
+            if result == kCVReturnSuccess {
+                Ok(CVMetalTexture::wrap_under_create_rule(this))
+            } else {
+                Err(anyhow!("could not create texture, code: {}", result))
             }
         }
     }
@@ -438,60 +434,56 @@ pub mod video_toolbox {
     impl_CFTypeDescription!(VTCompressionSession);
 
     impl VTCompressionSession {
-        pub fn new(
+        pub unsafe fn new(
             width: usize,
             height: usize,
             codec: CMVideoCodecType,
             callback: VTCompressionOutputCallback,
             callback_data: *const c_void,
         ) -> Result<Self> {
-            unsafe {
-                let mut this = ptr::null();
-                let result = VTCompressionSessionCreate(
-                    ptr::null(),
-                    width as i32,
-                    height as i32,
-                    codec,
-                    ptr::null(),
-                    ptr::null(),
-                    ptr::null(),
-                    callback,
-                    callback_data,
-                    &mut this,
-                );
+            let mut this = ptr::null();
+            let result = VTCompressionSessionCreate(
+                ptr::null(),
+                width as i32,
+                height as i32,
+                codec,
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+                callback,
+                callback_data,
+                &mut this,
+            );
 
-                if result == 0 {
-                    Ok(Self::wrap_under_create_rule(this))
-                } else {
-                    Err(anyhow!(
-                        "error creating compression session, code {}",
-                        result
-                    ))
-                }
+            if result == 0 {
+                Ok(Self::wrap_under_create_rule(this))
+            } else {
+                Err(anyhow!(
+                    "error creating compression session, code {}",
+                    result
+                ))
             }
         }
 
-        pub fn encode_frame(
+        pub unsafe fn encode_frame(
             &self,
             buffer: CVImageBufferRef,
             presentation_timestamp: CMTime,
             duration: CMTime,
         ) -> Result<()> {
-            unsafe {
-                let result = VTCompressionSessionEncodeFrame(
-                    self.as_concrete_TypeRef(),
-                    buffer,
-                    presentation_timestamp,
-                    duration,
-                    ptr::null(),
-                    ptr::null(),
-                    ptr::null_mut(),
-                );
-                if result == 0 {
-                    Ok(())
-                } else {
-                    Err(anyhow!("error encoding frame, code {}", result))
-                }
+            let result = VTCompressionSessionEncodeFrame(
+                self.as_concrete_TypeRef(),
+                buffer,
+                presentation_timestamp,
+                duration,
+                ptr::null(),
+                ptr::null(),
+                ptr::null_mut(),
+            );
+            if result == 0 {
+                Ok(())
+            } else {
+                Err(anyhow!("error encoding frame, code {}", result))
             }
         }
     }

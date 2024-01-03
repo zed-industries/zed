@@ -66,12 +66,10 @@ impl MetalRenderer {
             .expect("error building metal library");
 
         fn to_float2_bits(point: crate::PointF) -> u64 {
-            unsafe {
-                let mut output = mem::transmute::<_, u32>(point.y.to_bits()) as u64;
-                output <<= 32;
-                output |= mem::transmute::<_, u32>(point.x.to_bits()) as u64;
-                output
-            }
+            let mut output = point.y.to_bits() as u64;
+            output <<= 32;
+            output |= point.x.to_bits() as u64;
+            output
         }
 
         let unit_vertices = [
@@ -174,12 +172,12 @@ impl MetalRenderer {
             unit_vertices,
             instances,
             sprite_atlas,
-            core_video_texture_cache: CVMetalTextureCache::new(device.as_ptr()).unwrap(),
+            core_video_texture_cache: unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() },
         }
     }
 
     pub fn layer(&self) -> &metal::MetalLayerRef {
-        &*self.layer
+        &self.layer
     }
 
     pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
@@ -206,7 +204,7 @@ impl MetalRenderer {
         let command_buffer = command_queue.new_command_buffer();
         let mut instance_offset = 0;
 
-        let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, &command_buffer);
+        let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, command_buffer);
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
         let color_attachment = render_pass_descriptor
@@ -429,7 +427,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let shadow_bytes_len = mem::size_of::<Shadow>() * shadows.len();
+        let shadow_bytes_len = std::mem::size_of_val(shadows);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(
@@ -489,7 +487,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let quad_bytes_len = mem::size_of::<Quad>() * quads.len();
+        let quad_bytes_len = std::mem::size_of_val(quads);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
@@ -537,7 +535,7 @@ impl MetalRenderer {
         let mut prev_texture_id = None;
         let mut sprites = SmallVec::<[_; 1]>::new();
         let mut paths_and_tiles = paths
-            .into_iter()
+            .iter()
             .map(|path| (path, tiles_by_path_id.get(&path.id).unwrap()))
             .peekable();
 
@@ -652,7 +650,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let quad_bytes_len = mem::size_of::<Underline>() * underlines.len();
+        let quad_bytes_len = std::mem::size_of_val(underlines);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(
@@ -723,7 +721,7 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-        let sprite_bytes_len = mem::size_of::<MonochromeSprite>() * sprites.len();
+        let sprite_bytes_len = std::mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(
@@ -794,7 +792,7 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-        let sprite_bytes_len = mem::size_of::<PolychromeSprite>() * sprites.len();
+        let sprite_bytes_len = std::mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
             ptr::copy_nonoverlapping(
@@ -849,28 +847,30 @@ impl MetalRenderer {
                 media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             );
 
-            let y_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    ptr::null(),
-                    MTLPixelFormat::R8Unorm,
-                    surface.image_buffer.plane_width(0),
-                    surface.image_buffer.plane_height(0),
-                    0,
-                )
-                .unwrap();
-            let cb_cr_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    ptr::null(),
-                    MTLPixelFormat::RG8Unorm,
-                    surface.image_buffer.plane_width(1),
-                    surface.image_buffer.plane_height(1),
-                    1,
-                )
-                .unwrap();
+            let y_texture = unsafe {
+                self.core_video_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        ptr::null(),
+                        MTLPixelFormat::R8Unorm,
+                        surface.image_buffer.plane_width(0),
+                        surface.image_buffer.plane_height(0),
+                        0,
+                    )
+                    .unwrap()
+            };
+            let cb_cr_texture = unsafe {
+                self.core_video_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        ptr::null(),
+                        MTLPixelFormat::RG8Unorm,
+                        surface.image_buffer.plane_width(1),
+                        surface.image_buffer.plane_height(1),
+                        1,
+                    )
+                    .unwrap()
+            };
 
             align_offset(offset);
             let next_offset = *offset + mem::size_of::<Surface>();

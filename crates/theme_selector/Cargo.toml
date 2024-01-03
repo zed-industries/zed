@@ -9,6 +9,7 @@ path = "src/theme_selector.rs"
 doctest = false
 
 [dependencies]
+client = { path = "../client" }
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 fs = { path = "../fs" }

@@ -221,7 +221,7 @@ impl<V: Render> From<View<V>> for AnyView {
         AnyView {
             model: value.model.into_any(),
             layout: any_view::layout::<V>,
-            paint: any_view::paint::<V>,
+            paint: any_view::paint,
         }
     }
 }
@@ -243,7 +243,7 @@ impl Element for AnyView {
             state.is_some(),
             "state is None. Did you include an AnyView twice in the tree?"
         );
-        (self.paint)(&self, state.as_mut().unwrap(), cx)
+        (self.paint)(self, state.as_mut().unwrap(), cx)
     }
 }
 
@@ -293,7 +293,7 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
         Self {
             model: view.model.into(),
             layout: any_view::layout::<V>,
-            paint: any_view::paint::<V>,
+            paint: any_view::paint,
         }
     }
 }
@@ -325,11 +325,7 @@ mod any_view {
         (layout_id, element)
     }
 
-    pub(crate) fn paint<V: 'static + Render>(
-        _view: &AnyView,
-        element: &mut AnyElement,
-        cx: &mut WindowContext,
-    ) {
+    pub(crate) fn paint(_view: &AnyView, element: &mut AnyElement, cx: &mut WindowContext) {
         element.paint(cx);
     }
 }

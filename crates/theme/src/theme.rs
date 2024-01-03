@@ -8,7 +8,7 @@ use components::{
 };
 use gpui::{
     color::Color,
-    elements::{Border, ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
+    elements::{Border, ContainerStyle, ImageStyle, LabelStyle, SvgStyle, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
     platform, AppContext, AssetSource, MouseState,
 };
@@ -1276,15 +1276,9 @@ pub struct WelcomeStyle {
 pub struct ColorScheme {
     pub name: String,
     pub is_light: bool,
-    pub ramps: RampSet,
     pub lowest: Layer,
     pub middle: Layer,
     pub highest: Layer,
-
-    pub popover_shadow: Shadow,
-    pub modal_shadow: Shadow,
-
-    pub players: Vec<Player>,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

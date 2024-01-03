@@ -41,7 +41,7 @@ impl MacDisplay {
                 CGGetActiveDisplayList(display_count, displays.as_mut_ptr(), &mut display_count);
                 displays.set_len(display_count as usize);
 
-                displays.into_iter().map(|display| MacDisplay(display))
+                displays.into_iter().map(MacDisplay)
             } else {
                 panic!("Failed to get active display list");
             }

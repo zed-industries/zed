@@ -10,14 +10,14 @@ use crate::{connection::Connection, domain::Migrator, util::UnboundedSyncSender}
 const MIGRATION_RETRIES: usize = 10;
 
 type QueuedWrite = Box<dyn 'static + Send + FnOnce()>;
-type WriteQueueConstructor =
-    Box<dyn 'static + Send + FnMut() -> Box<dyn 'static + Send + Sync + Fn(QueuedWrite)>>;
+type WriteQueue = Box<dyn 'static + Send + Sync + Fn(QueuedWrite)>;
+type WriteQueueConstructor = Box<dyn 'static + Send + FnMut() -> WriteQueue>;
 lazy_static! {
     /// List of queues of tasks by database uri. This lets us serialize writes to the database
     /// and have a single worker thread per db file. This means many thread safe connections
     /// (possibly with different migrations) could all be communicating with the same background
     /// thread.
-    static ref QUEUES: RwLock<HashMap<Arc<str>, Box<dyn 'static + Send + Sync + Fn(QueuedWrite)>>> =
+    static ref QUEUES: RwLock<HashMap<Arc<str>, WriteQueue>> =
         Default::default();
 }
 

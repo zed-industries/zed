@@ -29,8 +29,8 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
-    // todo!("We should have a icon tooltip method, rather than using persistant_name")
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
         None
@@ -54,6 +54,7 @@ pub trait PanelHandle: Send + Sync {
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
@@ -106,6 +107,10 @@ where
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
         self.read(cx).icon(cx)
+    }
+
+    fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str> {
+        self.read(cx).icon_tooltip(cx)
     }
 
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action> {
@@ -612,6 +617,7 @@ impl Render for PanelButtons {
             .enumerate()
             .filter_map(|(i, entry)| {
                 let icon = entry.panel.icon(cx)?;
+                let icon_tooltip = entry.panel.icon_tooltip(cx)?;
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
@@ -627,7 +633,7 @@ impl Render for PanelButtons {
                 } else {
                     let action = entry.panel.toggle_action(cx);
 
-                    (action, name.into())
+                    (action, icon_tooltip.into())
                 };
 
                 Some(
@@ -745,6 +751,10 @@ pub mod test {
         }
 
         fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+            None
+        }
+
+        fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
             None
         }
 

@@ -176,21 +176,20 @@ impl Interactivity {
     {
         self.mouse_move_listeners
             .push(Box::new(move |event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture {
-                    if cx
+                if phase == DispatchPhase::Capture
+                    && cx
                         .active_drag
                         .as_ref()
                         .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
-                    {
-                        (listener)(
-                            &DragMoveEvent {
-                                event: event.clone(),
-                                bounds: bounds.bounds,
-                                drag: PhantomData,
-                            },
-                            cx,
-                        );
-                    }
+                {
+                    (listener)(
+                        &DragMoveEvent {
+                            event: event.clone(),
+                            bounds: bounds.bounds,
+                            drag: PhantomData,
+                        },
+                        cx,
+                    );
                 }
             }));
     }
@@ -236,7 +235,7 @@ impl Interactivity {
 
     pub fn on_boxed_action(
         &mut self,
-        action: &Box<dyn Action>,
+        action: &dyn Action,
         listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
     ) {
         let action = action.boxed_clone();
@@ -511,7 +510,7 @@ pub trait InteractiveElement: Sized {
 
     fn on_boxed_action(
         mut self,
-        action: &Box<dyn Action>,
+        action: &dyn Action,
         listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().on_boxed_action(action, listener);
@@ -878,6 +877,7 @@ impl DivState {
     }
 }
 
+#[derive(Default)]
 pub struct Interactivity {
     pub element_id: Option<ElementId>,
     pub key_context: Option<KeyContext>,
@@ -921,12 +921,12 @@ pub struct InteractiveBounds {
 
 impl InteractiveBounds {
     pub fn visibly_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
-        self.bounds.contains(point) && cx.was_top_layer(&point, &self.stacking_order)
+        self.bounds.contains(point) && cx.was_top_layer(point, &self.stacking_order)
     }
 
     pub fn drag_target_contains(&self, point: &Point<Pixels>, cx: &WindowContext) -> bool {
         self.bounds.contains(point)
-            && cx.was_top_layer_under_active_drag(&point, &self.stacking_order)
+            && cx.was_top_layer_under_active_drag(point, &self.stacking_order)
     }
 }
 
@@ -1009,8 +1009,7 @@ impl Interactivity {
                                         None,
                                     )
                                     .ok()
-                                    .map(|mut text| text.pop())
-                                    .flatten()
+                                    .and_then(|mut text| text.pop())
                                 {
                                     text.paint(bounds.origin, FONT_SIZE, cx).ok();
 
@@ -1024,7 +1023,6 @@ impl Interactivity {
                                     {
                                         let command_held = cx.modifiers().command;
                                         cx.on_key_event({
-                                            let text_bounds = text_bounds.clone();
                                             move |e: &crate::ModifiersChangedEvent, _phase, cx| {
                                                 if e.modifiers.command != command_held
                                                     && text_bounds.contains(&cx.mouse_position())
@@ -1037,17 +1035,16 @@ impl Interactivity {
                                         let hovered = bounds.contains(&cx.mouse_position());
                                         cx.on_mouse_event(
                                             move |event: &MouseMoveEvent, phase, cx| {
-                                                if phase == DispatchPhase::Capture {
-                                                    if bounds.contains(&event.position) != hovered {
-                                                        cx.notify();
-                                                    }
+                                                if phase == DispatchPhase::Capture
+                                                    && bounds.contains(&event.position) != hovered
+                                                {
+                                                    cx.notify();
                                                 }
                                             },
                                         );
 
                                         cx.on_mouse_event({
-                                            let location = self.location.clone().unwrap();
-                                            let text_bounds = text_bounds.clone();
+                                            let location = self.location.unwrap();
                                             move |e: &crate::MouseDownEvent, phase, cx| {
                                                 if text_bounds.contains(&e.position)
                                                     && phase.capture()
@@ -1188,10 +1185,10 @@ impl Interactivity {
                         if let Some(group_bounds) = hover_group_bounds {
                             let hovered = group_bounds.contains(&cx.mouse_position());
                             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                                if phase == DispatchPhase::Capture {
-                                    if group_bounds.contains(&event.position) != hovered {
-                                        cx.notify();
-                                    }
+                                if phase == DispatchPhase::Capture
+                                    && group_bounds.contains(&event.position) != hovered
+                                {
+                                    cx.notify();
                                 }
                             });
                         }
@@ -1203,10 +1200,10 @@ impl Interactivity {
                             let bounds = bounds.intersect(&cx.content_mask().bounds);
                             let hovered = bounds.contains(&cx.mouse_position());
                             cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                                if phase == DispatchPhase::Capture {
-                                    if bounds.contains(&event.position) != hovered {
-                                        cx.notify();
-                                    }
+                                if phase == DispatchPhase::Capture
+                                    && bounds.contains(&event.position) != hovered
+                                {
+                                    cx.notify();
                                 }
                             });
                         }
@@ -1366,7 +1363,7 @@ impl Interactivity {
                                     && !cx.has_active_drag();
                                 let mut was_hovered = was_hovered.borrow_mut();
 
-                                if is_hovered != was_hovered.clone() {
+                                if is_hovered != *was_hovered {
                                     *was_hovered = is_hovered;
                                     drop(was_hovered);
 
@@ -1693,46 +1690,6 @@ impl Interactivity {
     }
 }
 
-impl Default for Interactivity {
-    fn default() -> Self {
-        Self {
-            element_id: None,
-            key_context: None,
-            focusable: false,
-            tracked_focus_handle: None,
-            scroll_handle: None,
-            // scroll_offset: Point::default(),
-            group: None,
-            base_style: Box::new(StyleRefinement::default()),
-            focus_style: None,
-            in_focus_style: None,
-            hover_style: None,
-            group_hover_style: None,
-            active_style: None,
-            group_active_style: None,
-            drag_over_styles: Vec::new(),
-            group_drag_over_styles: Vec::new(),
-            mouse_down_listeners: Vec::new(),
-            mouse_up_listeners: Vec::new(),
-            mouse_move_listeners: Vec::new(),
-            scroll_wheel_listeners: Vec::new(),
-            key_down_listeners: Vec::new(),
-            key_up_listeners: Vec::new(),
-            action_listeners: Vec::new(),
-            drop_listeners: Vec::new(),
-            can_drop_predicate: None,
-            click_listeners: Vec::new(),
-            drag_listener: None,
-            hover_listener: None,
-            tooltip_builder: None,
-            block_mouse: false,
-
-            #[cfg(debug_assertions)]
-            location: None,
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct InteractiveElementState {
     pub focus_handle: Option<FocusHandle>,
@@ -1942,13 +1899,19 @@ struct ScrollHandleState {
 #[derive(Clone)]
 pub struct ScrollHandle(Rc<RefCell<ScrollHandleState>>);
 
+impl Default for ScrollHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScrollHandle {
     pub fn new() -> Self {
         Self(Rc::default())
     }
 
     pub fn offset(&self) -> Point<Pixels> {
-        self.0.borrow().offset.borrow().clone()
+        *self.0.borrow().offset.borrow()
     }
 
     pub fn top_item(&self) -> usize {

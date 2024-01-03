@@ -60,5 +60,6 @@ export default function app(): any {
         chat_panel: chat_panel(),
         notification_panel: notification_panel(),
         component_test: component_test(),
+        base_theme: theme,
     }
 }

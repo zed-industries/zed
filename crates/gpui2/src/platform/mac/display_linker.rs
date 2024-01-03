@@ -49,7 +49,6 @@ impl MacDisplayLinker {
             );
         } else {
             log::warn!("DisplayLink could not be obtained for {:?}", display_id);
-            return;
         }
     }
 

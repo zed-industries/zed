@@ -661,6 +661,10 @@ impl Panel for NotificationPanel {
             .then(|| Icon::Bell)
     }
 
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        Some("Notification Panel")
+    }
+
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
         let count = self.notification_store.read(cx).unread_notification_count();
         if count == 0 {

@@ -40,7 +40,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         self.0.is_empty()
     }
 
-    pub fn get<'a>(&self, key: &'a K) -> Option<&V> {
+    pub fn get(&self, key: &K) -> Option<&V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         cursor.seek(&MapKeyRef(Some(key)), Bias::Left, &());
         if let Some(item) = cursor.item() {
@@ -98,9 +98,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         let from_key = MapKeyRef(Some(from));
         cursor.seek(&from_key, Bias::Left, &());
 
-        cursor
-            .into_iter()
-            .map(|map_entry| (&map_entry.key, &map_entry.value))
+        cursor.map(|map_entry| (&map_entry.key, &map_entry.value))
     }
 
     pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>

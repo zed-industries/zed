@@ -335,7 +335,7 @@ impl MacTextSystemState {
                 }
             }
 
-            Ok((bitmap_size.into(), bytes))
+            Ok((bitmap_size, bytes))
         }
     }
 
@@ -343,10 +343,10 @@ impl MacTextSystemState {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
-            string.replace_str(&CFString::new(text.as_ref()), CFRange::init(0, 0));
+            string.replace_str(&CFString::new(text), CFRange::init(0, 0));
             let utf16_line_len = string.char_len() as usize;
 
-            let mut ix_converter = StringIndexConverter::new(text.as_ref());
+            let mut ix_converter = StringIndexConverter::new(text);
             for run in font_runs {
                 let utf8_end = ix_converter.utf8_ix + run.len;
                 let utf16_start = ix_converter.utf16_ix;
@@ -390,7 +390,7 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut ix_converter = StringIndexConverter::new(text.as_ref());
+            let mut ix_converter = StringIndexConverter::new(text);
             let mut glyphs = SmallVec::new();
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
@@ -453,7 +453,7 @@ impl MacTextSystemState {
                 if ix_converter.utf8_ix >= text.len() {
                     break;
                 }
-                break_indices.push(ix_converter.utf8_ix as usize);
+                break_indices.push(ix_converter.utf8_ix);
             }
             break_indices
         }

@@ -71,9 +71,11 @@ impl Element for Overlay {
             .map(|child| child.request_layout(cx))
             .collect::<SmallVec<_>>();
 
-        let mut overlay_style = Style::default();
-        overlay_style.position = Position::Absolute;
-        overlay_style.display = Display::Flex;
+        let overlay_style = Style {
+            position: Position::Absolute,
+            display: Display::Flex,
+            ..Style::default()
+        };
 
         let layout_id = cx.request_layout(&overlay_style, child_layout_ids.iter().copied());
 
@@ -147,7 +149,9 @@ impl Element for Overlay {
             desired.origin.y = limits.origin.y;
         }
 
-        cx.with_element_offset(desired.origin - bounds.origin, |cx| {
+        let mut offset = cx.element_offset() + desired.origin - bounds.origin;
+        offset = point(offset.x.round(), offset.y.round());
+        cx.with_absolute_element_offset(offset, |cx| {
             cx.break_content_mask(|cx| {
                 for child in &mut self.children {
                     child.paint(cx);

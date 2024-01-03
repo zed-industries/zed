@@ -29,8 +29,7 @@ pub struct TaffyLayoutEngine {
     >,
 }
 
-static EXPECT_MESSAGE: &'static str =
-    "we should avoid taffy layout errors by construction if possible";
+static EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
@@ -246,7 +245,7 @@ impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
         taffy::style::Style {
             display: self.display,
-            overflow: self.overflow.clone().into(),
+            overflow: self.overflow.into(),
             scrollbar_width: self.scrollbar_width,
             position: self.position,
             inset: self.inset.to_taffy(rem_size),
@@ -378,14 +377,14 @@ where
     }
 }
 
-impl<T, T2> Into<TaffyPoint<T2>> for Point<T>
+impl<T, T2> From<Point<T>> for TaffyPoint<T2>
 where
     T: Into<T2> + Clone + Default + Debug,
 {
-    fn into(self) -> TaffyPoint<T2> {
+    fn from(val: Point<T>) -> Self {
         TaffyPoint {
-            x: self.x.into(),
-            y: self.y.into(),
+            x: val.x.into(),
+            y: val.y.into(),
         }
     }
 }
@@ -396,8 +395,8 @@ where
 {
     fn to_taffy(&self, rem_size: Pixels) -> TaffySize<U> {
         TaffySize {
-            width: self.width.to_taffy(rem_size).into(),
-            height: self.height.to_taffy(rem_size).into(),
+            width: self.width.to_taffy(rem_size),
+            height: self.height.to_taffy(rem_size),
         }
     }
 }
@@ -408,10 +407,10 @@ where
 {
     fn to_taffy(&self, rem_size: Pixels) -> TaffyRect<U> {
         TaffyRect {
-            top: self.top.to_taffy(rem_size).into(),
-            right: self.right.to_taffy(rem_size).into(),
-            bottom: self.bottom.to_taffy(rem_size).into(),
-            left: self.left.to_taffy(rem_size).into(),
+            top: self.top.to_taffy(rem_size),
+            right: self.right.to_taffy(rem_size),
+            bottom: self.bottom.to_taffy(rem_size),
+            left: self.left.to_taffy(rem_size),
         }
     }
 }

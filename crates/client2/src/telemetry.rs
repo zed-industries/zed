@@ -28,6 +28,7 @@ struct TelemetryState {
     app_metadata: AppMetadata,
     architecture: &'static str,
     clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
+    flush_clickhouse_events_task: Option<Task<()>>,
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
     first_event_datetime: Option<DateTime<Utc>>,
@@ -111,6 +112,11 @@ pub enum ClickhouseEvent {
         operation: &'static str,
         milliseconds_since_first_event: i64,
     },
+    Setting {
+        setting: &'static str,
+        value: String,
+        milliseconds_since_first_event: i64,
+    },
 }
 
 #[cfg(debug_assertions)]
@@ -118,6 +124,12 @@ const MAX_QUEUE_LEN: usize = 1;
 
 #[cfg(not(debug_assertions))]
 const MAX_QUEUE_LEN: usize = 50;
+
+#[cfg(debug_assertions)]
+const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
+
+#[cfg(not(debug_assertions))]
+const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
@@ -139,6 +151,7 @@ impl Telemetry {
                 metrics_id: None,
                 session_id: None,
                 clickhouse_events_queue: Default::default(),
+                flush_clickhouse_events_task: Default::default(),
                 log_file: None,
                 is_staff: None,
                 first_event_datetime: None,
@@ -370,6 +383,21 @@ impl Telemetry {
         self.report_clickhouse_event(event, telemetry_settings, immediate_flush)
     }
 
+    pub fn report_setting_event(
+        self: &Arc<Self>,
+        telemetry_settings: TelemetrySettings,
+        setting: &'static str,
+        value: String,
+    ) {
+        let event = ClickhouseEvent::Setting {
+            setting,
+            value,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_clickhouse_event(event, telemetry_settings, false)
+    }
+
     fn milliseconds_since_first_event(&self) -> i64 {
         let mut state = self.state.lock();
         match state.first_event_datetime {
@@ -404,6 +432,13 @@ impl Telemetry {
             if immediate_flush || state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
                 self.flush_clickhouse_events();
+            } else {
+                let this = self.clone();
+                let executor = self.executor.clone();
+                state.flush_clickhouse_events_task = Some(self.executor.spawn(async move {
+                    executor.timer(DEBOUNCE_INTERVAL).await;
+                    this.flush_clickhouse_events();
+                }));
             }
         }
     }
@@ -424,6 +459,7 @@ impl Telemetry {
         let mut state = self.state.lock();
         state.first_event_datetime = None;
         let mut events = mem::take(&mut state.clickhouse_events_queue);
+        state.flush_clickhouse_events_task.take();
         drop(state);
 
         let this = self.clone();

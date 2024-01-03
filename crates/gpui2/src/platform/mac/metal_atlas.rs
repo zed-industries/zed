@@ -64,7 +64,7 @@ impl PlatformAtlas for MetalAtlas {
     ) -> Result<AtlasTile> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            return Ok(tile.clone());
+            Ok(tile.clone())
         } else {
             let (size, bytes) = build()?;
             let tile = lock.allocate(size, key.texture_kind());
@@ -203,7 +203,7 @@ impl MetalAtlasTexture {
             region,
             0,
             bytes.as_ptr() as *const _,
-            u32::from(bounds.size.width.to_bytes(self.bytes_per_pixel())) as u64,
+            bounds.size.width.to_bytes(self.bytes_per_pixel()) as u64,
         );
     }
 

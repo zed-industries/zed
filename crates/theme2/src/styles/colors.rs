@@ -206,16 +206,7 @@ pub struct ThemeColors {
     // ===
     // UI/Rich Text
     // ===
-    pub headline: Hsla,
-    pub paragraph: Hsla,
-    pub link_text: Hsla,
     pub link_text_hover: Hsla,
-    pub link_uri: Hsla,
-    pub inline_code_background: Hsla,
-    pub inline_code_border: Hsla,
-    pub code_block_background: Hsla,
-    pub code_block_border: Hsla,
-    pub emphasis: Hsla,
 }
 
 #[derive(Refineable, Clone)]

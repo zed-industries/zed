@@ -419,6 +419,10 @@ impl Panel for TerminalPanel {
         Some(Icon::Terminal)
     }
 
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        Some("Terminal Panel")
+    }
+
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }

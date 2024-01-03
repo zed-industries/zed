@@ -34,7 +34,7 @@ impl fmt::Debug for Rgba {
 impl Rgba {
     pub fn blend(&self, other: Rgba) -> Self {
         if other.a >= 1.0 {
-            return other;
+            other
         } else if other.a <= 0.0 {
             return *self;
         } else {
@@ -117,7 +117,7 @@ impl TryFrom<&'_ str> for Rgba {
         const RRGGBB: usize = "rrggbb".len();
         const RRGGBBAA: usize = "rrggbbaa".len();
 
-        const EXPECTED_FORMATS: &'static str = "Expected #rgb, #rgba, #rrggbb, or #rrggbbaa";
+        const EXPECTED_FORMATS: &str = "Expected #rgb, #rgba, #rrggbb, or #rrggbbaa";
 
         let Some(("", hex)) = value.trim().split_once('#') else {
             bail!("invalid RGBA hex color: '{value}'. {EXPECTED_FORMATS}");
@@ -328,7 +328,7 @@ impl Hsla {
         let alpha = other.a;
 
         if alpha >= 1.0 {
-            return other;
+            other
         } else if alpha <= 0.0 {
             return self;
         } else {
