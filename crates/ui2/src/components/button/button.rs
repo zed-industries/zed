@@ -165,7 +165,7 @@ impl RenderOnce for Button {
         self.base.child(
             h_stack()
                 .gap_1()
-                .when(self.icon_position.is_some(), |this| {
+                .when(self.icon_position == Some(IconPosition::Start), |this| {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
                             .disabled(is_disabled)
@@ -187,7 +187,7 @@ impl RenderOnce for Button {
                         )
                         .children(self.key_binding),
                 )
-                .when(!self.icon_position.is_some(), |this| {
+                .when(self.icon_position != Some(IconPosition::Start), |this| {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
                             .disabled(is_disabled)
