@@ -757,7 +757,7 @@ async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) 
 
     let mut events = fs
         .watch(
-            "crates/zed2/src/languages".as_ref(),
+            "crates/zed/src/languages".as_ref(),
             Duration::from_millis(100),
         )
         .await;
