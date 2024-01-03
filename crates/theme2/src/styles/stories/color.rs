@@ -7,7 +7,7 @@ use crate::{default_color_scales, ColorScaleStep};
 pub struct ColorsStory;
 
 impl Render for ColorsStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let color_scales = default_color_scales();
 
         Story::container().child(Story::title("Colors")).child(
