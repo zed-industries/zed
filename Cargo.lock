@@ -1555,7 +1555,7 @@ dependencies = [
  "envy",
  "fs",
  "futures 0.3.28",
- "git3",
+ "git",
  "gpui2",
  "hyper",
  "indoc",
@@ -2482,7 +2482,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "fuzzy",
- "git3",
+ "git",
  "gpui2",
  "indoc",
  "itertools 0.10.5",
@@ -3181,7 +3181,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "smol",
  "sum_tree",
- "text",
+ "text2",
  "unindent",
  "util",
 ]
@@ -3197,26 +3197,6 @@ dependencies = [
  "libgit2-sys",
  "log",
  "url",
-]
-
-[[package]]
-name = "git3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clock",
- "collections",
- "futures 0.3.28",
- "git2",
- "lazy_static",
- "log",
- "parking_lot 0.11.2",
- "smol",
- "sum_tree",
- "text2",
- "unindent",
- "util",
 ]
 
 [[package]]
@@ -4044,7 +4024,7 @@ dependencies = [
  "env_logger",
  "futures 0.3.28",
  "fuzzy",
- "git3",
+ "git",
  "globset",
  "gpui2",
  "indoc",
@@ -4714,7 +4694,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "futures 0.3.28",
- "git3",
+ "git",
  "gpui2",
  "indoc",
  "itertools 0.10.5",
@@ -5830,8 +5810,8 @@ dependencies = [
  "fsevent",
  "futures 0.3.28",
  "fuzzy",
+ "git",
  "git2",
- "git3",
  "globset",
  "gpui2",
  "ignore",

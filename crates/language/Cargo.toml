@@ -25,7 +25,7 @@ test-support = [
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fuzzy = {  path = "../fuzzy" }
-git = { package = "git3", path = "../git3" }
+git = { path = "../git" }
 gpui = { package = "gpui2", path = "../gpui2" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }

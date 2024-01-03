@@ -69,7 +69,7 @@ channel = { path = "../channel" }
 editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
-git = { package = "git3", path = "../git3", features = ["test-support"] }
+git = { path = "../git", features = ["test-support"] }
 live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 node_runtime = { path = "../node_runtime" }

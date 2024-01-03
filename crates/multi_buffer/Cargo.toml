@@ -23,7 +23,7 @@ test-support = [
 client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-git = { package = "git3", path = "../git3" }
+git = { path = "../git" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }

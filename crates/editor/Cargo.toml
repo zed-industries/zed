@@ -30,7 +30,7 @@ db = { path = "../db" }
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
 fuzzy = {  path = "../fuzzy" }
-git = { package = "git3", path = "../git3" }
+git = { path = "../git" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }

@@ -29,7 +29,7 @@ db = { path = "../db" }
 fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = {  path = "../fuzzy" }
-git = { package = "git3", path = "../git3" }
+git = { path = "../git" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
