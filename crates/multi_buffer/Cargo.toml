@@ -24,7 +24,7 @@ client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 git = { path = "../git" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 rich_text = { path = "../rich_text" }
@@ -63,7 +63,7 @@ copilot = { path = "../copilot", features = ["test-support"] }
 text = { path = "../text", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }

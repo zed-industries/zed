@@ -14,7 +14,7 @@ test-support = []
 client = { path = "../client" }
 db = { path = "../db" }
 editor = { path = "../editor" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
 project = { path = "../project" }

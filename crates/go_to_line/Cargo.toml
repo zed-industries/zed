@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 serde.workspace = true
 settings = { path = "../settings" }

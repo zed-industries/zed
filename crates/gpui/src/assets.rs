@@ -1,12 +1,16 @@
-use anyhow::{anyhow, Result};
-use image::ImageFormat;
-use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
-
-use crate::ImageData;
+use crate::{size, DevicePixels, Result, SharedString, Size};
+use anyhow::anyhow;
+use image::{Bgra, ImageBuffer};
+use std::{
+    borrow::Cow,
+    fmt,
+    hash::Hash,
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+};
 
 pub trait AssetSource: 'static + Send + Sync {
     fn load(&self, path: &str) -> Result<Cow<[u8]>>;
-    fn list(&self, path: &str) -> Vec<Cow<'static, str>>;
+    fn list(&self, path: &str) -> Result<Vec<SharedString>>;
 }
 
 impl AssetSource for () {
@@ -17,49 +21,44 @@ impl AssetSource for () {
         ))
     }
 
-    fn list(&self, _: &str) -> Vec<Cow<'static, str>> {
-        vec![]
+    fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
+        Ok(vec![])
     }
 }
 
-pub struct AssetCache {
-    source: Box<dyn AssetSource>,
-    svgs: RefCell<HashMap<String, usvg::Tree>>,
-    pngs: RefCell<HashMap<String, Arc<ImageData>>>,
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ImageId(usize);
+
+pub struct ImageData {
+    pub id: ImageId,
+    data: ImageBuffer<Bgra<u8>, Vec<u8>>,
 }
 
-impl AssetCache {
-    pub fn new(source: impl AssetSource) -> Self {
+impl ImageData {
+    pub fn new(data: ImageBuffer<Bgra<u8>, Vec<u8>>) -> Self {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
         Self {
-            source: Box::new(source),
-            svgs: RefCell::new(HashMap::new()),
-            pngs: RefCell::new(HashMap::new()),
+            id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),
+            data,
         }
     }
 
-    pub fn svg(&self, path: &str) -> Result<usvg::Tree> {
-        let mut svgs = self.svgs.borrow_mut();
-        if let Some(svg) = svgs.get(path) {
-            Ok(svg.clone())
-        } else {
-            let bytes = self.source.load(path)?;
-            let svg = usvg::Tree::from_data(&bytes, &usvg::Options::default())?;
-            svgs.insert(path.to_string(), svg.clone());
-            Ok(svg)
-        }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
     }
 
-    pub fn png(&self, path: &str) -> Result<Arc<ImageData>> {
-        let mut pngs = self.pngs.borrow_mut();
-        if let Some(png) = pngs.get(path) {
-            Ok(png.clone())
-        } else {
-            let bytes = self.source.load(path)?;
-            let image = ImageData::new(
-                image::load_from_memory_with_format(&bytes, ImageFormat::Png)?.into_bgra8(),
-            );
-            pngs.insert(path.to_string(), image.clone());
-            Ok(image)
-        }
+    pub fn size(&self) -> Size<DevicePixels> {
+        let (width, height) = self.data.dimensions();
+        size(width.into(), height.into())
+    }
+}
+
+impl fmt::Debug for ImageData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImageData")
+            .field("id", &self.id)
+            .field("size", &self.data.dimensions())
+            .finish()
     }
 }

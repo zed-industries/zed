@@ -14,7 +14,7 @@ editor = { path = "../editor" }
 feature_flags = { path = "../feature_flags" }
 fs = { path = "../fs" }
 fuzzy = {  path = "../fuzzy" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

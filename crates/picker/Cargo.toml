@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 editor = { path = "../editor" }
 ui = { path = "../ui" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 settings = { path = "../settings" }
 util = { path = "../util" }
@@ -22,7 +22,7 @@ parking_lot.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 serde_json.workspace = true
 ctor.workspace = true
 env_logger.workspace = true

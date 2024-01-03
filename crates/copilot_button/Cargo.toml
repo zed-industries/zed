@@ -13,7 +13,7 @@ copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
 zed_actions = { path = "../zed_actions"}
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

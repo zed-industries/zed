@@ -31,10 +31,10 @@ log.workspace = true
 libc = "0.2"
 time.workspace = true
 
-gpui = { package = "gpui2", path = "../gpui2", optional = true}
+gpui = { path = "../gpui", optional = true}
 
 [dev-dependencies]
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 
 [features]
 test-support = ["gpui/test-support"]

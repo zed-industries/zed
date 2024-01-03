@@ -22,7 +22,7 @@ test-support = [
 audio = { path = "../audio" }
 client = { path = "../client" }
 collections = { path = "../collections" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 log.workspace = true
 live_kit_client = { path = "../live_kit_client" }
 fs = { path = "../fs" }
@@ -48,7 +48,7 @@ client = { path = "../client", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

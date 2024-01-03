@@ -12,7 +12,7 @@ doctest = false
 editor = { path = "../editor" }
 collections = { path = "../collections" }
 fuzzy = {  path = "../fuzzy" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 picker = { path = "../picker" }
 project = { path = "../project" }
@@ -27,7 +27,7 @@ serde.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 theme = { path = "../theme", features = ["test-support"] }

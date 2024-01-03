@@ -12,7 +12,7 @@ doctest = false
 auto_update = { path = "../auto_update" }
 editor = { path = "../editor" }
 language = { path = "../language" }
-gpui = { path = "../gpui2", package = "gpui2" }
+gpui = { path = "../gpui" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 ui = { path = "../ui" }

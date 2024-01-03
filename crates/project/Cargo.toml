@@ -30,7 +30,7 @@ fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = {  path = "../fuzzy" }
 git = { path = "../git" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime" }
@@ -73,7 +73,7 @@ client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 db = { path = "../db", features = ["test-support"] }
 fs = { path = "../fs",  features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }

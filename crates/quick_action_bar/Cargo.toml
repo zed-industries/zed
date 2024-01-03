@@ -11,12 +11,12 @@ doctest = false
 [dependencies]
 assistant = { path = "../assistant" }
 editor = { path = "../editor" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 search = { path = "../search" }
 workspace = { path = "../workspace" }
 ui = { path = "../ui" }
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

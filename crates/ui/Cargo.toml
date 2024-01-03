@@ -11,7 +11,7 @@ path = "src/ui.rs"
 [dependencies]
 anyhow.workspace = true
 chrono = "0.4"
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 itertools = { version = "0.11.0", optional = true }
 menu = { path = "../menu"}
 serde.workspace = true

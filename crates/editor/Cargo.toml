@@ -31,7 +31,7 @@ collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
 fuzzy = {  path = "../fuzzy" }
 git = { path = "../git" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 multi_buffer = { path = "../multi_buffer" }
@@ -76,7 +76,7 @@ copilot = { path = "../copilot", features = ["test-support"] }
 text = { path = "../text", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }

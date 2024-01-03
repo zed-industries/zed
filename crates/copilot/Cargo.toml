@@ -21,7 +21,7 @@ test-support = [
 [dependencies]
 collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
@@ -43,7 +43,7 @@ parking_lot.workspace = true
 clock = { path = "../clock" }
 collections = { path = "../collections", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }

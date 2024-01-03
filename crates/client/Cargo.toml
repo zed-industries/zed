@@ -15,7 +15,7 @@ test-support = ["collections/test-support", "gpui/test-support", "rpc/test-suppo
 chrono = { version = "0.4", features = ["serde"] }
 collections = { path = "../collections" }
 db = { path = "../db" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
 text = { path = "../text" }
@@ -47,7 +47,7 @@ url = "2.2"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

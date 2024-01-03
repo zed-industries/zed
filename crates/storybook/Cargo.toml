@@ -18,7 +18,7 @@ strum = { version = "0.25.0", features = ["derive"] }
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 indoc.workspace = true
 itertools = "0.11.0"
 language = { path = "../language" }
@@ -35,4 +35,4 @@ util = { path = "../util" }
 picker = { path = "../picker" }
 
 [dev-dependencies]
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }

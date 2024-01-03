@@ -9,7 +9,7 @@ path = "src/audio.rs"
 doctest = false
 
 [dependencies]
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 collections = { path = "../collections" }
 util = { path = "../util" }
 

@@ -15,7 +15,7 @@ test-support = ["collections/test-support", "gpui/test-support"]
 [dependencies]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-gpui = { package = "gpui2", path = "../gpui2", optional = true }
+gpui = { path = "../gpui", optional = true }
 util = { path = "../util" }
 anyhow.workspace = true
 async-lock = "2.4"
@@ -39,7 +39,7 @@ prost-build = "0.9"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 smol.workspace = true
 tempdir.workspace = true
 ctor.workspace = true

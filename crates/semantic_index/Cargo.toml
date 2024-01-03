@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 ai = { path = "../ai" }
 collections = { path = "../collections" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
@@ -41,7 +41,7 @@ ndarray = { version = "0.15.0" }
 [dev-dependencies]
 ai = { path = "../ai", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }

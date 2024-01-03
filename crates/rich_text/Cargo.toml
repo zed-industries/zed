@@ -16,7 +16,7 @@ test-support = [
 
 [dependencies]
 collections = { path = "../collections" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
 language = { path = "../language" }

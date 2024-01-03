@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 editor = { path = "../editor" }
 fuzzy = {   path = "../fuzzy" }
-gpui = { package = "gpui2",  path = "../gpui2" }
+gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 text = { path = "../text" }
@@ -29,7 +29,7 @@ smol.workspace = true
 futures.workspace = true
 editor = { path = "../editor", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
-gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }

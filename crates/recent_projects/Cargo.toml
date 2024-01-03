@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 picker = { path = "../picker" }
 settings = { path = "../settings" }

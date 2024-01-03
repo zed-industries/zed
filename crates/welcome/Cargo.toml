@@ -15,7 +15,7 @@ client = { path = "../client" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
 fuzzy = {  path = "../fuzzy" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 ui = { path = "../ui" }
 db = { path = "../db" }
 install_cli = { path = "../install_cli" }

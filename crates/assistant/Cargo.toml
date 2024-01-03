@@ -14,7 +14,7 @@ client = { path = "../client" }
 collections = { path = "../collections"}
 editor = { path = "../editor" }
 fs = { path = "../fs" }
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
 multi_buffer = { path = "../multi_buffer" }
