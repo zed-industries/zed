@@ -12,13 +12,13 @@ doctest = false
 copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
-context_menu = { path = "../context_menu" }
+zed_actions = { path = "../zed_actions"}
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
-workspace = { path = "../workspace" }
+workspace = {path = "../workspace" }
 anyhow.workspace = true
 smol.workspace = true
 futures.workspace = true

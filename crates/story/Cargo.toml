@@ -7,6 +7,6 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 smallvec.workspace = true
 itertools = {package = "itertools", version = "0.10"}

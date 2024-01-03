@@ -20,7 +20,7 @@ test-support = [
 
 [dependencies]
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
+# context_menu = { path = "../context_menu" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
@@ -28,6 +28,7 @@ theme = { path = "../theme" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
+ui = { path = "../ui" }
 async-compression.workspace = true
 async-tar = "0.4.2"
 anyhow.workspace = true

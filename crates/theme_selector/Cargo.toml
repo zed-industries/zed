@@ -11,15 +11,16 @@ doctest = false
 [dependencies]
 client = { path = "../client" }
 editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
+feature_flags = { path = "../feature_flags" }
 fs = { path = "../fs" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
-theme = { path = "../theme" }
 settings = { path = "../settings" }
-feature_flags = { path = "../feature_flags" }
-workspace = { path = "../workspace" }
+theme = { path = "../theme" }
+ui = { path = "../ui" }
 util = { path = "../util" }
+workspace = { path = "../workspace" }
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true

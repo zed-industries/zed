@@ -420,8 +420,6 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    // Dag is: zed - projects - livestreaming
-
     // Move to same parent should be a no-op
     assert!(db
         .move_channel(projects_id, Some(zed_id), user_id)

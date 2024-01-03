@@ -1,6 +1,6 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{executor::Background, fonts::HighlightStyle};
-use std::{ops::Range, sync::Arc};
+use gpui::{BackgroundExecutor, HighlightStyle};
+use std::ops::Range;
 
 #[derive(Debug)]
 pub struct Outline<T> {
@@ -57,7 +57,7 @@ impl<T> Outline<T> {
         }
     }
 
-    pub async fn search(&self, query: &str, executor: Arc<Background>) -> Vec<StringMatch> {
+    pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
         let query = query.trim_start();
         let is_path_query = query.contains(' ');
         let smart_case = query.chars().any(|c| c.is_uppercase());
@@ -81,6 +81,7 @@ impl<T> Outline<T> {
         let mut prev_item_ix = 0;
         for mut string_match in matches {
             let outline_match = &self.items[string_match.candidate_id];
+            string_match.string = outline_match.text.clone();
 
             if is_path_query {
                 let prefix_len = self.path_candidate_prefixes[string_match.candidate_id];

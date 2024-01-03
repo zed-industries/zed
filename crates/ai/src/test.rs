@@ -104,11 +104,11 @@ impl CredentialProvider for FakeEmbeddingProvider {
     fn has_credentials(&self) -> bool {
         true
     }
-    fn retrieve_credentials(&self, _cx: &AppContext) -> ProviderCredential {
+    fn retrieve_credentials(&self, _cx: &mut AppContext) -> ProviderCredential {
         ProviderCredential::NotNeeded
     }
-    fn save_credentials(&self, _cx: &AppContext, _credential: ProviderCredential) {}
-    fn delete_credentials(&self, _cx: &AppContext) {}
+    fn save_credentials(&self, _cx: &mut AppContext, _credential: ProviderCredential) {}
+    fn delete_credentials(&self, _cx: &mut AppContext) {}
 }
 
 #[async_trait]
@@ -153,17 +153,10 @@ impl FakeCompletionProvider {
 
     pub fn send_completion(&self, completion: impl Into<String>) {
         let mut tx = self.last_completion_tx.lock();
-
-        println!("COMPLETION TX: {:?}", &tx);
-
-        let a = tx.as_mut().unwrap();
-        a.try_send(completion.into()).unwrap();
-
-        // tx.as_mut().unwrap().try_send(completion.into()).unwrap();
+        tx.as_mut().unwrap().try_send(completion.into()).unwrap();
     }
 
     pub fn finish_completion(&self) {
-        println!("FINISHING COMPLETION");
         self.last_completion_tx.lock().take().unwrap();
     }
 }
@@ -172,11 +165,11 @@ impl CredentialProvider for FakeCompletionProvider {
     fn has_credentials(&self) -> bool {
         true
     }
-    fn retrieve_credentials(&self, _cx: &AppContext) -> ProviderCredential {
+    fn retrieve_credentials(&self, _cx: &mut AppContext) -> ProviderCredential {
         ProviderCredential::NotNeeded
     }
-    fn save_credentials(&self, _cx: &AppContext, _credential: ProviderCredential) {}
-    fn delete_credentials(&self, _cx: &AppContext) {}
+    fn save_credentials(&self, _cx: &mut AppContext, _credential: ProviderCredential) {}
+    fn delete_credentials(&self, _cx: &mut AppContext) {}
 }
 
 impl CompletionProvider for FakeCompletionProvider {
@@ -188,10 +181,8 @@ impl CompletionProvider for FakeCompletionProvider {
         &self,
         _prompt: Box<dyn CompletionRequest>,
     ) -> BoxFuture<'static, anyhow::Result<BoxStream<'static, anyhow::Result<String>>>> {
-        println!("COMPLETING");
         let (tx, rx) = mpsc::channel(1);
         *self.last_completion_tx.lock() = Some(tx);
-        println!("TX: {:?}", *self.last_completion_tx.lock());
         async move { Ok(rx.map(|rx| Ok(rx)).boxed()) }.boxed()
     }
     fn box_clone(&self) -> Box<dyn CompletionProvider> {

@@ -5,7 +5,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{executor::Deterministic, Task, TestAppContext};
+use gpui::{BackgroundExecutor, Task, TestAppContext};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use rpc::RECEIVE_TIMEOUT;
@@ -115,18 +115,17 @@ pub trait RandomizedTest: 'static + Sized {
 
     async fn initialize(server: &mut TestServer, users: &[UserTestPlan]);
 
-    async fn on_client_added(client: &Rc<TestClient>, cx: &mut TestAppContext);
+    async fn on_client_added(_client: &Rc<TestClient>, _cx: &mut TestAppContext) {}
 
     async fn on_quiesce(server: &mut TestServer, client: &mut [(Rc<TestClient>, TestAppContext)]);
 }
 
 pub async fn run_randomized_test<T: RandomizedTest>(
     cx: &mut TestAppContext,
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     rng: StdRng,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let plan = TestPlan::<T>::new(&mut server, rng).await;
 
     LAST_PLAN.lock().replace({
@@ -144,7 +143,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
         applied.store(true, SeqCst);
         let did_apply = TestPlan::apply_server_operation(
             plan.clone(),
-            deterministic.clone(),
+            executor.clone(),
             &mut server,
             &mut clients,
             &mut client_tasks,
@@ -159,14 +158,14 @@ pub async fn run_randomized_test<T: RandomizedTest>(
     }
 
     drop(operation_channels);
-    deterministic.start_waiting();
+    executor.start_waiting();
     futures::future::join_all(client_tasks).await;
-    deterministic.finish_waiting();
+    executor.finish_waiting();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     T::on_quiesce(&mut server, &mut clients).await;
 
-    for (client, mut cx) in clients {
+    for (client, cx) in clients {
         cx.update(|cx| {
             let store = cx.remove_global::<SettingsStore>();
             cx.clear_globals();
@@ -174,7 +173,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
             drop(client);
         });
     }
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     if let Some(path) = &*PLAN_SAVE_PATH {
         eprintln!("saved test plan to path {:?}", path);
@@ -450,7 +449,7 @@ impl<T: RandomizedTest> TestPlan<T> {
 
     async fn apply_server_operation(
         plan: Arc<Mutex<Self>>,
-        deterministic: Arc<Deterministic>,
+        deterministic: BackgroundExecutor,
         server: &mut TestServer,
         clients: &mut Vec<(Rc<TestClient>, TestAppContext)>,
         client_tasks: &mut Vec<Task<()>>,
@@ -471,28 +470,18 @@ impl<T: RandomizedTest> TestPlan<T> {
                     username = user.username.clone();
                 };
                 log::info!("adding new connection for {}", username);
-                let next_entity_id = (user_id.0 * 10_000) as usize;
-                let mut client_cx = TestAppContext::new(
-                    cx.foreground_platform(),
-                    cx.platform(),
-                    deterministic.build_foreground(user_id.0 as usize),
-                    deterministic.build_background(),
-                    cx.font_cache(),
-                    cx.leak_detector(),
-                    next_entity_id,
-                    cx.function_name.clone(),
-                );
+
+                let mut client_cx = cx.new_app();
 
                 let (operation_tx, operation_rx) = futures::channel::mpsc::unbounded();
                 let client = Rc::new(server.create_client(&mut client_cx, &username).await);
                 operation_channels.push(operation_tx);
                 clients.push((client.clone(), client_cx.clone()));
-                client_tasks.push(client_cx.foreground().spawn(Self::simulate_client(
-                    plan.clone(),
-                    client,
-                    operation_rx,
-                    client_cx,
-                )));
+
+                let foreground_executor = client_cx.foreground_executor().clone();
+                let simulate_client =
+                    Self::simulate_client(plan.clone(), client, operation_rx, client_cx);
+                client_tasks.push(foreground_executor.spawn(simulate_client));
 
                 log::info!("added connection for {}", username);
             }
@@ -514,7 +503,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                     .collect::<Vec<_>>();
                 assert_eq!(user_connection_ids.len(), 1);
                 let removed_peer_id = user_connection_ids[0].into();
-                let (client, mut client_cx) = clients.remove(client_ix);
+                let (client, client_cx) = clients.remove(client_ix);
                 let client_task = client_tasks.remove(client_ix);
                 operation_channels.remove(client_ix);
                 server.forbid_connections();
@@ -647,7 +636,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                     log::error!("{} error: {}", client.username, error);
                 }
             }
-            cx.background().simulate_random_delay().await;
+            cx.executor().simulate_random_delay().await;
         }
         log::info!("{}: done", client.username);
     }

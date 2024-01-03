@@ -16,9 +16,6 @@ language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
-picker = { path = "../picker" }
-theme = { path = "../theme" }
-editor = { path = "../editor" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 anyhow.workspace = true

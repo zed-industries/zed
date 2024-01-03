@@ -2,9 +2,10 @@ use crate::{
     display_map::DisplaySnapshot,
     element::PointForPosition,
     hover_popover::{self, InlayHover},
-    Anchor, DisplayPoint, Editor, EditorSnapshot, InlayId, SelectPhase,
+    Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, InlayId,
+    SelectPhase,
 };
-use gpui::{Task, ViewContext};
+use gpui::{px, Task, ViewContext};
 use language::{Bias, ToOffset};
 use lsp::LanguageServerId;
 use project::{
@@ -12,6 +13,7 @@ use project::{
     ResolveState,
 };
 use std::ops::Range;
+use theme::ActiveTheme as _;
 use util::TryFutureExt;
 
 #[derive(Debug, Default)]
@@ -168,7 +170,7 @@ pub fn update_inlay_link_and_hover_points(
     editor: &mut Editor,
     cmd_held: bool,
     shift_held: bool,
-    cx: &mut ViewContext<'_, '_, Editor>,
+    cx: &mut ViewContext<'_, Editor>,
 ) {
     let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
@@ -396,8 +398,8 @@ pub fn show_link_definition(
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
                     // query the LSP for definition info
-                    cx.update(|cx| {
-                        project.update(cx, |project, cx| match definition_kind {
+                    project
+                        .update(&mut cx, |project, cx| match definition_kind {
                             LinkDefinitionKind::Symbol => {
                                 project.definition(&buffer, buffer_position, cx)
                             }
@@ -405,29 +407,30 @@ pub fn show_link_definition(
                             LinkDefinitionKind::Type => {
                                 project.type_definition(&buffer, buffer_position, cx)
                             }
+                        })?
+                        .await
+                        .ok()
+                        .map(|definition_result| {
+                            (
+                                definition_result.iter().find_map(|link| {
+                                    link.origin.as_ref().map(|origin| {
+                                        let start = snapshot.buffer_snapshot.anchor_in_excerpt(
+                                            excerpt_id.clone(),
+                                            origin.range.start,
+                                        );
+                                        let end = snapshot.buffer_snapshot.anchor_in_excerpt(
+                                            excerpt_id.clone(),
+                                            origin.range.end,
+                                        );
+                                        RangeInEditor::Text(start..end)
+                                    })
+                                }),
+                                definition_result
+                                    .into_iter()
+                                    .map(GoToDefinitionLink::Text)
+                                    .collect(),
+                            )
                         })
-                    })
-                    .await
-                    .ok()
-                    .map(|definition_result| {
-                        (
-                            definition_result.iter().find_map(|link| {
-                                link.origin.as_ref().map(|origin| {
-                                    let start = snapshot
-                                        .buffer_snapshot
-                                        .anchor_in_excerpt(excerpt_id.clone(), origin.range.start);
-                                    let end = snapshot
-                                        .buffer_snapshot
-                                        .anchor_in_excerpt(excerpt_id.clone(), origin.range.end);
-                                    RangeInEditor::Text(start..end)
-                                })
-                            }),
-                            definition_result
-                                .into_iter()
-                                .map(GoToDefinitionLink::Text)
-                                .collect(),
-                        )
-                    })
                 }
                 TriggerPoint::InlayHint(highlight, lsp_location, server_id) => Some((
                     Some(RangeInEditor::Inlay(highlight.clone())),
@@ -483,8 +486,14 @@ pub fn show_link_definition(
                         });
 
                     if any_definition_does_not_contain_current_location {
-                        // Highlight symbol using theme link definition highlight style
-                        let style = theme::current(cx).editor.link_definition;
+                        let style = gpui::HighlightStyle {
+                            underline: Some(gpui::UnderlineStyle {
+                                thickness: px(1.),
+                                ..Default::default()
+                            }),
+                            color: Some(cx.theme().colors().link_text_hover),
+                            ..Default::default()
+                        };
                         let highlight_range =
                             symbol_range.unwrap_or_else(|| match &trigger_point {
                                 TriggerPoint::Text(trigger_anchor) => {
@@ -575,8 +584,8 @@ fn go_to_fetched_definition_of_kind(
 
     let is_correct_kind = cached_definitions_kind == Some(kind);
     if !cached_definitions.is_empty() && is_correct_kind {
-        if !editor.focused {
-            cx.focus_self();
+        if !editor.focus_handle.is_focused(cx) {
+            cx.focus(&editor.focus_handle);
         }
 
         editor.navigate_to_definitions(cached_definitions, split, cx);
@@ -592,8 +601,8 @@ fn go_to_fetched_definition_of_kind(
 
         if point.as_valid().is_some() {
             match kind {
-                LinkDefinitionKind::Symbol => editor.go_to_definition(&Default::default(), cx),
-                LinkDefinitionKind::Type => editor.go_to_type_definition(&Default::default(), cx),
+                LinkDefinitionKind::Symbol => editor.go_to_definition(&GoToDefinition, cx),
+                LinkDefinitionKind::Type => editor.go_to_type_definition(&GoToTypeDefinition, cx),
             }
         }
     }
@@ -609,10 +618,7 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
-    use gpui::{
-        platform::{self, Modifiers, ModifiersChangedEvent},
-        View,
-    };
+    use gpui::{Modifiers, ModifiersChangedEvent};
     use indoc::indoc;
     use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
@@ -674,7 +680,7 @@ mod tests {
             );
         });
         requests.next().await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
             struct A;
             let «variable» = A;
@@ -682,10 +688,11 @@ mod tests {
 
         // Unpress shift causes highlight to go away (normal goto-definition is not valid here)
         cx.update_editor(|editor, cx| {
-            editor.modifiers_changed(
-                &platform::ModifiersChangedEvent {
+            crate::element::EditorElement::modifiers_changed(
+                editor,
+                &ModifiersChangedEvent {
                     modifiers: Modifiers {
-                        cmd: true,
+                        command: true,
                         ..Default::default()
                     },
                     ..Default::default()
@@ -725,7 +732,7 @@ mod tests {
             go_to_fetched_type_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         requests.next().await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
 
         cx.assert_editor_state(indoc! {"
             struct «Aˇ»;
@@ -747,23 +754,23 @@ mod tests {
         .await;
 
         cx.set_state(indoc! {"
-            fn ˇtest() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn ˇtest() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         // Basic hold cmd, expect highlight in region if response contains definition
         let hover_point = cx.display_point(indoc! {"
-            fn test() { do_wˇork(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_wˇork(); }
+                fn do_work() { test(); }
+            "});
         let symbol_range = cx.lsp_range(indoc! {"
-            fn test() { «do_work»(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { «do_work»(); }
+                fn do_work() { test(); }
+            "});
         let target_range = cx.lsp_range(indoc! {"
-            fn test() { do_work(); }
-            fn «do_work»() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn «do_work»() { test(); }
+            "});
 
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
@@ -786,22 +793,22 @@ mod tests {
             );
         });
         requests.next().await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { «do_work»(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { «do_work»(); }
+                fn do_work() { test(); }
+            "});
 
         // Unpress cmd causes highlight to go away
         cx.update_editor(|editor, cx| {
-            editor.modifiers_changed(&Default::default(), cx);
+            crate::element::EditorElement::modifiers_changed(editor, &Default::default(), cx);
         });
 
         // Assert no link highlights
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         // Response without source range still highlights word
         cx.update_editor(|editor, _| editor.link_go_to_definition_state.last_trigger_point = None);
@@ -826,18 +833,18 @@ mod tests {
             );
         });
         requests.next().await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
 
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { «do_work»(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { «do_work»(); }
+                fn do_work() { test(); }
+            "});
 
         // Moving mouse to location with no response dismisses highlight
         let hover_point = cx.display_point(indoc! {"
-            fˇn test() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fˇn test() { do_work(); }
+                fn do_work() { test(); }
+            "});
         let mut requests = cx
             .lsp
             .handle_request::<GotoDefinition, _, _>(move |_, _| async move {
@@ -854,19 +861,19 @@ mod tests {
             );
         });
         requests.next().await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
 
         // Assert no link highlights
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         // Move mouse without cmd and then pressing cmd triggers highlight
         let hover_point = cx.display_point(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { teˇst(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { teˇst(); }
+            "});
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -876,22 +883,22 @@ mod tests {
                 cx,
             );
         });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
 
         // Assert no link highlights
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         let symbol_range = cx.lsp_range(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { «test»(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { «test»(); }
+            "});
         let target_range = cx.lsp_range(indoc! {"
-            fn «test»() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn «test»() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
@@ -904,10 +911,11 @@ mod tests {
             ])))
         });
         cx.update_editor(|editor, cx| {
-            editor.modifiers_changed(
+            crate::element::EditorElement::modifiers_changed(
+                editor,
                 &ModifiersChangedEvent {
                     modifiers: Modifiers {
-                        cmd: true,
+                        command: true,
                         ..Default::default()
                     },
                 },
@@ -915,21 +923,21 @@ mod tests {
             );
         });
         requests.next().await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
 
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { «test»(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { «test»(); }
+            "});
 
         // Deactivating the window dismisses the highlight
         cx.update_workspace(|workspace, cx| {
-            workspace.on_window_activation_changed(false, cx);
+            workspace.on_window_activation_changed(cx);
         });
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         // Moving the mouse restores the highlights.
         cx.update_editor(|editor, cx| {
@@ -941,17 +949,17 @@ mod tests {
                 cx,
             );
         });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { «test»(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { «test»(); }
+            "});
 
         // Moving again within the same symbol range doesn't re-request
         let hover_point = cx.display_point(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { tesˇt(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { tesˇt(); }
+            "});
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -961,11 +969,11 @@ mod tests {
                 cx,
             );
         });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { «test»(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { «test»(); }
+            "});
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.update_editor(|editor, cx| {
@@ -978,27 +986,27 @@ mod tests {
                 // the cached location instead
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
             });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.assert_editor_state(indoc! {"
-            fn «testˇ»() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn «testˇ»() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         // Assert no link highlights after jump
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn do_work() { test(); }
+            "});
 
         // Cmd click without existing definition requests and jumps
         let hover_point = cx.display_point(indoc! {"
-            fn test() { do_wˇork(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_wˇork(); }
+                fn do_work() { test(); }
+            "});
         let target_range = cx.lsp_range(indoc! {"
-            fn test() { do_work(); }
-            fn «do_work»() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn «do_work»() { test(); }
+            "});
 
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
@@ -1014,22 +1022,22 @@ mod tests {
             go_to_fetched_definition(editor, PointForPosition::valid(hover_point), false, cx);
         });
         requests.next().await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.assert_editor_state(indoc! {"
-            fn test() { do_work(); }
-            fn «do_workˇ»() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn «do_workˇ»() { test(); }
+            "});
 
         // 1. We have a pending selection, mouse point is over a symbol that we have a response for, hitting cmd and nothing happens
         // 2. Selection is completed, hovering
         let hover_point = cx.display_point(indoc! {"
-            fn test() { do_wˇork(); }
-            fn do_work() { test(); }
-        "});
+                fn test() { do_wˇork(); }
+                fn do_work() { test(); }
+            "});
         let target_range = cx.lsp_range(indoc! {"
-            fn test() { do_work(); }
-            fn «do_work»() { test(); }
-        "});
+                fn test() { do_work(); }
+                fn «do_work»() { test(); }
+            "});
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
@@ -1043,9 +1051,9 @@ mod tests {
 
         // create a pending selection
         let selection_range = cx.ranges(indoc! {"
-            fn «test() { do_w»ork(); }
-            fn do_work() { test(); }
-        "})[0]
+                fn «test() { do_w»ork(); }
+                fn do_work() { test(); }
+            "})[0]
             .clone();
         cx.update_editor(|editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -1064,13 +1072,13 @@ mod tests {
                 cx,
             );
         });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         assert!(requests.try_next().is_err());
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test() { do_work(); }
-            fn do_work() { test(); }
-        "});
-        cx.foreground().run_until_parked();
+                fn test() { do_work(); }
+                fn do_work() { test(); }
+            "});
+        cx.background_executor.run_until_parked();
     }
 
     #[gpui::test]
@@ -1093,28 +1101,28 @@ mod tests {
         )
         .await;
         cx.set_state(indoc! {"
-            struct TestStruct;
+                struct TestStruct;
 
-            fn main() {
-                let variableˇ = TestStruct;
-            }
-        "});
+                fn main() {
+                    let variableˇ = TestStruct;
+                }
+            "});
         let hint_start_offset = cx.ranges(indoc! {"
-            struct TestStruct;
+                struct TestStruct;
 
-            fn main() {
-                let variableˇ = TestStruct;
-            }
-        "})[0]
+                fn main() {
+                    let variableˇ = TestStruct;
+                }
+            "})[0]
             .start;
         let hint_position = cx.to_lsp(hint_start_offset);
         let target_range = cx.lsp_range(indoc! {"
-            struct «TestStruct»;
+                struct «TestStruct»;
 
-            fn main() {
-                let variable = TestStruct;
-            }
-        "});
+                fn main() {
+                    let variable = TestStruct;
+                }
+            "});
 
         let expected_uri = cx.buffer_lsp_url.clone();
         let hint_label = ": TestStruct";
@@ -1144,7 +1152,7 @@ mod tests {
             })
             .next()
             .await;
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
@@ -1153,12 +1161,12 @@ mod tests {
 
         let inlay_range = cx
             .ranges(indoc! {"
-            struct TestStruct;
+                struct TestStruct;
 
-            fn main() {
-                let variable« »= TestStruct;
-            }
-        "})
+                fn main() {
+                    let variable« »= TestStruct;
+                }
+            "})
             .get(0)
             .cloned()
             .unwrap();
@@ -1190,7 +1198,7 @@ mod tests {
                 cx,
             );
         });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
             let actual_highlights = snapshot
@@ -1210,10 +1218,11 @@ mod tests {
 
         // Unpress cmd causes highlight to go away
         cx.update_editor(|editor, cx| {
-            editor.modifiers_changed(
-                &platform::ModifiersChangedEvent {
+            crate::element::EditorElement::modifiers_changed(
+                editor,
+                &ModifiersChangedEvent {
                     modifiers: Modifiers {
-                        cmd: false,
+                        command: false,
                         ..Default::default()
                     },
                     ..Default::default()
@@ -1223,21 +1232,22 @@ mod tests {
         });
         // Assert no link highlights
         cx.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            let actual_ranges = snapshot
-                .text_highlight_ranges::<LinkGoToDefinitionState>()
-                .map(|ranges| ranges.as_ref().clone().1)
-                .unwrap_or_default();
+                let snapshot = editor.snapshot(cx);
+                let actual_ranges = snapshot
+                    .text_highlight_ranges::<LinkGoToDefinitionState>()
+                    .map(|ranges| ranges.as_ref().clone().1)
+                    .unwrap_or_default();
 
-            assert!(actual_ranges.is_empty(), "When no cmd is pressed, should have no hint label selected, but got: {actual_ranges:?}");
-        });
+                assert!(actual_ranges.is_empty(), "When no cmd is pressed, should have no hint label selected, but got: {actual_ranges:?}");
+            });
 
         // Cmd+click without existing definition requests and jumps
         cx.update_editor(|editor, cx| {
-            editor.modifiers_changed(
-                &platform::ModifiersChangedEvent {
+            crate::element::EditorElement::modifiers_changed(
+                editor,
+                &ModifiersChangedEvent {
                     modifiers: Modifiers {
-                        cmd: true,
+                        command: true,
                         ..Default::default()
                     },
                     ..Default::default()
@@ -1253,17 +1263,17 @@ mod tests {
                 cx,
             );
         });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             go_to_fetched_type_definition(editor, hint_hover_position, false, cx);
         });
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
         cx.assert_editor_state(indoc! {"
-            struct «TestStructˇ»;
+                struct «TestStructˇ»;
 
-            fn main() {
-                let variable = TestStruct;
-            }
-        "});
+                fn main() {
+                    let variable = TestStruct;
+                }
+            "});
     }
 }

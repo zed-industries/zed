@@ -23,7 +23,6 @@ test-support = [
 client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
 git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
@@ -68,7 +67,6 @@ gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true

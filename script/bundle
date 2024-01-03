@@ -27,11 +27,10 @@ Options:
   -o    Open the resulting DMG or the app itself in local mode.
   -f    Overwrite the local app bundle if it exists.
   -h    Display this help and exit.
-  -2    Build zed 2 instead of zed 1.
   "
 }
 
-while getopts 'dlfoh2' flag
+while getopts 'dlfoh' flag
 do
     case "${flag}" in
         o) open_result=true;;
@@ -50,10 +49,6 @@ do
             target_dir="debug"
             ;;
         f) overwrite_local_app=true;;
-        2)
-            zed_crate="zed2"
-            binary_name="Zed2"
-            ;;
         h)
            help_info
            exit 0
@@ -152,12 +147,7 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
 
     # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
     /usr/bin/codesign --deep --force --timestamp --sign "Zed Industries, Inc." "${app_path}/Contents/Frameworks/WebRTC.framework" -v
-
-    # todo!(restore cli to zed2)
-    if [[ "$zed_crate" == "zed" ]]; then
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
-    fi
-
+    /usr/bin/codesign --deep --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
     /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/${zed_crate}" -v
     /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/${zed_crate}/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
 

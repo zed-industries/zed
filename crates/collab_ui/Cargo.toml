@@ -29,14 +29,14 @@ client = { path = "../client" }
 channel = { path = "../channel" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
-drag_and_drop = { path = "../drag_and_drop" }
+# context_menu = { path = "../context_menu" }
+# drag_and_drop = { path = "../drag_and_drop" }
 editor = { path = "../editor" }
 feedback = { path = "../feedback" }
-fuzzy = { path = "../fuzzy" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
-menu = { path = "../menu" }
+menu = {  path = "../menu" }
 notifications = { path = "../notifications" }
 rich_text = { path = "../rich_text" }
 picker = { path = "../picker" }
@@ -44,13 +44,14 @@ project = { path = "../project" }
 recent_projects = { path = "../recent_projects" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
-feature_flags = {path = "../feature_flags"}
+feature_flags = { path = "../feature_flags"}
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 vcs_menu = { path = "../vcs_menu" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-zed-actions = {path = "../zed-actions"}
+zed_actions = { path = "../zed_actions"}
 
 anyhow.workspace = true
 futures.workspace = true

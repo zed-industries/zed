@@ -294,7 +294,7 @@ mod tests {
 
     use super::*;
     use crate::languages::language;
-    use gpui::{color::Color, TestAppContext};
+    use gpui::{Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
@@ -349,11 +349,11 @@ mod tests {
         )
         .await;
         let grammar = language.grammar().unwrap();
-        let theme = SyntaxTheme::new(vec![
-            ("type".into(), Color::green().into()),
-            ("keyword".into(), Color::blue().into()),
-            ("function".into(), Color::red().into()),
-            ("property".into(), Color::white().into()),
+        let theme = SyntaxTheme::new_test([
+            ("type", Hsla::default()),
+            ("keyword", Hsla::default()),
+            ("function", Hsla::default()),
+            ("property", Hsla::default()),
         ]);
 
         language.set_theme(&theme);
@@ -456,11 +456,11 @@ mod tests {
         )
         .await;
         let grammar = language.grammar().unwrap();
-        let theme = SyntaxTheme::new(vec![
-            ("type".into(), Color::green().into()),
-            ("keyword".into(), Color::blue().into()),
-            ("function".into(), Color::red().into()),
-            ("property".into(), Color::white().into()),
+        let theme = SyntaxTheme::new_test([
+            ("type", Hsla::default()),
+            ("keyword", Hsla::default()),
+            ("function", Hsla::default()),
+            ("property", Hsla::default()),
         ]);
 
         language.set_theme(&theme);
@@ -494,11 +494,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_rust_autoindent(cx: &mut TestAppContext) {
-        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
-            cx.set_global(SettingsStore::test(cx));
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
             language::init(cx);
-            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |s| {
                     s.defaults.tab_size = NonZeroU32::new(2);
                 });
@@ -507,8 +508,9 @@ mod tests {
 
         let language = crate::languages::language("rust", tree_sitter_rust::language(), None).await;
 
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.model_id() as u64, "").with_language(language, cx);
+        cx.new_model(|cx| {
+            let mut buffer =
+                Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);

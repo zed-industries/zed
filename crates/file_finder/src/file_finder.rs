@@ -2,7 +2,8 @@ use collections::HashMap;
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
+    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -14,14 +15,118 @@ use std::{
     },
 };
 use text::Point;
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 
-pub type FileFinder = Picker<FileFinderDelegate>;
+actions!(file_finder, [Toggle]);
+
+impl ModalView for FileFinder {}
+
+pub struct FileFinder {
+    picker: View<Picker<FileFinderDelegate>>,
+}
+
+pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(FileFinder::register).detach();
+}
+
+impl FileFinder {
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(|workspace, _: &Toggle, cx| {
+            let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
+                Self::open(workspace, cx);
+                return;
+            };
+
+            file_finder.update(cx, |file_finder, cx| {
+                file_finder
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(cx))
+            });
+        });
+    }
+
+    fn open(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        let project = workspace.project().read(cx);
+
+        let currently_opened_path = workspace
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+            .map(|project_path| {
+                let abs_path = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
+                FoundPath::new(project_path, abs_path)
+            });
+
+        // if exists, bubble the currently opened path to the top
+        let history_items = currently_opened_path
+            .clone()
+            .into_iter()
+            .chain(
+                workspace
+                    .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
+                    .into_iter()
+                    .filter(|(history_path, _)| {
+                        Some(history_path)
+                            != currently_opened_path
+                                .as_ref()
+                                .map(|found_path| &found_path.project)
+                    })
+                    .filter(|(_, history_abs_path)| {
+                        history_abs_path.as_ref()
+                            != currently_opened_path
+                                .as_ref()
+                                .and_then(|found_path| found_path.absolute.as_ref())
+                    })
+                    .filter(|(_, history_abs_path)| match history_abs_path {
+                        Some(abs_path) => history_file_exists(abs_path),
+                        None => true,
+                    })
+                    .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
+            )
+            .collect();
+
+        let project = workspace.project().clone();
+        let weak_workspace = cx.view().downgrade();
+        workspace.toggle_modal(cx, |cx| {
+            let delegate = FileFinderDelegate::new(
+                cx.view().downgrade(),
+                weak_workspace,
+                project,
+                currently_opened_path,
+                history_items,
+                cx,
+            );
+
+            FileFinder::new(delegate, cx)
+        });
+    }
+
+    fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
+        Self {
+            picker: cx.new_view(|cx| Picker::new(delegate, cx)),
+        }
+    }
+}
+
+impl EventEmitter<DismissEvent> for FileFinder {}
+impl FocusableView for FileFinder {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+impl Render for FileFinder {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_stack().w(rems(34.)).child(self.picker.clone())
+    }
+}
 
 pub struct FileFinderDelegate {
-    workspace: WeakViewHandle<Workspace>,
-    project: ModelHandle<Project>,
+    file_finder: WeakView<FileFinder>,
+    workspace: WeakView<Workspace>,
+    project: Model<Project>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -165,90 +270,7 @@ impl FoundPath {
     }
 }
 
-actions!(file_finder, [Toggle]);
-
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(toggle_or_cycle_file_finder);
-    FileFinder::init(cx);
-}
-
 const MAX_RECENT_SELECTIONS: usize = 20;
-
-fn toggle_or_cycle_file_finder(
-    workspace: &mut Workspace,
-    _: &Toggle,
-    cx: &mut ViewContext<Workspace>,
-) {
-    match workspace.modal::<FileFinder>() {
-        Some(file_finder) => file_finder.update(cx, |file_finder, cx| {
-            let current_index = file_finder.delegate().selected_index();
-            file_finder.select_next(&menu::SelectNext, cx);
-            let new_index = file_finder.delegate().selected_index();
-            if current_index == new_index {
-                file_finder.select_first(&menu::SelectFirst, cx);
-            }
-        }),
-        None => {
-            workspace.toggle_modal(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-
-                let currently_opened_path = workspace
-                    .active_item(cx)
-                    .and_then(|item| item.project_path(cx))
-                    .map(|project_path| {
-                        let abs_path = project
-                            .worktree_for_id(project_path.worktree_id, cx)
-                            .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
-                        FoundPath::new(project_path, abs_path)
-                    });
-
-                // if exists, bubble the currently opened path to the top
-                let history_items = currently_opened_path
-                    .clone()
-                    .into_iter()
-                    .chain(
-                        workspace
-                            .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
-                            .into_iter()
-                            .filter(|(history_path, _)| {
-                                Some(history_path)
-                                    != currently_opened_path
-                                        .as_ref()
-                                        .map(|found_path| &found_path.project)
-                            })
-                            .filter(|(_, history_abs_path)| {
-                                history_abs_path.as_ref()
-                                    != currently_opened_path
-                                        .as_ref()
-                                        .and_then(|found_path| found_path.absolute.as_ref())
-                            })
-                            .filter(|(_, history_abs_path)| match history_abs_path {
-                                Some(abs_path) => history_file_exists(abs_path),
-                                None => true,
-                            })
-                            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
-                    )
-                    .collect();
-
-                let project = workspace.project().clone();
-                let workspace = cx.handle().downgrade();
-                let finder = cx.add_view(|cx| {
-                    Picker::new(
-                        FileFinderDelegate::new(
-                            workspace,
-                            project,
-                            currently_opened_path,
-                            history_items,
-                            cx,
-                        ),
-                        cx,
-                    )
-                });
-                finder
-            });
-        }
-    }
-}
 
 #[cfg(not(test))]
 fn history_file_exists(abs_path: &PathBuf) -> bool {
@@ -282,17 +304,23 @@ impl FileSearchQuery {
 
 impl FileFinderDelegate {
     fn new(
-        workspace: WeakViewHandle<Workspace>,
-        project: ModelHandle<Project>,
+        file_finder: WeakView<FileFinder>,
+        workspace: WeakView<Workspace>,
+        project: Model<Project>,
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
-        cx.observe(&project, |picker, _, cx| {
-            picker.update_matches(picker.query(cx), cx);
+        cx.observe(&project, |file_finder, _, cx| {
+            //todo!() We should probably not re-render on every project anything
+            file_finder
+                .picker
+                .update(cx, |picker, cx| picker.refresh(cx))
         })
         .detach();
+
         Self {
+            file_finder,
             workspace,
             project,
             search_count: 0,
@@ -310,7 +338,7 @@ impl FileFinderDelegate {
     fn spawn_search(
         &mut self,
         query: PathLikeWithPosition<FileSearchQuery>,
-        cx: &mut ViewContext<FileFinder>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
         let relative_to = self
             .currently_opened_path
@@ -343,14 +371,14 @@ impl FileFinderDelegate {
                 false,
                 100,
                 &cancel_flag,
-                cx.background(),
+                cx.background_executor().clone(),
             )
             .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
                 .update(&mut cx, |picker, cx| {
                     picker
-                        .delegate_mut()
+                        .delegate
                         .set_search_matches(search_id, did_cancel, query, matches, cx)
                 })
                 .log_err();
@@ -363,7 +391,7 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: PathLikeWithPosition<FileSearchQuery>,
         matches: Vec<PathMatch>,
-        cx: &mut ViewContext<FileFinder>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
@@ -495,6 +523,8 @@ impl FileFinderDelegate {
 }
 
 impl PickerDelegate for FileFinderDelegate {
+    type ListItem = ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Search project files...".into()
     }
@@ -507,12 +537,25 @@ impl PickerDelegate for FileFinderDelegate {
         self.selected_index.unwrap_or(0)
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<FileFinder>) {
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = Some(ix);
         cx.notify();
     }
 
-    fn update_matches(&mut self, raw_query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
+    fn separators_after_indices(&self) -> Vec<usize> {
+        let history_items = self.matches.history.len();
+        if history_items == 0 || self.matches.search.is_empty() {
+            Vec::new()
+        } else {
+            vec![history_items - 1]
+        }
+    }
+
+    fn update_matches(
+        &mut self,
+        raw_query: String,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Task<()> {
         let raw_query = raw_query.trim();
         if raw_query.is_empty() {
             let project = self.project.read(cx);
@@ -550,9 +593,9 @@ impl PickerDelegate for FileFinderDelegate {
         }
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<FileFinder>) {
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
-            if let Some(workspace) = self.workspace.upgrade(cx) {
+            if let Some(workspace) = self.workspace.upgrade() {
                 let open_task = workspace.update(cx, move |workspace, cx| {
                     let split_or_open = |workspace: &mut Workspace, project_path, cx| {
                         if secondary {
@@ -628,6 +671,8 @@ impl PickerDelegate for FileFinderDelegate {
                     .and_then(|query| query.column)
                     .unwrap_or(0)
                     .saturating_sub(1);
+                let finder = self.file_finder.clone();
+
                 cx.spawn(|_, mut cx| async move {
                     let item = open_task.await.log_err()?;
                     if let Some(row) = row {
@@ -646,10 +691,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    workspace
-                        .downgrade()
-                        .update(&mut cx, |workspace, cx| workspace.dismiss_modal(cx))
-                        .log_err();
+                    finder.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok()?;
 
                     Some(())
                 })
@@ -658,44 +700,47 @@ impl PickerDelegate for FileFinderDelegate {
         }
     }
 
-    fn dismissed(&mut self, _: &mut ViewContext<FileFinder>) {}
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<FileFinderDelegate>>) {
+        self.file_finder
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
 
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &mut MouseState,
         selected: bool,
-        cx: &AppContext,
-    ) -> AnyElement<Picker<Self>> {
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
         let path_match = self
             .matches
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
-        let theme = theme::current(cx);
-        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
+
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
-        Flex::column()
-            .with_child(
-                Label::new(file_name, style.label.clone()).with_highlights(file_name_positions),
-            )
-            .with_child(
-                Label::new(full_path, style.label.clone()).with_highlights(full_path_positions),
-            )
-            .flex(1., false)
-            .contained()
-            .with_style(style.container)
-            .into_any_named("match")
+
+        Some(
+            ListItem::new(ix)
+                .spacing(ListItemSpacing::Sparse)
+                .inset(true)
+                .selected(selected)
+                .child(
+                    v_stack()
+                        .child(HighlightedLabel::new(file_name, file_name_positions))
+                        .child(HighlightedLabel::new(full_path, full_path_positions)),
+                ),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{assert_eq, collections::HashMap, path::Path, time::Duration};
+    use std::{assert_eq, path::Path, time::Duration};
 
     use super::*;
     use editor::Editor;
-    use gpui::{TestAppContext, ViewHandle};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
     use menu::{Confirm, SelectNext};
     use serde_json::json;
     use workspace::{AppState, Workspace};
@@ -725,37 +770,18 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
-        cx.dispatch_action(window.into(), Toggle);
 
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        let (picker, workspace, cx) = build_find_picker(project, cx);
 
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches("bna".to_string(), cx)
-            })
-            .await;
-        finder.read_with(cx, |finder, _| {
-            assert_eq!(finder.delegate().matches.len(), 2);
+        cx.simulate_input("bna");
+        picker.update(cx, |picker, _| {
+            assert_eq!(picker.delegate.matches.len(), 2);
         });
-        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.into(), SelectNext);
-        cx.dispatch_action(window.into(), Confirm);
-        active_pane
-            .condition(cx, |pane, _| pane.active_item().is_some())
-            .await;
+        cx.dispatch_action(SelectNext);
+        cx.dispatch_action(Confirm);
         cx.read(|cx| {
-            let active_item = active_pane.read(cx).active_item().unwrap();
-            assert_eq!(
-                active_item
-                    .as_any()
-                    .downcast_ref::<Editor>()
-                    .unwrap()
-                    .read(cx)
-                    .title(cx),
-                "bandana"
-            );
+            let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+            assert_eq!(active_editor.read(cx).title(cx), "bandana");
         });
 
         for bandana_query in [
@@ -766,35 +792,26 @@ mod tests {
             " ndan ",
             " band ",
         ] {
-            finder
-                .update(cx, |finder, cx| {
-                    finder
-                        .delegate_mut()
+            picker
+                .update(cx, |picker, cx| {
+                    picker
+                        .delegate
                         .update_matches(bandana_query.to_string(), cx)
                 })
                 .await;
-            finder.read_with(cx, |finder, _| {
+            picker.update(cx, |picker, _| {
                 assert_eq!(
-                    finder.delegate().matches.len(),
+                    picker.delegate.matches.len(),
                     1,
                     "Wrong number of matches for bandana query '{bandana_query}'"
                 );
             });
-            let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-            cx.dispatch_action(window.into(), SelectNext);
-            cx.dispatch_action(window.into(), Confirm);
-            active_pane
-                .condition(cx, |pane, _| pane.active_item().is_some())
-                .await;
+            cx.dispatch_action(SelectNext);
+            cx.dispatch_action(Confirm);
             cx.read(|cx| {
-                let active_item = active_pane.read(cx).active_item().unwrap();
+                let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
                 assert_eq!(
-                    active_item
-                        .as_any()
-                        .downcast_ref::<Editor>()
-                        .unwrap()
-                        .read(cx)
-                        .title(cx),
+                    active_editor.read(cx).title(cx),
                     "bandana",
                     "Wrong match for bandana query '{bandana_query}'"
                 );
@@ -823,25 +840,23 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
-        cx.dispatch_action(window.into(), Toggle);
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        let (picker, workspace, cx) = build_find_picker(project, cx);
 
         let file_query = &first_file_name[..3];
         let file_row = 1;
         let file_column = 3;
         assert!(file_column <= first_file_contents.len());
         let query_inside_file = format!("{file_query}:{file_row}:{file_column}");
-        finder
+        picker
             .update(cx, |finder, cx| {
                 finder
-                    .delegate_mut()
+                    .delegate
                     .update_matches(query_inside_file.to_string(), cx)
             })
             .await;
-        finder.read_with(cx, |finder, _| {
-            let finder = finder.delegate();
+        picker.update(cx, |finder, _| {
+            let finder = &finder.delegate;
             assert_eq!(finder.matches.len(), 1);
             let latest_search_query = finder
                 .latest_search_query
@@ -856,34 +871,27 @@ mod tests {
             assert_eq!(latest_search_query.column, Some(file_column as u32));
         });
 
-        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.into(), SelectNext);
-        cx.dispatch_action(window.into(), Confirm);
-        active_pane
-            .condition(cx, |pane, _| pane.active_item().is_some())
-            .await;
-        let editor = cx.update(|cx| {
-            let active_item = active_pane.read(cx).active_item().unwrap();
-            active_item.downcast::<Editor>().unwrap()
-        });
-        cx.foreground().advance_clock(Duration::from_secs(2));
-        cx.foreground().start_waiting();
-        cx.foreground().finish_waiting();
+        cx.dispatch_action(SelectNext);
+        cx.dispatch_action(Confirm);
+
+        let editor = cx.update(|cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+        cx.executor().advance_clock(Duration::from_secs(2));
+
         editor.update(cx, |editor, cx| {
-            let all_selections = editor.selections.all_adjusted(cx);
-            assert_eq!(
-                all_selections.len(),
-                1,
-                "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
-            );
-            let caret_selection = all_selections.into_iter().next().unwrap();
-            assert_eq!(caret_selection.start, caret_selection.end,
-                "Caret selection should have its start and end at the same position");
-            assert_eq!(file_row, caret_selection.start.row + 1,
-                "Query inside file should get caret with the same focus row");
-            assert_eq!(file_column, caret_selection.start.column as usize + 1,
-                "Query inside file should get caret with the same focus column");
-        });
+                let all_selections = editor.selections.all_adjusted(cx);
+                assert_eq!(
+                    all_selections.len(),
+                    1,
+                    "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
+                );
+                let caret_selection = all_selections.into_iter().next().unwrap();
+                assert_eq!(caret_selection.start, caret_selection.end,
+                    "Caret selection should have its start and end at the same position");
+                assert_eq!(file_row, caret_selection.start.row + 1,
+                    "Query inside file should get caret with the same focus row");
+                assert_eq!(file_column, caret_selection.start.column as usize + 1,
+                    "Query inside file should get caret with the same focus column");
+            });
     }
 
     #[gpui::test]
@@ -907,27 +915,25 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
-        cx.dispatch_action(window.into(), Toggle);
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        let (picker, workspace, cx) = build_find_picker(project, cx);
 
         let file_query = &first_file_name[..3];
         let file_row = 200;
         let file_column = 300;
         assert!(file_column > first_file_contents.len());
         let query_outside_file = format!("{file_query}:{file_row}:{file_column}");
-        finder
-            .update(cx, |finder, cx| {
-                finder
-                    .delegate_mut()
+        picker
+            .update(cx, |picker, cx| {
+                picker
+                    .delegate
                     .update_matches(query_outside_file.to_string(), cx)
             })
             .await;
-        finder.read_with(cx, |finder, _| {
-            let finder = finder.delegate();
-            assert_eq!(finder.matches.len(), 1);
-            let latest_search_query = finder
+        picker.update(cx, |finder, _| {
+            let delegate = &finder.delegate;
+            assert_eq!(delegate.matches.len(), 1);
+            let latest_search_query = delegate
                 .latest_search_query
                 .as_ref()
                 .expect("Finder should have a query after the update_matches call");
@@ -940,34 +946,27 @@ mod tests {
             assert_eq!(latest_search_query.column, Some(file_column as u32));
         });
 
-        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window.into(), SelectNext);
-        cx.dispatch_action(window.into(), Confirm);
-        active_pane
-            .condition(cx, |pane, _| pane.active_item().is_some())
-            .await;
-        let editor = cx.update(|cx| {
-            let active_item = active_pane.read(cx).active_item().unwrap();
-            active_item.downcast::<Editor>().unwrap()
-        });
-        cx.foreground().advance_clock(Duration::from_secs(2));
-        cx.foreground().start_waiting();
-        cx.foreground().finish_waiting();
+        cx.dispatch_action(SelectNext);
+        cx.dispatch_action(Confirm);
+
+        let editor = cx.update(|cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+        cx.executor().advance_clock(Duration::from_secs(2));
+
         editor.update(cx, |editor, cx| {
-            let all_selections = editor.selections.all_adjusted(cx);
-            assert_eq!(
-                all_selections.len(),
-                1,
-                "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
-            );
-            let caret_selection = all_selections.into_iter().next().unwrap();
-            assert_eq!(caret_selection.start, caret_selection.end,
-                "Caret selection should have its start and end at the same position");
-            assert_eq!(0, caret_selection.start.row,
-                "Excessive rows (as in query outside file borders) should get trimmed to last file row");
-            assert_eq!(first_file_contents.len(), caret_selection.start.column as usize,
-                "Excessive columns (as in query outside file borders) should get trimmed to selected row's last column");
-        });
+                let all_selections = editor.selections.all_adjusted(cx);
+                assert_eq!(
+                    all_selections.len(),
+                    1,
+                    "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
+                );
+                let caret_selection = all_selections.into_iter().next().unwrap();
+                assert_eq!(caret_selection.start, caret_selection.end,
+                    "Caret selection should have its start and end at the same position");
+                assert_eq!(0, caret_selection.start.row,
+                    "Excessive rows (as in query outside file borders) should get trimmed to last file row");
+                assert_eq!(first_file_contents.len(), caret_selection.start.column as usize,
+                    "Excessive columns (as in query outside file borders) should get trimmed to selected row's last column");
+            });
     }
 
     #[gpui::test]
@@ -991,32 +990,22 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
-        let workspace = cx
-            .add_window(|cx| Workspace::test_new(project, cx))
-            .root(cx);
-        let finder = cx
-            .add_window(|cx| {
-                Picker::new(
-                    FileFinderDelegate::new(
-                        workspace.downgrade(),
-                        workspace.read(cx).project().clone(),
-                        None,
-                        Vec::new(),
-                        cx,
-                    ),
-                    cx,
-                )
-            })
-            .root(cx);
+
+        let (picker, _, cx) = build_find_picker(project, cx);
 
         let query = test_path_like("hi");
-        finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search(query.clone(), cx))
+        picker
+            .update(cx, |picker, cx| {
+                picker.delegate.spawn_search(query.clone(), cx)
+            })
             .await;
-        finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 5));
 
-        finder.update(cx, |finder, cx| {
-            let delegate = finder.delegate_mut();
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.matches.len(), 5)
+        });
+
+        picker.update(cx, |picker, cx| {
+            let delegate = &mut picker.delegate;
             assert!(
                 delegate.matches.history.is_empty(),
                 "Search matches expected"
@@ -1088,31 +1077,17 @@ mod tests {
             cx,
         )
         .await;
-        let workspace = cx
-            .add_window(|cx| Workspace::test_new(project, cx))
-            .root(cx);
-        let finder = cx
-            .add_window(|cx| {
-                Picker::new(
-                    FileFinderDelegate::new(
-                        workspace.downgrade(),
-                        workspace.read(cx).project().clone(),
-                        None,
-                        Vec::new(),
-                        cx,
-                    ),
-                    cx,
-                )
-            })
-            .root(cx);
-        finder
-            .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search(test_path_like("hi"), cx)
+
+        let (picker, _, cx) = build_find_picker(project, cx);
+
+        picker
+            .update(cx, |picker, cx| {
+                picker.delegate.spawn_search(test_path_like("hi"), cx)
             })
             .await;
-        finder.update(cx, |f, _| {
+        picker.update(cx, |picker, _| {
             assert_eq!(
-                collect_search_results(f),
+                collect_search_results(picker),
                 vec![
                     PathBuf::from("ignored-root/happiness"),
                     PathBuf::from("ignored-root/height"),
@@ -1157,20 +1132,13 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
-        cx.dispatch_action(window.into(), Toggle);
 
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        let (picker, workspace, cx) = build_find_picker(project, cx);
 
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches("env".to_string(), cx)
-            })
-            .await;
-        finder.update(cx, |f, _| {
+        cx.simulate_input("env");
+        picker.update(cx, |picker, _| {
             assert_eq!(
-                collect_search_results(f),
+                collect_search_results(picker),
                 vec![
                     PathBuf::from(".env"),
                     PathBuf::from("a/banana_env"),
@@ -1190,15 +1158,11 @@ mod tests {
             })
             .await
             .unwrap();
-        cx.foreground().run_until_parked();
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches("env".to_string(), cx)
-            })
-            .await;
-        finder.update(cx, |f, _| {
+        cx.run_until_parked();
+        cx.simulate_input("env");
+        picker.update(cx, |picker, _| {
             assert_eq!(
-                collect_search_results(f),
+                collect_search_results(picker),
                 vec![
                     PathBuf::from(".env"),
                     PathBuf::from("a/banana_env"),
@@ -1226,34 +1190,19 @@ mod tests {
             cx,
         )
         .await;
-        let workspace = cx
-            .add_window(|cx| Workspace::test_new(project, cx))
-            .root(cx);
-        let finder = cx
-            .add_window(|cx| {
-                Picker::new(
-                    FileFinderDelegate::new(
-                        workspace.downgrade(),
-                        workspace.read(cx).project().clone(),
-                        None,
-                        Vec::new(),
-                        cx,
-                    ),
-                    cx,
-                )
-            })
-            .root(cx);
+
+        let (picker, _, cx) = build_find_picker(project, cx);
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
-        finder
-            .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search(test_path_like("thf"), cx)
+        picker
+            .update(cx, |picker, cx| {
+                picker.delegate.spawn_search(test_path_like("thf"), cx)
             })
             .await;
         cx.read(|cx| {
-            let finder = finder.read(cx);
-            let delegate = finder.delegate();
+            let picker = picker.read(cx);
+            let delegate = &picker.delegate;
             assert!(
                 delegate.matches.history.is_empty(),
                 "Search matches expected"
@@ -1271,12 +1220,12 @@ mod tests {
 
         // Since the worktree root is a file, searching for its name followed by a slash does
         // not match anything.
-        finder
+        picker
             .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search(test_path_like("thf/"), cx)
+                f.delegate.spawn_search(test_path_like("thf/"), cx)
             })
             .await;
-        finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 0));
+        picker.update(cx, |f, _| assert_eq!(f.delegate.matches.len(), 0));
     }
 
     #[gpui::test]
@@ -1298,45 +1247,36 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace = cx
-            .add_window(|cx| Workspace::test_new(project, cx))
-            .root(cx);
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
-            WorktreeId::from_usize(worktrees[0].id())
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
         });
 
         // When workspace has an active item, sort items which are closer to that item
         // first when they have the same name. In this case, b.txt is closer to dir2's a.txt
         // so that one should be sorted earlier
-        let b_path = Some(dummy_found_path(ProjectPath {
+        let b_path = ProjectPath {
             worktree_id,
             path: Arc::from(Path::new("/root/dir2/b.txt")),
-        }));
-        let finder = cx
-            .add_window(|cx| {
-                Picker::new(
-                    FileFinderDelegate::new(
-                        workspace.downgrade(),
-                        workspace.read(cx).project().clone(),
-                        b_path,
-                        Vec::new(),
-                        cx,
-                    ),
-                    cx,
-                )
+        };
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path(b_path, None, true, cx)
             })
-            .root(cx);
-
+            .await
+            .unwrap();
+        let finder = open_file_picker(&workspace, cx);
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search(test_path_like("a.txt"), cx)
+                f.delegate.spawn_search(test_path_like("a.txt"), cx)
             })
             .await;
 
-        finder.read_with(cx, |f, _| {
-            let delegate = f.delegate();
+        finder.update(cx, |f, _| {
+            let delegate = &f.delegate;
             assert!(
                 delegate.matches.history.is_empty(),
                 "Search matches expected"
@@ -1365,39 +1305,21 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace = cx
-            .add_window(|cx| Workspace::test_new(project, cx))
-            .root(cx);
-        let finder = cx
-            .add_window(|cx| {
-                Picker::new(
-                    FileFinderDelegate::new(
-                        workspace.downgrade(),
-                        workspace.read(cx).project().clone(),
-                        None,
-                        Vec::new(),
-                        cx,
-                    ),
-                    cx,
-                )
-            })
-            .root(cx);
-        finder
+        let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+        picker
             .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search(test_path_like("dir"), cx)
+                f.delegate.spawn_search(test_path_like("dir"), cx)
             })
             .await;
         cx.read(|cx| {
-            let finder = finder.read(cx);
-            assert_eq!(finder.delegate().matches.len(), 0);
+            let finder = picker.read(cx);
+            assert_eq!(finder.delegate.matches.len(), 0);
         });
     }
 
     #[gpui::test]
-    async fn test_query_history(
-        deterministic: Arc<gpui::executor::Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_query_history(cx: &mut gpui::TestAppContext) {
         let app_state = init_test(cx);
 
         app_state
@@ -1416,12 +1338,11 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
-            WorktreeId::from_usize(worktrees[0].id())
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
         });
 
         // Open and close panels, getting their history items afterwards.
@@ -1430,32 +1351,16 @@ mod tests {
         //
         // TODO: without closing, the opened items do not propagate their history changes for some reason
         // it does work in real app though, only tests do not propagate.
+        workspace.update(cx, |_, cx| cx.focused());
 
-        let initial_history = open_close_queried_buffer(
-            "fir",
-            1,
-            "first.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let initial_history = open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
         assert!(
             initial_history.is_empty(),
             "Should have no history before opening any files"
         );
 
-        let history_after_first = open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let history_after_first =
+            open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
         assert_eq!(
             history_after_first,
             vec![FoundPath::new(
@@ -1468,16 +1373,8 @@ mod tests {
             "Should show 1st opened item in the history when opening the 2nd item"
         );
 
-        let history_after_second = open_close_queried_buffer(
-            "thi",
-            1,
-            "third.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let history_after_second =
+            open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
         assert_eq!(
             history_after_second,
             vec![
@@ -1497,93 +1394,74 @@ mod tests {
                 ),
             ],
             "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
-2nd item should be the first in the history, as the last opened."
+    2nd item should be the first in the history, as the last opened."
         );
 
-        let history_after_third = open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let history_after_third =
+            open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
         assert_eq!(
-            history_after_third,
-            vec![
-                FoundPath::new(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new("test/third.rs")),
-                    },
-                    Some(PathBuf::from("/src/test/third.rs"))
-                ),
-                FoundPath::new(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new("test/second.rs")),
-                    },
-                    Some(PathBuf::from("/src/test/second.rs"))
-                ),
-                FoundPath::new(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new("test/first.rs")),
-                    },
-                    Some(PathBuf::from("/src/test/first.rs"))
-                ),
-            ],
-            "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
-3rd item should be the first in the history, as the last opened."
-        );
+                history_after_third,
+                vec![
+                    FoundPath::new(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("test/third.rs")),
+                        },
+                        Some(PathBuf::from("/src/test/third.rs"))
+                    ),
+                    FoundPath::new(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("test/second.rs")),
+                        },
+                        Some(PathBuf::from("/src/test/second.rs"))
+                    ),
+                    FoundPath::new(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("test/first.rs")),
+                        },
+                        Some(PathBuf::from("/src/test/first.rs"))
+                    ),
+                ],
+                "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
+    3rd item should be the first in the history, as the last opened."
+            );
 
-        let history_after_second_again = open_close_queried_buffer(
-            "thi",
-            1,
-            "third.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let history_after_second_again =
+            open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
         assert_eq!(
-            history_after_second_again,
-            vec![
-                FoundPath::new(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new("test/second.rs")),
-                    },
-                    Some(PathBuf::from("/src/test/second.rs"))
-                ),
-                FoundPath::new(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new("test/third.rs")),
-                    },
-                    Some(PathBuf::from("/src/test/third.rs"))
-                ),
-                FoundPath::new(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new("test/first.rs")),
-                    },
-                    Some(PathBuf::from("/src/test/first.rs"))
-                ),
-            ],
-            "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
-2nd item, as the last opened, 3rd item should go next as it was opened right before."
-        );
+                history_after_second_again,
+                vec![
+                    FoundPath::new(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("test/second.rs")),
+                        },
+                        Some(PathBuf::from("/src/test/second.rs"))
+                    ),
+                    FoundPath::new(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("test/third.rs")),
+                        },
+                        Some(PathBuf::from("/src/test/third.rs"))
+                    ),
+                    FoundPath::new(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("test/first.rs")),
+                        },
+                        Some(PathBuf::from("/src/test/first.rs"))
+                    ),
+                ],
+                "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
+    2nd item, as the last opened, 3rd item should go next as it was opened right before."
+            );
     }
 
     #[gpui::test]
-    async fn test_external_files_history(
-        deterministic: Arc<gpui::executor::Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         let app_state = init_test(cx);
 
         app_state
@@ -1621,22 +1499,21 @@ mod tests {
             })
         })
         .detach();
-        deterministic.run_until_parked();
+        cx.background_executor.run_until_parked();
 
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1,);
 
-            WorktreeId::from_usize(worktrees[0].id())
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
         });
         workspace
             .update(cx, |workspace, cx| {
                 workspace.open_abs_path(PathBuf::from("/external-src/test/third.rs"), false, cx)
             })
             .detach();
-        deterministic.run_until_parked();
+        cx.background_executor.run_until_parked();
         let external_worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(
@@ -1648,23 +1525,18 @@ mod tests {
             WorktreeId::from_usize(
                 worktrees
                     .into_iter()
-                    .find(|worktree| worktree.id() != worktree_id.to_usize())
+                    .find(|worktree| {
+                        worktree.entity_id().as_u64() as usize != worktree_id.to_usize()
+                    })
                     .expect("New worktree should have a different id")
-                    .id(),
+                    .entity_id()
+                    .as_u64() as usize,
             )
         });
-        close_active_item(&workspace, &deterministic, cx).await;
+        cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
 
-        let initial_history_items = open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let initial_history_items =
+            open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
         assert_eq!(
             initial_history_items,
             vec![FoundPath::new(
@@ -1677,16 +1549,8 @@ mod tests {
             "Should show external file with its full path in the history after it was open"
         );
 
-        let updated_history_items = open_close_queried_buffer(
-            "fir",
-            1,
-            "first.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let updated_history_items =
+            open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
         assert_eq!(
             updated_history_items,
             vec![
@@ -1710,10 +1574,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_toggle_panel_new_selections(
-        deterministic: Arc<gpui::executor::Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
         let app_state = init_test(cx);
 
         app_state
@@ -1732,76 +1593,35 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
         // generate some history to select from
-        open_close_queried_buffer(
-            "fir",
-            1,
-            "first.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "thi",
-            1,
-            "third.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        let current_history = open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+        cx.executor().run_until_parked();
+        open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+        open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
+        let current_history =
+            open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
 
         for expected_selected_index in 0..current_history.len() {
-            cx.dispatch_action(window.into(), Toggle);
-            let selected_index = cx.read(|cx| {
-                workspace
-                    .read(cx)
-                    .modal::<FileFinder>()
-                    .unwrap()
-                    .read(cx)
-                    .delegate()
-                    .selected_index()
-            });
+            cx.dispatch_action(Toggle);
+            let picker = active_file_picker(&workspace, cx);
+            let selected_index = picker.update(cx, |picker, _| picker.delegate.selected_index());
             assert_eq!(
                 selected_index, expected_selected_index,
                 "Should select the next item in the history"
             );
         }
 
-        cx.dispatch_action(window.into(), Toggle);
-        let selected_index = cx.read(|cx| {
+        cx.dispatch_action(Toggle);
+        let selected_index = workspace.update(cx, |workspace, cx| {
             workspace
-                .read(cx)
-                .modal::<FileFinder>()
+                .active_modal::<FileFinder>(cx)
                 .unwrap()
                 .read(cx)
-                .delegate()
+                .picker
+                .read(cx)
+                .delegate
                 .selected_index()
         });
         assert_eq!(
@@ -1811,10 +1631,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_preserves_history_items(
-        deterministic: Arc<gpui::executor::Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
         let app_state = init_test(cx);
 
         app_state
@@ -1834,69 +1651,29 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1,);
 
-            WorktreeId::from_usize(worktrees[0].id())
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
         });
 
         // generate some history to select from
-        open_close_queried_buffer(
-            "fir",
-            1,
-            "first.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "thi",
-            1,
-            "third.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+        open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+        open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
+        open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
 
-        cx.dispatch_action(window.into(), Toggle);
+        let finder = open_file_picker(&workspace, cx);
         let first_query = "f";
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
             .update(cx, |finder, cx| {
-                finder
-                    .delegate_mut()
-                    .update_matches(first_query.to_string(), cx)
+                finder.delegate.update_matches(first_query.to_string(), cx)
             })
             .await;
-        finder.read_with(cx, |finder, _| {
-            let delegate = finder.delegate();
+        finder.update(cx, |finder, _| {
+            let delegate = &finder.delegate;
             assert_eq!(delegate.matches.history.len(), 1, "Only one history item contains {first_query}, it should be present and others should be filtered out");
             let history_match = delegate.matches.history.first().unwrap();
             assert!(history_match.1.is_some(), "Should have path matches for history items after querying");
@@ -1912,16 +1689,14 @@ mod tests {
         });
 
         let second_query = "fsdasdsa";
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        let finder = active_file_picker(&workspace, cx);
         finder
             .update(cx, |finder, cx| {
-                finder
-                    .delegate_mut()
-                    .update_matches(second_query.to_string(), cx)
+                finder.delegate.update_matches(second_query.to_string(), cx)
             })
             .await;
-        finder.read_with(cx, |finder, _| {
-            let delegate = finder.delegate();
+        finder.update(cx, |finder, _| {
+            let delegate = &finder.delegate;
             assert!(
                 delegate.matches.history.is_empty(),
                 "No history entries should match {second_query}"
@@ -1933,16 +1708,17 @@ mod tests {
         });
 
         let first_query_again = first_query;
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        let finder = active_file_picker(&workspace, cx);
         finder
             .update(cx, |finder, cx| {
                 finder
-                    .delegate_mut()
+                    .delegate
                     .update_matches(first_query_again.to_string(), cx)
             })
             .await;
-        finder.read_with(cx, |finder, _| {
-            let delegate = finder.delegate();
+        finder.update(cx, |finder, _| {
+            let delegate = &finder.delegate;
             assert_eq!(delegate.matches.history.len(), 1, "Only one history item contains {first_query_again}, it should be present and others should be filtered out, even after non-matching query");
             let history_match = delegate.matches.history.first().unwrap();
             assert!(history_match.1.is_some(), "Should have path matches for history items after querying");
@@ -1959,10 +1735,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_history_items_vs_very_good_external_match(
-        deterministic: Arc<gpui::executor::Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
         let app_state = init_test(cx);
 
         app_state
@@ -1982,60 +1755,18 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
         // generate some history to select from
-        open_close_queried_buffer(
-            "fir",
-            1,
-            "first.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "thi",
-            1,
-            "third.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "sec",
-            1,
-            "second.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+        open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+        open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
+        open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
 
-        cx.dispatch_action(window.into(), Toggle);
+        let finder = open_file_picker(&workspace, cx);
         let query = "collab_ui";
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches(query.to_string(), cx)
-            })
-            .await;
-        finder.read_with(cx, |finder, _| {
-            let delegate = finder.delegate();
+        cx.simulate_input(query);
+        finder.update(cx, |finder, _| {
+            let delegate = &finder.delegate;
             assert!(
                 delegate.matches.history.is_empty(),
                 "History items should not math query {query}, they should be matched by name only"
@@ -2061,10 +1792,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_nonexistent_history_items_not_shown(
-        deterministic: Arc<gpui::executor::Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext) {
         let app_state = init_test(cx);
 
         app_state
@@ -2083,61 +1811,17 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
-        // generate some history to select from
-        open_close_queried_buffer(
-            "fir",
-            1,
-            "first.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "non",
-            1,
-            "nonexistent.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "thi",
-            1,
-            "third.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
-        open_close_queried_buffer(
-            "fir",
-            1,
-            "first.rs",
-            window.into(),
-            &workspace,
-            &deterministic,
-            cx,
-        )
-        .await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx)); // generate some history to select from
+        open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+        open_close_queried_buffer("non", 1, "nonexistent.rs", &workspace, cx).await;
+        open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
+        open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
 
-        cx.dispatch_action(window.into(), Toggle);
-        let query = "rs";
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches(query.to_string(), cx)
-            })
-            .await;
-        finder.read_with(cx, |finder, _| {
-            let delegate = finder.delegate();
-            let history_entries = delegate
+        let picker = open_file_picker(&workspace, cx);
+        cx.simulate_input("rs");
+
+        picker.update(cx, |finder, _| {
+            let history_entries = finder.delegate
                 .matches
                 .history
                 .iter()
@@ -2158,104 +1842,42 @@ mod tests {
         input: &str,
         expected_matches: usize,
         expected_editor_title: &str,
-        window: gpui::AnyWindowHandle,
-        workspace: &ViewHandle<Workspace>,
-        deterministic: &gpui::executor::Deterministic,
-        cx: &mut gpui::TestAppContext,
+        workspace: &View<Workspace>,
+        cx: &mut gpui::VisualTestContext<'_>,
     ) -> Vec<FoundPath> {
-        cx.dispatch_action(window, Toggle);
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches(input.to_string(), cx)
-            })
-            .await;
-        let history_items = finder.read_with(cx, |finder, _| {
+        let picker = open_file_picker(&workspace, cx);
+        cx.simulate_input(input);
+
+        let history_items = picker.update(cx, |finder, _| {
             assert_eq!(
-                finder.delegate().matches.len(),
+                finder.delegate.matches.len(),
                 expected_matches,
                 "Unexpected number of matches found for query {input}"
             );
-            finder.delegate().history_items.clone()
+            finder.delegate.history_items.clone()
         });
 
-        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window, SelectNext);
-        cx.dispatch_action(window, Confirm);
-        deterministic.run_until_parked();
-        active_pane
-            .condition(cx, |pane, _| pane.active_item().is_some())
-            .await;
+        cx.dispatch_action(SelectNext);
+        cx.dispatch_action(Confirm);
+
         cx.read(|cx| {
-            let active_item = active_pane.read(cx).active_item().unwrap();
-            let active_editor_title = active_item
-                .as_any()
-                .downcast_ref::<Editor>()
-                .unwrap()
-                .read(cx)
-                .title(cx);
+            let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+            let active_editor_title = active_editor.read(cx).title(cx);
             assert_eq!(
                 expected_editor_title, active_editor_title,
                 "Unexpected editor title for query {input}"
             );
         });
 
-        close_active_item(workspace, deterministic, cx).await;
+        cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
 
         history_items
     }
 
-    async fn close_active_item(
-        workspace: &ViewHandle<Workspace>,
-        deterministic: &gpui::executor::Deterministic,
-        cx: &mut TestAppContext,
-    ) {
-        let mut original_items = HashMap::new();
-        cx.read(|cx| {
-            for pane in workspace.read(cx).panes() {
-                let pane_id = pane.id();
-                let pane = pane.read(cx);
-                let insertion_result = original_items.insert(pane_id, pane.items().count());
-                assert!(insertion_result.is_none(), "Pane id {pane_id} collision");
-            }
-        });
-
-        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        active_pane
-            .update(cx, |pane, cx| {
-                pane.close_active_item(&workspace::CloseActiveItem { save_intent: None }, cx)
-                    .unwrap()
-            })
-            .await
-            .unwrap();
-        deterministic.run_until_parked();
-        cx.read(|cx| {
-            for pane in workspace.read(cx).panes() {
-                let pane_id = pane.id();
-                let pane = pane.read(cx);
-                match original_items.remove(&pane_id) {
-                    Some(original_items) => {
-                        assert_eq!(
-                            pane.items().count(),
-                            original_items.saturating_sub(1),
-                            "Pane id {pane_id} should have item closed"
-                        );
-                    }
-                    None => panic!("Pane id {pane_id} not found in original items"),
-                }
-            }
-        });
-        assert!(
-            original_items.len() <= 1,
-            "At most one panel should got closed"
-        );
-    }
-
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        cx.foreground().forbid_parking();
         cx.update(|cx| {
             let state = AppState::test(cx);
-            theme::init((), cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             super::init(cx);
             editor::init(cx);
@@ -2279,15 +1901,45 @@ mod tests {
         .unwrap()
     }
 
-    fn dummy_found_path(project_path: ProjectPath) -> FoundPath {
-        FoundPath {
-            project: project_path,
-            absolute: None,
-        }
+    fn build_find_picker(
+        project: Model<Project>,
+        cx: &mut TestAppContext,
+    ) -> (
+        View<Picker<FileFinderDelegate>>,
+        View<Workspace>,
+        &mut VisualTestContext,
+    ) {
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let picker = open_file_picker(&workspace, cx);
+        (picker, workspace, cx)
+    }
+
+    #[track_caller]
+    fn open_file_picker(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> View<Picker<FileFinderDelegate>> {
+        cx.dispatch_action(Toggle);
+        active_file_picker(workspace, cx)
+    }
+
+    #[track_caller]
+    fn active_file_picker(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> View<Picker<FileFinderDelegate>> {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<FileFinder>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        })
     }
 
     fn collect_search_results(picker: &Picker<FileFinderDelegate>) -> Vec<PathBuf> {
-        let matches = &picker.delegate().matches;
+        let matches = &picker.delegate.matches;
         assert!(
             matches.history.is_empty(),
             "Should have no history matches, but got: {:?}",

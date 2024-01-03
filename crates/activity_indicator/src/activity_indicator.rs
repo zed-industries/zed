@@ -2,19 +2,19 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    actions, anyhow,
-    elements::*,
-    platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ModelHandle, View, ViewContext, ViewHandle,
+    actions, svg, AppContext, CursorStyle, EventEmitter, InteractiveElement as _, Model,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement, Styled, View,
+    ViewContext, VisualContext as _,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc};
+use ui::prelude::*;
 use util::ResultExt;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-actions!(lsp_status, [ShowErrorMessage]);
+actions!(activity_indicator, [ShowErrorMessage]);
 
 const DOWNLOAD_ICON: &str = "icons/download.svg";
 const WARNING_ICON: &str = "icons/warning.svg";
@@ -25,8 +25,8 @@ pub enum Event {
 
 pub struct ActivityIndicator {
     statuses: Vec<LspStatus>,
-    project: ModelHandle<Project>,
-    auto_updater: Option<ModelHandle<AutoUpdater>>,
+    project: Model<Project>,
+    auto_updater: Option<Model<AutoUpdater>>,
 }
 
 struct LspStatus {
@@ -47,20 +47,15 @@ struct Content {
     on_click: Option<Arc<dyn Fn(&mut ActivityIndicator, &mut ViewContext<ActivityIndicator>)>>,
 }
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(ActivityIndicator::show_error_message);
-    cx.add_action(ActivityIndicator::dismiss_error_message);
-}
-
 impl ActivityIndicator {
     pub fn new(
         workspace: &mut Workspace,
         languages: Arc<LanguageRegistry>,
         cx: &mut ViewContext<Workspace>,
-    ) -> ViewHandle<ActivityIndicator> {
+    ) -> View<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
-        let this = cx.add_view(|cx: &mut ViewContext<Self>| {
+        let this = cx.new_view(|cx: &mut ViewContext<Self>| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(|this, mut cx| async move {
                 while let Some((language, event)) = status_events.next().await {
@@ -77,11 +72,13 @@ impl ActivityIndicator {
             })
             .detach();
             cx.observe(&project, |_, _, cx| cx.notify()).detach();
+
             if let Some(auto_updater) = auto_updater.as_ref() {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
-            cx.observe_active_labeled_tasks(|_, cx| cx.notify())
-                .detach();
+
+            // cx.observe_active_labeled_tasks(|_, cx| cx.notify())
+            //     .detach();
 
             Self {
                 statuses: Default::default(),
@@ -89,6 +86,7 @@ impl ActivityIndicator {
                 auto_updater,
             }
         });
+
         cx.subscribe(&this, move |workspace, _, event, cx| match event {
             Event::ShowError { lsp_name, error } => {
                 if let Some(buffer) = project
@@ -104,7 +102,7 @@ impl ActivityIndicator {
                     });
                     workspace.add_item(
                         Box::new(
-                            cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                            cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
                         ),
                         cx,
                     );
@@ -290,71 +288,41 @@ impl ActivityIndicator {
             };
         }
 
-        if let Some(most_recent_active_task) = cx.active_labeled_tasks().last() {
-            return Content {
-                icon: None,
-                message: most_recent_active_task.to_string(),
-                on_click: None,
-            };
-        }
+        // todo!(show active tasks)
+        // if let Some(most_recent_active_task) = cx.active_labeled_tasks().last() {
+        //     return Content {
+        //         icon: None,
+        //         message: most_recent_active_task.to_string(),
+        //         on_click: None,
+        //     };
+        // }
 
         Default::default()
     }
 }
 
-impl Entity for ActivityIndicator {
-    type Event = Event;
-}
+impl EventEmitter<Event> for ActivityIndicator {}
 
-impl View for ActivityIndicator {
-    fn ui_name() -> &'static str {
-        "ActivityIndicator"
-    }
+impl Render for ActivityIndicator {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let content = self.content_to_render(cx);
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let Content {
-            icon,
-            message,
-            on_click,
-        } = self.content_to_render(cx);
+        let mut result = h_stack()
+            .id("activity-indicator")
+            .on_action(cx.listener(Self::show_error_message))
+            .on_action(cx.listener(Self::dismiss_error_message));
 
-        let mut element = MouseEventHandler::new::<Self, _>(0, cx, |state, cx| {
-            let theme = &theme::current(cx).workspace.status_bar.lsp_status;
-            let style = if state.hovered() && on_click.is_some() {
-                theme.hovered.as_ref().unwrap_or(&theme.default)
-            } else {
-                &theme.default
-            };
-            Flex::row()
-                .with_children(icon.map(|path| {
-                    Svg::new(path)
-                        .with_color(style.icon_color)
-                        .constrained()
-                        .with_width(style.icon_width)
-                        .contained()
-                        .with_margin_right(style.icon_spacing)
-                        .aligned()
-                        .into_any_named("activity-icon")
+        if let Some(on_click) = content.on_click {
+            result = result
+                .cursor(CursorStyle::PointingHand)
+                .on_click(cx.listener(move |this, _, cx| {
+                    on_click(this, cx);
                 }))
-                .with_child(
-                    Text::new(message, style.message.clone())
-                        .with_soft_wrap(false)
-                        .aligned(),
-                )
-                .constrained()
-                .with_height(style.height)
-                .contained()
-                .with_style(style.container)
-                .aligned()
-        });
-
-        if let Some(on_click) = on_click.clone() {
-            element = element
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, this, cx| on_click(this, cx));
         }
 
-        element.into_any()
+        result
+            .children(content.icon.map(|icon| svg().path(icon)))
+            .child(Label::new(SharedString::from(content.message)).size(LabelSize::Small))
     }
 }
 

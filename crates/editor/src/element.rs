@@ -1,50 +1,47 @@
-use super::{
-    display_map::{BlockContext, ToDisplayPoint},
-    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, SelectPhase, SoftWrap, ToPoint,
-    MAX_LINE_LEN,
-};
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, TransformBlock},
+    display_map::{
+        BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
+        TransformBlock,
+    },
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
-        hide_hover, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH,
-        MIN_POPOVER_LINE_HEIGHT,
+        self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
-        go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
-        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+        go_to_fetched_definition, go_to_fetched_type_definition, show_link_definition,
+        update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
+        LinkGoToDefinitionState,
     },
-    mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
+    mouse_context_menu,
+    scroll::scroll_amount::ScrollAmount,
+    CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    HalfPageDown, HalfPageUp, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase,
+    Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
+use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    color::Color,
-    elements::*,
-    fonts::TextStyle,
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-        PathBuilder,
-    },
-    json::{self, ToJson},
-    platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
-    text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AnyElement, Axis, CursorRegion, Element, EventContext, FontCache, MouseRegion, Quad,
-    SizeConstraint, ViewContext, WindowContext,
+    div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
+    AnchorCorner, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Hsla, InteractiveBounds,
+    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun,
+    TextStyle, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
-use json::json;
-use language::{
-    language_settings::ShowWhitespaceSetting, Bias, CursorShape, OffsetUtf16, Selection,
-};
+use language::language_settings::ShowWhitespaceSetting;
+use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
 };
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
+    any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
@@ -52,11 +49,12 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use text::Point;
-use theme::SelectionStyle;
+use sum_tree::Bias;
+use theme::{ActiveTheme, PlayerColor};
+use ui::prelude::*;
+use ui::{h_stack, ButtonLike, ButtonStyle, IconButton, Tooltip};
+use util::ResultExt;
 use workspace::item::Item;
-
-enum FoldMarkers {}
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -119,176 +117,288 @@ impl SelectionLayout {
 }
 
 pub struct EditorElement {
-    style: Arc<EditorStyle>,
+    editor: View<Editor>,
+    style: EditorStyle,
 }
 
 impl EditorElement {
-    pub fn new(style: EditorStyle) -> Self {
+    pub fn new(editor: &View<Editor>, style: EditorStyle) -> Self {
         Self {
-            style: Arc::new(style),
+            editor: editor.clone(),
+            style,
         }
     }
 
-    fn attach_mouse_handlers(
-        position_map: &Arc<PositionMap>,
-        has_popovers: bool,
-        visible_bounds: RectF,
-        text_bounds: RectF,
-        gutter_bounds: RectF,
-        bounds: RectF,
+    fn register_actions(&self, cx: &mut WindowContext) {
+        let view = &self.editor;
+        view.update(cx, |editor, cx| {
+            for action in editor.editor_actions.iter() {
+                (action)(cx)
+            }
+        });
+
+        crate::rust_analyzer_ext::apply_related_actions(view, cx);
+        register_action(view, cx, Editor::move_left);
+        register_action(view, cx, Editor::move_right);
+        register_action(view, cx, Editor::move_down);
+        register_action(view, cx, Editor::move_up);
+        register_action(view, cx, Editor::cancel);
+        register_action(view, cx, Editor::newline);
+        register_action(view, cx, Editor::newline_above);
+        register_action(view, cx, Editor::newline_below);
+        register_action(view, cx, Editor::backspace);
+        register_action(view, cx, Editor::delete);
+        register_action(view, cx, Editor::tab);
+        register_action(view, cx, Editor::tab_prev);
+        register_action(view, cx, Editor::indent);
+        register_action(view, cx, Editor::outdent);
+        register_action(view, cx, Editor::delete_line);
+        register_action(view, cx, Editor::join_lines);
+        register_action(view, cx, Editor::sort_lines_case_sensitive);
+        register_action(view, cx, Editor::sort_lines_case_insensitive);
+        register_action(view, cx, Editor::reverse_lines);
+        register_action(view, cx, Editor::shuffle_lines);
+        register_action(view, cx, Editor::convert_to_upper_case);
+        register_action(view, cx, Editor::convert_to_lower_case);
+        register_action(view, cx, Editor::convert_to_title_case);
+        register_action(view, cx, Editor::convert_to_snake_case);
+        register_action(view, cx, Editor::convert_to_kebab_case);
+        register_action(view, cx, Editor::convert_to_upper_camel_case);
+        register_action(view, cx, Editor::convert_to_lower_camel_case);
+        register_action(view, cx, Editor::delete_to_previous_word_start);
+        register_action(view, cx, Editor::delete_to_previous_subword_start);
+        register_action(view, cx, Editor::delete_to_next_word_end);
+        register_action(view, cx, Editor::delete_to_next_subword_end);
+        register_action(view, cx, Editor::delete_to_beginning_of_line);
+        register_action(view, cx, Editor::delete_to_end_of_line);
+        register_action(view, cx, Editor::cut_to_end_of_line);
+        register_action(view, cx, Editor::duplicate_line);
+        register_action(view, cx, Editor::move_line_up);
+        register_action(view, cx, Editor::move_line_down);
+        register_action(view, cx, Editor::transpose);
+        register_action(view, cx, Editor::cut);
+        register_action(view, cx, Editor::copy);
+        register_action(view, cx, Editor::paste);
+        register_action(view, cx, Editor::undo);
+        register_action(view, cx, Editor::redo);
+        register_action(view, cx, Editor::move_page_up);
+        register_action(view, cx, Editor::move_page_down);
+        register_action(view, cx, Editor::next_screen);
+        register_action(view, cx, Editor::scroll_cursor_top);
+        register_action(view, cx, Editor::scroll_cursor_center);
+        register_action(view, cx, Editor::scroll_cursor_bottom);
+        register_action(view, cx, |editor, _: &LineDown, cx| {
+            editor.scroll_screen(&ScrollAmount::Line(1.), cx)
+        });
+        register_action(view, cx, |editor, _: &LineUp, cx| {
+            editor.scroll_screen(&ScrollAmount::Line(-1.), cx)
+        });
+        register_action(view, cx, |editor, _: &HalfPageDown, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
+        });
+        register_action(view, cx, |editor, _: &HalfPageUp, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
+        });
+        register_action(view, cx, |editor, _: &PageDown, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(1.), cx)
+        });
+        register_action(view, cx, |editor, _: &PageUp, cx| {
+            editor.scroll_screen(&ScrollAmount::Page(-1.), cx)
+        });
+        register_action(view, cx, Editor::move_to_previous_word_start);
+        register_action(view, cx, Editor::move_to_previous_subword_start);
+        register_action(view, cx, Editor::move_to_next_word_end);
+        register_action(view, cx, Editor::move_to_next_subword_end);
+        register_action(view, cx, Editor::move_to_beginning_of_line);
+        register_action(view, cx, Editor::move_to_end_of_line);
+        register_action(view, cx, Editor::move_to_start_of_paragraph);
+        register_action(view, cx, Editor::move_to_end_of_paragraph);
+        register_action(view, cx, Editor::move_to_beginning);
+        register_action(view, cx, Editor::move_to_end);
+        register_action(view, cx, Editor::select_up);
+        register_action(view, cx, Editor::select_down);
+        register_action(view, cx, Editor::select_left);
+        register_action(view, cx, Editor::select_right);
+        register_action(view, cx, Editor::select_to_previous_word_start);
+        register_action(view, cx, Editor::select_to_previous_subword_start);
+        register_action(view, cx, Editor::select_to_next_word_end);
+        register_action(view, cx, Editor::select_to_next_subword_end);
+        register_action(view, cx, Editor::select_to_beginning_of_line);
+        register_action(view, cx, Editor::select_to_end_of_line);
+        register_action(view, cx, Editor::select_to_start_of_paragraph);
+        register_action(view, cx, Editor::select_to_end_of_paragraph);
+        register_action(view, cx, Editor::select_to_beginning);
+        register_action(view, cx, Editor::select_to_end);
+        register_action(view, cx, Editor::select_all);
+        register_action(view, cx, |editor, action, cx| {
+            editor.select_all_matches(action, cx).log_err();
+        });
+        register_action(view, cx, Editor::select_line);
+        register_action(view, cx, Editor::split_selection_into_lines);
+        register_action(view, cx, Editor::add_selection_above);
+        register_action(view, cx, Editor::add_selection_below);
+        register_action(view, cx, |editor, action, cx| {
+            editor.select_next(action, cx).log_err();
+        });
+        register_action(view, cx, |editor, action, cx| {
+            editor.select_previous(action, cx).log_err();
+        });
+        register_action(view, cx, Editor::toggle_comments);
+        register_action(view, cx, Editor::select_larger_syntax_node);
+        register_action(view, cx, Editor::select_smaller_syntax_node);
+        register_action(view, cx, Editor::move_to_enclosing_bracket);
+        register_action(view, cx, Editor::undo_selection);
+        register_action(view, cx, Editor::redo_selection);
+        register_action(view, cx, Editor::go_to_diagnostic);
+        register_action(view, cx, Editor::go_to_prev_diagnostic);
+        register_action(view, cx, Editor::go_to_hunk);
+        register_action(view, cx, Editor::go_to_prev_hunk);
+        register_action(view, cx, Editor::go_to_definition);
+        register_action(view, cx, Editor::go_to_definition_split);
+        register_action(view, cx, Editor::go_to_type_definition);
+        register_action(view, cx, Editor::go_to_type_definition_split);
+        register_action(view, cx, Editor::fold);
+        register_action(view, cx, Editor::fold_at);
+        register_action(view, cx, Editor::unfold_lines);
+        register_action(view, cx, Editor::unfold_at);
+        register_action(view, cx, Editor::fold_selected_ranges);
+        register_action(view, cx, Editor::show_completions);
+        register_action(view, cx, Editor::toggle_code_actions);
+        register_action(view, cx, Editor::open_excerpts);
+        register_action(view, cx, Editor::toggle_soft_wrap);
+        register_action(view, cx, Editor::toggle_inlay_hints);
+        register_action(view, cx, hover_popover::hover);
+        register_action(view, cx, Editor::reveal_in_finder);
+        register_action(view, cx, Editor::copy_path);
+        register_action(view, cx, Editor::copy_relative_path);
+        register_action(view, cx, Editor::copy_highlight_json);
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.format(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, Editor::restart_language_server);
+        register_action(view, cx, Editor::show_character_palette);
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.confirm_completion(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.confirm_code_action(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.rename(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.confirm_rename(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.find_all_references(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, Editor::next_copilot_suggestion);
+        register_action(view, cx, Editor::previous_copilot_suggestion);
+        register_action(view, cx, Editor::copilot_suggest);
+        register_action(view, cx, Editor::context_menu_first);
+        register_action(view, cx, Editor::context_menu_prev);
+        register_action(view, cx, Editor::context_menu_next);
+        register_action(view, cx, Editor::context_menu_last);
+    }
+
+    fn register_key_listeners(&self, cx: &mut WindowContext) {
+        cx.on_key_event({
+            let editor = self.editor.clone();
+            move |event: &ModifiersChangedEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if editor.update(cx, |editor, cx| Self::modifiers_changed(editor, event, cx)) {
+                    cx.stop_propagation();
+                }
+            }
+        });
+    }
+
+    pub(crate) fn modifiers_changed(
+        editor: &mut Editor,
+        event: &ModifiersChangedEvent,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let pending_selection = editor.has_pending_selection();
+
+        if let Some(point) = &editor.link_go_to_definition_state.last_trigger_point {
+            if event.command && !pending_selection {
+                let point = point.clone();
+                let snapshot = editor.snapshot(cx);
+                let kind = point.definition_kind(event.shift);
+
+                show_link_definition(kind, editor, point, snapshot, cx);
+                return false;
+            }
+        }
+
+        {
+            if editor.link_go_to_definition_state.symbol_range.is_some()
+                || !editor.link_go_to_definition_state.definitions.is_empty()
+            {
+                editor.link_go_to_definition_state.symbol_range.take();
+                editor.link_go_to_definition_state.definitions.clear();
+                cx.notify();
+            }
+
+            editor.link_go_to_definition_state.task = None;
+
+            editor.clear_highlights::<LinkGoToDefinitionState>(cx);
+        }
+
+        false
+    }
+
+    fn mouse_left_down(
+        editor: &mut Editor,
+        event: &MouseDownEvent,
+        position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
-        enum EditorElementMouseHandlers {}
-        let view_id = cx.view_id();
-        cx.scene().push_mouse_region(
-            MouseRegion::new::<EditorElementMouseHandlers>(view_id, view_id, visible_bounds)
-                .on_down(MouseButton::Left, {
-                    let position_map = position_map.clone();
-                    move |event, editor, cx| {
-                        if !Self::mouse_down(
-                            editor,
-                            event.platform_event,
-                            position_map.as_ref(),
-                            text_bounds,
-                            gutter_bounds,
-                            cx,
-                        ) {
-                            cx.propagate_event();
-                        }
-                    }
-                })
-                .on_down(MouseButton::Right, {
-                    let position_map = position_map.clone();
-                    move |event, editor, cx| {
-                        if !Self::mouse_right_down(
-                            editor,
-                            event.position,
-                            position_map.as_ref(),
-                            text_bounds,
-                            cx,
-                        ) {
-                            cx.propagate_event();
-                        }
-                    }
-                })
-                .on_up(MouseButton::Left, {
-                    let position_map = position_map.clone();
-                    move |event, editor, cx| {
-                        if !Self::mouse_up(
-                            editor,
-                            event.position,
-                            event.cmd,
-                            event.shift,
-                            event.alt,
-                            position_map.as_ref(),
-                            text_bounds,
-                            cx,
-                        ) {
-                            cx.propagate_event()
-                        }
-                    }
-                })
-                .on_drag(MouseButton::Left, {
-                    let position_map = position_map.clone();
-                    move |event, editor, cx| {
-                        if event.end {
-                            return;
-                        }
+        let mut click_count = event.click_count;
+        let modifiers = event.modifiers;
 
-                        if !Self::mouse_dragged(
-                            editor,
-                            event.platform_event,
-                            position_map.as_ref(),
-                            text_bounds,
-                            cx,
-                        ) {
-                            cx.propagate_event()
-                        }
-                    }
-                })
-                .on_move({
-                    let position_map = position_map.clone();
-                    move |event, editor, cx| {
-                        if !Self::mouse_moved(
-                            editor,
-                            event.platform_event,
-                            &position_map,
-                            text_bounds,
-                            cx,
-                        ) {
-                            cx.propagate_event()
-                        }
-                    }
-                })
-                .on_move_out(move |_, editor: &mut Editor, cx| {
-                    if has_popovers {
-                        hide_hover(editor, cx);
-                    }
-                })
-                .on_scroll({
-                    let position_map = position_map.clone();
-                    move |event, editor, cx| {
-                        if !Self::scroll(
-                            editor,
-                            event.position,
-                            *event.delta.raw(),
-                            event.delta.precise(),
-                            &position_map,
-                            bounds,
-                            cx,
-                        ) {
-                            cx.propagate_event()
-                        }
-                    }
-                }),
-        );
-
-        enum GutterHandlers {}
-        let view_id = cx.view_id();
-        let region_id = cx.view_id() + 1;
-        cx.scene().push_mouse_region(
-            MouseRegion::new::<GutterHandlers>(view_id, region_id, gutter_bounds).on_hover(
-                |hover, editor: &mut Editor, cx| {
-                    editor.gutter_hover(
-                        &GutterHover {
-                            hovered: hover.started,
-                        },
-                        cx,
-                    );
-                },
-            ),
-        )
-    }
-
-    fn mouse_down(
-        editor: &mut Editor,
-        MouseButtonEvent {
-            position,
-            modifiers:
-                Modifiers {
-                    shift,
-                    ctrl,
-                    alt,
-                    cmd,
-                    ..
-                },
-            mut click_count,
-            ..
-        }: MouseButtonEvent,
-        position_map: &PositionMap,
-        text_bounds: RectF,
-        gutter_bounds: RectF,
-        cx: &mut EventContext<Editor>,
-    ) -> bool {
-        if gutter_bounds.contains_point(position) {
+        if gutter_bounds.contains(&event.position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-        } else if !text_bounds.contains_point(position) {
-            return false;
+        } else if !text_bounds.contains(&event.position) {
+            return;
+        }
+        if !cx.was_top_layer(&event.position, stacking_order) {
+            return;
         }
 
-        let point_for_position = position_map.point_for_position(text_bounds, position);
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
         let position = point_for_position.previous_valid;
-        if shift && alt {
+        if modifiers.shift && modifiers.alt {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
@@ -296,7 +406,7 @@ impl EditorElement {
                 },
                 cx,
             );
-        } else if shift && !ctrl && !alt && !cmd {
+        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.command {
             editor.select(
                 SelectPhase::Extend {
                     position,
@@ -308,46 +418,44 @@ impl EditorElement {
             editor.select(
                 SelectPhase::Begin {
                     position,
-                    add: alt,
+                    add: modifiers.alt,
                     click_count,
                 },
                 cx,
             );
         }
 
-        true
+        cx.stop_propagation();
     }
 
     fn mouse_right_down(
         editor: &mut Editor,
-        position: Vector2F,
+        event: &MouseDownEvent,
         position_map: &PositionMap,
-        text_bounds: RectF,
-        cx: &mut EventContext<Editor>,
-    ) -> bool {
-        if !text_bounds.contains_point(position) {
-            return false;
+        text_bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if !text_bounds.contains(&event.position) {
+            return;
         }
-        let point_for_position = position_map.point_for_position(text_bounds, position);
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
         mouse_context_menu::deploy_context_menu(
             editor,
-            position,
+            event.position,
             point_for_position.previous_valid,
             cx,
         );
-        true
+        cx.stop_propagation();
     }
 
     fn mouse_up(
         editor: &mut Editor,
-        position: Vector2F,
-        cmd: bool,
-        shift: bool,
-        alt: bool,
+        event: &MouseUpEvent,
         position_map: &PositionMap,
-        text_bounds: RectF,
-        cx: &mut EventContext<Editor>,
-    ) -> bool {
+        text_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
+        cx: &mut ViewContext<Editor>,
+    ) {
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
@@ -355,118 +463,99 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
-        if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-            let point = position_map.point_for_position(text_bounds, position);
+        if !pending_nonempty_selections
+            && event.modifiers.command
+            && text_bounds.contains(&event.position)
+            && cx.was_top_layer(&event.position, stacking_order)
+        {
+            let point = position_map.point_for_position(text_bounds, event.position);
             let could_be_inlay = point.as_valid().is_none();
-            if shift || could_be_inlay {
-                go_to_fetched_type_definition(editor, point, alt, cx);
+            let split = event.modifiers.alt;
+            if event.modifiers.shift || could_be_inlay {
+                go_to_fetched_type_definition(editor, point, split, cx);
             } else {
-                go_to_fetched_definition(editor, point, alt, cx);
+                go_to_fetched_definition(editor, point, split, cx);
             }
 
-            return true;
+            cx.stop_propagation();
+        } else if end_selection {
+            cx.stop_propagation();
         }
-
-        end_selection
     }
 
     fn mouse_dragged(
         editor: &mut Editor,
-        MouseMovedEvent {
-            modifiers: Modifiers { cmd, shift, .. },
-            position,
-            ..
-        }: MouseMovedEvent,
+        event: &MouseMoveEvent,
         position_map: &PositionMap,
-        text_bounds: RectF,
-        cx: &mut EventContext<Editor>,
-    ) -> bool {
-        // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
-        // Don't trigger hover popover if mouse is hovering over context menu
-        let point = if text_bounds.contains_point(position) {
-            position_map
-                .point_for_position(text_bounds, position)
-                .as_valid()
-        } else {
-            None
-        };
+        text_bounds: Bounds<Pixels>,
+        _gutter_bounds: Bounds<Pixels>,
+        _stacking_order: &StackingOrder,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if !editor.has_pending_selection() {
+            return;
+        }
 
-        update_go_to_definition_link(
-            editor,
-            point.map(GoToDefinitionTrigger::Text),
-            cmd,
-            shift,
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
+        let mut scroll_delta = gpui::Point::<f32>::default();
+        let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
+        let top = text_bounds.origin.y + vertical_margin;
+        let bottom = text_bounds.lower_left().y - vertical_margin;
+        if event.position.y < top {
+            scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
+        }
+        if event.position.y > bottom {
+            scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
+        }
+
+        let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
+        let left = text_bounds.origin.x + horizontal_margin;
+        let right = text_bounds.upper_right().x - horizontal_margin;
+        if event.position.x < left {
+            scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
+        }
+        if event.position.x > right {
+            scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
+        }
+
+        editor.select(
+            SelectPhase::Update {
+                position: point_for_position.previous_valid,
+                goal_column: point_for_position.exact_unclipped.column(),
+                scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
+                    .clamp(&gpui::Point::default(), &position_map.scroll_max),
+            },
             cx,
         );
-
-        if editor.has_pending_selection() {
-            let mut scroll_delta = Vector2F::zero();
-
-            let vertical_margin = position_map.line_height.min(text_bounds.height() / 3.0);
-            let top = text_bounds.origin_y() + vertical_margin;
-            let bottom = text_bounds.lower_left().y() - vertical_margin;
-            if position.y() < top {
-                scroll_delta.set_y(-scale_vertical_mouse_autoscroll_delta(top - position.y()))
-            }
-            if position.y() > bottom {
-                scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y() - bottom))
-            }
-
-            let horizontal_margin = position_map.line_height.min(text_bounds.width() / 3.0);
-            let left = text_bounds.origin_x() + horizontal_margin;
-            let right = text_bounds.upper_right().x() - horizontal_margin;
-            if position.x() < left {
-                scroll_delta.set_x(-scale_horizontal_mouse_autoscroll_delta(
-                    left - position.x(),
-                ))
-            }
-            if position.x() > right {
-                scroll_delta.set_x(scale_horizontal_mouse_autoscroll_delta(
-                    position.x() - right,
-                ))
-            }
-
-            let point_for_position = position_map.point_for_position(text_bounds, position);
-
-            editor.select(
-                SelectPhase::Update {
-                    position: point_for_position.previous_valid,
-                    goal_column: point_for_position.exact_unclipped.column(),
-                    scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                        .clamp(Vector2F::zero(), position_map.scroll_max),
-                },
-                cx,
-            );
-            hover_at(editor, point, cx);
-            true
-        } else {
-            hover_at(editor, point, cx);
-            false
-        }
     }
 
     fn mouse_moved(
         editor: &mut Editor,
-        MouseMovedEvent {
-            modifiers: Modifiers { shift, cmd, .. },
-            position,
-            ..
-        }: MouseMovedEvent,
+        event: &MouseMoveEvent,
         position_map: &PositionMap,
-        text_bounds: RectF,
+        text_bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
-        // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
+    ) {
+        let modifiers = event.modifiers;
+        let text_hovered = text_bounds.contains(&event.position);
+        let gutter_hovered = gutter_bounds.contains(&event.position);
+        let was_top = cx.was_top_layer(&event.position, stacking_order);
+
+        editor.set_gutter_hovered(gutter_hovered, cx);
+
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_bounds.contains_point(position) {
-            let point_for_position = position_map.point_for_position(text_bounds, position);
+        if text_hovered && was_top {
+            let point_for_position = position_map.point_for_position(text_bounds, event.position);
+
             match point_for_position.as_valid() {
                 Some(point) => {
                     update_go_to_definition_link(
                         editor,
                         Some(GoToDefinitionTrigger::Text(point)),
-                        cmd,
-                        shift,
+                        modifiers.command,
+                        modifiers.shift,
                         cx,
                     );
                     hover_at(editor, Some(point), cx);
@@ -476,76 +565,69 @@ impl EditorElement {
                         &position_map.snapshot,
                         point_for_position,
                         editor,
-                        cmd,
-                        shift,
+                        modifiers.command,
+                        modifiers.shift,
                         cx,
                     );
                 }
             }
         } else {
-            update_go_to_definition_link(editor, None, cmd, shift, cx);
+            update_go_to_definition_link(editor, None, modifiers.command, modifiers.shift, cx);
             hover_at(editor, None, cx);
+            if gutter_hovered && was_top {
+                cx.stop_propagation();
+            }
         }
-
-        true
     }
 
     fn scroll(
         editor: &mut Editor,
-        position: Vector2F,
-        mut delta: Vector2F,
-        precise: bool,
+        event: &ScrollWheelEvent,
         position_map: &PositionMap,
-        bounds: RectF,
+        bounds: &InteractiveBounds,
         cx: &mut ViewContext<Editor>,
-    ) -> bool {
-        if !bounds.contains_point(position) {
-            return false;
+    ) {
+        if !bounds.visibly_contains(&event.position, cx) {
+            return;
         }
 
         let line_height = position_map.line_height;
         let max_glyph_width = position_map.em_width;
+        let (delta, axis) = match event.delta {
+            gpui::ScrollDelta::Pixels(mut pixels) => {
+                //Trackpad
+                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+                (pixels, axis)
+            }
 
-        let axis = if precise {
-            //Trackpad
-            position_map.snapshot.ongoing_scroll.filter(&mut delta)
-        } else {
-            //Not trackpad
-            delta *= vec2f(max_glyph_width, line_height);
-            None //Resets ongoing scroll
+            gpui::ScrollDelta::Lines(lines) => {
+                //Not trackpad
+                let pixels = point(lines.x * max_glyph_width, lines.y * line_height);
+                (pixels, None)
+            }
         };
 
         let scroll_position = position_map.snapshot.scroll_position();
-        let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
-        let y = (scroll_position.y() * line_height - delta.y()) / line_height;
-        let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), position_map.scroll_max);
+        let x = f32::from((scroll_position.x * max_glyph_width - delta.x) / max_glyph_width);
+        let y = f32::from((scroll_position.y * line_height - delta.y) / line_height);
+        let scroll_position = point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
         editor.scroll(scroll_position, axis, cx);
-
-        true
+        cx.stop_propagation();
     }
 
     fn paint_background(
         &self,
-        gutter_bounds: RectF,
-        text_bounds: RectF,
+        gutter_bounds: Bounds<Pixels>,
+        text_bounds: Bounds<Pixels>,
         layout: &LayoutState,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
-        let bounds = gutter_bounds.union_rect(text_bounds);
+        let bounds = gutter_bounds.union(&text_bounds);
         let scroll_top =
-            layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
-        cx.scene().push_quad(Quad {
-            bounds: gutter_bounds,
-            background: Some(self.style.gutter_background),
-            border: Border::new(0., Color::transparent_black()).into(),
-            corner_radii: Default::default(),
-        });
-        cx.scene().push_quad(Quad {
-            bounds: text_bounds,
-            background: Some(self.style.background),
-            border: Border::new(0., Color::transparent_black()).into(),
-            corner_radii: Default::default(),
-        });
+            layout.position_map.snapshot.scroll_position().y * layout.position_map.line_height;
+        let gutter_bg = cx.theme().colors().editor_gutter_background;
+        cx.paint_quad(fill(gutter_bounds, gutter_bg));
+        cx.paint_quad(fill(text_bounds, self.style.background));
 
         if let EditorMode::Full = layout.mode {
             let mut active_rows = layout.active_rows.iter().peekable();
@@ -559,90 +641,77 @@ impl EditorElement {
                 }
 
                 if !contains_non_empty_selection {
-                    let origin = vec2f(
-                        bounds.origin_x(),
-                        bounds.origin_y() + (layout.position_map.line_height * *start_row as f32)
+                    let origin = point(
+                        bounds.origin.x,
+                        bounds.origin.y + (layout.position_map.line_height * *start_row as f32)
                             - scroll_top,
                     );
-                    let size = vec2f(
-                        bounds.width(),
+                    let size = size(
+                        bounds.size.width,
                         layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
-                    cx.scene().push_quad(Quad {
-                        bounds: RectF::new(origin, size),
-                        background: Some(self.style.active_line_background),
-                        border: Border::default().into(),
-                        corner_radii: Default::default(),
-                    });
+                    let active_line_bg = cx.theme().colors().editor_active_line_background;
+                    cx.paint_quad(fill(Bounds { origin, size }, active_line_bg));
                 }
             }
 
             if let Some(highlighted_rows) = &layout.highlighted_rows {
-                let origin = vec2f(
-                    bounds.origin_x(),
-                    bounds.origin_y()
+                let origin = point(
+                    bounds.origin.x,
+                    bounds.origin.y
                         + (layout.position_map.line_height * highlighted_rows.start as f32)
                         - scroll_top,
                 );
-                let size = vec2f(
-                    bounds.width(),
+                let size = size(
+                    bounds.size.width,
                     layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
-                cx.scene().push_quad(Quad {
-                    bounds: RectF::new(origin, size),
-                    background: Some(self.style.highlighted_line_background),
-                    border: Border::default().into(),
-                    corner_radii: Default::default(),
-                });
+                let highlighted_line_bg = cx.theme().colors().editor_highlighted_line_background;
+                cx.paint_quad(fill(Bounds { origin, size }, highlighted_line_bg));
             }
 
             let scroll_left =
-                layout.position_map.snapshot.scroll_position().x() * layout.position_map.em_width;
+                layout.position_map.snapshot.scroll_position().x * layout.position_map.em_width;
 
             for (wrap_position, active) in layout.wrap_guides.iter() {
-                let x =
-                    (text_bounds.origin_x() + wrap_position + layout.position_map.em_width / 2.)
-                        - scroll_left;
+                let x = (text_bounds.origin.x + *wrap_position + layout.position_map.em_width / 2.)
+                    - scroll_left;
 
-                if x < text_bounds.origin_x()
+                if x < text_bounds.origin.x
                     || (layout.show_scrollbars && x > self.scrollbar_left(&bounds))
                 {
                     continue;
                 }
 
                 let color = if *active {
-                    self.style.active_wrap_guide
+                    cx.theme().colors().editor_active_wrap_guide
                 } else {
-                    self.style.wrap_guide
+                    cx.theme().colors().editor_wrap_guide
                 };
-                cx.scene().push_quad(Quad {
-                    bounds: RectF::new(
-                        vec2f(x, text_bounds.origin_y()),
-                        vec2f(1., text_bounds.height()),
-                    ),
-                    background: Some(color),
-                    border: Border::new(0., Color::transparent_black()).into(),
-                    corner_radii: Default::default(),
-                });
+                cx.paint_quad(fill(
+                    Bounds {
+                        origin: point(x, text_bounds.origin.y),
+                        size: size(px(1.), text_bounds.size.height),
+                    },
+                    color,
+                ));
             }
         }
     }
 
     fn paint_gutter(
         &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
+        bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y() * line_height;
+        let scroll_top = scroll_position.y * line_height;
 
         let show_gutter = matches!(
-            settings::get::<ProjectSettings>(cx).git.git_gutter,
+            ProjectSettings::get_global(cx).git.git_gutter,
             Some(GitGutterSetting::TrackedFiles)
         );
 
@@ -650,50 +719,66 @@ impl EditorElement {
             Self::paint_diff_hunks(bounds, layout, cx);
         }
 
-        for (ix, line) in layout.line_number_layouts.iter().enumerate() {
+        for (ix, line) in layout.line_numbers.iter().enumerate() {
             if let Some(line) = line {
-                let line_origin = bounds.origin()
-                    + vec2f(
-                        bounds.width() - line.width() - layout.gutter_padding,
+                let line_origin = bounds.origin
+                    + point(
+                        bounds.size.width - line.width - layout.gutter_padding,
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
 
-                line.paint(line_origin, visible_bounds, line_height, cx);
+                line.paint(line_origin, line_height, cx).log_err();
             }
         }
 
-        for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
-            if let Some(indicator) = fold_indicator.as_mut() {
-                let position = vec2f(
-                    bounds.width() - layout.gutter_padding,
-                    ix as f32 * line_height - (scroll_top % line_height),
-                );
-                let centering_offset = vec2f(
-                    (layout.gutter_padding + layout.gutter_margin - indicator.size().x()) / 2.,
-                    (line_height - indicator.size().y()) / 2.,
-                );
+        cx.with_z_index(1, |cx| {
+            for (ix, fold_indicator) in layout.fold_indicators.drain(..).enumerate() {
+                if let Some(fold_indicator) = fold_indicator {
+                    let mut fold_indicator = fold_indicator.into_any_element();
+                    let available_space = size(
+                        AvailableSpace::MinContent,
+                        AvailableSpace::Definite(line_height * 0.55),
+                    );
+                    let fold_indicator_size = fold_indicator.measure(available_space, cx);
 
-                let indicator_origin = bounds.origin() + position + centering_offset;
-
-                indicator.paint(indicator_origin, visible_bounds, editor, cx);
+                    let position = point(
+                        bounds.size.width - layout.gutter_padding,
+                        ix as f32 * line_height - (scroll_top % line_height),
+                    );
+                    let centering_offset = point(
+                        (layout.gutter_padding + layout.gutter_margin - fold_indicator_size.width)
+                            / 2.,
+                        (line_height - fold_indicator_size.height) / 2.,
+                    );
+                    let origin = bounds.origin + position + centering_offset;
+                    fold_indicator.draw(origin, available_space, cx);
+                }
             }
-        }
 
-        if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
-            let mut x = 0.;
-            let mut y = *row as f32 * line_height - scroll_top;
-            x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
-            y += (line_height - indicator.size().y()) / 2.;
-            indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, editor, cx);
-        }
+            if let Some(indicator) = layout.code_actions_indicator.take() {
+                let mut button = indicator.button.into_any_element();
+                let available_space = size(
+                    AvailableSpace::MinContent,
+                    AvailableSpace::Definite(line_height),
+                );
+                let indicator_size = button.measure(available_space, cx);
+
+                let mut x = Pixels::ZERO;
+                let mut y = indicator.row as f32 * line_height - scroll_top;
+                // Center indicator.
+                x += ((layout.gutter_padding + layout.gutter_margin) - indicator_size.width) / 2.;
+                y += (line_height - indicator_size.height) / 2.;
+
+                button.draw(bounds.origin + point(x, y), available_space, cx);
+            }
+        });
     }
 
-    fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut ViewContext<Editor>) {
-        let diff_style = &theme::current(cx).editor.diff.clone();
+    fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_top = scroll_position.y() * line_height;
+        let scroll_top = scroll_position.y * line_height;
 
         for hunk in &layout.display_hunks {
             let (display_row_range, status) = match hunk {
@@ -702,17 +787,17 @@ impl EditorElement {
                     let start_y = row as f32 * line_height - scroll_top;
                     let end_y = start_y + line_height;
 
-                    let width = diff_style.removed_width_em * line_height;
-                    let highlight_origin = bounds.origin() + vec2f(-width, start_y);
-                    let highlight_size = vec2f(width * 2., end_y - start_y);
-                    let highlight_bounds = RectF::new(highlight_origin, highlight_size);
-
-                    cx.scene().push_quad(Quad {
-                        bounds: highlight_bounds,
-                        background: Some(diff_style.modified),
-                        border: Border::new(0., Color::transparent_black()).into(),
-                        corner_radii: (1. * line_height).into(),
-                    });
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                    cx.paint_quad(quad(
+                        highlight_bounds,
+                        Corners::all(1. * line_height),
+                        gpui::yellow(), // todo!("use the right color")
+                        Edges::default(),
+                        transparent_black(),
+                    ));
 
                     continue;
                 }
@@ -724,8 +809,8 @@ impl EditorElement {
             };
 
             let color = match status {
-                DiffHunkStatus::Added => diff_style.inserted,
-                DiffHunkStatus::Modified => diff_style.modified,
+                DiffHunkStatus::Added => cx.theme().status().created,
+                DiffHunkStatus::Modified => cx.theme().status().modified,
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
@@ -735,17 +820,17 @@ impl EditorElement {
                     let start_y = row as f32 * line_height - offset - scroll_top;
                     let end_y = start_y + line_height;
 
-                    let width = diff_style.removed_width_em * line_height;
-                    let highlight_origin = bounds.origin() + vec2f(-width, start_y);
-                    let highlight_size = vec2f(width * 2., end_y - start_y);
-                    let highlight_bounds = RectF::new(highlight_origin, highlight_size);
-
-                    cx.scene().push_quad(Quad {
-                        bounds: highlight_bounds,
-                        background: Some(diff_style.deleted),
-                        border: Border::new(0., Color::transparent_black()).into(),
-                        corner_radii: (1. * line_height).into(),
-                    });
+                    let width = 0.275 * line_height;
+                    let highlight_origin = bounds.origin + point(-width, start_y);
+                    let highlight_size = size(width * 2., end_y - start_y);
+                    let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+                    cx.paint_quad(quad(
+                        highlight_bounds,
+                        Corners::all(1. * line_height),
+                        cx.theme().status().deleted,
+                        Edges::default(),
+                        transparent_black(),
+                    ));
 
                     continue;
                 }
@@ -757,257 +842,307 @@ impl EditorElement {
             let start_y = start_row as f32 * line_height - scroll_top;
             let end_y = end_row as f32 * line_height - scroll_top;
 
-            let width = diff_style.width_em * line_height;
-            let highlight_origin = bounds.origin() + vec2f(-width, start_y);
-            let highlight_size = vec2f(width * 2., end_y - start_y);
-            let highlight_bounds = RectF::new(highlight_origin, highlight_size);
-
-            cx.scene().push_quad(Quad {
-                bounds: highlight_bounds,
-                background: Some(color),
-                border: Border::new(0., Color::transparent_black()).into(),
-                corner_radii: (diff_style.corner_radius * line_height).into(),
-            });
+            let width = 0.275 * line_height;
+            let highlight_origin = bounds.origin + point(-width, start_y);
+            let highlight_size = size(width * 2., end_y - start_y);
+            let highlight_bounds = Bounds::new(highlight_origin, highlight_size);
+            cx.paint_quad(quad(
+                highlight_bounds,
+                Corners::all(0.05 * line_height),
+                color, // todo!("use the right color")
+                Edges::default(),
+                transparent_black(),
+            ));
         }
     }
 
     fn paint_text(
         &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
+        text_bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
-        let style = &self.style;
-        let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = layout.visible_display_row_range.start;
-        let scroll_top = scroll_position.y() * layout.position_map.line_height;
-        let max_glyph_width = layout.position_map.em_width;
-        let scroll_left = scroll_position.x() * max_glyph_width;
-        let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
+        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
-        let whitespace_setting = editor.buffer.read(cx).settings_at(0, cx).show_whitespaces;
+        let whitespace_setting = self
+            .editor
+            .read(cx)
+            .buffer
+            .read(cx)
+            .settings_at(0, cx)
+            .show_whitespaces;
 
-        cx.scene().push_layer(Some(bounds));
-
-        cx.scene().push_cursor_region(CursorRegion {
-            bounds,
-            style: if !editor.link_go_to_definition_state.definitions.is_empty() {
-                CursorStyle::PointingHand
-            } else {
-                CursorStyle::IBeam
-            },
-        });
-
-        let fold_corner_radius =
-            self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
-        for (id, range, color) in layout.fold_ranges.iter() {
-            self.paint_highlighted_range(
-                range.clone(),
-                *color,
-                fold_corner_radius,
-                fold_corner_radius * 2.,
-                layout,
-                content_origin,
-                scroll_top,
-                scroll_left,
-                bounds,
-                cx,
-            );
-
-            for bound in range_to_bounds(
-                &range,
-                content_origin,
-                scroll_left,
-                scroll_top,
-                &layout.visible_display_row_range,
-                line_end_overshoot,
-                &layout.position_map,
-            ) {
-                cx.scene().push_cursor_region(CursorRegion {
-                    bounds: bound,
-                    style: CursorStyle::PointingHand,
-                });
-
-                let display_row = range.start.row();
-
-                let buffer_row = DisplayPoint::new(display_row, 0)
-                    .to_point(&layout.position_map.snapshot.display_snapshot)
-                    .row;
-
-                let view_id = cx.view_id();
-                cx.scene().push_mouse_region(
-                    MouseRegion::new::<FoldMarkers>(view_id, *id as usize, bound)
-                        .on_click(MouseButton::Left, move |_, editor: &mut Editor, cx| {
-                            editor.unfold_at(&UnfoldAt { buffer_row }, cx)
-                        })
-                        .with_notify_on_hover(true)
-                        .with_notify_on_click(true),
-                )
-            }
-        }
-
-        for (range, color) in &layout.highlighted_ranges {
-            self.paint_highlighted_range(
-                range.clone(),
-                *color,
-                0.,
-                line_end_overshoot,
-                layout,
-                content_origin,
-                scroll_top,
-                scroll_left,
-                bounds,
-                cx,
-            );
-        }
-
-        let mut cursors = SmallVec::<[Cursor; 32]>::new();
-        let corner_radius = 0.15 * layout.position_map.line_height;
-        let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
-
-        for (selection_style, selections) in &layout.selections {
-            for selection in selections {
-                self.paint_highlighted_range(
-                    selection.range.clone(),
-                    selection_style.selection,
-                    corner_radius,
-                    corner_radius * 2.,
-                    layout,
-                    content_origin,
-                    scroll_top,
-                    scroll_left,
-                    bounds,
-                    cx,
-                );
-
-                if selection.is_local && !selection.range.is_empty() {
-                    invisible_display_ranges.push(selection.range.clone());
-                }
-                if !selection.is_local || editor.show_local_cursors(cx) {
-                    let cursor_position = selection.head;
-                    if layout
-                        .visible_display_row_range
-                        .contains(&cursor_position.row())
+        cx.with_content_mask(
+            Some(ContentMask {
+                bounds: text_bounds,
+            }),
+            |cx| {
+                let interactive_text_bounds = InteractiveBounds {
+                    bounds: text_bounds,
+                    stacking_order: cx.stacking_order().clone(),
+                };
+                if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
+                    if self
+                        .editor
+                        .read(cx)
+                        .link_go_to_definition_state
+                        .definitions
+                        .is_empty()
                     {
-                        let cursor_row_layout = &layout.position_map.line_layouts
-                            [(cursor_position.row() - start_row) as usize]
-                            .line;
-                        let cursor_column = cursor_position.column() as usize;
-
-                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                        let mut block_width =
-                            cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
-                        if block_width == 0.0 {
-                            block_width = layout.position_map.em_width;
-                        }
-                        let block_text = if let CursorShape::Block = selection.cursor_shape {
-                            layout
-                                .position_map
-                                .snapshot
-                                .chars_at(cursor_position)
-                                .next()
-                                .and_then(|(character, _)| {
-                                    let font_id =
-                                        cursor_row_layout.font_for_index(cursor_column)?;
-                                    let text = character.to_string();
-
-                                    Some(cx.text_layout_cache().layout_str(
-                                        &text,
-                                        cursor_row_layout.font_size(),
-                                        &[(
-                                            text.chars().count(),
-                                            RunStyle {
-                                                font_id,
-                                                color: style.background,
-                                                underline: Default::default(),
-                                            },
-                                        )],
-                                    ))
-                                })
-                        } else {
-                            None
-                        };
-
-                        let x = cursor_character_x - scroll_left;
-                        let y = cursor_position.row() as f32 * layout.position_map.line_height
-                            - scroll_top;
-                        if selection.is_newest {
-                            editor.pixel_position_of_newest_cursor = Some(vec2f(
-                                bounds.origin_x() + x + block_width / 2.,
-                                bounds.origin_y() + y + layout.position_map.line_height / 2.,
-                            ));
-                        }
-                        cursors.push(Cursor {
-                            color: selection_style.cursor,
-                            block_width,
-                            origin: vec2f(x, y),
-                            line_height: layout.position_map.line_height,
-                            shape: selection.cursor_shape,
-                            block_text,
-                        });
+                        cx.set_cursor_style(CursorStyle::IBeam);
+                    } else {
+                        cx.set_cursor_style(CursorStyle::PointingHand);
                     }
                 }
-            }
-        }
 
-        if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
-            for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
-                let row = start_row + ix as u32;
-                line_with_invisibles.draw(
-                    layout,
-                    row,
-                    scroll_top,
-                    content_origin,
-                    scroll_left,
-                    visible_text_bounds,
-                    whitespace_setting,
-                    &invisible_display_ranges,
-                    visible_bounds,
-                    cx,
-                )
-            }
-        }
+                let fold_corner_radius = 0.15 * layout.position_map.line_height;
+                cx.with_element_id(Some("folds"), |cx| {
+                    let snapshot = &layout.position_map.snapshot;
+                    for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
+                        let fold_range = fold.range.clone();
+                        let display_range = fold.range.start.to_display_point(&snapshot)
+                            ..fold.range.end.to_display_point(&snapshot);
+                        debug_assert_eq!(display_range.start.row(), display_range.end.row());
+                        let row = display_range.start.row();
 
-        cx.scene().push_layer(Some(bounds));
-        for cursor in cursors {
-            cursor.paint(content_origin, cx);
-        }
-        cx.scene().pop_layer();
+                        let line_layout = &layout.position_map.line_layouts
+                            [(row - layout.visible_display_row_range.start) as usize]
+                            .line;
+                        let start_x = content_origin.x
+                            + line_layout.x_for_index(display_range.start.column() as usize)
+                            - layout.position_map.scroll_position.x;
+                        let start_y = content_origin.y
+                            + row as f32 * layout.position_map.line_height
+                            - layout.position_map.scroll_position.y;
+                        let end_x = content_origin.x
+                            + line_layout.x_for_index(display_range.end.column() as usize)
+                            - layout.position_map.scroll_position.x;
 
-        if let Some((position, context_menu)) = layout.context_menu.as_mut() {
-            cx.scene().push_stacking_context(None, None);
+                        let fold_bounds = Bounds {
+                            origin: point(start_x, start_y),
+                            size: size(end_x - start_x, layout.position_map.line_height),
+                        };
+
+                        let fold_background = cx.with_z_index(1, |cx| {
+                            div()
+                                .id(fold.id)
+                                .size_full()
+                                .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                                .on_click(cx.listener_for(
+                                    &self.editor,
+                                    move |editor: &mut Editor, _, cx| {
+                                        editor.unfold_ranges(
+                                            [fold_range.start..fold_range.end],
+                                            true,
+                                            false,
+                                            cx,
+                                        );
+                                        cx.stop_propagation();
+                                    },
+                                ))
+                                .draw_and_update_state(
+                                    fold_bounds.origin,
+                                    fold_bounds.size,
+                                    cx,
+                                    |fold_element_state, cx| {
+                                        if fold_element_state.is_active() {
+                                            cx.theme().colors().ghost_element_active
+                                        } else if fold_bounds.contains(&cx.mouse_position()) {
+                                            cx.theme().colors().ghost_element_hover
+                                        } else {
+                                            cx.theme().colors().ghost_element_background
+                                        }
+                                    },
+                                )
+                        });
+
+                        self.paint_highlighted_range(
+                            display_range.clone(),
+                            fold_background,
+                            fold_corner_radius,
+                            fold_corner_radius * 2.,
+                            layout,
+                            content_origin,
+                            text_bounds,
+                            cx,
+                        );
+                    }
+                });
+
+                for (range, color) in &layout.highlighted_ranges {
+                    self.paint_highlighted_range(
+                        range.clone(),
+                        *color,
+                        Pixels::ZERO,
+                        line_end_overshoot,
+                        layout,
+                        content_origin,
+                        text_bounds,
+                        cx,
+                    );
+                }
+
+                let mut cursors = SmallVec::<[Cursor; 32]>::new();
+                let corner_radius = 0.15 * layout.position_map.line_height;
+                let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
+
+                for (selection_style, selections) in &layout.selections {
+                    for selection in selections {
+                        self.paint_highlighted_range(
+                            selection.range.clone(),
+                            selection_style.selection,
+                            corner_radius,
+                            corner_radius * 2.,
+                            layout,
+                            content_origin,
+                            text_bounds,
+                            cx,
+                        );
+
+                        if selection.is_local && !selection.range.is_empty() {
+                            invisible_display_ranges.push(selection.range.clone());
+                        }
+
+                        if !selection.is_local || self.editor.read(cx).show_local_cursors(cx) {
+                            let cursor_position = selection.head;
+                            if layout
+                                .visible_display_row_range
+                                .contains(&cursor_position.row())
+                            {
+                                let cursor_row_layout = &layout.position_map.line_layouts
+                                    [(cursor_position.row() - start_row) as usize]
+                                    .line;
+                                let cursor_column = cursor_position.column() as usize;
+
+                                let cursor_character_x =
+                                    cursor_row_layout.x_for_index(cursor_column);
+                                let mut block_width = cursor_row_layout
+                                    .x_for_index(cursor_column + 1)
+                                    - cursor_character_x;
+                                if block_width == Pixels::ZERO {
+                                    block_width = layout.position_map.em_width;
+                                }
+                                let block_text = if let CursorShape::Block = selection.cursor_shape
+                                {
+                                    layout
+                                        .position_map
+                                        .snapshot
+                                        .chars_at(cursor_position)
+                                        .next()
+                                        .and_then(|(character, _)| {
+                                            // todo!() currently shape_line panics if text conatins newlines
+                                            let text = if character == '\n' {
+                                                SharedString::from(" ")
+                                            } else {
+                                                SharedString::from(character.to_string())
+                                            };
+                                            let len = text.len();
+                                            cx.text_system()
+                                                .shape_line(
+                                                    text,
+                                                    cursor_row_layout.font_size,
+                                                    &[TextRun {
+                                                        len,
+                                                        font: self.style.text.font(),
+                                                        color: self.style.background,
+                                                        background_color: None,
+                                                        underline: None,
+                                                    }],
+                                                )
+                                                .log_err()
+                                        })
+                                } else {
+                                    None
+                                };
+
+                                let x = cursor_character_x - layout.position_map.scroll_position.x;
+                                let y = cursor_position.row() as f32
+                                    * layout.position_map.line_height
+                                    - layout.position_map.scroll_position.y;
+                                if selection.is_newest {
+                                    self.editor.update(cx, |editor, _| {
+                                        editor.pixel_position_of_newest_cursor = Some(point(
+                                            text_bounds.origin.x + x + block_width / 2.,
+                                            text_bounds.origin.y
+                                                + y
+                                                + layout.position_map.line_height / 2.,
+                                        ))
+                                    });
+                                }
+                                cursors.push(Cursor {
+                                    color: selection_style.cursor,
+                                    block_width,
+                                    origin: point(x, y),
+                                    line_height: layout.position_map.line_height,
+                                    shape: selection.cursor_shape,
+                                    block_text,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                for (ix, line_with_invisibles) in
+                    layout.position_map.line_layouts.iter().enumerate()
+                {
+                    let row = start_row + ix as u32;
+                    line_with_invisibles.draw(
+                        layout,
+                        row,
+                        content_origin,
+                        whitespace_setting,
+                        &invisible_display_ranges,
+                        cx,
+                    )
+                }
+
+                cx.with_z_index(0, |cx| {
+                    for cursor in cursors {
+                        cursor.paint(content_origin, cx);
+                    }
+                });
+            },
+        )
+    }
+
+    fn paint_overlays(
+        &mut self,
+        text_bounds: Bounds<Pixels>,
+        layout: &mut LayoutState,
+        cx: &mut WindowContext,
+    ) {
+        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let start_row = layout.visible_display_row_range.start;
+        if let Some((position, mut context_menu)) = layout.context_menu.take() {
+            let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+            let context_menu_size = context_menu.measure(available_space, cx);
+
             let cursor_row_layout =
                 &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
-            let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
-            let mut list_origin = content_origin + vec2f(x, y);
-            let list_width = context_menu.size().x();
-            let list_height = context_menu.size().y();
+            let x = cursor_row_layout.x_for_index(position.column() as usize)
+                - layout.position_map.scroll_position.x;
+            let y = (position.row() + 1) as f32 * layout.position_map.line_height
+                - layout.position_map.scroll_position.y;
+            let mut list_origin = content_origin + point(x, y);
+            let list_width = context_menu_size.width;
+            let list_height = context_menu_size.height;
 
             // Snap the right edge of the list to the right edge of the window if
             // its horizontal bounds overflow.
-            if list_origin.x() + list_width > cx.window_size().x() {
-                list_origin.set_x((cx.window_size().x() - list_width).max(0.));
+            if list_origin.x + list_width > cx.viewport_size().width {
+                list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
             }
 
-            if list_origin.y() + list_height > bounds.max_y() {
-                list_origin.set_y(list_origin.y() - layout.position_map.line_height - list_height);
+            if list_origin.y + list_height > text_bounds.lower_right().y {
+                list_origin.y -= layout.position_map.line_height + list_height;
             }
 
-            context_menu.paint(
-                list_origin,
-                RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-                editor,
-                cx,
-            );
-
-            cx.scene().pop_stacking_context();
+            cx.break_content_mask(|cx| context_menu.draw(list_origin, available_space, cx));
         }
 
-        if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
-            cx.scene().push_stacking_context(None, None);
+        if let Some((position, mut hover_popovers)) = layout.hover_popovers.take() {
+            let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
             // This is safe because we check on layout whether the required row is available
             let hovered_row_layout =
@@ -1016,163 +1151,158 @@ impl EditorElement {
             // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
             // height. This is the size we will use to decide whether to render popovers above or below
             // the hovered line.
-            let first_size = hover_popovers[0].size();
-            let height_to_reserve = first_size.y()
-                + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.position_map.line_height;
+            let first_size = hover_popovers[0].measure(available_space, cx);
+            let height_to_reserve =
+                first_size.height + 1.5 * MIN_POPOVER_LINE_HEIGHT * layout.position_map.line_height;
 
             // Compute Hovered Point
-            let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
-            let hovered_point = content_origin + vec2f(x, y);
+            let x = hovered_row_layout.x_for_index(position.column() as usize)
+                - layout.position_map.scroll_position.x;
+            let y = position.row() as f32 * layout.position_map.line_height
+                - layout.position_map.scroll_position.y;
+            let hovered_point = content_origin + point(x, y);
 
-            if hovered_point.y() - height_to_reserve > 0.0 {
+            if hovered_point.y - height_to_reserve > Pixels::ZERO {
                 // There is enough space above. Render popovers above the hovered point
-                let mut current_y = hovered_point.y();
-                for hover_popover in hover_popovers {
-                    let size = hover_popover.size();
-                    let mut popover_origin = vec2f(hovered_point.x(), current_y - size.y());
+                let mut current_y = hovered_point.y;
+                for mut hover_popover in hover_popovers {
+                    let size = hover_popover.measure(available_space, cx);
+                    let mut popover_origin = point(hovered_point.x, current_y - size.height);
 
-                    let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
-                    if x_out_of_bounds < 0.0 {
-                        popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
+                    let x_out_of_bounds =
+                        text_bounds.upper_right().x - (popover_origin.x + size.width);
+                    if x_out_of_bounds < Pixels::ZERO {
+                        popover_origin.x = popover_origin.x + x_out_of_bounds;
                     }
 
-                    hover_popover.paint(
-                        popover_origin,
-                        RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-                        editor,
-                        cx,
-                    );
+                    cx.break_content_mask(|cx| {
+                        hover_popover.draw(popover_origin, available_space, cx)
+                    });
 
-                    current_y = popover_origin.y() - HOVER_POPOVER_GAP;
+                    current_y = popover_origin.y - HOVER_POPOVER_GAP;
                 }
             } else {
                 // There is not enough space above. Render popovers below the hovered point
-                let mut current_y = hovered_point.y() + layout.position_map.line_height;
-                for hover_popover in hover_popovers {
-                    let size = hover_popover.size();
-                    let mut popover_origin = vec2f(hovered_point.x(), current_y);
+                let mut current_y = hovered_point.y + layout.position_map.line_height;
+                for mut hover_popover in hover_popovers {
+                    let size = hover_popover.measure(available_space, cx);
+                    let mut popover_origin = point(hovered_point.x, current_y);
 
-                    let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
-                    if x_out_of_bounds < 0.0 {
-                        popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
+                    let x_out_of_bounds =
+                        text_bounds.upper_right().x - (popover_origin.x + size.width);
+                    if x_out_of_bounds < Pixels::ZERO {
+                        popover_origin.x = popover_origin.x + x_out_of_bounds;
                     }
 
-                    hover_popover.paint(
-                        popover_origin,
-                        RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-                        editor,
-                        cx,
-                    );
+                    hover_popover.draw(popover_origin, available_space, cx);
 
-                    current_y = popover_origin.y() + size.y() + HOVER_POPOVER_GAP;
+                    current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
                 }
             }
-
-            cx.scene().pop_stacking_context();
         }
 
-        cx.scene().pop_layer();
+        if let Some(mouse_context_menu) = self.editor.read(cx).mouse_context_menu.as_ref() {
+            let element = overlay()
+                .position(mouse_context_menu.position)
+                .child(mouse_context_menu.context_menu.clone())
+                .anchor(AnchorCorner::TopLeft)
+                .snap_to_window();
+            element.into_any().draw(
+                gpui::Point::default(),
+                size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                cx,
+            );
+        }
     }
 
-    fn scrollbar_left(&self, bounds: &RectF) -> f32 {
-        bounds.max_x() - self.style.theme.scrollbar.width
+    fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
+        bounds.upper_right().x - self.style.scrollbar_width
     }
 
     fn paint_scrollbar(
         &mut self,
-        bounds: RectF,
+        bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
-        editor: &Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
-        enum ScrollbarMouseHandlers {}
         if layout.mode != EditorMode::Full {
             return;
         }
 
-        let style = &self.style.theme.scrollbar;
-
-        let top = bounds.min_y();
-        let bottom = bounds.max_y();
-        let right = bounds.max_x();
+        let top = bounds.origin.y;
+        let bottom = bounds.lower_left().y;
+        let right = bounds.lower_right().x;
         let left = self.scrollbar_left(&bounds);
-        let row_range = &layout.scrollbar_row_range;
+        let row_range = layout.scrollbar_row_range.clone();
         let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
-        let mut height = bounds.height();
-        let mut first_row_y_offset = 0.0;
+        let mut height = bounds.size.height;
+        let mut first_row_y_offset = px(0.0);
 
         // Impose a minimum height on the scrollbar thumb
         let row_height = height / max_row;
-        let min_thumb_height =
-            style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
+        let min_thumb_height = layout.position_map.line_height;
         let thumb_height = (row_range.end - row_range.start) * row_height;
         if thumb_height < min_thumb_height {
             first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
             height -= min_thumb_height - thumb_height;
         }
 
-        let y_for_row = |row: f32| -> f32 { top + first_row_y_offset + row * row_height };
+        let y_for_row = |row: f32| -> Pixels { top + first_row_y_offset + row * row_height };
 
         let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
         let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
-        let track_bounds = RectF::from_points(vec2f(left, top), vec2f(right, bottom));
-        let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
+        let track_bounds = Bounds::from_corners(point(left, top), point(right, bottom));
+        let thumb_bounds = Bounds::from_corners(point(left, thumb_top), point(right, thumb_bottom));
 
         if layout.show_scrollbars {
-            cx.scene().push_quad(Quad {
-                bounds: track_bounds,
-                border: style.track.border.into(),
-                background: style.track.background_color,
-                ..Default::default()
-            });
-            let scrollbar_settings = settings::get::<EditorSettings>(cx).scrollbar;
-            let theme = theme::current(cx);
-            let scrollbar_theme = &theme.editor.scrollbar;
+            cx.paint_quad(quad(
+                track_bounds,
+                Corners::default(),
+                cx.theme().colors().scrollbar_track_background,
+                Edges {
+                    top: Pixels::ZERO,
+                    right: Pixels::ZERO,
+                    bottom: Pixels::ZERO,
+                    left: px(1.),
+                },
+                cx.theme().colors().scrollbar_track_border,
+            ));
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
             if layout.is_singleton && scrollbar_settings.selections {
                 let start_anchor = Anchor::min();
                 let end_anchor = Anchor::max();
-                let color = scrollbar_theme.selections;
-                let border = Border {
-                    width: 1.,
-                    color: style.thumb.border.color,
-                    overlay: false,
-                    top: false,
-                    right: true,
-                    bottom: false,
-                    left: true,
-                };
-                let mut push_region = |start: DisplayPoint, end: DisplayPoint| {
-                    let start_y = y_for_row(start.row() as f32);
-                    let mut end_y = y_for_row(end.row() as f32);
-                    if end_y - start_y < 1. {
-                        end_y = start_y + 1.;
-                    }
-                    let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
-
-                    cx.scene().push_quad(Quad {
-                        bounds,
-                        background: Some(color),
-                        border: border.into(),
-                        corner_radii: style.thumb.corner_radii.into(),
-                    })
-                };
-                let background_ranges = editor
+                let background_ranges = self
+                    .editor
+                    .read(cx)
                     .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
                         50000,
                     );
-                for row in background_ranges {
-                    let start = row.start();
-                    let end = row.end();
-                    push_region(*start, *end);
+                for range in background_ranges {
+                    let start_y = y_for_row(range.start().row() as f32);
+                    let mut end_y = y_for_row(range.end().row() as f32);
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
+                    }
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
+                    cx.paint_quad(quad(
+                        bounds,
+                        Corners::default(),
+                        cx.theme().status().info,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
                 }
             }
 
             if layout.is_singleton && scrollbar_settings.git_diff {
-                let diff_style = scrollbar_theme.git.clone();
                 for hunk in layout
                     .position_map
                     .snapshot
@@ -1190,106 +1320,146 @@ impl EditorElement {
                         y_for_row((end_display.row()) as f32)
                     };
 
-                    if end_y - start_y < 1. {
-                        end_y = start_y + 1.;
+                    if end_y - start_y < px(1.) {
+                        end_y = start_y + px(1.);
                     }
-                    let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
+                    let bounds = Bounds::from_corners(point(left, start_y), point(right, end_y));
 
                     let color = match hunk.status() {
-                        DiffHunkStatus::Added => diff_style.inserted,
-                        DiffHunkStatus::Modified => diff_style.modified,
-                        DiffHunkStatus::Removed => diff_style.deleted,
+                        DiffHunkStatus::Added => cx.theme().status().created,
+                        DiffHunkStatus::Modified => cx.theme().status().modified,
+                        DiffHunkStatus::Removed => cx.theme().status().deleted,
                     };
-
-                    let border = Border {
-                        width: 1.,
-                        color: style.thumb.border.color,
-                        overlay: false,
-                        top: false,
-                        right: true,
-                        bottom: false,
-                        left: true,
-                    };
-
-                    cx.scene().push_quad(Quad {
+                    cx.paint_quad(quad(
                         bounds,
-                        background: Some(color),
-                        border: border.into(),
-                        corner_radii: style.thumb.corner_radii.into(),
-                    })
+                        Corners::default(),
+                        color,
+                        Edges {
+                            top: Pixels::ZERO,
+                            right: px(1.),
+                            bottom: Pixels::ZERO,
+                            left: px(1.),
+                        },
+                        cx.theme().colors().scrollbar_thumb_border,
+                    ));
                 }
             }
 
-            cx.scene().push_quad(Quad {
-                bounds: thumb_bounds,
-                border: style.thumb.border.into(),
-                background: style.thumb.background_color,
-                corner_radii: style.thumb.corner_radii.into(),
-            });
+            cx.paint_quad(quad(
+                thumb_bounds,
+                Corners::default(),
+                cx.theme().colors().scrollbar_thumb_background,
+                Edges {
+                    top: Pixels::ZERO,
+                    right: px(1.),
+                    bottom: Pixels::ZERO,
+                    left: px(1.),
+                },
+                cx.theme().colors().scrollbar_thumb_border,
+            ));
         }
 
-        cx.scene().push_cursor_region(CursorRegion {
+        let interactive_track_bounds = InteractiveBounds {
             bounds: track_bounds,
-            style: CursorStyle::Arrow,
-        });
-        let region_id = cx.view_id();
-        cx.scene().push_mouse_region(
-            MouseRegion::new::<ScrollbarMouseHandlers>(region_id, region_id, track_bounds)
-                .on_move(move |event, editor: &mut Editor, cx| {
-                    if event.pressed_button.is_none() {
-                        editor.scroll_manager.show_scrollbar(cx);
-                    }
-                })
-                .on_down(MouseButton::Left, {
-                    let row_range = row_range.clone();
-                    move |event, editor: &mut Editor, cx| {
-                        let y = event.position.y();
-                        if y < thumb_top || thumb_bottom < y {
-                            let center_row = ((y - top) * max_row as f32 / height).round() as u32;
-                            let top_row = center_row
-                                .saturating_sub((row_range.end - row_range.start) as u32 / 2);
+            stacking_order: cx.stacking_order().clone(),
+        };
+        let mut mouse_position = cx.mouse_position();
+        if interactive_track_bounds.visibly_contains(&mouse_position, cx) {
+            cx.set_cursor_style(CursorStyle::Arrow);
+        }
+
+        cx.on_mouse_event({
+            let editor = self.editor.clone();
+            move |event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    return;
+                }
+
+                editor.update(cx, |editor, cx| {
+                    if event.pressed_button == Some(MouseButton::Left)
+                        && editor.scroll_manager.is_dragging_scrollbar()
+                    {
+                        let y = mouse_position.y;
+                        let new_y = event.position.y;
+                        if (track_bounds.top()..track_bounds.bottom()).contains(&y) {
                             let mut position = editor.scroll_position(cx);
-                            position.set_y(top_row as f32);
+                            position.y += (new_y - y) * (max_row as f32) / height;
+                            if position.y < 0.0 {
+                                position.y = 0.0;
+                            }
                             editor.set_scroll_position(position, cx);
-                        } else {
+                        }
+
+                        mouse_position = event.position;
+                        cx.stop_propagation();
+                    } else {
+                        editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+                        if interactive_track_bounds.visibly_contains(&event.position, cx) {
                             editor.scroll_manager.show_scrollbar(cx);
                         }
                     }
                 })
-                .on_drag(MouseButton::Left, {
-                    move |event, editor: &mut Editor, cx| {
-                        if event.end {
-                            return;
-                        }
+            }
+        });
 
-                        let y = event.prev_mouse_position.y();
-                        let new_y = event.position.y();
-                        if thumb_top < y && y < thumb_bottom {
-                            let mut position = editor.scroll_position(cx);
-                            position.set_y(position.y() + (new_y - y) * (max_row as f32) / height);
-                            if position.y() < 0.0 {
-                                position.set_y(0.);
-                            }
-                            editor.set_scroll_position(position, cx);
-                        }
+        if self.editor.read(cx).scroll_manager.is_dragging_scrollbar() {
+            cx.on_mouse_event({
+                let editor = self.editor.clone();
+                move |_: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture {
+                        return;
                     }
-                }),
-        );
+
+                    editor.update(cx, |editor, cx| {
+                        editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+                        cx.stop_propagation();
+                    });
+                }
+            });
+        } else {
+            cx.on_mouse_event({
+                let editor = self.editor.clone();
+                move |event: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture {
+                        return;
+                    }
+
+                    editor.update(cx, |editor, cx| {
+                        if track_bounds.contains(&event.position) {
+                            editor.scroll_manager.set_is_dragging_scrollbar(true, cx);
+
+                            let y = event.position.y;
+                            if y < thumb_top || thumb_bottom < y {
+                                let center_row =
+                                    ((y - top) * max_row as f32 / height).round() as u32;
+                                let top_row = center_row
+                                    .saturating_sub((row_range.end - row_range.start) as u32 / 2);
+                                let mut position = editor.scroll_position(cx);
+                                position.y = top_row as f32;
+                                editor.set_scroll_position(position, cx);
+                            } else {
+                                editor.scroll_manager.show_scrollbar(cx);
+                            }
+
+                            cx.stop_propagation();
+                        }
+                    });
+                }
+            });
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
-        color: Color,
-        corner_radius: f32,
-        line_end_overshoot: f32,
+        color: Hsla,
+        corner_radius: Pixels,
+        line_end_overshoot: Pixels,
         layout: &LayoutState,
-        content_origin: Vector2F,
-        scroll_top: f32,
-        scroll_left: f32,
-        bounds: RectF,
-        cx: &mut ViewContext<Editor>,
+        content_origin: gpui::Point<Pixels>,
+        bounds: Bounds<Pixels>,
+        cx: &mut WindowContext,
     ) {
         let start_row = layout.visible_display_row_range.start;
         let end_row = layout.visible_display_row_range.end;
@@ -1304,9 +1474,9 @@ impl EditorElement {
                 color,
                 line_height: layout.position_map.line_height,
                 corner_radius,
-                start_y: content_origin.y()
+                start_y: content_origin.y
                     + row_range.start as f32 * layout.position_map.line_height
-                    - scroll_top,
+                    - layout.position_map.scroll_position.y,
                 lines: row_range
                     .into_iter()
                     .map(|row| {
@@ -1314,19 +1484,19 @@ impl EditorElement {
                             &layout.position_map.line_layouts[(row - start_row) as usize].line;
                         HighlightedRangeLine {
                             start_x: if row == range.start.row() {
-                                content_origin.x()
+                                content_origin.x
                                     + line_layout.x_for_index(range.start.column() as usize)
-                                    - scroll_left
+                                    - layout.position_map.scroll_position.x
                             } else {
-                                content_origin.x() - scroll_left
+                                content_origin.x - layout.position_map.scroll_position.x
                             },
                             end_x: if row == range.end.row() {
-                                content_origin.x()
+                                content_origin.x
                                     + line_layout.x_for_index(range.end.column() as usize)
-                                    - scroll_left
+                                    - layout.position_map.scroll_position.x
                             } else {
-                                content_origin.x() + line_layout.width() + line_end_overshoot
-                                    - scroll_left
+                                content_origin.x + line_layout.width + line_end_overshoot
+                                    - layout.position_map.scroll_position.x
                             },
                         }
                     })
@@ -1339,49 +1509,49 @@ impl EditorElement {
 
     fn paint_blocks(
         &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
+        bounds: Bounds<Pixels>,
         layout: &mut LayoutState,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
-        let scroll_left = scroll_position.x() * layout.position_map.em_width;
-        let scroll_top = scroll_position.y() * layout.position_map.line_height;
+        let scroll_left = scroll_position.x * layout.position_map.em_width;
+        let scroll_top = scroll_position.y * layout.position_map.line_height;
 
-        for block in &mut layout.blocks {
-            let mut origin = bounds.origin()
-                + vec2f(
-                    0.,
+        for mut block in layout.blocks.drain(..) {
+            let mut origin = bounds.origin
+                + point(
+                    Pixels::ZERO,
                     block.row as f32 * layout.position_map.line_height - scroll_top,
                 );
             if !matches!(block.style, BlockStyle::Sticky) {
-                origin += vec2f(-scroll_left, 0.);
+                origin += point(-scroll_left, Pixels::ZERO);
             }
-            block.element.paint(origin, visible_bounds, editor, cx);
+            block.element.draw(origin, block.available_space, cx);
         }
     }
 
-    fn column_pixels(&self, column: usize, cx: &ViewContext<Editor>) -> f32 {
+    fn column_pixels(&self, column: usize, cx: &WindowContext) -> Pixels {
         let style = &self.style;
-
-        cx.text_layout_cache()
-            .layout_str(
-                " ".repeat(column).as_str(),
-                style.text.font_size,
-                &[(
-                    column,
-                    RunStyle {
-                        font_id: style.text.font_id,
-                        color: Color::black(),
-                        underline: Default::default(),
-                    },
-                )],
+        let font_size = style.text.font_size.to_pixels(cx.rem_size());
+        let layout = cx
+            .text_system()
+            .shape_line(
+                SharedString::from(" ".repeat(column)),
+                font_size,
+                &[TextRun {
+                    len: column,
+                    font: style.text.font(),
+                    color: Hsla::default(),
+                    background_color: None,
+                    underline: None,
+                }],
             )
-            .width()
+            .unwrap();
+
+        layout.width
     }
 
-    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> f32 {
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &WindowContext) -> Pixels {
         let digit_count = (snapshot.max_buffer_row() as f32 + 1.).log10().floor() as usize + 1;
         self.column_pixels(digit_count, cx)
     }
@@ -1459,7 +1629,7 @@ impl EditorElement {
         relative_rows
     }
 
-    fn layout_line_numbers(
+    fn shape_line_numbers(
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
@@ -1468,15 +1638,15 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> (
-        Vec<Option<text_layout::Line>>,
+        Vec<Option<ShapedLine>>,
         Vec<Option<(FoldStatus, BufferRow, bool)>>,
     ) {
-        let style = &self.style;
+        let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
         let include_line_numbers = snapshot.mode == EditorMode::Full;
-        let mut line_number_layouts = Vec::with_capacity(rows.len());
+        let mut shaped_line_numbers = Vec::with_capacity(rows.len());
         let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
-        let is_relative = settings::get::<EditorSettings>(cx).relative_line_numbers;
+        let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {
@@ -1492,9 +1662,9 @@ impl EditorElement {
         {
             let display_row = rows.start + ix as u32;
             let (active, color) = if active_rows.contains_key(&display_row) {
-                (true, style.line_number_active)
+                (true, cx.theme().colors().editor_active_line_number)
             } else {
-                (false, style.line_number)
+                (false, cx.theme().colors().editor_line_number)
             };
             if let Some(buffer_row) = row {
                 if include_line_numbers {
@@ -1504,18 +1674,18 @@ impl EditorElement {
                         .get(&(ix as u32 + rows.start))
                         .unwrap_or(&default_number);
                     write!(&mut line_number, "{}", number).unwrap();
-                    line_number_layouts.push(Some(cx.text_layout_cache().layout_str(
-                        &line_number,
-                        style.text.font_size,
-                        &[(
-                            line_number.len(),
-                            RunStyle {
-                                font_id: style.text.font_id,
-                                color,
-                                underline: Default::default(),
-                            },
-                        )],
-                    )));
+                    let run = TextRun {
+                        len: line_number.len(),
+                        font: self.style.text.font(),
+                        color,
+                        background_color: None,
+                        underline: None,
+                    };
+                    let shaped_line = cx
+                        .text_system()
+                        .shape_line(line_number.clone().into(), font_size, &[run])
+                        .unwrap();
+                    shaped_line_numbers.push(Some(shaped_line));
                     fold_statuses.push(
                         is_singleton
                             .then(|| {
@@ -1528,17 +1698,17 @@ impl EditorElement {
                 }
             } else {
                 fold_statuses.push(None);
-                line_number_layouts.push(None);
+                shaped_line_numbers.push(None);
             }
         }
 
-        (line_number_layouts, fold_statuses)
+        (shaped_line_numbers, fold_statuses)
     }
 
     fn layout_lines(
-        &mut self,
+        &self,
         rows: Range<u32>,
-        line_number_layouts: &[Option<Line>],
+        line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> Vec<LineWithInvisibles> {
@@ -1546,14 +1716,12 @@ impl EditorElement {
             return Vec::new();
         }
 
-        // When the editor is empty and unfocused, then show the placeholder.
+        // Show the placeholder when the editor is empty
         if snapshot.is_empty() {
-            let placeholder_style = self
-                .style
-                .placeholder_text
-                .as_ref()
-                .unwrap_or(&self.style.text);
+            let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
+            let placeholder_color = cx.theme().colors().text_placeholder;
             let placeholder_text = snapshot.placeholder_text();
+
             let placeholder_lines = placeholder_text
                 .as_ref()
                 .map_or("", AsRef::as_ref)
@@ -1562,19 +1730,17 @@ impl EditorElement {
                 .chain(iter::repeat(""))
                 .take(rows.len());
             placeholder_lines
-                .map(|line| {
-                    cx.text_layout_cache().layout_str(
-                        line,
-                        placeholder_style.font_size,
-                        &[(
-                            line.len(),
-                            RunStyle {
-                                font_id: placeholder_style.font_id,
-                                color: placeholder_style.color,
-                                underline: Default::default(),
-                            },
-                        )],
-                    )
+                .filter_map(move |line| {
+                    let run = TextRun {
+                        len: line.len(),
+                        font: self.style.text.font(),
+                        color: placeholder_color,
+                        background_color: None,
+                        underline: Default::default(),
+                    };
+                    cx.text_system()
+                        .shape_line(line.to_string().into(), font_size, &[run])
+                        .log_err()
                 })
                 .map(|line| LineWithInvisibles {
                     line,
@@ -1582,48 +1748,471 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let style = &self.style;
-            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
-
+            let chunks = snapshot.highlighted_chunks(rows.clone(), true, &self.style);
             LineWithInvisibles::from_chunks(
                 chunks,
-                &style.text,
-                cx.text_layout_cache(),
-                cx.font_cache(),
+                &self.style.text,
                 MAX_LINE_LEN,
                 rows.len() as usize,
                 line_number_layouts,
                 snapshot.mode,
+                cx,
             )
         }
     }
 
+    fn compute_layout(&mut self, bounds: Bounds<Pixels>, cx: &mut WindowContext) -> LayoutState {
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let style = self.style.clone();
+
+            let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+            let font_size = style.text.font_size.to_pixels(cx.rem_size());
+            let line_height = style.text.line_height_in_pixels(cx.rem_size());
+            let em_width = cx
+                .text_system()
+                .typographic_bounds(font_id, font_size, 'm')
+                .unwrap()
+                .size
+                .width;
+            let em_advance = cx
+                .text_system()
+                .advance(font_id, font_size, 'm')
+                .unwrap()
+                .width;
+
+            let gutter_padding;
+            let gutter_width;
+            let gutter_margin;
+            if snapshot.show_gutter {
+                let descent = cx.text_system().descent(font_id, font_size);
+
+                let gutter_padding_factor = 3.5;
+                gutter_padding = (em_width * gutter_padding_factor).round();
+                gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
+                gutter_margin = -descent;
+            } else {
+                gutter_padding = Pixels::ZERO;
+                gutter_width = Pixels::ZERO;
+                gutter_margin = Pixels::ZERO;
+            };
+
+            editor.gutter_width = gutter_width;
+
+            let text_width = bounds.size.width - gutter_width;
+            let overscroll = size(em_width, px(0.));
+            let _snapshot = {
+                editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
+
+                let editor_width = text_width - gutter_margin - overscroll.width - em_width;
+                let wrap_width = match editor.soft_wrap_mode(cx) {
+                    SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
+                    SoftWrap::EditorWidth => editor_width,
+                    SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
+                };
+
+                if editor.set_wrap_width(Some(wrap_width), cx) {
+                    editor.snapshot(cx)
+                } else {
+                    snapshot
+                }
+            };
+
+            let wrap_guides = editor
+                .wrap_guides(cx)
+                .iter()
+                .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
+                .collect::<SmallVec<[_; 2]>>();
+
+            let gutter_size = size(gutter_width, bounds.size.height);
+            let text_size = size(text_width, bounds.size.height);
+
+            let autoscroll_horizontally =
+                editor.autoscroll_vertically(bounds.size.height, line_height, cx);
+            let mut snapshot = editor.snapshot(cx);
+
+            let scroll_position = snapshot.scroll_position();
+            // The scroll position is a fractional point, the whole number of which represents
+            // the top of the window in terms of display rows.
+            let start_row = scroll_position.y as u32;
+            let height_in_lines = f32::from(bounds.size.height / line_height);
+            let max_row = snapshot.max_point().row();
+
+            // Add 1 to ensure selections bleed off screen
+            let end_row = 1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
+
+            let start_anchor = if start_row == 0 {
+                Anchor::min()
+            } else {
+                snapshot
+                    .buffer_snapshot
+                    .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
+            };
+            let end_anchor = if end_row > max_row {
+                Anchor::max()
+            } else {
+                snapshot
+                    .buffer_snapshot
+                    .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
+            };
+
+            let mut selections: Vec<(PlayerColor, Vec<SelectionLayout>)> = Vec::new();
+            let mut active_rows = BTreeMap::new();
+            let is_singleton = editor.is_singleton(cx);
+
+            let highlighted_rows = editor.highlighted_rows();
+            let highlighted_ranges = editor.background_highlights_in_range(
+                start_anchor..end_anchor,
+                &snapshot.display_snapshot,
+                cx.theme().colors(),
+            );
+
+            let mut newest_selection_head = None;
+
+            if editor.show_local_selections {
+                let mut local_selections: Vec<Selection<Point>> = editor
+                    .selections
+                    .disjoint_in_range(start_anchor..end_anchor, cx);
+                local_selections.extend(editor.selections.pending(cx));
+                let mut layouts = Vec::new();
+                let newest = editor.selections.newest(cx);
+                for selection in local_selections.drain(..) {
+                    let is_empty = selection.start == selection.end;
+                    let is_newest = selection == newest;
+
+                    let layout = SelectionLayout::new(
+                        selection,
+                        editor.selections.line_mode,
+                        editor.cursor_shape,
+                        &snapshot.display_snapshot,
+                        is_newest,
+                        true,
+                    );
+                    if is_newest {
+                        newest_selection_head = Some(layout.head);
+                    }
+
+                    for row in cmp::max(layout.active_rows.start, start_row)
+                        ..=cmp::min(layout.active_rows.end, end_row)
+                    {
+                        let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
+                        *contains_non_empty_selection |= !is_empty;
+                    }
+                    layouts.push(layout);
+                }
+
+                selections.push((style.local_player, layouts));
+            }
+
+            if let Some(collaboration_hub) = &editor.collaboration_hub {
+                // When following someone, render the local selections in their color.
+                if let Some(leader_id) = editor.leader_peer_id {
+                    if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id) {
+                        if let Some(participant_index) = collaboration_hub
+                            .user_participant_indices(cx)
+                            .get(&collaborator.user_id)
+                        {
+                            if let Some((local_selection_style, _)) = selections.first_mut() {
+                                *local_selection_style = cx
+                                    .theme()
+                                    .players()
+                                    .color_for_participant(participant_index.0);
+                            }
+                        }
+                    }
+                }
+
+                let mut remote_selections = HashMap::default();
+                for selection in snapshot.remote_selections_in_range(
+                    &(start_anchor..end_anchor),
+                    collaboration_hub.as_ref(),
+                    cx,
+                ) {
+                    let selection_style = if let Some(participant_index) = selection.participant_index {
+                        cx.theme()
+                            .players()
+                            .color_for_participant(participant_index.0)
+                    } else {
+                        cx.theme().players().absent()
+                    };
+
+                    // Don't re-render the leader's selections, since the local selections
+                    // match theirs.
+                    if Some(selection.peer_id) == editor.leader_peer_id {
+                        continue;
+                    }
+
+                    remote_selections
+                        .entry(selection.replica_id)
+                        .or_insert((selection_style, Vec::new()))
+                        .1
+                        .push(SelectionLayout::new(
+                            selection.selection,
+                            selection.line_mode,
+                            selection.cursor_shape,
+                            &snapshot.display_snapshot,
+                            false,
+                            false,
+                        ));
+                }
+
+                selections.extend(remote_selections.into_values());
+            }
+
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+            let show_scrollbars = match scrollbar_settings.show {
+                ShowScrollbar::Auto => {
+                    // Git
+                    (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                    ||
+                    // Selections
+                    (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
+                    // Scrollmanager
+                    || editor.scroll_manager.scrollbars_visible()
+                }
+                ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
+                ShowScrollbar::Always => true,
+                ShowScrollbar::Never => false,
+            };
+
+            let head_for_relative = newest_selection_head.unwrap_or_else(|| {
+                let newest = editor.selections.newest::<Point>(cx);
+                SelectionLayout::new(
+                    newest,
+                    editor.selections.line_mode,
+                    editor.cursor_shape,
+                    &snapshot.display_snapshot,
+                    true,
+                    true,
+                )
+                .head
+            });
+
+            let (line_numbers, fold_statuses) = self.shape_line_numbers(
+                start_row..end_row,
+                &active_rows,
+                head_for_relative,
+                is_singleton,
+                &snapshot,
+                cx,
+            );
+
+            let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
+
+            let scrollbar_row_range = scroll_position.y..(scroll_position.y + height_in_lines);
+
+            let mut max_visible_line_width = Pixels::ZERO;
+            let line_layouts = self.layout_lines(start_row..end_row, &line_numbers, &snapshot, cx);
+            for line_with_invisibles in &line_layouts {
+                if line_with_invisibles.line.width > max_visible_line_width {
+                    max_visible_line_width = line_with_invisibles.line.width;
+                }
+            }
+
+            let longest_line_width = layout_line(snapshot.longest_row(), &snapshot, &style, cx)
+                .unwrap()
+                .width;
+            let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.width;
+
+            let (scroll_width, blocks) = cx.with_element_id(Some("editor_blocks"), |cx| {
+                self.layout_blocks(
+                    start_row..end_row,
+                    &snapshot,
+                    bounds.size.width,
+                    scroll_width,
+                    gutter_padding,
+                    gutter_width,
+                    em_width,
+                    gutter_width + gutter_margin,
+                    line_height,
+                    &style,
+                    &line_layouts,
+                    editor,
+                    cx,
+                )
+            });
+
+            let scroll_max = point(
+                f32::from((scroll_width - text_size.width) / em_width).max(0.0),
+                max_row as f32,
+            );
+
+            let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x);
+
+            let autoscrolled = if autoscroll_horizontally {
+                editor.autoscroll_horizontally(
+                    start_row,
+                    text_size.width,
+                    scroll_width,
+                    em_width,
+                    &line_layouts,
+                    cx,
+                )
+            } else {
+                false
+            };
+
+            if clamped || autoscrolled {
+                snapshot = editor.snapshot(cx);
+            }
+
+            let mut context_menu = None;
+            let mut code_actions_indicator = None;
+            if let Some(newest_selection_head) = newest_selection_head {
+                if (start_row..end_row).contains(&newest_selection_head.row()) {
+                    if editor.context_menu_visible() {
+                        let max_height = (12. * line_height).min((bounds.size.height - line_height) / 2.);
+                        context_menu =
+                            editor.render_context_menu(newest_selection_head, &self.style, max_height, cx);
+                    }
+
+                    let active = matches!(
+                        editor.context_menu.read().as_ref(),
+                        Some(crate::ContextMenu::CodeActions(_))
+                    );
+
+                    code_actions_indicator = editor
+                        .render_code_actions_indicator(&style, active, cx)
+                        .map(|element| CodeActionsIndicator {
+                            row: newest_selection_head.row(),
+                            button: element,
+                        });
+                }
+            }
+
+            let visible_rows = start_row..start_row + line_layouts.len() as u32;
+            let max_size = size(
+                (120. * em_width) // Default size
+                    .min(bounds.size.width / 2.) // Shrink to half of the editor width
+                    .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+                (16. * line_height) // Default size
+                    .min(bounds.size.height / 2.) // Shrink to half of the editor height
+                    .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+            );
+
+            let hover = editor.hover_state.render(
+                &snapshot,
+                &style,
+                visible_rows,
+                max_size,
+                editor.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            );
+
+            let fold_indicators = cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
+                editor.render_fold_indicators(
+                    fold_statuses,
+                    &style,
+                    editor.gutter_hovered,
+                    line_height,
+                    gutter_margin,
+                    cx,
+                )
+            });
+
+            let invisible_symbol_font_size = font_size / 2.;
+            let tab_invisible = cx
+                .text_system()
+                .shape_line(
+                    "→".into(),
+                    invisible_symbol_font_size,
+                    &[TextRun {
+                        len: "→".len(),
+                        font: self.style.text.font(),
+                        color: cx.theme().colors().editor_invisible,
+                        background_color: None,
+                        underline: None,
+                    }],
+                )
+                .unwrap();
+            let space_invisible = cx
+                .text_system()
+                .shape_line(
+                    "•".into(),
+                    invisible_symbol_font_size,
+                    &[TextRun {
+                        len: "•".len(),
+                        font: self.style.text.font(),
+                        color: cx.theme().colors().editor_invisible,
+                        background_color: None,
+                        underline: None,
+                    }],
+                )
+                .unwrap();
+
+            LayoutState {
+                mode: snapshot.mode,
+                position_map: Arc::new(PositionMap {
+                    size: bounds.size,
+                    scroll_position: point(
+                        scroll_position.x * em_width,
+                        scroll_position.y * line_height,
+                    ),
+                    scroll_max,
+                    line_layouts,
+                    line_height,
+                    em_width,
+                    em_advance,
+                    snapshot,
+                }),
+                visible_anchor_range: start_anchor..end_anchor,
+                visible_display_row_range: start_row..end_row,
+                wrap_guides,
+                gutter_size,
+                gutter_padding,
+                text_size,
+                scrollbar_row_range,
+                show_scrollbars,
+                is_singleton,
+                max_row,
+                gutter_margin,
+                active_rows,
+                highlighted_rows,
+                highlighted_ranges,
+                line_numbers,
+                display_hunks,
+                blocks,
+                selections,
+                context_menu,
+                code_actions_indicator,
+                fold_indicators,
+                tab_invisible,
+                space_invisible,
+                hover_popovers: hover,
+            }
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn layout_blocks(
-        &mut self,
+        &self,
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
-        editor_width: f32,
-        scroll_width: f32,
-        gutter_padding: f32,
-        gutter_width: f32,
-        em_width: f32,
-        text_x: f32,
-        line_height: f32,
+        editor_width: Pixels,
+        scroll_width: Pixels,
+        gutter_padding: Pixels,
+        gutter_width: Pixels,
+        em_width: Pixels,
+        text_x: Pixels,
+        line_height: Pixels,
         style: &EditorStyle,
         line_layouts: &[LineWithInvisibles],
         editor: &mut Editor,
         cx: &mut ViewContext<Editor>,
-    ) -> (f32, Vec<BlockLayout>) {
+    ) -> (Pixels, Vec<BlockLayout>) {
         let mut block_id = 0;
-        let scroll_x = snapshot.scroll_anchor.offset.x();
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| match block {
                 TransformBlock::ExcerptHeader { .. } => false,
                 TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
             });
-        let mut render_block = |block: &TransformBlock, width: f32, block_id: usize| {
+
+        let render_block = |block: &TransformBlock,
+                            available_space: Size<AvailableSpace>,
+                            block_id: usize,
+                            editor: &mut Editor,
+                            cx: &mut ViewContext<Editor>| {
             let mut element = match block {
                 TransformBlock::Custom(block) => {
                     let align_to = block
@@ -1636,7 +2225,8 @@ impl EditorElement {
                                 .line
                                 .x_for_index(align_to.column() as usize)
                         } else {
-                            layout_line(align_to.row(), snapshot, style, cx.text_layout_cache())
+                            layout_line(align_to.row(), snapshot, style, cx)
+                                .unwrap()
                                 .x_for_index(align_to.column() as usize)
                         };
 
@@ -1645,26 +2235,26 @@ impl EditorElement {
                         anchor_x,
                         gutter_padding,
                         line_height,
-                        scroll_x,
                         gutter_width,
                         em_width,
                         block_id,
+                        editor_style: &self.style,
                     })
                 }
+
                 TransformBlock::ExcerptHeader {
-                    id,
                     buffer,
                     range,
                     starts_new_buffer,
                     ..
                 } => {
-                    let tooltip_style = theme::current(cx).tooltip.clone();
                     let include_root = editor
                         .project
                         .as_ref()
                         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                         .unwrap_or_default();
-                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+
+                    let jump_handler = project::File::from_dyn(buffer.file()).map(|file| {
                         let jump_path = ProjectPath {
                             worktree_id: file.worktree_id(cx),
                             path: file.path.clone(),
@@ -1675,121 +2265,142 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        enum JumpIcon {}
-                        MouseEventHandler::new::<JumpIcon, _>((*id).into(), cx, |state, _| {
-                            let style = style.jump_icon.style_for(state);
-                            Svg::new("icons/arrow_up_right.svg")
-                                .with_color(style.color)
-                                .constrained()
-                                .with_width(style.icon_width)
-                                .aligned()
-                                .contained()
-                                .with_style(style.container)
-                                .constrained()
-                                .with_width(style.button_width)
-                                .with_height(style.button_width)
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, editor, cx| {
-                            if let Some(workspace) = editor
-                                .workspace
-                                .as_ref()
-                                .and_then(|(workspace, _)| workspace.upgrade(cx))
-                            {
-                                workspace.update(cx, |workspace, cx| {
-                                    Editor::jump(
-                                        workspace,
-                                        jump_path.clone(),
-                                        jump_position,
-                                        jump_anchor,
-                                        cx,
-                                    );
-                                });
-                            }
-                        })
-                        .with_tooltip::<JumpIcon>(
-                            (*id).into(),
-                            "Jump to Buffer".to_string(),
-                            Some(Box::new(crate::OpenExcerpts)),
-                            tooltip_style.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .flex_float()
+                        let jump_handler = cx.listener_for(&self.editor, move |editor, _, cx| {
+                            editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
+                        });
+
+                        jump_handler
                     });
 
-                    if *starts_new_buffer {
-                        let editor_font_size = style.text.font_size;
-                        let style = &style.diagnostic_path_header;
-                        let font_size = (style.text_scale_factor * editor_font_size).round();
-
+                    let element = if *starts_new_buffer {
                         let path = buffer.resolve_file_path(cx, include_root);
                         let mut filename = None;
                         let mut parent_path = None;
                         // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
                         if let Some(path) = path {
                             filename = path.file_name().map(|f| f.to_string_lossy().to_string());
-                            parent_path =
-                                path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                            parent_path = path
+                                .parent()
+                                .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
-                        Flex::row()
-                            .with_child(
-                                Label::new(
-                                    filename.unwrap_or_else(|| "untitled".to_string()),
-                                    style.filename.text.clone().with_font_size(font_size),
-                                )
-                                .contained()
-                                .with_style(style.filename.container)
-                                .aligned(),
+                        div()
+                            .id(("path header container", block_id))
+                            .size_full()
+                            .p_1p5()
+                            .child(
+                                h_stack()
+                                    .id("path header block")
+                                    .py_1p5()
+                                    .pl_3()
+                                    .pr_2()
+                                    .rounded_lg()
+                                    .shadow_md()
+                                    .border()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_subheader_background)
+                                    .justify_between()
+                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        h_stack().gap_3().child(
+                                            h_stack()
+                                                .gap_2()
+                                                .child(
+                                                    filename
+                                                        .map(SharedString::from)
+                                                        .unwrap_or_else(|| "untitled".into()),
+                                                )
+                                                .when_some(parent_path, |then, path| {
+                                                    then.child(
+                                                        div().child(path).text_color(
+                                                            cx.theme().colors().text_muted,
+                                                        ),
+                                                    )
+                                                }),
+                                        ),
+                                    )
+                                    .when_some(jump_handler, |this, jump_handler| {
+                                        this.cursor_pointer()
+                                            .tooltip(|cx| {
+                                                Tooltip::for_action(
+                                                    "Jump to Buffer",
+                                                    &OpenExcerpts,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_mouse_down(MouseButton::Left, |_, cx| {
+                                                cx.stop_propagation()
+                                            })
+                                            .on_click(jump_handler)
+                                    }),
                             )
-                            .with_children(parent_path.map(|path| {
-                                Label::new(path, style.path.text.clone().with_font_size(font_size))
-                                    .contained()
-                                    .with_style(style.path.container)
-                                    .aligned()
-                            }))
-                            .with_children(jump_icon)
-                            .contained()
-                            .with_style(style.container)
-                            .with_padding_left(gutter_padding)
-                            .with_padding_right(gutter_padding)
-                            .expanded()
-                            .into_any_named("path header block")
                     } else {
-                        let text_style = style.text.clone();
-                        Flex::row()
-                            .with_child(Label::new("⋯", text_style))
-                            .with_children(jump_icon)
-                            .contained()
-                            .with_padding_left(gutter_padding)
-                            .with_padding_right(gutter_padding)
-                            .expanded()
-                            .into_any_named("collapsed context")
-                    }
+                        h_stack()
+                            .id(("collapsed context", block_id))
+                            .size_full()
+                            .gap(gutter_padding)
+                            .child(
+                                h_stack()
+                                    .justify_end()
+                                    .flex_none()
+                                    .w(gutter_width - gutter_padding)
+                                    .h_full()
+                                    .text_buffer(cx)
+                                    .text_color(cx.theme().colors().editor_line_number)
+                                    .child("..."),
+                            )
+                            .map(|this| {
+                                if let Some(jump_handler) = jump_handler {
+                                    this.child(
+                                        ButtonLike::new("jump to collapsed context")
+                                            .style(ButtonStyle::Transparent)
+                                            .full_width()
+                                            .on_click(jump_handler)
+                                            .tooltip(|cx| {
+                                                Tooltip::for_action(
+                                                    "Jump to Buffer",
+                                                    &OpenExcerpts,
+                                                    cx,
+                                                )
+                                            })
+                                            .child(
+                                                div()
+                                                    .h_px()
+                                                    .w_full()
+                                                    .bg(cx.theme().colors().border_variant)
+                                                    .group_hover("", |style| {
+                                                        style.bg(cx.theme().colors().border)
+                                                    }),
+                                            ),
+                                    )
+                                } else {
+                                    this.child(div().size_full().bg(gpui::green()))
+                                }
+                            })
+                    };
+                    element.into_any()
                 }
             };
 
-            element.layout(
-                SizeConstraint {
-                    min: Vector2F::zero(),
-                    max: vec2f(width, block.height() as f32 * line_height),
-                },
-                editor,
-                cx,
-            );
-            element
+            let size = element.measure(available_space, cx);
+            (element, size)
         };
 
-        let mut fixed_block_max_width = 0f32;
+        let mut fixed_block_max_width = Pixels::ZERO;
         let mut blocks = Vec::new();
         for (row, block) in fixed_blocks {
-            let element = render_block(block, f32::INFINITY, block_id);
+            let available_space = size(
+                AvailableSpace::MinContent,
+                AvailableSpace::Definite(block.height() as f32 * line_height),
+            );
+            let (element, element_size) =
+                render_block(block, available_space, block_id, editor, cx);
             block_id += 1;
-            fixed_block_max_width = fixed_block_max_width.max(element.size().x() + em_width);
+            fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
             blocks.push(BlockLayout {
                 row,
                 element,
+                available_space,
                 style: BlockStyle::Fixed,
             });
         }
@@ -1805,11 +2416,16 @@ impl EditorElement {
                     .max(gutter_width + scroll_width),
                 BlockStyle::Fixed => unreachable!(),
             };
-            let element = render_block(block, width, block_id);
+            let available_space = size(
+                AvailableSpace::Definite(width),
+                AvailableSpace::Definite(block.height() as f32 * line_height),
+            );
+            let (element, _) = render_block(block, available_space, block_id, editor, cx);
             block_id += 1;
             blocks.push(BlockLayout {
                 row,
                 element,
+                available_space,
                 style,
             });
         }
@@ -1818,11 +2434,133 @@ impl EditorElement {
             blocks,
         )
     }
+
+    fn paint_mouse_listeners(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        gutter_bounds: Bounds<Pixels>,
+        text_bounds: Bounds<Pixels>,
+        layout: &LayoutState,
+        cx: &mut WindowContext,
+    ) {
+        let interactive_bounds = InteractiveBounds {
+            bounds: bounds.intersect(&cx.content_mask().bounds),
+            stacking_order: cx.stacking_order().clone(),
+        };
+
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+            let interactive_bounds = interactive_bounds.clone();
+
+            move |event: &ScrollWheelEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    editor.update(cx, |editor, cx| {
+                        Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
+                    });
+                }
+            }
+        });
+
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+            let interactive_bounds = interactive_bounds.clone();
+
+            move |event: &MouseDownEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    match event.button {
+                        MouseButton::Left => editor.update(cx, |editor, cx| {
+                            Self::mouse_left_down(
+                                editor,
+                                event,
+                                &position_map,
+                                text_bounds,
+                                gutter_bounds,
+                                &stacking_order,
+                                cx,
+                            );
+                        }),
+                        MouseButton::Right => editor.update(cx, |editor, cx| {
+                            Self::mouse_right_down(editor, event, &position_map, text_bounds, cx);
+                        }),
+                        _ => {}
+                    };
+                }
+            }
+        });
+
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+            let interactive_bounds = interactive_bounds.clone();
+
+            move |event: &MouseUpEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    editor.update(cx, |editor, cx| {
+                        Self::mouse_up(
+                            editor,
+                            event,
+                            &position_map,
+                            text_bounds,
+                            &stacking_order,
+                            cx,
+                        )
+                    });
+                }
+            }
+        });
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+            let stacking_order = cx.stacking_order().clone();
+
+            move |event: &MouseMoveEvent, phase, cx| {
+                // if editor.has_pending_selection() && event.pressed_button == Some(MouseButton::Left) {
+
+                if phase == DispatchPhase::Bubble {
+                    editor.update(cx, |editor, cx| {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            Self::mouse_dragged(
+                                editor,
+                                event,
+                                &position_map,
+                                text_bounds,
+                                gutter_bounds,
+                                &stacking_order,
+                                cx,
+                            )
+                        }
+
+                        if interactive_bounds.visibly_contains(&event.position, cx) {
+                            Self::mouse_moved(
+                                editor,
+                                event,
+                                &position_map,
+                                text_bounds,
+                                gutter_bounds,
+                                &stacking_order,
+                                cx,
+                            )
+                        }
+                    });
+                }
+            }
+        });
+    }
 }
 
 #[derive(Debug)]
 pub struct LineWithInvisibles {
-    pub line: Line,
+    pub line: ShapedLine,
     invisibles: Vec<Invisible>,
 }
 
@@ -1830,12 +2568,11 @@ impl LineWithInvisibles {
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         text_style: &TextStyle,
-        text_layout_cache: &TextLayoutCache,
-        font_cache: &Arc<FontCache>,
         max_line_len: usize,
         max_line_count: usize,
-        line_number_layouts: &[Option<Line>],
+        line_number_layouts: &[Option<ShapedLine>],
         editor_mode: EditorMode,
+        cx: &WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
         let mut line = String::new();
@@ -1844,6 +2581,8 @@ impl LineWithInvisibles {
         let mut non_whitespace_added = false;
         let mut row = 0;
         let mut line_exceeded_max_len = false;
+        let font_size = text_style.font_size.to_pixels(cx.rem_size());
+
         for highlighted_chunk in chunks.chain([HighlightedChunk {
             chunk: "\n",
             style: None,
@@ -1851,8 +2590,12 @@ impl LineWithInvisibles {
         }]) {
             for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
                 if ix > 0 {
+                    let shaped_line = cx
+                        .text_system()
+                        .shape_line(line.clone().into(), font_size, &styles)
+                        .unwrap();
                     layouts.push(Self {
-                        line: text_layout_cache.layout_str(&line, text_style.font_size, &styles),
+                        line: shaped_line,
                         invisibles: invisibles.drain(..).collect(),
                     });
 
@@ -1868,11 +2611,7 @@ impl LineWithInvisibles {
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
                     let text_style = if let Some(style) = highlighted_chunk.style {
-                        text_style
-                            .clone()
-                            .highlight(style, font_cache)
-                            .map(Cow::Owned)
-                            .unwrap_or_else(|_| Cow::Borrowed(text_style))
+                        Cow::Owned(text_style.clone().highlight(style))
                     } else {
                         Cow::Borrowed(text_style)
                     };
@@ -1886,14 +2625,13 @@ impl LineWithInvisibles {
                         line_exceeded_max_len = true;
                     }
 
-                    styles.push((
-                        line_chunk.len(),
-                        RunStyle {
-                            font_id: text_style.font_id,
-                            color: text_style.color,
-                            underline: text_style.underline,
-                        },
-                    ));
+                    styles.push(TextRun {
+                        len: line_chunk.len(),
+                        font: text_style.font(),
+                        color: text_style.color,
+                        background_color: text_style.background_color,
+                        underline: text_style.underline,
+                    });
 
                     if editor_mode == EditorMode::Full {
                         // Line wrap pads its contents with fake whitespaces,
@@ -1938,33 +2676,28 @@ impl LineWithInvisibles {
         &self,
         layout: &LayoutState,
         row: u32,
-        scroll_top: f32,
-        content_origin: Vector2F,
-        scroll_left: f32,
-        visible_text_bounds: RectF,
+        content_origin: gpui::Point<Pixels>,
         whitespace_setting: ShowWhitespaceSetting,
         selection_ranges: &[Range<DisplayPoint>],
-        visible_bounds: RectF,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let line_height = layout.position_map.line_height;
-        let line_y = row as f32 * line_height - scroll_top;
+        let line_y = line_height * row as f32 - layout.position_map.scroll_position.y;
 
-        self.line.paint(
-            content_origin + vec2f(-scroll_left, line_y),
-            visible_text_bounds,
-            line_height,
-            cx,
-        );
+        self.line
+            .paint(
+                content_origin + gpui::point(-layout.position_map.scroll_position.x, line_y),
+                line_height,
+                cx,
+            )
+            .log_err();
 
         self.draw_invisibles(
             &selection_ranges,
             layout,
             content_origin,
-            scroll_left,
             line_y,
             row,
-            visible_bounds,
             line_height,
             whitespace_setting,
             cx,
@@ -1975,14 +2708,12 @@ impl LineWithInvisibles {
         &self,
         selection_ranges: &[Range<DisplayPoint>],
         layout: &LayoutState,
-        content_origin: Vector2F,
-        scroll_left: f32,
-        line_y: f32,
+        content_origin: gpui::Point<Pixels>,
+        line_y: Pixels,
         row: u32,
-        visible_bounds: RectF,
-        line_height: f32,
+        line_height: Pixels,
         whitespace_setting: ShowWhitespaceSetting,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut WindowContext,
     ) {
         let allowed_invisibles_regions = match whitespace_setting {
             ShowWhitespaceSetting::None => return,
@@ -1998,8 +2729,12 @@ impl LineWithInvisibles {
 
             let x_offset = self.line.x_for_index(token_offset);
             let invisible_offset =
-                (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
-            let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
+                (layout.position_map.em_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
+            let origin = content_origin
+                + gpui::point(
+                    x_offset + invisible_offset - layout.position_map.scroll_position.x,
+                    line_y,
+                );
 
             if let Some(allowed_regions) = allowed_invisibles_regions {
                 let invisible_point = DisplayPoint::new(row, token_offset as u32);
@@ -2010,7 +2745,7 @@ impl LineWithInvisibles {
                     continue;
                 }
             }
-            invisible_symbol.paint(origin, visible_bounds, line_height, cx);
+            invisible_symbol.paint(origin, line_height, cx).log_err();
         }
     }
 }
@@ -2021,601 +2756,134 @@ enum Invisible {
     Whitespace { line_offset: usize },
 }
 
-impl Element<Editor> for EditorElement {
-    type LayoutState = LayoutState;
-    type PaintState = ();
+impl Element for EditorElement {
+    type State = ();
 
-    fn layout(
+    fn request_layout(
         &mut self,
-        constraint: SizeConstraint,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> (Vector2F, Self::LayoutState) {
-        let mut size = constraint.max;
-        if size.x().is_infinite() {
-            unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
-        }
+        _element_state: Option<Self::State>,
+        cx: &mut gpui::WindowContext,
+    ) -> (gpui::LayoutId, Self::State) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_style(self.style.clone(), cx);
 
-        let snapshot = editor.snapshot(cx);
-        let style = self.style.clone();
-
-        let line_height = (style.text.font_size * style.line_height_scalar).round();
-
-        let gutter_padding;
-        let gutter_width;
-        let gutter_margin;
-        if snapshot.show_gutter {
-            let em_width = style.text.em_width(cx.font_cache());
-            gutter_padding = (em_width * style.gutter_padding_factor).round();
-            gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
-            gutter_margin = -style.text.descent(cx.font_cache());
-        } else {
-            gutter_padding = 0.0;
-            gutter_width = 0.0;
-            gutter_margin = 0.0;
-        };
-
-        let text_width = size.x() - gutter_width;
-        let em_width = style.text.em_width(cx.font_cache());
-        let em_advance = style.text.em_advance(cx.font_cache());
-        let overscroll = vec2f(em_width, 0.);
-        let snapshot = {
-            editor.set_visible_line_count(size.y() / line_height, cx);
-
-            let editor_width = text_width - gutter_margin - overscroll.x() - em_width;
-            let wrap_width = match editor.soft_wrap_mode(cx) {
-                SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
-                SoftWrap::EditorWidth => editor_width,
-                SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
+            let layout_id = match editor.mode {
+                EditorMode::SingleLine => {
+                    let rem_size = cx.rem_size();
+                    let mut style = Style::default();
+                    style.size.width = relative(1.).into();
+                    style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
+                    cx.request_layout(&style, None)
+                }
+                EditorMode::AutoHeight { max_lines } => {
+                    let editor_handle = cx.view().clone();
+                    let max_line_number_width =
+                        self.max_line_number_width(&editor.snapshot(cx), cx);
+                    cx.request_measured_layout(Style::default(), move |known_dimensions, _, cx| {
+                        editor_handle
+                            .update(cx, |editor, cx| {
+                                compute_auto_height_layout(
+                                    editor,
+                                    max_lines,
+                                    max_line_number_width,
+                                    known_dimensions,
+                                    cx,
+                                )
+                            })
+                            .unwrap_or_default()
+                    })
+                }
+                EditorMode::Full => {
+                    let mut style = Style::default();
+                    style.size.width = relative(1.).into();
+                    style.size.height = relative(1.).into();
+                    cx.request_layout(&style, None)
+                }
             };
 
-            if editor.set_wrap_width(Some(wrap_width), cx) {
-                editor.snapshot(cx)
-            } else {
-                snapshot
-            }
-        };
-
-        let wrap_guides = editor
-            .wrap_guides(cx)
-            .iter()
-            .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
-            .collect();
-
-        let scroll_height = (snapshot.max_point().row() + 1) as f32 * line_height;
-        if let EditorMode::AutoHeight { max_lines } = snapshot.mode {
-            size.set_y(
-                scroll_height
-                    .min(constraint.max_along(Axis::Vertical))
-                    .max(constraint.min_along(Axis::Vertical))
-                    .max(line_height)
-                    .min(line_height * max_lines as f32),
-            )
-        } else if let EditorMode::SingleLine = snapshot.mode {
-            size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
-        } else if size.y().is_infinite() {
-            size.set_y(scroll_height);
-        }
-        let gutter_size = vec2f(gutter_width, size.y());
-        let text_size = vec2f(text_width, size.y());
-
-        let autoscroll_horizontally = editor.autoscroll_vertically(size.y(), line_height, cx);
-        let mut snapshot = editor.snapshot(cx);
-
-        let scroll_position = snapshot.scroll_position();
-        // The scroll position is a fractional point, the whole number of which represents
-        // the top of the window in terms of display rows.
-        let start_row = scroll_position.y() as u32;
-        let height_in_lines = size.y() / line_height;
-        let max_row = snapshot.max_point().row();
-
-        // Add 1 to ensure selections bleed off screen
-        let end_row = 1 + cmp::min(
-            (scroll_position.y() + height_in_lines).ceil() as u32,
-            max_row,
-        );
-
-        let start_anchor = if start_row == 0 {
-            Anchor::min()
-        } else {
-            snapshot
-                .buffer_snapshot
-                .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
-        };
-        let end_anchor = if end_row > max_row {
-            Anchor::max()
-        } else {
-            snapshot
-                .buffer_snapshot
-                .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
-        };
-
-        let mut selections: Vec<(SelectionStyle, Vec<SelectionLayout>)> = Vec::new();
-        let mut active_rows = BTreeMap::new();
-        let mut fold_ranges = Vec::new();
-        let is_singleton = editor.is_singleton(cx);
-
-        let highlighted_rows = editor.highlighted_rows();
-        let theme = theme::current(cx);
-        let highlighted_ranges = editor.background_highlights_in_range(
-            start_anchor..end_anchor,
-            &snapshot.display_snapshot,
-            theme.as_ref(),
-        );
-
-        fold_ranges.extend(
-            snapshot
-                .folds_in_range(start_anchor..end_anchor)
-                .map(|anchor| {
-                    let start = anchor.start.to_point(&snapshot.buffer_snapshot);
-                    (
-                        start.row,
-                        start.to_display_point(&snapshot.display_snapshot)
-                            ..anchor.end.to_display_point(&snapshot),
-                    )
-                }),
-        );
-
-        let mut newest_selection_head = None;
-
-        if editor.show_local_selections {
-            let mut local_selections: Vec<Selection<Point>> = editor
-                .selections
-                .disjoint_in_range(start_anchor..end_anchor, cx);
-            local_selections.extend(editor.selections.pending(cx));
-            let mut layouts = Vec::new();
-            let newest = editor.selections.newest(cx);
-            for selection in local_selections.drain(..) {
-                let is_empty = selection.start == selection.end;
-                let is_newest = selection == newest;
-
-                let layout = SelectionLayout::new(
-                    selection,
-                    editor.selections.line_mode,
-                    editor.cursor_shape,
-                    &snapshot.display_snapshot,
-                    is_newest,
-                    true,
-                );
-                if is_newest {
-                    newest_selection_head = Some(layout.head);
-                }
-
-                for row in cmp::max(layout.active_rows.start, start_row)
-                    ..=cmp::min(layout.active_rows.end, end_row)
-                {
-                    let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
-                    *contains_non_empty_selection |= !is_empty;
-                }
-                layouts.push(layout);
-            }
-
-            selections.push((style.selection, layouts));
-        }
-
-        if let Some(collaboration_hub) = &editor.collaboration_hub {
-            // When following someone, render the local selections in their color.
-            if let Some(leader_id) = editor.leader_peer_id {
-                if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id) {
-                    if let Some(participant_index) = collaboration_hub
-                        .user_participant_indices(cx)
-                        .get(&collaborator.user_id)
-                    {
-                        if let Some((local_selection_style, _)) = selections.first_mut() {
-                            *local_selection_style =
-                                style.selection_style_for_room_participant(participant_index.0);
-                        }
-                    }
-                }
-            }
-
-            let mut remote_selections = HashMap::default();
-            for selection in snapshot.remote_selections_in_range(
-                &(start_anchor..end_anchor),
-                collaboration_hub.as_ref(),
-                cx,
-            ) {
-                let selection_style = if let Some(participant_index) = selection.participant_index {
-                    style.selection_style_for_room_participant(participant_index.0)
-                } else {
-                    style.absent_selection
-                };
-
-                // Don't re-render the leader's selections, since the local selections
-                // match theirs.
-                if Some(selection.peer_id) == editor.leader_peer_id {
-                    continue;
-                }
-
-                remote_selections
-                    .entry(selection.replica_id)
-                    .or_insert((selection_style, Vec::new()))
-                    .1
-                    .push(SelectionLayout::new(
-                        selection.selection,
-                        selection.line_mode,
-                        selection.cursor_shape,
-                        &snapshot.display_snapshot,
-                        false,
-                        false,
-                    ));
-            }
-
-            selections.extend(remote_selections.into_values());
-        }
-
-        let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
-        let show_scrollbars = match scrollbar_settings.show {
-            ShowScrollbar::Auto => {
-                // Git
-                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
-                ||
-                // Selections
-                (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
-                // Scrollmanager
-                || editor.scroll_manager.scrollbars_visible()
-            }
-            ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
-            ShowScrollbar::Always => true,
-            ShowScrollbar::Never => false,
-        };
-
-        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)> = fold_ranges
-            .into_iter()
-            .map(|(id, fold)| {
-                let color = self
-                    .style
-                    .folds
-                    .ellipses
-                    .background
-                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize))
-                    .color;
-
-                (id, fold, color)
-            })
-            .collect();
-
-        let head_for_relative = newest_selection_head.unwrap_or_else(|| {
-            let newest = editor.selections.newest::<Point>(cx);
-            SelectionLayout::new(
-                newest,
-                editor.selections.line_mode,
-                editor.cursor_shape,
-                &snapshot.display_snapshot,
-                true,
-                true,
-            )
-            .head
-        });
-
-        let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
-            start_row..end_row,
-            &active_rows,
-            head_for_relative,
-            is_singleton,
-            &snapshot,
-            cx,
-        );
-
-        let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
-
-        let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
-
-        let mut max_visible_line_width = 0.0;
-        let line_layouts =
-            self.layout_lines(start_row..end_row, &line_number_layouts, &snapshot, cx);
-        for line_with_invisibles in &line_layouts {
-            if line_with_invisibles.line.width() > max_visible_line_width {
-                max_visible_line_width = line_with_invisibles.line.width();
-            }
-        }
-
-        let style = self.style.clone();
-        let longest_line_width = layout_line(
-            snapshot.longest_row(),
-            &snapshot,
-            &style,
-            cx.text_layout_cache(),
-        )
-        .width();
-        let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
-        let em_width = style.text.em_width(cx.font_cache());
-        let (scroll_width, blocks) = self.layout_blocks(
-            start_row..end_row,
-            &snapshot,
-            size.x(),
-            scroll_width,
-            gutter_padding,
-            gutter_width,
-            em_width,
-            gutter_width + gutter_margin,
-            line_height,
-            &style,
-            &line_layouts,
-            editor,
-            cx,
-        );
-
-        let scroll_max = vec2f(
-            ((scroll_width - text_size.x()) / em_width).max(0.0),
-            max_row as f32,
-        );
-
-        let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x());
-
-        let autoscrolled = if autoscroll_horizontally {
-            editor.autoscroll_horizontally(
-                start_row,
-                text_size.x(),
-                scroll_width,
-                em_width,
-                &line_layouts,
-                cx,
-            )
-        } else {
-            false
-        };
-
-        if clamped || autoscrolled {
-            snapshot = editor.snapshot(cx);
-        }
-
-        let style = editor.style(cx);
-
-        let mut context_menu = None;
-        let mut code_actions_indicator = None;
-        if let Some(newest_selection_head) = newest_selection_head {
-            if (start_row..end_row).contains(&newest_selection_head.row()) {
-                if editor.context_menu_visible() {
-                    context_menu =
-                        editor.render_context_menu(newest_selection_head, style.clone(), cx);
-                }
-
-                let active = matches!(
-                    editor.context_menu.read().as_ref(),
-                    Some(crate::ContextMenu::CodeActions(_))
-                );
-
-                code_actions_indicator = editor
-                    .render_code_actions_indicator(&style, active, cx)
-                    .map(|indicator| (newest_selection_head.row(), indicator));
-            }
-        }
-
-        let visible_rows = start_row..start_row + line_layouts.len() as u32;
-        let mut hover = editor.hover_state.render(
-            &snapshot,
-            &style,
-            visible_rows,
-            editor.workspace.as_ref().map(|(w, _)| w.clone()),
-            cx,
-        );
-        let mode = editor.mode;
-
-        let mut fold_indicators = editor.render_fold_indicators(
-            fold_statuses,
-            &style,
-            editor.gutter_hovered,
-            line_height,
-            gutter_margin,
-            cx,
-        );
-
-        if let Some((_, context_menu)) = context_menu.as_mut() {
-            context_menu.layout(
-                SizeConstraint {
-                    min: Vector2F::zero(),
-                    max: vec2f(
-                        cx.window_size().x() * 0.7,
-                        (12. * line_height).min((size.y() - line_height) / 2.),
-                    ),
-                },
-                editor,
-                cx,
-            );
-        }
-
-        if let Some((_, indicator)) = code_actions_indicator.as_mut() {
-            indicator.layout(
-                SizeConstraint::strict_along(
-                    Axis::Vertical,
-                    line_height * style.code_actions.vertical_scale,
-                ),
-                editor,
-                cx,
-            );
-        }
-
-        for fold_indicator in fold_indicators.iter_mut() {
-            if let Some(indicator) = fold_indicator.as_mut() {
-                indicator.layout(
-                    SizeConstraint::strict_along(
-                        Axis::Vertical,
-                        line_height * style.code_actions.vertical_scale,
-                    ),
-                    editor,
-                    cx,
-                );
-            }
-        }
-
-        if let Some((_, hover_popovers)) = hover.as_mut() {
-            for hover_popover in hover_popovers.iter_mut() {
-                hover_popover.layout(
-                    SizeConstraint {
-                        min: Vector2F::zero(),
-                        max: vec2f(
-                            (120. * em_width) // Default size
-                                .min(size.x() / 2.) // Shrink to half of the editor width
-                                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
-                            (16. * line_height) // Default size
-                                .min(size.y() / 2.) // Shrink to half of the editor height
-                                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
-                        ),
-                    },
-                    editor,
-                    cx,
-                );
-            }
-        }
-
-        let invisible_symbol_font_size = self.style.text.font_size / 2.0;
-        let invisible_symbol_style = RunStyle {
-            color: self.style.whitespace,
-            font_id: self.style.text.font_id,
-            underline: Default::default(),
-        };
-
-        (
-            size,
-            LayoutState {
-                mode,
-                position_map: Arc::new(PositionMap {
-                    size,
-                    scroll_max,
-                    line_layouts,
-                    line_height,
-                    em_width,
-                    em_advance,
-                    snapshot,
-                }),
-                visible_display_row_range: start_row..end_row,
-                wrap_guides,
-                gutter_size,
-                gutter_padding,
-                text_size,
-                scrollbar_row_range,
-                show_scrollbars,
-                is_singleton,
-                max_row,
-                gutter_margin,
-                active_rows,
-                highlighted_rows,
-                highlighted_ranges,
-                fold_ranges,
-                line_number_layouts,
-                display_hunks,
-                blocks,
-                selections,
-                context_menu,
-                code_actions_indicator,
-                fold_indicators,
-                tab_invisible: cx.text_layout_cache().layout_str(
-                    "→",
-                    invisible_symbol_font_size,
-                    &[("→".len(), invisible_symbol_style)],
-                ),
-                space_invisible: cx.text_layout_cache().layout_str(
-                    "•",
-                    invisible_symbol_font_size,
-                    &[("•".len(), invisible_symbol_style)],
-                ),
-                hover_popovers: hover,
-            },
-        )
+            (layout_id, ())
+        })
     }
 
     fn paint(
         &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
-        editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) -> Self::PaintState {
-        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
-        cx.scene().push_layer(Some(visible_bounds));
+        bounds: Bounds<gpui::Pixels>,
+        _element_state: &mut Self::State,
+        cx: &mut gpui::WindowContext,
+    ) {
+        let editor = self.editor.clone();
 
-        let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
-        let text_bounds = RectF::new(
-            bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
-            layout.text_size,
+        cx.with_text_style(
+            Some(gpui::TextStyleRefinement {
+                font_size: Some(self.style.text.font_size),
+                ..Default::default()
+            }),
+            |cx| {
+                let mut layout = self.compute_layout(bounds, cx);
+                let gutter_bounds = Bounds {
+                    origin: bounds.origin,
+                    size: layout.gutter_size,
+                };
+                let text_bounds = Bounds {
+                    origin: gutter_bounds.upper_right(),
+                    size: layout.text_size,
+                };
+
+                let focus_handle = editor.focus_handle(cx);
+                let key_context = self.editor.read(cx).key_context(cx);
+                cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
+                    self.register_actions(cx);
+                    self.register_key_listeners(cx);
+
+                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                        let input_handler =
+                            ElementInputHandler::new(bounds, self.editor.clone(), cx);
+                        cx.handle_input(&focus_handle, input_handler);
+
+                        self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                        if layout.gutter_size.width > Pixels::ZERO {
+                            self.paint_gutter(gutter_bounds, &mut layout, cx);
+                        }
+                        self.paint_text(text_bounds, &mut layout, cx);
+
+                        cx.with_z_index(0, |cx| {
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout,
+                                cx,
+                            );
+                        });
+                        if !layout.blocks.is_empty() {
+                            cx.with_z_index(0, |cx| {
+                                cx.with_element_id(Some("editor_blocks"), |cx| {
+                                    self.paint_blocks(bounds, &mut layout, cx);
+                                });
+                            })
+                        }
+
+                        cx.with_z_index(1, |cx| {
+                            self.paint_overlays(text_bounds, &mut layout, cx);
+                        });
+
+                        cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
+                    });
+                })
+            },
         );
+    }
+}
 
-        Self::attach_mouse_handlers(
-            &layout.position_map,
-            layout.hover_popovers.is_some(),
-            visible_bounds,
-            text_bounds,
-            gutter_bounds,
-            bounds,
-            cx,
-        );
+impl IntoElement for EditorElement {
+    type Element = Self;
 
-        self.paint_background(gutter_bounds, text_bounds, layout, cx);
-        if layout.gutter_size.x() > 0. {
-            self.paint_gutter(gutter_bounds, visible_bounds, layout, editor, cx);
-        }
-        self.paint_text(text_bounds, visible_bounds, layout, editor, cx);
-
-        cx.scene().push_layer(Some(bounds));
-        if !layout.blocks.is_empty() {
-            self.paint_blocks(bounds, visible_bounds, layout, editor, cx);
-        }
-        self.paint_scrollbar(bounds, layout, &editor, cx);
-        cx.scene().pop_layer();
-        cx.scene().pop_layer();
+    fn element_id(&self) -> Option<gpui::ElementId> {
+        self.editor.element_id()
     }
 
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        bounds: RectF,
-        _: RectF,
-        layout: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &Editor,
-        _: &ViewContext<Editor>,
-    ) -> Option<RectF> {
-        let text_bounds = RectF::new(
-            bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
-            layout.text_size,
-        );
-        let content_origin = text_bounds.origin() + vec2f(layout.gutter_margin, 0.);
-        let scroll_position = layout.position_map.snapshot.scroll_position();
-        let start_row = scroll_position.y() as u32;
-        let scroll_top = scroll_position.y() * layout.position_map.line_height;
-        let scroll_left = scroll_position.x() * layout.position_map.em_width;
-
-        let range_start = OffsetUtf16(range_utf16.start)
-            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-        if range_start.row() < start_row {
-            return None;
-        }
-
-        let line = &layout
-            .position_map
-            .line_layouts
-            .get((range_start.row() - start_row) as usize)?
-            .line;
-        let range_start_x = line.x_for_index(range_start.column() as usize);
-        let range_start_y = range_start.row() as f32 * layout.position_map.line_height;
-        Some(RectF::new(
-            content_origin
-                + vec2f(
-                    range_start_x,
-                    range_start_y + layout.position_map.line_height,
-                )
-                - vec2f(scroll_left, scroll_top),
-            vec2f(
-                layout.position_map.em_width,
-                layout.position_map.line_height,
-            ),
-        ))
-    }
-
-    fn debug(
-        &self,
-        bounds: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &Editor,
-        _: &ViewContext<Editor>,
-    ) -> json::Value {
-        json!({
-            "type": "BufferElement",
-            "bounds": bounds.to_json()
-        })
+    fn into_element(self) -> Self::Element {
+        self
     }
 }
 
@@ -2623,39 +2891,45 @@ type BufferRow = u32;
 
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
-    gutter_size: Vector2F,
-    gutter_padding: f32,
-    gutter_margin: f32,
-    text_size: Vector2F,
+    gutter_size: Size<Pixels>,
+    gutter_padding: Pixels,
+    gutter_margin: Pixels,
+    text_size: gpui::Size<Pixels>,
     mode: EditorMode,
-    wrap_guides: SmallVec<[(f32, bool); 2]>,
+    wrap_guides: SmallVec<[(Pixels, bool); 2]>,
+    visible_anchor_range: Range<Anchor>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
-    line_number_layouts: Vec<Option<text_layout::Line>>,
+    line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
-    highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
-    selections: Vec<(SelectionStyle, Vec<SelectionLayout>)>,
+    highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     is_singleton: bool,
     max_row: u32,
-    context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
-    code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
-    hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
-    fold_indicators: Vec<Option<AnyElement<Editor>>>,
-    tab_invisible: Line,
-    space_invisible: Line,
+    context_menu: Option<(DisplayPoint, AnyElement)>,
+    code_actions_indicator: Option<CodeActionsIndicator>,
+    hover_popovers: Option<(DisplayPoint, Vec<AnyElement>)>,
+    fold_indicators: Vec<Option<IconButton>>,
+    tab_invisible: ShapedLine,
+    space_invisible: ShapedLine,
+}
+
+struct CodeActionsIndicator {
+    row: u32,
+    button: IconButton,
 }
 
 struct PositionMap {
-    size: Vector2F,
-    line_height: f32,
-    scroll_max: Vector2F,
-    em_width: f32,
-    em_advance: f32,
+    size: Size<Pixels>,
+    line_height: Pixels,
+    scroll_position: gpui::Point<Pixels>,
+    scroll_max: gpui::Point<f32>,
+    em_width: Pixels,
+    em_advance: Pixels,
     line_layouts: Vec<LineWithInvisibles>,
     snapshot: EditorSnapshot,
 }
@@ -2689,21 +2963,26 @@ impl PointForPosition {
 }
 
 impl PositionMap {
-    fn point_for_position(&self, text_bounds: RectF, position: Vector2F) -> PointForPosition {
+    fn point_for_position(
+        &self,
+        text_bounds: Bounds<Pixels>,
+        position: gpui::Point<Pixels>,
+    ) -> PointForPosition {
         let scroll_position = self.snapshot.scroll_position();
-        let position = position - text_bounds.origin();
-        let y = position.y().max(0.0).min(self.size.y());
-        let x = position.x() + (scroll_position.x() * self.em_width);
-        let row = (y / self.line_height + scroll_position.y()) as u32;
+        let position = position - text_bounds.origin;
+        let y = position.y.max(px(0.)).min(self.size.height);
+        let x = position.x + (scroll_position.x * self.em_width);
+        let row = (f32::from(y / self.line_height) + scroll_position.y) as u32;
+
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
-            .get(row as usize - scroll_position.y() as usize)
-            .map(|line_with_spaces| &line_with_spaces.line)
+            .get(row as usize - scroll_position.y as usize)
+            .map(|&LineWithInvisibles { ref line, .. }| line)
         {
             if let Some(ix) = line.index_for_x(x) {
-                (ix as u32, 0.0)
+                (ix as u32, px(0.))
             } else {
-                (line.len() as u32, 0f32.max(x - line.width()))
+                (line.len as u32, px(0.).max(x - line.width))
             }
         } else {
             (0, x)
@@ -2726,7 +3005,8 @@ impl PositionMap {
 
 struct BlockLayout {
     row: u32,
-    element: AnyElement<Editor>,
+    element: AnyElement,
+    available_space: Size<AvailableSpace>,
     style: BlockStyle,
 }
 
@@ -2734,8 +3014,8 @@ fn layout_line(
     row: u32,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
-    layout_cache: &TextLayoutCache,
-) -> text_layout::Line {
+    cx: &WindowContext,
+) -> Result<ShapedLine> {
     let mut line = snapshot.line(row);
 
     if line.len() > MAX_LINE_LEN {
@@ -2747,38 +3027,37 @@ fn layout_line(
         line.truncate(len);
     }
 
-    layout_cache.layout_str(
-        &line,
-        style.text.font_size,
-        &[(
-            snapshot.line_len(row) as usize,
-            RunStyle {
-                font_id: style.text.font_id,
-                color: Color::black(),
-                underline: Default::default(),
-            },
-        )],
+    cx.text_system().shape_line(
+        line.into(),
+        style.text.font_size.to_pixels(cx.rem_size()),
+        &[TextRun {
+            len: snapshot.line_len(row) as usize,
+            font: style.text.font(),
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+        }],
     )
 }
 
 #[derive(Debug)]
 pub struct Cursor {
-    origin: Vector2F,
-    block_width: f32,
-    line_height: f32,
-    color: Color,
+    origin: gpui::Point<Pixels>,
+    block_width: Pixels,
+    line_height: Pixels,
+    color: Hsla,
     shape: CursorShape,
-    block_text: Option<Line>,
+    block_text: Option<ShapedLine>,
 }
 
 impl Cursor {
     pub fn new(
-        origin: Vector2F,
-        block_width: f32,
-        line_height: f32,
-        color: Color,
+        origin: gpui::Point<Pixels>,
+        block_width: Pixels,
+        line_height: Pixels,
+        color: Hsla,
         shape: CursorShape,
-        block_text: Option<Line>,
+        block_text: Option<ShapedLine>,
     ) -> Cursor {
         Cursor {
             origin,
@@ -2790,45 +3069,44 @@ impl Cursor {
         }
     }
 
-    pub fn bounding_rect(&self, origin: Vector2F) -> RectF {
-        RectF::new(
-            self.origin + origin,
-            vec2f(self.block_width, self.line_height),
-        )
+    pub fn bounding_rect(&self, origin: gpui::Point<Pixels>) -> Bounds<Pixels> {
+        Bounds {
+            origin: self.origin + origin,
+            size: size(self.block_width, self.line_height),
+        }
     }
 
-    pub fn paint(&self, origin: Vector2F, cx: &mut WindowContext) {
+    pub fn paint(&self, origin: gpui::Point<Pixels>, cx: &mut WindowContext) {
         let bounds = match self.shape {
-            CursorShape::Bar => RectF::new(self.origin + origin, vec2f(2.0, self.line_height)),
-            CursorShape::Block | CursorShape::Hollow => RectF::new(
-                self.origin + origin,
-                vec2f(self.block_width, self.line_height),
-            ),
-            CursorShape::Underscore => RectF::new(
-                self.origin + origin + Vector2F::new(0.0, self.line_height - 2.0),
-                vec2f(self.block_width, 2.0),
-            ),
+            CursorShape::Bar => Bounds {
+                origin: self.origin + origin,
+                size: size(px(2.0), self.line_height),
+            },
+            CursorShape::Block | CursorShape::Hollow => Bounds {
+                origin: self.origin + origin,
+                size: size(self.block_width, self.line_height),
+            },
+            CursorShape::Underscore => Bounds {
+                origin: self.origin
+                    + origin
+                    + gpui::Point::new(Pixels::ZERO, self.line_height - px(2.0)),
+                size: size(self.block_width, px(2.0)),
+            },
         };
 
         //Draw background or border quad
-        if matches!(self.shape, CursorShape::Hollow) {
-            cx.scene().push_quad(Quad {
-                bounds,
-                background: None,
-                border: Border::all(1., self.color).into(),
-                corner_radii: Default::default(),
-            });
+        let cursor = if matches!(self.shape, CursorShape::Hollow) {
+            outline(bounds, self.color)
         } else {
-            cx.scene().push_quad(Quad {
-                bounds,
-                background: Some(self.color),
-                border: Default::default(),
-                corner_radii: Default::default(),
-            });
-        }
+            fill(bounds, self.color)
+        };
+
+        cx.paint_quad(cursor);
 
         if let Some(block_text) = &self.block_text {
-            block_text.paint(self.origin + origin, bounds, self.line_height, cx);
+            block_text
+                .paint(self.origin + origin, self.line_height, cx)
+                .log_err();
         }
     }
 
@@ -2839,21 +3117,21 @@ impl Cursor {
 
 #[derive(Debug)]
 pub struct HighlightedRange {
-    pub start_y: f32,
-    pub line_height: f32,
+    pub start_y: Pixels,
+    pub line_height: Pixels,
     pub lines: Vec<HighlightedRangeLine>,
-    pub color: Color,
-    pub corner_radius: f32,
+    pub color: Hsla,
+    pub corner_radius: Pixels,
 }
 
 #[derive(Debug)]
 pub struct HighlightedRangeLine {
-    pub start_x: f32,
-    pub end_x: f32,
+    pub start_x: Pixels,
+    pub end_x: Pixels,
 }
 
 impl HighlightedRange {
-    pub fn paint(&self, bounds: RectF, cx: &mut WindowContext) {
+    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
             self.paint_lines(self.start_y, &self.lines[0..1], bounds, cx);
             self.paint_lines(
@@ -2869,24 +3147,23 @@ impl HighlightedRange {
 
     fn paint_lines(
         &self,
-        start_y: f32,
+        start_y: Pixels,
         lines: &[HighlightedRangeLine],
-        bounds: RectF,
+        _bounds: Bounds<Pixels>,
         cx: &mut WindowContext,
     ) {
         if lines.is_empty() {
             return;
         }
 
-        let mut path = PathBuilder::new();
         let first_line = lines.first().unwrap();
         let last_line = lines.last().unwrap();
 
-        let first_top_left = vec2f(first_line.start_x, start_y);
-        let first_top_right = vec2f(first_line.end_x, start_y);
+        let first_top_left = point(first_line.start_x, start_y);
+        let first_top_right = point(first_line.end_x, start_y);
 
-        let curve_height = vec2f(0., self.corner_radius);
-        let curve_width = |start_x: f32, end_x: f32| {
+        let curve_height = point(Pixels::ZERO, self.corner_radius);
+        let curve_width = |start_x: Pixels, end_x: Pixels| {
             let max = (end_x - start_x) / 2.;
             let width = if max < self.corner_radius {
                 max
@@ -2894,43 +3171,43 @@ impl HighlightedRange {
                 self.corner_radius
             };
 
-            vec2f(width, 0.)
+            point(width, Pixels::ZERO)
         };
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
-        path.reset(first_top_right - top_curve_width);
+        let mut path = gpui::Path::new(first_top_right - top_curve_width);
         path.curve_to(first_top_right + curve_height, first_top_right);
 
         let mut iter = lines.iter().enumerate().peekable();
         while let Some((ix, line)) = iter.next() {
-            let bottom_right = vec2f(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
+            let bottom_right = point(line.end_x, start_y + (ix + 1) as f32 * self.line_height);
 
             if let Some((_, next_line)) = iter.peek() {
-                let next_top_right = vec2f(next_line.end_x, bottom_right.y());
+                let next_top_right = point(next_line.end_x, bottom_right.y);
 
-                match next_top_right.x().partial_cmp(&bottom_right.x()).unwrap() {
+                match next_top_right.x.partial_cmp(&bottom_right.x).unwrap() {
                     Ordering::Equal => {
                         path.line_to(bottom_right);
                     }
                     Ordering::Less => {
-                        let curve_width = curve_width(next_top_right.x(), bottom_right.x());
+                        let curve_width = curve_width(next_top_right.x, bottom_right.x);
                         path.line_to(bottom_right - curve_height);
-                        if self.corner_radius > 0. {
+                        if self.corner_radius > Pixels::ZERO {
                             path.curve_to(bottom_right - curve_width, bottom_right);
                         }
                         path.line_to(next_top_right + curve_width);
-                        if self.corner_radius > 0. {
+                        if self.corner_radius > Pixels::ZERO {
                             path.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
                     Ordering::Greater => {
-                        let curve_width = curve_width(bottom_right.x(), next_top_right.x());
+                        let curve_width = curve_width(bottom_right.x, next_top_right.x);
                         path.line_to(bottom_right - curve_height);
-                        if self.corner_radius > 0. {
+                        if self.corner_radius > Pixels::ZERO {
                             path.curve_to(bottom_right + curve_width, bottom_right);
                         }
                         path.line_to(next_top_right - curve_width);
-                        if self.corner_radius > 0. {
+                        if self.corner_radius > Pixels::ZERO {
                             path.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
@@ -2938,13 +3215,13 @@ impl HighlightedRange {
             } else {
                 let curve_width = curve_width(line.start_x, line.end_x);
                 path.line_to(bottom_right - curve_height);
-                if self.corner_radius > 0. {
+                if self.corner_radius > Pixels::ZERO {
                     path.curve_to(bottom_right - curve_width, bottom_right);
                 }
 
-                let bottom_left = vec2f(line.start_x, bottom_right.y());
+                let bottom_left = point(line.start_x, bottom_right.y);
                 path.line_to(bottom_left + curve_width);
-                if self.corner_radius > 0. {
+                if self.corner_radius > Pixels::ZERO {
                     path.curve_to(bottom_left - curve_height, bottom_left);
                 }
             }
@@ -2952,86 +3229,34 @@ impl HighlightedRange {
 
         if first_line.start_x > last_line.start_x {
             let curve_width = curve_width(last_line.start_x, first_line.start_x);
-            let second_top_left = vec2f(last_line.start_x, start_y + self.line_height);
+            let second_top_left = point(last_line.start_x, start_y + self.line_height);
             path.line_to(second_top_left + curve_height);
-            if self.corner_radius > 0. {
+            if self.corner_radius > Pixels::ZERO {
                 path.curve_to(second_top_left + curve_width, second_top_left);
             }
-            let first_bottom_left = vec2f(first_line.start_x, second_top_left.y());
+            let first_bottom_left = point(first_line.start_x, second_top_left.y);
             path.line_to(first_bottom_left - curve_width);
-            if self.corner_radius > 0. {
+            if self.corner_radius > Pixels::ZERO {
                 path.curve_to(first_bottom_left - curve_height, first_bottom_left);
             }
         }
 
         path.line_to(first_top_left + curve_height);
-        if self.corner_radius > 0. {
+        if self.corner_radius > Pixels::ZERO {
             path.curve_to(first_top_left + top_curve_width, first_top_left);
         }
         path.line_to(first_top_right - top_curve_width);
 
-        cx.scene().push_path(path.build(self.color, Some(bounds)));
+        cx.paint_path(path, self.color);
     }
 }
 
-fn range_to_bounds(
-    range: &Range<DisplayPoint>,
-    content_origin: Vector2F,
-    scroll_left: f32,
-    scroll_top: f32,
-    visible_row_range: &Range<u32>,
-    line_end_overshoot: f32,
-    position_map: &PositionMap,
-) -> impl Iterator<Item = RectF> {
-    let mut bounds: SmallVec<[RectF; 1]> = SmallVec::new();
-
-    if range.start == range.end {
-        return bounds.into_iter();
-    }
-
-    let start_row = visible_row_range.start;
-    let end_row = visible_row_range.end;
-
-    let row_range = if range.end.column() == 0 {
-        cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
-    } else {
-        cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
-    };
-
-    let first_y =
-        content_origin.y() + row_range.start as f32 * position_map.line_height - scroll_top;
-
-    for (idx, row) in row_range.enumerate() {
-        let line_layout = &position_map.line_layouts[(row - start_row) as usize].line;
-
-        let start_x = if row == range.start.row() {
-            content_origin.x() + line_layout.x_for_index(range.start.column() as usize)
-                - scroll_left
-        } else {
-            content_origin.x() - scroll_left
-        };
-
-        let end_x = if row == range.end.row() {
-            content_origin.x() + line_layout.x_for_index(range.end.column() as usize) - scroll_left
-        } else {
-            content_origin.x() + line_layout.width() + line_end_overshoot - scroll_left
-        };
-
-        bounds.push(RectF::from_points(
-            vec2f(start_x, first_y + position_map.line_height * idx as f32),
-            vec2f(end_x, first_y + position_map.line_height * (idx + 1) as f32),
-        ))
-    }
-
-    bounds.into_iter()
+pub fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
+    (delta.pow(1.5) / 100.0).into()
 }
 
-pub fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
-    delta.powf(1.5) / 100.0
-}
-
-fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
-    delta.powf(1.2) / 300.0
+fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
+    (delta.pow(1.2) / 300.0).into()
 }
 
 #[cfg(test)]
@@ -3049,35 +3274,40 @@ mod tests {
     use util::test::sample_text;
 
     #[gpui::test]
-    fn test_layout_line_numbers(cx: &mut TestAppContext) {
+    fn test_shape_line_numbers(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
-        let editor = cx
-            .add_window(|cx| {
-                let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-                Editor::new(EditorMode::Full, buffer, None, None, cx)
-            })
-            .root(cx);
-        let element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-
-        let layouts = editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            element
-                .layout_line_numbers(
-                    0..6,
-                    &Default::default(),
-                    DisplayPoint::new(0, 0),
-                    false,
-                    &snapshot,
-                    cx,
-                )
-                .0
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
         });
+
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let element = EditorElement::new(&editor, style);
+
+        let layouts = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element
+                    .shape_line_numbers(
+                        0..6,
+                        &Default::default(),
+                        DisplayPoint::new(0, 0),
+                        false,
+                        &snapshot,
+                        cx,
+                    )
+                    .0
+            })
+            .unwrap();
         assert_eq!(layouts.len(), 6);
 
-        let relative_rows = editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
-        });
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
+            })
+            .unwrap();
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
         assert_eq!(relative_rows[&2], 1);
@@ -3086,22 +3316,26 @@ mod tests {
         assert_eq!(relative_rows[&5], 2);
 
         // works if cursor is before screen
-        let relative_rows = editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
 
-            element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
-        });
+                element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+            })
+            .unwrap();
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&3], 2);
         assert_eq!(relative_rows[&4], 3);
         assert_eq!(relative_rows[&5], 4);
 
         // works if cursor is after screen
-        let relative_rows = editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
 
-            element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
-        });
+                element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+            })
+            .unwrap();
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&0], 5);
         assert_eq!(relative_rows[&1], 4);
@@ -3112,28 +3346,38 @@ mod tests {
     async fn test_vim_visual_selections(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let editor = cx
-            .add_window(|cx| {
-                let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-                Editor::new(EditorMode::Full, buffer, None, None, cx)
-            })
-            .root(cx);
-        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-        let (_, state) = editor.update(cx, |editor, cx| {
-            editor.cursor_shape = CursorShape::Block;
-            editor.change_selections(None, cx, |s| {
-                s.select_ranges([
-                    Point::new(0, 0)..Point::new(1, 0),
-                    Point::new(3, 2)..Point::new(3, 3),
-                    Point::new(5, 6)..Point::new(6, 0),
-                ]);
-            });
-            element.layout(
-                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
-                editor,
-                cx,
-            )
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
         });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
+
+        window
+            .update(cx, |editor, cx| {
+                editor.cursor_shape = CursorShape::Block;
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges([
+                        Point::new(0, 0)..Point::new(1, 0),
+                        Point::new(3, 2)..Point::new(3, 3),
+                        Point::new(5, 6)..Point::new(6, 0),
+                    ]);
+                });
+            })
+            .unwrap();
+        let state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+
         assert_eq!(state.selections.len(), 1);
         let local_selections = &state.selections[0].1;
         assert_eq!(local_selections.len(), 3);
@@ -3182,29 +3426,29 @@ mod tests {
         // 13: bbbbbb
         // 14: cccccc
         // 15: dddddd
-        let editor = cx
-            .add_window(|cx| {
-                let buffer = MultiBuffer::build_multi(
-                    [
-                        (
-                            &(sample_text(8, 6, 'a') + "\n"),
-                            vec![
-                                Point::new(0, 0)..Point::new(3, 0),
-                                Point::new(4, 0)..Point::new(7, 0),
-                            ],
-                        ),
-                        (
-                            &(sample_text(8, 6, 'a') + "\n"),
-                            vec![Point::new(1, 0)..Point::new(3, 0)],
-                        ),
-                    ],
-                    cx,
-                );
-                Editor::new(EditorMode::Full, buffer, None, None, cx)
-            })
-            .root(cx);
-        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-        let (_, state) = editor.update(cx, |editor, cx| {
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_multi(
+                [
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![
+                            Point::new(0, 0)..Point::new(3, 0),
+                            Point::new(4, 0)..Point::new(7, 0),
+                        ],
+                    ),
+                    (
+                        &(sample_text(8, 6, 'a') + "\n"),
+                        vec![Point::new(1, 0)..Point::new(3, 0)],
+                    ),
+                ],
+                cx,
+            );
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
+        let _state = window.update(cx, |editor, cx| {
             editor.cursor_shape = CursorShape::Block;
             editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([
@@ -3212,13 +3456,19 @@ mod tests {
                     DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
                 ]);
             });
-            element.layout(
-                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
-                editor,
-                cx,
-            )
         });
 
+        let state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
         assert_eq!(state.selections.len(), 1);
         let local_selections = &state.selections[0].1;
         assert_eq!(local_selections.len(), 2);
@@ -3230,7 +3480,6 @@ mod tests {
             DisplayPoint::new(4, 0)..DisplayPoint::new(6, 0)
         );
         assert_eq!(local_selections[0].head, DisplayPoint::new(5, 0));
-
         // moves cursor on buffer boundary back two lines
         // and doesn't allow selection to bleed through
         assert_eq!(
@@ -3244,44 +3493,50 @@ mod tests {
     fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        let editor = cx
-            .add_window(|cx| {
-                let buffer = MultiBuffer::build_simple("", cx);
-                Editor::new(EditorMode::Full, buffer, None, None, cx)
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            Editor::new(EditorMode::Full, buffer, None, cx)
+        });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        window
+            .update(cx, |editor, cx| {
+                editor.set_placeholder_text("hello", cx);
+                editor.insert_blocks(
+                    [BlockProperties {
+                        style: BlockStyle::Fixed,
+                        disposition: BlockDisposition::Above,
+                        height: 3,
+                        position: Anchor::min(),
+                        render: Arc::new(|_| div().into_any()),
+                    }],
+                    None,
+                    cx,
+                );
+
+                // Blur the editor so that it displays placeholder text.
+                cx.blur();
             })
-            .root(cx);
+            .unwrap();
 
-        editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("hello", cx);
-            editor.insert_blocks(
-                [BlockProperties {
-                    style: BlockStyle::Fixed,
-                    disposition: BlockDisposition::Above,
-                    height: 3,
-                    position: Anchor::min(),
-                    render: Arc::new(|_| Empty::new().into_any()),
-                }],
-                None,
-                cx,
-            );
-
-            // Blur the editor so that it displays placeholder text.
-            cx.blur();
-        });
-
-        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-        let (size, mut state) = editor.update(cx, |editor, cx| {
-            element.layout(
-                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
-                editor,
-                cx,
-            )
-        });
+        let mut element = EditorElement::new(&editor, style);
+        let state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        let size = state.position_map.size;
 
         assert_eq!(state.position_map.line_layouts.len(), 4);
         assert_eq!(
             state
-                .line_number_layouts
+                .line_numbers
                 .iter()
                 .map(Option::is_some)
                 .collect::<Vec<_>>(),
@@ -3289,10 +3544,11 @@ mod tests {
         );
 
         // Don't panic.
-        let bounds = RectF::new(Default::default(), size);
-        editor.update(cx, |editor, cx| {
-            element.paint(bounds, bounds, &mut state, editor, cx);
-        });
+        let bounds = Bounds::<Pixels>::new(Default::default(), size);
+        cx.update_window(window.into(), |_, cx| {
+            element.paint(bounds, &mut (), cx);
+        })
+        .unwrap()
     }
 
     #[gpui::test]
@@ -3335,7 +3591,7 @@ mod tests {
         });
 
         let actual_invisibles =
-            collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, 500.0);
+            collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, px(500.0));
 
         assert_eq!(expected_invisibles, actual_invisibles);
     }
@@ -3355,10 +3611,10 @@ mod tests {
                 cx,
                 editor_mode_without_invisibles,
                 "\t\t\t| | a b",
-                500.0,
+                px(500.0),
             );
             assert!(invisibles.is_empty(),
-                "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
+                    "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
         }
     }
 
@@ -3409,8 +3665,12 @@ mod tests {
                 s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
             });
 
-            let actual_invisibles =
-                collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, editor_width);
+            let actual_invisibles = collect_invisibles_from_new_editor(
+                cx,
+                EditorMode::Full,
+                &input_text,
+                px(editor_width),
+            );
 
             // Whatever the editor size is, ensure it has the same invisible kinds in the same order
             // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
@@ -3442,29 +3702,36 @@ mod tests {
         cx: &mut TestAppContext,
         editor_mode: EditorMode,
         input_text: &str,
-        editor_width: f32,
+        editor_width: Pixels,
     ) -> Vec<Invisible> {
         info!(
-            "Creating editor with mode {editor_mode:?}, width {editor_width} and text '{input_text}'"
+            "Creating editor with mode {editor_mode:?}, width {}px and text '{input_text}'",
+            editor_width.0
         );
-        let editor = cx
-            .add_window(|cx| {
-                let buffer = MultiBuffer::build_simple(&input_text, cx);
-                Editor::new(editor_mode, buffer, None, None, cx)
-            })
-            .root(cx);
-
-        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-        let (_, layout_state) = editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_wrap_width(Some(editor_width), cx);
-
-            element.layout(
-                SizeConstraint::new(vec2f(editor_width, 500.), vec2f(editor_width, 500.)),
-                editor,
-                cx,
-            )
+        let window = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&input_text, cx);
+            Editor::new(editor_mode, buffer, None, cx)
         });
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let mut element = EditorElement::new(&editor, style);
+        window
+            .update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+                editor.set_wrap_width(Some(editor_width), cx);
+            })
+            .unwrap();
+        let layout_state = cx
+            .update_window(window.into(), |_, cx| {
+                element.compute_layout(
+                    Bounds {
+                        origin: point(px(500.), px(500.)),
+                        size: size(px(500.), px(500.)),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
 
         layout_state
             .position_map
@@ -3475,4 +3742,74 @@ mod tests {
             .cloned()
             .collect()
     }
+}
+
+pub fn register_action<T: Action>(
+    view: &View<Editor>,
+    cx: &mut WindowContext,
+    listener: impl Fn(&mut Editor, &T, &mut ViewContext<Editor>) + 'static,
+) {
+    let view = view.clone();
+    cx.on_action(TypeId::of::<T>(), move |action, phase, cx| {
+        let action = action.downcast_ref().unwrap();
+        if phase == DispatchPhase::Bubble {
+            view.update(cx, |editor, cx| {
+                listener(editor, action, cx);
+            })
+        }
+    })
+}
+
+fn compute_auto_height_layout(
+    editor: &mut Editor,
+    max_lines: usize,
+    max_line_number_width: Pixels,
+    known_dimensions: Size<Option<Pixels>>,
+    cx: &mut ViewContext<Editor>,
+) -> Option<Size<Pixels>> {
+    let width = known_dimensions.width?;
+    if let Some(height) = known_dimensions.height {
+        return Some(size(width, height));
+    }
+
+    let style = editor.style.as_ref().unwrap();
+    let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+    let font_size = style.text.font_size.to_pixels(cx.rem_size());
+    let line_height = style.text.line_height_in_pixels(cx.rem_size());
+    let em_width = cx
+        .text_system()
+        .typographic_bounds(font_id, font_size, 'm')
+        .unwrap()
+        .size
+        .width;
+
+    let mut snapshot = editor.snapshot(cx);
+    let gutter_width;
+    let gutter_margin;
+    if snapshot.show_gutter {
+        let descent = cx.text_system().descent(font_id, font_size);
+        let gutter_padding_factor = 3.5;
+        let gutter_padding = (em_width * gutter_padding_factor).round();
+        gutter_width = max_line_number_width + gutter_padding * 2.0;
+        gutter_margin = -descent;
+    } else {
+        gutter_width = Pixels::ZERO;
+        gutter_margin = Pixels::ZERO;
+    };
+
+    editor.gutter_width = gutter_width;
+    let text_width = width - gutter_width;
+    let overscroll = size(em_width, px(0.));
+
+    let editor_width = text_width - gutter_margin - overscroll.width - em_width;
+    if editor.set_wrap_width(Some(editor_width), cx) {
+        snapshot = editor.snapshot(cx);
+    }
+
+    let scroll_height = Pixels::from(snapshot.max_point().row() + 1) * line_height;
+    let height = scroll_height
+        .max(line_height)
+        .min(line_height * max_lines as f32);
+
+    Some(size(width, height))
 }

@@ -2,9 +2,9 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     Highlights,
 };
-use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
+use crate::{Anchor, Editor, EditorStyle, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, ViewContext};
+use gpui::{AnyElement, Pixels, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -50,7 +50,7 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> AnyElement<Editor>>;
+pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> AnyElement>;
 
 pub struct Block {
     id: BlockId,
@@ -69,7 +69,7 @@ where
     pub position: P,
     pub height: u8,
     pub style: BlockStyle,
-    pub render: Arc<dyn Fn(&mut BlockContext) -> AnyElement<Editor>>,
+    pub render: Arc<dyn Fn(&mut BlockContext) -> AnyElement>,
     pub disposition: BlockDisposition,
 }
 
@@ -80,15 +80,15 @@ pub enum BlockStyle {
     Sticky,
 }
 
-pub struct BlockContext<'a, 'b, 'c> {
-    pub view_context: &'c mut ViewContext<'a, 'b, Editor>,
-    pub anchor_x: f32,
-    pub scroll_x: f32,
-    pub gutter_width: f32,
-    pub gutter_padding: f32,
-    pub em_width: f32,
-    pub line_height: f32,
+pub struct BlockContext<'a, 'b> {
+    pub view_context: &'b mut ViewContext<'a, Editor>,
+    pub anchor_x: Pixels,
+    pub gutter_width: Pixels,
+    pub gutter_padding: Pixels,
+    pub em_width: Pixels,
+    pub line_height: Pixels,
     pub block_id: usize,
+    pub editor_style: &'b EditorStyle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -932,22 +932,22 @@ impl BlockDisposition {
     }
 }
 
-impl<'a, 'b, 'c> Deref for BlockContext<'a, 'b, 'c> {
-    type Target = ViewContext<'a, 'b, Editor>;
+impl<'a> Deref for BlockContext<'a, '_> {
+    type Target = ViewContext<'a, Editor>;
 
     fn deref(&self) -> &Self::Target {
         self.view_context
     }
 }
 
-impl DerefMut for BlockContext<'_, '_, '_> {
+impl DerefMut for BlockContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.view_context
     }
 }
 
 impl Block {
-    pub fn render(&self, cx: &mut BlockContext) -> AnyElement<Editor> {
+    pub fn render(&self, cx: &mut BlockContext) -> AnyElement {
         self.render.lock()(cx)
     }
 
@@ -993,7 +993,7 @@ mod tests {
     use super::*;
     use crate::display_map::inlay_map::InlayMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use gpui::{elements::Empty, Element};
+    use gpui::{div, font, px, Element};
     use multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1015,27 +1015,19 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_basic_blocks(cx: &mut gpui::AppContext) {
-        init_test(cx);
-
-        let family_id = cx
-            .font_cache()
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
+    fn test_basic_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx));
 
         let text = "aaa\nbbb\nccc\nddd";
 
-        let buffer = MultiBuffer::build_simple(text, cx);
-        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
-        let (wrap_map, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, None, cx);
+        let (wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -1045,21 +1037,21 @@ mod tests {
                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
                 height: 1,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().into_any_named("block 1")),
+                render: Arc::new(|_| div().into_any()),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 2)),
                 height: 2,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().into_any_named("block 2")),
+                render: Arc::new(|_| div().into_any()),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(3, 3)),
                 height: 3,
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| Empty::new().into_any_named("block 3")),
+                render: Arc::new(|_| div().into_any()),
             },
         ]);
 
@@ -1190,26 +1182,21 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_blocks_on_wrapped_lines(cx: &mut gpui::AppContext) {
-        init_test(cx);
+    fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx));
 
-        let family_id = cx
-            .font_cache()
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
+        let _font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
 
         let text = "one two three\nfour five six\nseven eight";
 
-        let buffer = MultiBuffer::build_simple(text, cx);
-        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, Some(60.), cx);
+        let (_, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
+        });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -1218,14 +1205,14 @@ mod tests {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 12)),
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().into_any_named("block 1")),
+                render: Arc::new(|_| div().into_any()),
                 height: 1,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 1)),
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| Empty::new().into_any_named("block 2")),
+                render: Arc::new(|_| div().into_any()),
                 height: 1,
             },
         ]);
@@ -1240,8 +1227,8 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_blocks(cx: &mut gpui::AppContext, mut rng: StdRng) {
-        init_test(cx);
+    fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        cx.update(|cx| init_test(cx));
 
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1250,18 +1237,10 @@ mod tests {
         let wrap_width = if rng.gen_bool(0.2) {
             None
         } else {
-            Some(rng.gen_range(0.0..=100.0))
+            Some(px(rng.gen_range(0.0..=100.0)))
         };
         let tab_size = 1.try_into().unwrap();
-        let family_id = cx
-            .font_cache()
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
+        let font_size = px(14.0);
         let buffer_start_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
 
@@ -1272,17 +1251,17 @@ mod tests {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial buffer text: {:?}", text);
-            MultiBuffer::build_simple(&text, cx)
+            cx.update(|cx| MultiBuffer::build_simple(&text, cx))
         } else {
-            MultiBuffer::build_random(&mut rng, cx)
+            cx.update(|cx| MultiBuffer::build_random(&mut rng, cx))
         };
 
-        let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let mut buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (wrap_map, wraps_snapshot) =
-            WrapMap::new(tab_snapshot, font_id, font_size, wrap_width, cx);
+        let (wrap_map, wraps_snapshot) = cx
+            .update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), font_size, wrap_width, cx));
         let mut block_map = BlockMap::new(
             wraps_snapshot,
             buffer_start_header_height,
@@ -1297,7 +1276,7 @@ mod tests {
                     let wrap_width = if rng.gen_bool(0.2) {
                         None
                     } else {
-                        Some(rng.gen_range(0.0..=100.0))
+                        Some(px(rng.gen_range(0.0..=100.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
@@ -1306,7 +1285,7 @@ mod tests {
                     let block_count = rng.gen_range(1..=5);
                     let block_properties = (0..block_count)
                         .map(|_| {
-                            let buffer = buffer.read(cx).read(cx);
+                            let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
                             let position = buffer.anchor_after(
                                 buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
                             );
@@ -1328,7 +1307,7 @@ mod tests {
                                 position,
                                 height,
                                 disposition,
-                                render: Arc::new(|_| Empty::new().into_any()),
+                                render: Arc::new(|_| div().into_any()),
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1646,8 +1625,9 @@ mod tests {
     }
 
     fn init_test(cx: &mut gpui::AppContext) {
-        cx.set_global(SettingsStore::test(cx));
-        theme::init((), cx);
+        let settings = SettingsStore::test(cx);
+        cx.set_global(settings);
+        theme::init(theme::LoadThemes::JustBase, cx);
     }
 
     impl TransformBlock {

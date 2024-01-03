@@ -1189,7 +1189,6 @@ impl Buffer {
         self.undo_or_redo(transaction).log_err()
     }
 
-    #[allow(clippy::needless_collect)]
     pub fn undo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
         let transactions = self
             .history
@@ -1223,7 +1222,6 @@ impl Buffer {
         }
     }
 
-    #[allow(clippy::needless_collect)]
     pub fn redo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
         let transactions = self
             .history
@@ -1536,7 +1534,6 @@ impl Buffer {
         edits
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn randomly_edit<T>(
         &mut self,
         rng: &mut T,
@@ -2655,7 +2652,7 @@ impl LineEnding {
             max_ix -= 1;
         }
 
-        if let Some(ix) = text[..max_ix].find(&['\n']) {
+        if let Some(ix) = text[..max_ix].find(['\n']) {
             if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
                 Self::Windows
             } else {

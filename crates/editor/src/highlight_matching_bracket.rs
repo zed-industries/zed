@@ -24,7 +24,7 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
                 opening_range.to_anchors(&snapshot.buffer_snapshot),
                 closing_range.to_anchors(&snapshot.buffer_snapshot),
             ],
-            |theme| theme.editor.document_highlight_read_background,
+            |theme| theme.editor_document_highlight_read_background,
             cx,
         )
     }

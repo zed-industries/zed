@@ -1,6 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
-use gpui::{keymap_matcher::KeymapContext, Action};
+use gpui::{Action, KeyContext};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
 use workspace::searchable::Direction;
@@ -167,10 +167,10 @@ impl EditorState {
         self.operator_stack.last().copied()
     }
 
-    pub fn keymap_context_layer(&self) -> KeymapContext {
-        let mut context = KeymapContext::default();
-        context.add_identifier("VimEnabled");
-        context.add_key(
+    pub fn keymap_context_layer(&self) -> KeyContext {
+        let mut context = KeyContext::default();
+        context.add("VimEnabled");
+        context.set(
             "vim_mode",
             match self.mode {
                 Mode::Normal => "normal",
@@ -180,24 +180,24 @@ impl EditorState {
         );
 
         if self.vim_controlled() {
-            context.add_identifier("VimControl");
+            context.add("VimControl");
         }
 
         if self.active_operator().is_none() && self.pre_count.is_some()
             || self.active_operator().is_some() && self.post_count.is_some()
         {
-            context.add_identifier("VimCount");
+            context.add("VimCount");
         }
 
         let active_operator = self.active_operator();
 
         if let Some(active_operator) = active_operator {
             for context_flag in active_operator.context_flags().into_iter() {
-                context.add_identifier(*context_flag);
+                context.add(*context_flag);
             }
         }
 
-        context.add_key(
+        context.set(
             "vim_operator",
             active_operator.map(|op| op.id()).unwrap_or_else(|| "none"),
         );
