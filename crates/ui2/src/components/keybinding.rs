@@ -72,6 +72,11 @@ impl KeyBinding {
             "down" => Some(Icon::ArrowDown),
             "backspace" => Some(Icon::Backspace),
             "delete" => Some(Icon::Delete),
+            "enter" => Some(Icon::Return),
+            "escape" => Some(Icon::Escape),
+            "return" => Some(Icon::Return),
+            "space" => Some(Icon::Space),
+            "tab" => Some(Icon::Tab),
             _ => None,
         }
     }
