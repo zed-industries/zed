@@ -21,9 +21,9 @@ impl RenderOnce for KeyBinding {
                 h_stack()
                     .flex_none()
                     .gap_0p5()
-                    .bg(cx.theme().colors().element_background)
                     .p_0p5()
                     .rounded_sm()
+                    .text_color(cx.theme().colors().text_muted)
                     .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
                     .when(keystroke.modifiers.control, |el| {
                         el.child(KeyIcon::new(Icon::Control))
@@ -70,6 +70,13 @@ impl KeyBinding {
             "down" => Some(Icon::ArrowDown),
             "backspace" => Some(Icon::Backspace),
             "delete" => Some(Icon::Delete),
+            "return" => Some(Icon::Return),
+            "enter" => Some(Icon::Return),
+            "tab" => Some(Icon::Tab),
+            "space" => Some(Icon::Space),
+            "escape" => Some(Icon::Escape),
+            "pagedown" => Some(Icon::PageDown),
+            "pageup" => Some(Icon::PageUp),
             _ => None,
         }
     }
@@ -100,7 +107,7 @@ impl RenderOnce for Key {
             .h(rems(14. / 16.))
             .text_ui()
             .line_height(relative(1.))
-            .text_color(cx.theme().colors().text)
+            .text_color(cx.theme().colors().text_muted)
             .child(self.key.clone())
     }
 }
@@ -118,9 +125,11 @@ pub struct KeyIcon {
 
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div()
-            .w(rems(14. / 16.))
-            .child(IconElement::new(self.icon).size(IconSize::Small))
+        div().w(rems(14. / 16.)).child(
+            IconElement::new(self.icon)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        )
     }
 }
 
