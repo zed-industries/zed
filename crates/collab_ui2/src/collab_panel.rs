@@ -2323,7 +2323,7 @@ fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement
 }
 
 impl Render for CollabPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))

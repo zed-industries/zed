@@ -781,7 +781,7 @@ impl Element for Div {
                     child_layout_ids = self
                         .children
                         .iter_mut()
-                        .map(|child| child.layout(cx))
+                        .map(|child| child.request_layout(cx))
                         .collect::<SmallVec<_>>();
                     cx.request_layout(&style, child_layout_ids.iter().copied())
                 })

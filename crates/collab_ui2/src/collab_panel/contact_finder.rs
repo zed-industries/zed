@@ -35,7 +35,7 @@ impl ContactFinder {
 }
 
 impl Render for ContactFinder {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
             .elevation_3(cx)
             .child(

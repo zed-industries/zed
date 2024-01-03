@@ -1,5 +1,5 @@
 use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
-use gpui::{relative, rems, Action, Div, FocusHandle, IntoElement, Keystroke};
+use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -11,9 +11,7 @@ pub struct KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    type Output = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_stack()
             .flex_none()
             .gap_2()
@@ -87,9 +85,7 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    type Output = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let single_char = self.key.len() == 1;
 
         div()
@@ -121,9 +117,7 @@ pub struct KeyIcon {
 }
 
 impl RenderOnce for KeyIcon {
-    type Output = Div;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div()
             .w(rems(14. / 16.))
             .child(IconElement::new(self.icon).size(IconSize::Small))

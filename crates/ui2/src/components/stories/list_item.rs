@@ -7,7 +7,7 @@ use crate::{Icon, ListItem};
 pub struct ListItemStory;
 
 impl Render for ListItemStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container()
             .bg(cx.theme().colors().background)
             .child(Story::title_for::<ListItem>())

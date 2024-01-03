@@ -104,7 +104,7 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
             return div();
         };

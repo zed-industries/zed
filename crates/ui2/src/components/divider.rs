@@ -1,4 +1,4 @@
-use gpui::{Div, Hsla, IntoElement};
+use gpui::{Hsla, IntoElement};
 
 use crate::prelude::*;
 
@@ -31,9 +31,7 @@ pub struct Divider {
 }
 
 impl RenderOnce for Divider {
-    type Output = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {

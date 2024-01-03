@@ -142,7 +142,7 @@ impl FocusableView for ChannelModal {
 }
 
 impl Render for ChannelModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let channel_store = self.channel_store.read(cx);
         let Some(channel) = channel_store.channel_for_id(self.channel_id) else {
             return div();

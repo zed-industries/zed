@@ -66,7 +66,7 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         div().track_focus(&self.focus).size_full().children(
             self.frame
                 .as_ref()

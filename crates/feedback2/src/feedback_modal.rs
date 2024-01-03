@@ -396,7 +396,7 @@ impl FeedbackModal {
 }
 
 impl Render for FeedbackModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.update_submission_state(cx);
 
         let submit_button_text = if self.awaiting_submission() {

@@ -181,7 +181,7 @@ impl CopilotCodeVerification {
 }
 
 impl Render for CopilotCodeVerification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let prompt = match &self.status {
             Status::SigningIn {
                 prompt: Some(prompt),

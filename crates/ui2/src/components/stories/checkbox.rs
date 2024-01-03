@@ -7,7 +7,7 @@ use crate::{h_stack, Checkbox};
 pub struct CheckboxStory;
 
 impl Render for CheckboxStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<Checkbox>())
             .child(Story::label("Default"))

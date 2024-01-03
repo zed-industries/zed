@@ -9,7 +9,7 @@ pub struct ToolbarControls {
 }
 
 impl Render for ToolbarControls {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let include_warnings = self
             .editor
             .as_ref()

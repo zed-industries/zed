@@ -7,7 +7,7 @@ use crate::{List, ListItem};
 pub struct ListStory;
 
 impl Render for ListStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<List>())
             .child(Story::label("Default"))

@@ -1867,7 +1867,7 @@ impl FocusableView for Pane {
 }
 
 impl Render for Pane {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
@@ -2746,7 +2746,7 @@ mod tests {
 }
 
 impl Render for DraggedTab {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         let item = &self.pane.read(cx).items[self.ix];
         let label = item.tab_content(Some(self.detail), false, cx);

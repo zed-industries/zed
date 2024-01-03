@@ -6,6 +6,10 @@ use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug};
 
+/// Implemented by types that participate in laying out and painting the contents of a window.
+/// Elements form a tree and are laid out according to web-based layout rules.
+/// Rather than calling methods on implementers of this trait directly, you'll usually call `into_any` to convert  them into an AnyElement, which manages state internally.
+/// You can create custom elements by implementing this trait.
 pub trait Element: 'static + IntoElement {
     type State: 'static;
 
@@ -107,15 +111,13 @@ pub trait IntoElement: Sized {
 }
 
 pub trait Render: 'static + Sized {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element;
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement;
 }
 
 /// You can derive [IntoElement] on any type that implements this trait.
 /// It is used to allow views to be expressed in terms of abstract data.
 pub trait RenderOnce: 'static {
-    type Output: IntoElement;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output;
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement;
 }
 
 pub trait ParentElement {
@@ -139,62 +141,29 @@ pub trait ParentElement {
     }
 }
 
-pub struct Component<C> {
-    component: Option<C>,
-}
+pub struct Component<C: RenderOnce>(Option<C>);
 
-pub struct ComponentState<C: RenderOnce> {
-    rendered_element: Option<<C::Output as IntoElement>::Element>,
-    rendered_element_state: Option<<<C::Output as IntoElement>::Element as Element>::State>,
-}
-
-impl<C> Component<C> {
+impl<C: RenderOnce> Component<C> {
     pub fn new(component: C) -> Self {
-        Component {
-            component: Some(component),
-        }
+        Component(Some(component))
     }
 }
 
 impl<C: RenderOnce> Element for Component<C> {
-    type State = ComponentState<C>;
+    type State = AnyElement;
 
     fn request_layout(
         &mut self,
-        state: Option<Self::State>,
+        _: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.component.take().unwrap().render(cx).into_element();
-        if let Some(element_id) = element.element_id() {
-            let layout_id =
-                cx.with_element_state(element_id, |state, cx| element.request_layout(state, cx));
-            let state = ComponentState {
-                rendered_element: Some(element),
-                rendered_element_state: None,
-            };
-            (layout_id, state)
-        } else {
-            let (layout_id, state) =
-                element.request_layout(state.and_then(|s| s.rendered_element_state), cx);
-            let state = ComponentState {
-                rendered_element: Some(element),
-                rendered_element_state: Some(state),
-            };
-            (layout_id, state)
-        }
+        let mut element = self.0.take().unwrap().render(cx).into_any_element();
+        let layout_id = element.request_layout(cx);
+        (layout_id, element)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        let mut element = state.rendered_element.take().unwrap();
-        if let Some(element_id) = element.element_id() {
-            cx.with_element_state(element_id, |element_state, cx| {
-                let mut element_state = element_state.unwrap();
-                element.paint(bounds, &mut element_state, cx);
-                ((), element_state)
-            });
-        } else {
-            element.paint(bounds, state.rendered_element_state.as_mut().unwrap(), cx);
-        }
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
+        element.paint(cx)
     }
 }
 
@@ -216,7 +185,7 @@ pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;
 
-    fn layout(&mut self, cx: &mut WindowContext) -> LayoutId;
+    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId;
 
     fn paint(&mut self, cx: &mut WindowContext);
 
@@ -391,7 +360,7 @@ where
         self.as_ref().unwrap().element_id()
     }
 
-    fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
         DrawableElement::request_layout(self.as_mut().unwrap(), cx)
     }
 
@@ -431,8 +400,8 @@ impl AnyElement {
         AnyElement(element)
     }
 
-    pub fn layout(&mut self, cx: &mut WindowContext) -> LayoutId {
-        self.0.layout(cx)
+    pub fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+        self.0.request_layout(cx)
     }
 
     pub fn paint(&mut self, cx: &mut WindowContext) {
@@ -471,7 +440,7 @@ impl Element for AnyElement {
         _: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let layout_id = self.layout(cx);
+        let layout_id = self.request_layout(cx);
         (layout_id, ())
     }
 

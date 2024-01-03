@@ -9,7 +9,7 @@ use crate::{Indicator, Tab};
 pub struct TabStory;
 
 impl Render for TabStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<Tab>())
             .child(Story::label("Default"))

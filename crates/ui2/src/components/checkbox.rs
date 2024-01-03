@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, Div, Element, ElementId, IntoElement, Styled, WindowContext};
+use gpui::{div, prelude::*, Element, ElementId, IntoElement, Styled, WindowContext};
 
 use crate::prelude::*;
 use crate::{Color, Icon, IconElement, Selection};
@@ -19,9 +19,7 @@ pub struct Checkbox {
 }
 
 impl RenderOnce for Checkbox {
-    type Output = gpui::Stateful<Div>;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {

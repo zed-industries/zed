@@ -58,7 +58,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         h_stack().full().track_focus(&self.focus_handle).child(
             v_stack()
                 .w_96()

@@ -1,7 +1,7 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    BackgroundExecutor, Bounds, ClipboardItem, Context, Element, Entity, EventEmitter,
-    ForegroundExecutor, InputEvent, KeyDownEvent, Keystroke, Model, ModelContext, Pixels, Platform,
+    BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
+    InputEvent, IntoElement, KeyDownEvent, Keystroke, Model, ModelContext, Pixels, Platform,
     PlatformWindow, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
     TestWindowHandlers, TextSystem, View, ViewContext, VisualContext, WindowBounds, WindowContext,
     WindowHandle, WindowOptions,
@@ -731,7 +731,7 @@ impl AnyWindowHandle {
 pub struct EmptyView {}
 
 impl Render for EmptyView {
-    fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> impl IntoElement {
         div()
     }
 }

@@ -87,7 +87,7 @@ impl<V: Render> Element for View<V> {
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
         let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
-        let layout_id = element.layout(cx);
+        let layout_id = element.request_layout(cx);
         (layout_id, Some(element))
     }
 
@@ -321,7 +321,7 @@ mod any_view {
     ) -> (LayoutId, AnyElement) {
         let view = view.clone().downcast::<V>().unwrap();
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
-        let layout_id = element.layout(cx);
+        let layout_id = element.request_layout(cx);
         (layout_id, element)
     }
 

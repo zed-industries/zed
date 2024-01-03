@@ -1,5 +1,5 @@
 use gpui::{
-    div, DismissEvent, Element, EventEmitter, InteractiveElement, ParentElement, Render,
+    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
     SemanticVersion, StatefulInteractiveElement, Styled, ViewContext,
 };
 use menu::Cancel;
@@ -13,7 +13,7 @@ pub struct UpdateNotification {
 impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let app_name = cx.global::<ReleaseChannel>().display_name();
 
         v_stack()

@@ -222,7 +222,7 @@ impl ChannelView {
 impl EventEmitter<EditorEvent> for ChannelView {}
 
 impl Render for ChannelView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.editor.clone()
     }
 }

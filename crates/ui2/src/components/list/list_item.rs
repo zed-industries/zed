@@ -1,6 +1,4 @@
-use gpui::{
-    px, AnyElement, AnyView, ClickEvent, Div, MouseButton, MouseDownEvent, Pixels, Stateful,
-};
+use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
 use smallvec::SmallVec;
 
 use crate::{prelude::*, Disclosure};
@@ -147,9 +145,7 @@ impl ParentElement for ListItem {
 }
 
 impl RenderOnce for ListItem {
-    type Output = Stateful<Div>;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_stack()
             .id(self.id)
             .w_full()

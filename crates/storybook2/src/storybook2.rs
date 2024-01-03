@@ -113,7 +113,7 @@ impl StoryWrapper {
 }
 
 impl Render for StoryWrapper {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()

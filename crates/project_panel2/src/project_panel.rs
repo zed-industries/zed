@@ -1480,7 +1480,7 @@ impl ProjectPanel {
 }
 
 impl Render for ProjectPanel {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let has_worktree = self.visible_entries.len() != 0;
 
         if has_worktree {

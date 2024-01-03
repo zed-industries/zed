@@ -1,14 +1,10 @@
-use gpui::Div;
-
 use crate::prelude::*;
 
 #[derive(IntoElement)]
 pub struct ListSeparator;
 
 impl RenderOnce for ListSeparator {
-    type Output = Div;
-
-    fn render(self, cx: &mut WindowContext) -> Self::Output {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         div()
             .h_px()
             .w_full()

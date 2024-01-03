@@ -279,7 +279,7 @@ pub enum ViewEvent {
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if self.has_matches() {
             div()
                 .flex_1()
@@ -1548,7 +1548,7 @@ impl ProjectSearchBar {
 }
 
 impl Render for ProjectSearchBar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(search) = self.active_project_search.clone() else {
             return div();
         };

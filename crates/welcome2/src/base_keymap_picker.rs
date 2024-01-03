@@ -64,7 +64,7 @@ impl BaseKeymapSelector {
 }
 
 impl Render for BaseKeymapSelector {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }

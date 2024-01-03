@@ -1,4 +1,4 @@
-use gpui::{div, img, px, Element, ParentElement, Render, Styled, ViewContext};
+use gpui::{div, img, px, IntoElement, ParentElement, Render, Styled, ViewContext};
 use story::Story;
 
 use crate::{ActiveTheme, PlayerColors};
@@ -6,7 +6,7 @@ use crate::{ActiveTheme, PlayerColors};
 pub struct PlayerStory;
 
 impl Render for PlayerStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container().child(
             div()
                 .flex()

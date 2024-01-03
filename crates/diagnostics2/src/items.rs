@@ -21,7 +21,7 @@ pub struct DiagnosticIndicator {
 }
 
 impl Render for DiagnosticIndicator {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_stack().child(
                 IconElement::new(Icon::Check)

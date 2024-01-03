@@ -7,7 +7,7 @@ use ui::prelude::*;
 pub struct ZIndexStory;
 
 impl Render for ZIndexStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container().child(Story::title("z-index")).child(
             div()
                 .flex()
@@ -80,9 +80,7 @@ struct ZIndexExample {
 }
 
 impl RenderOnce for ZIndexExample {
-    type Output = Div;
-
-    fn render(self, _cx: &mut WindowContext) -> Self::Output {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div()
             .relative()
             .size_full()

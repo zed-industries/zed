@@ -232,7 +232,7 @@ impl ContextMenuItem {
 }
 
 impl Render for ContextMenu {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().elevation_2(cx).flex().flex_row().child(
             v_stack()
                 .min_w(px(200.))

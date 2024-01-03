@@ -17,7 +17,7 @@ impl DeployFeedbackButton {
 }
 
 impl Render for DeployFeedbackButton {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_open = self
             .workspace
             .upgrade()

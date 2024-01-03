@@ -1,7 +1,5 @@
 use editor::Editor;
-use gpui::{
-    div, Element, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView,
-};
+use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView};
 use std::sync::Arc;
 use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
@@ -38,7 +36,7 @@ impl ActiveBufferLanguage {
 }
 
 impl Render for ActiveBufferLanguage {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()

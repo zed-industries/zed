@@ -118,7 +118,7 @@ impl ProjectSharedNotification {
 }
 
 impl Render for ProjectSharedNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         // TODO: Is there a better place for us to initialize the font?
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);

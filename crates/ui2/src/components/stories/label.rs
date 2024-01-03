@@ -5,7 +5,7 @@ use story::Story;
 pub struct LabelStory;
 
 impl Render for LabelStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl Element {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<Label>())
             .child(Story::label("Default"))
