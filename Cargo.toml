@@ -32,7 +32,6 @@ members = [
     "crates/drag_and_drop",
     "crates/editor",
     "crates/feature_flags",
-    "crates/feature_flags2",
     "crates/feedback",
     "crates/file_finder",
     "crates/fs",
@@ -47,7 +46,6 @@ members = [
     "crates/gpui2",
     "crates/gpui2_macros",
     "crates/install_cli",
-    "crates/install_cli2",
     "crates/journal",
     "crates/journal",
     "crates/language",
@@ -108,8 +106,7 @@ members = [
     "crates/welcome",
     "crates/xtask",
     "crates/zed",
-    "crates/zed-actions",
-    "crates/zed_actions2"
+    "crates/zed_actions",
 ]
 default-members = ["crates/zed"]
 resolver = "2"

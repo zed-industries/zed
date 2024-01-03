@@ -37,7 +37,7 @@ lsp = { package = "lsp2", path = "../lsp2" }
 multi_buffer = { path = "../multi_buffer" }
 project = { package = "project2", path = "../project2" }
 rpc = { package = "rpc2", path = "../rpc2" }
-rich_text = { package = "rich_text2", path = "../rich_text2" }
+rich_text = { path = "../rich_text" }
 settings = { package="settings2", path = "../settings2" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }

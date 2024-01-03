@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 client = { package = "client2", path = "../client2" }
 editor = { path = "../editor" }
-feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
+feature_flags = { path = "../feature_flags" }
 fs = { package = "fs2", path = "../fs2" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 gpui = { package = "gpui2", path = "../gpui2" }

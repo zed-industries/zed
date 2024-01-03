@@ -14,13 +14,12 @@ test-support = [
     "util/test-support",
 ]
 
-
 [dependencies]
 collections = { path = "../collections" }
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 sum_tree = { path = "../sum_tree" }
-theme = { path = "../theme" }
-language = { path = "../language" }
+theme = { package = "theme2", path = "../theme2" }
+language = { package = "language2", path = "../language2" }
 util = { path = "../util" }
 anyhow.workspace = true
 futures.workspace = true

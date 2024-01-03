@@ -9,7 +9,7 @@ path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
-ai = { package = "ai2", path = "../ai2" }
+ai = { path = "../ai" }
 client = { package = "client2", path = "../client2" }
 collections = { path = "../collections"}
 editor = { path = "../editor" }
@@ -44,7 +44,7 @@ smol.workspace = true
 tiktoken-rs.workspace = true
 
 [dev-dependencies]
-ai = { package = "ai2", path = "../ai2", features = ["test-support"]}
+ai = { path = "../ai", features = ["test-support"]}
 editor = { path = "../editor", features = ["test-support"] }
 project = { package = "project2", path = "../project2", features = ["test-support"] }
 

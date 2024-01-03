@@ -20,7 +20,7 @@ ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }
 workspace = { path = "../workspace" }
-zed_actions = { package = "zed_actions2", path = "../zed_actions2" }
+zed_actions = { path = "../zed_actions" }
 anyhow.workspace = true
 serde.workspace = true
 

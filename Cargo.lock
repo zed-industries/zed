@@ -82,33 +82,6 @@ dependencies = [
  "async-trait",
  "bincode",
  "futures 0.3.28",
- "gpui",
- "isahc",
- "language",
- "lazy_static",
- "log",
- "matrixmultiply",
- "ordered-float 2.10.0",
- "parking_lot 0.11.2",
- "parse_duration",
- "postage",
- "rand 0.8.5",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "tiktoken-rs",
- "util",
-]
-
-[[package]]
-name = "ai2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bincode",
- "futures 0.3.28",
  "gpui2",
  "isahc",
  "language2",
@@ -329,7 +302,7 @@ checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 name = "assistant"
 version = "0.1.0"
 dependencies = [
- "ai2",
+ "ai",
  "anyhow",
  "chrono",
  "client2",
@@ -1301,7 +1274,7 @@ dependencies = [
  "clock",
  "collections",
  "db2",
- "feature_flags2",
+ "feature_flags",
  "futures 0.3.28",
  "gpui2",
  "image",
@@ -1512,7 +1485,7 @@ dependencies = [
  "chrono",
  "collections",
  "db2",
- "feature_flags2",
+ "feature_flags",
  "futures 0.3.28",
  "gpui2",
  "image",
@@ -1743,7 +1716,7 @@ dependencies = [
  "collections",
  "db2",
  "editor",
- "feature_flags2",
+ "feature_flags",
  "feedback",
  "futures 0.3.28",
  "fuzzy2",
@@ -1758,7 +1731,7 @@ dependencies = [
  "pretty_assertions",
  "project2",
  "recent_projects",
- "rich_text2",
+ "rich_text",
  "rpc2",
  "schemars",
  "serde",
@@ -1773,7 +1746,7 @@ dependencies = [
  "util",
  "vcs_menu",
  "workspace",
- "zed_actions2",
+ "zed_actions",
 ]
 
 [[package]]
@@ -1828,7 +1801,7 @@ dependencies = [
  "ui2",
  "util",
  "workspace",
- "zed_actions2",
+ "zed_actions",
 ]
 
 [[package]]
@@ -1947,7 +1920,7 @@ dependencies = [
  "theme2",
  "util",
  "workspace",
- "zed_actions2",
+ "zed_actions",
 ]
 
 [[package]]
@@ -2645,7 +2618,7 @@ dependencies = [
  "postage",
  "project2",
  "rand 0.8.5",
- "rich_text2",
+ "rich_text",
  "rpc2",
  "schemars",
  "serde",
@@ -2838,14 +2811,6 @@ checksum = "6999dc1837253364c2ebb0704ba97994bd874e8f195d665c50b7548f6ea92764"
 
 [[package]]
 name = "feature_flags"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui",
-]
-
-[[package]]
-name = "feature_flags2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3993,20 +3958,8 @@ name = "install_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "gpui",
- "log",
- "smol",
- "util",
-]
-
-[[package]]
-name = "install_cli2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "gpui2",
  "log",
- "serde",
  "smol",
  "util",
 ]
@@ -5011,7 +4964,7 @@ dependencies = [
  "project2",
  "pulldown-cmark",
  "rand 0.8.5",
- "rich_text2",
+ "rich_text",
  "schemars",
  "serde",
  "serde_derive",
@@ -5209,7 +5162,7 @@ dependencies = [
  "clock",
  "collections",
  "db2",
- "feature_flags2",
+ "feature_flags",
  "gpui2",
  "rpc2",
  "settings2",
@@ -6831,24 +6784,6 @@ dependencies = [
  "anyhow",
  "collections",
  "futures 0.3.28",
- "gpui",
- "language",
- "lazy_static",
- "pulldown-cmark",
- "smallvec",
- "smol",
- "sum_tree",
- "theme",
- "util",
-]
-
-[[package]]
-name = "rich_text2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "futures 0.3.28",
  "gpui2",
  "language2",
  "lazy_static",
@@ -7576,7 +7511,7 @@ dependencies = [
 name = "semantic_index2"
 version = "0.1.0"
 dependencies = [
- "ai2",
+ "ai",
  "anyhow",
  "async-trait",
  "client2",
@@ -7778,7 +7713,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "feature_flags2",
+ "feature_flags",
  "fs2",
  "futures 0.3.28",
  "gpui2",
@@ -8909,7 +8844,7 @@ version = "0.1.0"
 dependencies = [
  "client2",
  "editor",
- "feature_flags2",
+ "feature_flags",
  "fs2",
  "fuzzy2",
  "gpui2",
@@ -10026,7 +9961,7 @@ dependencies = [
  "ui2",
  "util",
  "workspace",
- "zed_actions2",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10427,7 +10362,7 @@ dependencies = [
  "fs2",
  "fuzzy2",
  "gpui2",
- "install_cli2",
+ "install_cli",
  "log",
  "picker",
  "project2",
@@ -10697,7 +10632,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui2",
  "indoc",
- "install_cli2",
+ "install_cli",
  "itertools 0.10.5",
  "language2",
  "lazy_static",
@@ -10802,7 +10737,7 @@ name = "zed"
 version = "0.119.0"
 dependencies = [
  "activity_indicator",
- "ai2",
+ "ai",
  "anyhow",
  "assistant",
  "async-compression",
@@ -10828,7 +10763,7 @@ dependencies = [
  "diagnostics",
  "editor",
  "env_logger",
- "feature_flags2",
+ "feature_flags",
  "feedback",
  "file_finder",
  "fs2",
@@ -10839,7 +10774,7 @@ dependencies = [
  "ignore",
  "image",
  "indexmap 1.9.3",
- "install_cli2",
+ "install_cli",
  "isahc",
  "journal",
  "language2",
@@ -10924,19 +10859,11 @@ dependencies = [
  "vim",
  "welcome",
  "workspace",
- "zed_actions2",
+ "zed_actions",
 ]
 
 [[package]]
-name = "zed-actions"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "serde",
-]
-
-[[package]]
-name = "zed_actions2"
+name = "zed_actions"
 version = "0.1.0"
 dependencies = [
  "gpui2",

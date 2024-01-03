@@ -35,7 +35,7 @@ workspace = { path = "../workspace" }
 theme = { package = "theme2", path = "../theme2" }
 ui = { package = "ui2", path = "../ui2"}
 diagnostics = { path = "../diagnostics" }
-zed_actions = { package = "zed_actions2", path = "../zed_actions2" }
+zed_actions = { path = "../zed_actions" }
 
 [dev-dependencies]
 indoc.workspace = true

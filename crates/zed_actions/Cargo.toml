@@ -1,5 +1,5 @@
 [package]
-name = "zed-actions"
+name = "zed_actions"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -7,5 +7,5 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 serde.workspace = true

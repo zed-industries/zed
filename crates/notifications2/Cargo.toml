@@ -22,7 +22,7 @@ client = { package = "client2", path = "../client2" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 db = { package = "db2", path = "../db2" }
-feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
+feature_flags = { path = "../feature_flags" }
 gpui = { package = "gpui2", path = "../gpui2" }
 rpc = { package = "rpc2", path = "../rpc2" }
 settings = { package = "settings2", path = "../settings2" }
