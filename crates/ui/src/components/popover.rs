@@ -1,10 +1,9 @@
-use gpui::{
-    div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled,
-    WindowContext,
-};
-use smallvec::SmallVec;
 use crate::prelude::*;
 use crate::v_stack;
+use gpui::{
+    div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled, WindowContext,
+};
+use smallvec::SmallVec;
 
 /// A popover is used to display a menu or show some options.
 ///

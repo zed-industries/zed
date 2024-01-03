@@ -1,6 +1,4 @@
-use gpui::{
-    div, AnyElement, IntoElement, ParentElement, RenderOnce, Styled, WindowContext,
-};
+use gpui::{div, AnyElement, IntoElement, ParentElement, RenderOnce, Styled, WindowContext};
 use smallvec::SmallVec;
 
 #[derive(Default, IntoElement)]
