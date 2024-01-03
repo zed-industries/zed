@@ -1,7 +1,7 @@
-use gpui::{actions, impl_actions, AppContext, ViewContext};
+use gpui::{actions, impl_actions, ViewContext};
 use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
 use serde_derive::Deserialize;
-use workspace::{searchable::Direction, Pane, Workspace};
+use workspace::{searchable::Direction, Workspace};
 
 use crate::{motion::Motion, normal::move_cursor, state::SearchState, Vim};
 
@@ -44,21 +44,21 @@ struct Replacement {
     is_case_sensitive: bool,
 }
 
+actions!(vim, [SearchSubmit]);
 impl_actions!(
     vim,
-    [MoveToNext, MoveToPrev, Search, FindCommand, ReplaceCommand]
+    [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
 );
-actions!(vim, [SearchSubmit]);
 
-pub(crate) fn init(cx: &mut AppContext) {
-    cx.add_action(move_to_next);
-    cx.add_action(move_to_prev);
-    cx.add_action(search);
-    cx.add_action(search_submit);
-    cx.add_action(search_deploy);
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(move_to_next);
+    workspace.register_action(move_to_prev);
+    workspace.register_action(search);
+    workspace.register_action(search_submit);
+    workspace.register_action(search_deploy);
 
-    cx.add_action(find_command);
-    cx.add_action(replace_command);
+    workspace.register_action(find_command);
+    workspace.register_action(replace_command);
 }
 
 fn move_to_next(workspace: &mut Workspace, action: &MoveToNext, cx: &mut ViewContext<Workspace>) {
@@ -106,9 +106,9 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
 }
 
 // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
-fn search_deploy(_: &mut Pane, _: &buffer_search::Deploy, cx: &mut ViewContext<Pane>) {
+fn search_deploy(_: &mut Workspace, _: &buffer_search::Deploy, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, _| vim.workspace_state.search = Default::default());
-    cx.propagate_action();
+    cx.propagate();
 }
 
 fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewContext<Workspace>) {
@@ -347,58 +347,50 @@ fn parse_replace_all(query: &str) -> Replacement {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
     use editor::DisplayPoint;
     use search::BufferSearchBar;
 
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_move_to_next(
-        cx: &mut gpui::TestAppContext,
-        deterministic: Arc<gpui::executor::Deterministic>,
-    ) {
+    async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["*"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["*"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["#"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["#"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["2", "*"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_state("ˇhi\nhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["g", "*"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["n"]);
         cx.assert_state("hi\nhigh\nˇhi\n", Mode::Normal);
 
         cx.simulate_keystrokes(["g", "#"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
         cx.assert_state("hi\nˇhigh\nhi\n", Mode::Normal);
     }
 
     #[gpui::test]
-    async fn test_search(
-        cx: &mut gpui::TestAppContext,
-        deterministic: Arc<gpui::executor::Deterministic>,
-    ) {
+    async fn test_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
@@ -414,11 +406,11 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        search_bar.read_with(cx.cx, |bar, cx| {
+        cx.update_view(search_bar, |bar, cx| {
             assert_eq!(bar.query(cx), "cc");
         });
 
-        deterministic.run_until_parked();
+        cx.run_until_parked();
 
         cx.update_editor(|editor, cx| {
             let highlights = editor.all_text_background_highlights(cx);
@@ -440,51 +432,41 @@ mod test {
 
         // ?<enter> to go to previous
         cx.simulate_keystrokes(["?", "enter"]);
-        deterministic.run_until_parked();
         cx.assert_state("aa\nbb\ncc\ncc\nˇcc\n", Mode::Normal);
         cx.simulate_keystrokes(["?", "enter"]);
-        deterministic.run_until_parked();
         cx.assert_state("aa\nbb\ncc\nˇcc\ncc\n", Mode::Normal);
 
         // /<enter> to go to next
         cx.simulate_keystrokes(["/", "enter"]);
-        deterministic.run_until_parked();
         cx.assert_state("aa\nbb\ncc\ncc\nˇcc\n", Mode::Normal);
 
         // ?{search}<enter> to search backwards
         cx.simulate_keystrokes(["?", "b", "enter"]);
-        deterministic.run_until_parked();
         cx.assert_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
 
         // works with counts
         cx.simulate_keystrokes(["4", "/", "c"]);
-        deterministic.run_until_parked();
         cx.simulate_keystrokes(["enter"]);
         cx.assert_state("aa\nbb\ncc\ncˇc\ncc\n", Mode::Normal);
 
         // check that searching resumes from cursor, not previous match
         cx.set_state("ˇaa\nbb\ndd\ncc\nbb\n", Mode::Normal);
         cx.simulate_keystrokes(["/", "d"]);
-        deterministic.run_until_parked();
         cx.simulate_keystrokes(["enter"]);
         cx.assert_state("aa\nbb\nˇdd\ncc\nbb\n", Mode::Normal);
         cx.update_editor(|editor, cx| editor.move_to_beginning(&Default::default(), cx));
         cx.assert_state("ˇaa\nbb\ndd\ncc\nbb\n", Mode::Normal);
         cx.simulate_keystrokes(["/", "b"]);
-        deterministic.run_until_parked();
         cx.simulate_keystrokes(["enter"]);
         cx.assert_state("aa\nˇbb\ndd\ncc\nbb\n", Mode::Normal);
     }
 
     #[gpui::test]
-    async fn test_non_vim_search(
-        cx: &mut gpui::TestAppContext,
-        deterministic: Arc<gpui::executor::Deterministic>,
-    ) {
+    async fn test_non_vim_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, false).await;
         cx.set_state("ˇone one one one", Mode::Normal);
         cx.simulate_keystrokes(["cmd-f"]);
-        deterministic.run_until_parked();
+        cx.run_until_parked();
 
         cx.assert_editor_state("«oneˇ» one one one");
         cx.simulate_keystrokes(["enter"]);

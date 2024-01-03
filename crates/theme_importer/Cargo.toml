@@ -9,7 +9,7 @@ any_ascii = "0.3.2"
 anyhow.workspace = true
 clap = { version = "4.4", features = ["derive"] }
 convert_case = "0.6.0"
-gpui = { package = "gpui2", path = "../gpui2" }
+gpui = { path = "../gpui" }
 indexmap = { version = "1.6.2", features = ["serde"] }
 json_comments = "0.2.2"
 log.workspace = true
@@ -19,5 +19,5 @@ rust-embed.workspace = true
 serde.workspace = true
 simplelog = "0.9"
 strum = { version = "0.25.0", features = ["derive"] }
-theme = { package = "theme2", path = "../theme2", features = ["importing-themes"] }
+theme = { path = "../theme", features = ["importing-themes"] }
 uuid.workspace = true

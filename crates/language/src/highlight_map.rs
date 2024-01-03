@@ -1,4 +1,4 @@
-use gpui::fonts::HighlightStyle;
+use gpui::HighlightStyle;
 use std::sync::Arc;
 use theme::SyntaxTheme;
 
@@ -79,23 +79,23 @@ impl Default for HighlightId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::color::Color;
+    use gpui::rgba;
 
     #[test]
     fn test_highlight_map() {
-        let theme = SyntaxTheme::new(
-            [
-                ("function", Color::from_u32(0x100000ff)),
-                ("function.method", Color::from_u32(0x200000ff)),
-                ("function.async", Color::from_u32(0x300000ff)),
-                ("variable.builtin.self.rust", Color::from_u32(0x400000ff)),
-                ("variable.builtin", Color::from_u32(0x500000ff)),
-                ("variable", Color::from_u32(0x600000ff)),
+        let theme = SyntaxTheme {
+            highlights: [
+                ("function", rgba(0x100000ff)),
+                ("function.method", rgba(0x200000ff)),
+                ("function.async", rgba(0x300000ff)),
+                ("variable.builtin.self.rust", rgba(0x400000ff)),
+                ("variable.builtin", rgba(0x500000ff)),
+                ("variable", rgba(0x600000ff)),
             ]
             .iter()
             .map(|(name, color)| (name.to_string(), (*color).into()))
             .collect(),
-        );
+        };
 
         let capture_names = &[
             "function.special",

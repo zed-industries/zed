@@ -4,7 +4,7 @@ use collections::HashMap;
 use futures::lock::Mutex;
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
-use lsp::LanguageServerBinary;
+use lsp2::LanguageServerBinary;
 use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;

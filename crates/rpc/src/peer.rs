@@ -342,7 +342,7 @@ impl Peer {
     pub fn add_test_connection(
         self: &Arc<Self>,
         connection: Connection,
-        executor: Arc<gpui::executor::Background>,
+        executor: gpui::BackgroundExecutor,
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,
@@ -559,7 +559,6 @@ mod tests {
     use async_tungstenite::tungstenite::Message as WebSocketMessage;
     use gpui::TestAppContext;
 
-    #[ctor::ctor]
     fn init_logger() {
         if std::env::var("RUST_LOG").is_ok() {
             env_logger::init();
@@ -568,7 +567,9 @@ mod tests {
 
     #[gpui::test(iterations = 50)]
     async fn test_request_response(cx: &mut TestAppContext) {
-        let executor = cx.foreground();
+        init_logger();
+
+        let executor = cx.executor();
 
         // create 2 clients connected to 1 server
         let server = Peer::new(0);
@@ -576,18 +577,18 @@ mod tests {
         let client2 = Peer::new(0);
 
         let (client1_to_server_conn, server_to_client_1_conn, _kill) =
-            Connection::in_memory(cx.background());
+            Connection::in_memory(cx.executor());
         let (client1_conn_id, io_task1, client1_incoming) =
-            client1.add_test_connection(client1_to_server_conn, cx.background());
+            client1.add_test_connection(client1_to_server_conn, cx.executor());
         let (_, io_task2, server_incoming1) =
-            server.add_test_connection(server_to_client_1_conn, cx.background());
+            server.add_test_connection(server_to_client_1_conn, cx.executor());
 
         let (client2_to_server_conn, server_to_client_2_conn, _kill) =
-            Connection::in_memory(cx.background());
+            Connection::in_memory(cx.executor());
         let (client2_conn_id, io_task3, client2_incoming) =
-            client2.add_test_connection(client2_to_server_conn, cx.background());
+            client2.add_test_connection(client2_to_server_conn, cx.executor());
         let (_, io_task4, server_incoming2) =
-            server.add_test_connection(server_to_client_2_conn, cx.background());
+            server.add_test_connection(server_to_client_2_conn, cx.executor());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();
@@ -664,25 +665,25 @@ mod tests {
 
     #[gpui::test(iterations = 50)]
     async fn test_order_of_response_and_incoming(cx: &mut TestAppContext) {
-        let executor = cx.foreground();
+        let executor = cx.executor();
         let server = Peer::new(0);
         let client = Peer::new(0);
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
-            Connection::in_memory(cx.background());
+            Connection::in_memory(executor.clone());
         let (client_to_server_conn_id, io_task1, mut client_incoming) =
-            client.add_test_connection(client_to_server_conn, cx.background());
+            client.add_test_connection(client_to_server_conn, executor.clone());
+
         let (server_to_client_conn_id, io_task2, mut server_incoming) =
-            server.add_test_connection(server_to_client_conn, cx.background());
+            server.add_test_connection(server_to_client_conn, executor.clone());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();
 
         executor
             .spawn(async move {
-                let request = server_incoming
-                    .next()
-                    .await
+                let future = server_incoming.next().await;
+                let request = future
                     .unwrap()
                     .into_any()
                     .downcast::<TypedEnvelope<proto::Ping>>()
@@ -762,16 +763,16 @@ mod tests {
 
     #[gpui::test(iterations = 50)]
     async fn test_dropping_request_before_completion(cx: &mut TestAppContext) {
-        let executor = cx.foreground();
+        let executor = cx.executor();
         let server = Peer::new(0);
         let client = Peer::new(0);
 
         let (client_to_server_conn, server_to_client_conn, _kill) =
-            Connection::in_memory(cx.background());
+            Connection::in_memory(cx.executor());
         let (client_to_server_conn_id, io_task1, mut client_incoming) =
-            client.add_test_connection(client_to_server_conn, cx.background());
+            client.add_test_connection(client_to_server_conn, cx.executor());
         let (server_to_client_conn_id, io_task2, mut server_incoming) =
-            server.add_test_connection(server_to_client_conn, cx.background());
+            server.add_test_connection(server_to_client_conn, cx.executor());
 
         executor.spawn(io_task1).detach();
         executor.spawn(io_task2).detach();
@@ -858,7 +859,7 @@ mod tests {
             .detach();
 
         // Allow the request to make some progress before dropping it.
-        cx.background().simulate_random_delay().await;
+        cx.executor().simulate_random_delay().await;
         drop(request1_task);
 
         request2_task.await;
@@ -874,13 +875,13 @@ mod tests {
 
     #[gpui::test(iterations = 50)]
     async fn test_disconnect(cx: &mut TestAppContext) {
-        let executor = cx.foreground();
+        let executor = cx.executor();
 
-        let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
+        let (client_conn, mut server_conn, _kill) = Connection::in_memory(executor.clone());
 
         let client = Peer::new(0);
         let (connection_id, io_handler, mut incoming) =
-            client.add_test_connection(client_conn, cx.background());
+            client.add_test_connection(client_conn, executor.clone());
 
         let (io_ended_tx, io_ended_rx) = oneshot::channel();
         executor
@@ -910,12 +911,12 @@ mod tests {
 
     #[gpui::test(iterations = 50)]
     async fn test_io_error(cx: &mut TestAppContext) {
-        let executor = cx.foreground();
-        let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
+        let executor = cx.executor();
+        let (client_conn, mut server_conn, _kill) = Connection::in_memory(executor.clone());
 
         let client = Peer::new(0);
         let (connection_id, io_handler, mut incoming) =
-            client.add_test_connection(client_conn, cx.background());
+            client.add_test_connection(client_conn, executor.clone());
         executor.spawn(io_handler).detach();
         executor
             .spawn(async move { incoming.next().await })

@@ -1,7 +1,7 @@
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::{anyhow, Context, Result};
 use collections::BTreeMap;
-use gpui::{keymap_matcher::Binding, AppContext, NoAction};
+use gpui::{Action, AppContext, KeyBinding, SharedString};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
@@ -73,9 +73,9 @@ impl KeymapFile {
                                     "Expected first item in array to be a string."
                                 )));
                             };
-                            cx.deserialize_action(&name, Some(data))
+                            cx.build_action(&name, Some(data))
                         }
-                        Value::String(name) => cx.deserialize_action(&name, None),
+                        Value::String(name) => cx.build_action(&name, None),
                         Value::Null => Ok(no_action()),
                         _ => {
                             return Some(Err(anyhow!("Expected two-element array, got {action:?}")))
@@ -87,16 +87,16 @@ impl KeymapFile {
                         )
                     })
                     .log_err()
-                    .map(|action| Binding::load(&keystroke, action, context.as_deref()))
+                    .map(|action| KeyBinding::load(&keystroke, action, context.as_deref()))
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-            cx.add_bindings(bindings);
+            cx.bind_keys(bindings);
         }
         Ok(())
     }
 
-    pub fn generate_json_schema(action_names: &[&'static str]) -> serde_json::Value {
+    pub fn generate_json_schema(action_names: &[SharedString]) -> serde_json::Value {
         let mut root_schema = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
             .into_generator()
@@ -138,7 +138,7 @@ impl KeymapFile {
 }
 
 fn no_action() -> Box<dyn gpui::Action> {
-    Box::new(NoAction {})
+    gpui::NoAction.boxed_clone()
 }
 
 #[cfg(test)]

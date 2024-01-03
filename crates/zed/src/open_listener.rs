@@ -54,7 +54,7 @@ impl OpenListener {
         )
     }
 
-    pub fn open_urls(&self, urls: Vec<String>) {
+    pub fn open_urls(&self, urls: &[String]) {
         self.triggered.store(true, Ordering::Release);
         let request = if let Some(server_name) =
             urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
@@ -101,7 +101,7 @@ impl OpenListener {
         None
     }
 
-    fn handle_file_urls(&self, urls: Vec<String>) -> Option<OpenRequest> {
+    fn handle_file_urls(&self, urls: &[String]) -> Option<OpenRequest> {
         let paths: Vec<_> = urls
             .iter()
             .flat_map(|url| url.strip_prefix("file://"))
@@ -187,105 +187,109 @@ pub async fn handle_cli_connection(
                 };
 
                 let mut errored = false;
-                match cx
-                    .update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                    .await
-                {
-                    Ok((workspace, items)) => {
-                        let mut item_release_futures = Vec::new();
 
-                        for (item, path) in items.into_iter().zip(&paths) {
-                            match item {
-                                Some(Ok(item)) => {
-                                    if let Some(point) = caret_positions.remove(path) {
-                                        if let Some(active_editor) = item.downcast::<Editor>() {
-                                            active_editor
-                                                .downgrade()
-                                                .update(&mut cx, |editor, cx| {
-                                                    let snapshot =
-                                                        editor.snapshot(cx).display_snapshot;
-                                                    let point = snapshot
-                                                        .buffer_snapshot
-                                                        .clip_point(point, Bias::Left);
-                                                    editor.change_selections(
-                                                        Some(Autoscroll::center()),
-                                                        cx,
-                                                        |s| s.select_ranges([point..point]),
-                                                    );
-                                                })
-                                                .log_err();
+                match cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx)) {
+                    Ok(task) => match task.await {
+                        Ok((workspace, items)) => {
+                            let mut item_release_futures = Vec::new();
+
+                            for (item, path) in items.into_iter().zip(&paths) {
+                                match item {
+                                    Some(Ok(item)) => {
+                                        if let Some(point) = caret_positions.remove(path) {
+                                            if let Some(active_editor) = item.downcast::<Editor>() {
+                                                workspace
+                                                    .update(&mut cx, |_, cx| {
+                                                        active_editor.update(cx, |editor, cx| {
+                                                            let snapshot = editor
+                                                                .snapshot(cx)
+                                                                .display_snapshot;
+                                                            let point = snapshot
+                                                                .buffer_snapshot
+                                                                .clip_point(point, Bias::Left);
+                                                            editor.change_selections(
+                                                                Some(Autoscroll::center()),
+                                                                cx,
+                                                                |s| s.select_ranges([point..point]),
+                                                            );
+                                                        });
+                                                    })
+                                                    .log_err();
+                                            }
                                         }
-                                    }
 
-                                    let released = oneshot::channel();
-                                    cx.update(|cx| {
-                                        item.on_release(
-                                            cx,
-                                            Box::new(move |_| {
-                                                let _ = released.0.send(());
-                                            }),
-                                        )
-                                        .detach();
-                                    });
-                                    item_release_futures.push(released.1);
-                                }
-                                Some(Err(err)) => {
-                                    responses
-                                        .send(CliResponse::Stderr {
-                                            message: format!("error opening {:?}: {}", path, err),
+                                        cx.update(|cx| {
+                                            let released = oneshot::channel();
+                                            item.on_release(
+                                                cx,
+                                                Box::new(move |_| {
+                                                    let _ = released.0.send(());
+                                                }),
+                                            )
+                                            .detach();
+                                            item_release_futures.push(released.1);
                                         })
                                         .log_err();
-                                    errored = true;
+                                    }
+                                    Some(Err(err)) => {
+                                        responses
+                                            .send(CliResponse::Stderr {
+                                                message: format!(
+                                                    "error opening {:?}: {}",
+                                                    path, err
+                                                ),
+                                            })
+                                            .log_err();
+                                        errored = true;
+                                    }
+                                    None => {}
                                 }
-                                None => {}
                             }
-                        }
 
-                        if wait {
-                            let background = cx.background();
-                            let wait = async move {
-                                if paths.is_empty() {
-                                    let (done_tx, done_rx) = oneshot::channel();
-                                    if let Some(workspace) = workspace.upgrade(&cx) {
-                                        let _subscription = cx.update(|cx| {
-                                            cx.observe_release(&workspace, move |_, _| {
+                            if wait {
+                                let background = cx.background_executor().clone();
+                                let wait = async move {
+                                    if paths.is_empty() {
+                                        let (done_tx, done_rx) = oneshot::channel();
+                                        let _subscription = workspace.update(&mut cx, |_, cx| {
+                                            cx.on_release(move |_, _, _| {
                                                 let _ = done_tx.send(());
                                             })
                                         });
-                                        drop(workspace);
                                         let _ = done_rx.await;
-                                    }
-                                } else {
-                                    let _ =
-                                        futures::future::try_join_all(item_release_futures).await;
-                                };
-                            }
-                            .fuse();
-                            futures::pin_mut!(wait);
+                                    } else {
+                                        let _ = futures::future::try_join_all(item_release_futures)
+                                            .await;
+                                    };
+                                }
+                                .fuse();
+                                futures::pin_mut!(wait);
 
-                            loop {
-                                // Repeatedly check if CLI is still open to avoid wasting resources
-                                // waiting for files or workspaces to close.
-                                let mut timer = background.timer(Duration::from_secs(1)).fuse();
-                                futures::select_biased! {
-                                    _ = wait => break,
-                                    _ = timer => {
-                                        if responses.send(CliResponse::Ping).is_err() {
-                                            break;
+                                loop {
+                                    // Repeatedly check if CLI is still open to avoid wasting resources
+                                    // waiting for files or workspaces to close.
+                                    let mut timer = background.timer(Duration::from_secs(1)).fuse();
+                                    futures::select_biased! {
+                                        _ = wait => break,
+                                        _ = timer => {
+                                            if responses.send(CliResponse::Ping).is_err() {
+                                                break;
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    Err(error) => {
-                        errored = true;
-                        responses
-                            .send(CliResponse::Stderr {
-                                message: format!("error opening {:?}: {}", paths, error),
-                            })
-                            .log_err();
-                    }
+                        Err(error) => {
+                            errored = true;
+                            responses
+                                .send(CliResponse::Stderr {
+                                    message: format!("error opening {:?}: {}", paths, error),
+                                })
+                                .log_err();
+                        }
+                    },
+                    Err(_) => errored = true,
                 }
 
                 responses

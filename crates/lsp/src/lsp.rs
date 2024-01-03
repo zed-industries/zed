@@ -5,7 +5,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
-use gpui::{executor, AsyncAppContext, Task};
+use gpui::{AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -62,7 +62,7 @@ pub struct LanguageServer {
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<usize, ResponseHandler>>>>,
     io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
-    executor: Arc<executor::Background>,
+    executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
@@ -210,7 +210,7 @@ impl LanguageServer {
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
         Stderr: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send + Clone,
+        F: FnMut(AnyNotification) + 'static + Send + Sync + Clone,
     {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
@@ -220,30 +220,35 @@ impl LanguageServer {
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
 
-        let stdout_input_task = cx.spawn(|cx| {
-            Self::handle_input(
-                stdout,
-                on_unhandled_notification.clone(),
-                notification_handlers.clone(),
-                response_handlers.clone(),
-                io_handlers.clone(),
-                cx,
-            )
-            .log_err()
+        let stdout_input_task = cx.spawn({
+            let on_unhandled_notification = on_unhandled_notification.clone();
+            let notification_handlers = notification_handlers.clone();
+            let response_handlers = response_handlers.clone();
+            let io_handlers = io_handlers.clone();
+            move |cx| {
+                Self::handle_input(
+                    stdout,
+                    on_unhandled_notification,
+                    notification_handlers,
+                    response_handlers,
+                    io_handlers,
+                    cx,
+                )
+                .log_err()
+            }
         });
         let stderr_input_task = stderr
             .map(|stderr| {
-                cx.spawn(|_| {
-                    Self::handle_stderr(stderr, io_handlers.clone(), stderr_capture.clone())
-                        .log_err()
-                })
+                let io_handlers = io_handlers.clone();
+                let stderr_captures = stderr_capture.clone();
+                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
             })
             .unwrap_or_else(|| Task::Ready(Some(None)));
         let input_task = cx.spawn(|_| async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
-        let output_task = cx.background().spawn({
+        let output_task = cx.background_executor().spawn({
             Self::handle_output(
                 stdin,
                 outbound_rx,
@@ -264,7 +269,7 @@ impl LanguageServer {
             code_action_kinds,
             next_id: Default::default(),
             outbound_tx,
-            executor: cx.background(),
+            executor: cx.background_executor().clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
@@ -481,10 +486,7 @@ impl LanguageServer {
                         completion_item: Some(CompletionItemCapability {
                             snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                                properties: vec![
-                                    "documentation".to_string(),
-                                    "additionalTextEdits".to_string(),
-                                ],
+                                properties: vec!["additionalTextEdits".to_string()],
                             }),
                             ..Default::default()
                         }),
@@ -610,7 +612,7 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, AsyncAppContext) -> Fut,
+        F: 'static + FnMut(T::Params, AsyncAppContext) -> Fut + Send,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
@@ -644,7 +646,7 @@ impl LanguageServer {
     #[must_use]
     pub fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + Send + FnMut(Params, AsyncAppContext),
+        F: 'static + FnMut(Params, AsyncAppContext) + Send,
         Params: DeserializeOwned,
     {
         let prev_handler = self.notification_handlers.lock().insert(
@@ -672,7 +674,7 @@ impl LanguageServer {
         mut f: F,
     ) -> Subscription
     where
-        F: 'static + Send + FnMut(Params, AsyncAppContext) -> Fut,
+        F: 'static + FnMut(Params, AsyncAppContext) -> Fut + Send,
         Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
@@ -685,7 +687,7 @@ impl LanguageServer {
                     match serde_json::from_str(params) {
                         Ok(params) => {
                             let response = f(params, cx.clone());
-                            cx.foreground()
+                            cx.foreground_executor()
                                 .spawn({
                                     let outbound_tx = outbound_tx.clone();
                                     async move {
@@ -780,20 +782,11 @@ impl LanguageServer {
         )
     }
 
-    // some child of string literal (be it "" or ``) which is the child of an attribute
-
-    // <Foo className="bar" />
-    // <Foo className={`bar`} />
-    // <Foo className={something + "bar"} />
-    // <Foo className={something + "bar"} />
-    // const classes = "awesome ";
-    // <Foo className={classes} />
-
     fn request_internal<T: request::Request>(
         next_id: &AtomicUsize,
         response_handlers: &Mutex<Option<HashMap<usize, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
-        executor: &Arc<executor::Background>,
+        executor: &BackgroundExecutor,
         params: T::Params,
     ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
     where
@@ -1071,8 +1064,9 @@ impl FakeLanguageServer {
             .on_request::<T, _, _>(move |params, cx| {
                 let result = handler(params, cx.clone());
                 let responded_tx = responded_tx.clone();
+                let executor = cx.background_executor().clone();
                 async move {
-                    cx.background().simulate_random_delay().await;
+                    executor.simulate_random_delay().await;
                     let result = result.await;
                     responded_tx.unbounded_send(()).ok();
                     result

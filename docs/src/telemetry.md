@@ -124,7 +124,7 @@ The following data is sent:
     - `operation`: The app operation that was performed
         - `first open`
         - `open`
-        - `close (only in GPUI2-powered Zed)`
+        - `close`
     - `milliseconds_since_first_event`: Same as above
 
 You can audit the metrics data that Zed has reported by running the command `zed: open telemetry log` from the command palette, or clicking `Help > View Telemetry Log` in the application menu.

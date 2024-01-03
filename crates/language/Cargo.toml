@@ -24,8 +24,7 @@ test-support = [
 [dependencies]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-fuzzy = { path = "../fuzzy" }
-fs = { path = "../fs" }
+fuzzy = {  path = "../fuzzy" }
 git = { path = "../git" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
@@ -45,7 +44,6 @@ lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-pulldown-cmark = { version = "0.9.2", default-features = false }
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -60,6 +58,7 @@ unicase = "2.6"
 rand = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
+pulldown-cmark = { version = "0.9.2", default-features = false }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

@@ -2,8 +2,9 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
-    MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
-    SavedMessage,
+    Assist, CycleMessageRole, InlineAssist, MessageId, MessageMetadata, MessageStatus,
+    NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
 
 use ai::{
@@ -22,28 +23,24 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, MoveDown, MoveUp, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MoveDown, MoveUp, MultiBufferSnapshot,
+    ToOffset, ToPoint,
 };
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    actions,
-    elements::{
-        ChildView, Component, Empty, Flex, Label, MouseEventHandler, ParentElement, SafeStylable,
-        Stack, Svg, Text, UniformList, UniformListState,
-    },
-    fonts::HighlightStyle,
-    geometry::vector::{vec2f, Vector2F},
-    platform::{CursorStyle, MouseButton, PromptLevel},
-    Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelContext,
-    ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakModelHandle, WeakViewHandle, WindowContext,
+    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
+    AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
+    ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
+    View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
 use search::BufferSearchBar;
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::{
     cell::Cell,
     cmp,
@@ -55,105 +52,60 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use theme::{
-    components::{action_button::Button, ComponentExt},
-    AssistantStyle,
+use theme::ThemeSettings;
+use ui::{
+    prelude::*,
+    utils::{DateTimeType, FormatDistance},
+    ButtonLike, Tab, TabBar, Tooltip,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
-    dock::{DockPosition, Panel},
+    dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
     Save, Toast, ToggleZoom, Toolbar, Workspace,
 };
 
-actions!(
-    assistant,
-    [
-        NewConversation,
-        Assist,
-        Split,
-        CycleMessageRole,
-        QuoteSelection,
-        ToggleFocus,
-        ResetKey,
-        InlineAssist,
-        ToggleIncludeConversation,
-        ToggleRetrieveContext,
-    ]
-);
-
 pub fn init(cx: &mut AppContext) {
-    settings::register::<AssistantSettings>(cx);
-    cx.add_action(
-        |this: &mut AssistantPanel,
-         _: &workspace::NewFile,
-         cx: &mut ViewContext<AssistantPanel>| {
-            this.new_conversation(cx);
+    AssistantSettings::register(cx);
+    cx.observe_new_views(
+        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
+            workspace
+                .register_action(|workspace, _: &ToggleFocus, cx| {
+                    workspace.toggle_panel_focus::<AssistantPanel>(cx);
+                })
+                .register_action(AssistantPanel::inline_assist)
+                .register_action(AssistantPanel::cancel_last_inline_assist)
+                .register_action(ConversationEditor::quote_selection);
         },
-    );
-    cx.add_action(ConversationEditor::assist);
-    cx.capture_action(ConversationEditor::cancel_last_assist);
-    cx.capture_action(ConversationEditor::save);
-    cx.add_action(ConversationEditor::quote_selection);
-    cx.capture_action(ConversationEditor::copy);
-    cx.add_action(ConversationEditor::split);
-    cx.capture_action(ConversationEditor::cycle_message_role);
-    cx.add_action(AssistantPanel::save_credentials);
-    cx.add_action(AssistantPanel::reset_credentials);
-    cx.add_action(AssistantPanel::toggle_zoom);
-    cx.add_action(AssistantPanel::deploy);
-    cx.add_action(AssistantPanel::select_next_match);
-    cx.add_action(AssistantPanel::select_prev_match);
-    cx.add_action(AssistantPanel::handle_editor_cancel);
-    cx.add_action(
-        |workspace: &mut Workspace, _: &ToggleFocus, cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_panel_focus::<AssistantPanel>(cx);
-        },
-    );
-    cx.add_action(AssistantPanel::inline_assist);
-    cx.add_action(AssistantPanel::cancel_last_inline_assist);
-    cx.add_action(InlineAssistant::confirm);
-    cx.add_action(InlineAssistant::cancel);
-    cx.add_action(InlineAssistant::toggle_include_conversation);
-    cx.add_action(InlineAssistant::toggle_retrieve_context);
-    cx.add_action(InlineAssistant::move_up);
-    cx.add_action(InlineAssistant::move_down);
-}
-
-#[derive(Debug)]
-pub enum AssistantPanelEvent {
-    ZoomIn,
-    ZoomOut,
-    Focus,
-    Close,
-    DockPositionChanged,
+    )
+    .detach();
 }
 
 pub struct AssistantPanel {
-    workspace: WeakViewHandle<Workspace>,
-    width: Option<f32>,
-    height: Option<f32>,
+    workspace: WeakView<Workspace>,
+    width: Option<Pixels>,
+    height: Option<Pixels>,
     active_editor_index: Option<usize>,
     prev_active_editor_index: Option<usize>,
-    editors: Vec<ViewHandle<ConversationEditor>>,
+    editors: Vec<View<ConversationEditor>>,
     saved_conversations: Vec<SavedConversationMetadata>,
-    saved_conversations_list_state: UniformListState,
+    saved_conversations_scroll_handle: UniformListScrollHandle,
     zoomed: bool,
-    has_focus: bool,
-    toolbar: ViewHandle<Toolbar>,
+    focus_handle: FocusHandle,
+    toolbar: View<Toolbar>,
     completion_provider: Arc<dyn CompletionProvider>,
-    api_key_editor: Option<ViewHandle<Editor>>,
+    api_key_editor: Option<View<Editor>>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
     next_inline_assist_id: usize,
     pending_inline_assists: HashMap<usize, PendingInlineAssist>,
-    pending_inline_assist_ids_by_editor: HashMap<WeakViewHandle<Editor>, Vec<usize>>,
+    pending_inline_assist_ids_by_editor: HashMap<WeakView<Editor>, Vec<usize>>,
     include_conversation_in_next_inline_assist: bool,
     inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
-    semantic_index: Option<ModelHandle<SemanticIndex>>,
+    semantic_index: Option<Model<SemanticIndex>>,
     retrieve_context_in_next_inline_assist: bool,
 }
 
@@ -161,11 +113,11 @@ impl AssistantPanel {
     const INLINE_PROMPT_HISTORY_MAX_LEN: usize = 20;
 
     pub fn load(
-        workspace: WeakViewHandle<Workspace>,
-        cx: AsyncAppContext,
-    ) -> Task<Result<ViewHandle<Self>>> {
+        workspace: WeakView<Workspace>,
+        cx: AsyncWindowContext,
+    ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            let fs = workspace.read_with(&cx, |workspace, _| workspace.app_state().fs.clone())?;
+            let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
             let saved_conversations = SavedConversationMetadata::list(fs.clone())
                 .await
                 .log_err()
@@ -174,7 +126,7 @@ impl AssistantPanel {
             // TODO: deserialize state.
             let workspace_handle = workspace.clone();
             workspace.update(&mut cx, |workspace, cx| {
-                cx.add_view::<Self, _>(|cx| {
+                cx.new_view::<Self>(|cx| {
                     const CONVERSATION_WATCH_DURATION: Duration = Duration::from_millis(100);
                     let _watch_saved_conversations = cx.spawn(move |this, mut cx| async move {
                         let mut events = fs
@@ -195,10 +147,10 @@ impl AssistantPanel {
                         anyhow::Ok(())
                     });
 
-                    let toolbar = cx.add_view(|cx| {
+                    let toolbar = cx.new_view(|cx| {
                         let mut toolbar = Toolbar::new();
                         toolbar.set_can_navigate(false, cx);
-                        toolbar.add_item(cx.add_view(|cx| BufferSearchBar::new(cx)), cx);
+                        toolbar.add_item(cx.new_view(|cx| BufferSearchBar::new(cx)), cx);
                         toolbar
                     });
 
@@ -206,8 +158,12 @@ impl AssistantPanel {
                     // Defaulting currently to GPT4, allow for this to be set via config.
                     let completion_provider = Arc::new(OpenAICompletionProvider::new(
                         "gpt-4",
-                        cx.background().clone(),
+                        cx.background_executor().clone(),
                     ));
+
+                    let focus_handle = cx.focus_handle();
+                    cx.on_focus_in(&focus_handle, Self::focus_in).detach();
+                    cx.on_focus_out(&focus_handle, Self::focus_out).detach();
 
                     let mut this = Self {
                         workspace: workspace_handle,
@@ -215,9 +171,9 @@ impl AssistantPanel {
                         prev_active_editor_index: Default::default(),
                         editors: Default::default(),
                         saved_conversations,
-                        saved_conversations_list_state: Default::default(),
+                        saved_conversations_scroll_handle: Default::default(),
                         zoomed: false,
-                        has_focus: false,
+                        focus_handle,
                         toolbar,
                         completion_provider,
                         api_key_editor: None,
@@ -238,11 +194,11 @@ impl AssistantPanel {
 
                     let mut old_dock_position = this.position(cx);
                     this.subscriptions =
-                        vec![cx.observe_global::<SettingsStore, _>(move |this, cx| {
+                        vec![cx.observe_global::<SettingsStore>(move |this, cx| {
                             let new_dock_position = this.position(cx);
                             if new_dock_position != old_dock_position {
                                 old_dock_position = new_dock_position;
-                                cx.emit(AssistantPanelEvent::DockPositionChanged);
+                                cx.emit(PanelEvent::ChangePosition);
                             }
                             cx.notify();
                         })];
@@ -251,6 +207,25 @@ impl AssistantPanel {
                 })
             })
         })
+    }
+
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
+        cx.notify();
+        if self.focus_handle.is_focused(cx) {
+            if let Some(editor) = self.active_editor() {
+                cx.focus_view(editor);
+            } else if let Some(api_key_editor) = self.api_key_editor.as_ref() {
+                cx.focus_view(api_key_editor);
+            }
+        }
+    }
+
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        self.toolbar
+            .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
+        cx.notify();
     }
 
     pub fn inline_assist(
@@ -293,9 +268,9 @@ impl AssistantPanel {
 
     fn new_inline_assist(
         &mut self,
-        editor: &ViewHandle<Editor>,
+        editor: &View<Editor>,
         cx: &mut ViewContext<Self>,
-        project: &ModelHandle<Project>,
+        project: &Model<Project>,
     ) {
         let selection = editor.read(cx).selections.newest_anchor().clone();
         if selection.start.excerpt_id != selection.end.excerpt_id {
@@ -331,7 +306,7 @@ impl AssistantPanel {
         // Retrieve Credentials Authenticates the Provider
         provider.retrieve_credentials(cx);
 
-        let codegen = cx.add_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
         });
 
@@ -341,14 +316,14 @@ impl AssistantPanel {
                 let previously_indexed = semantic_index
                     .update(&mut cx, |index, cx| {
                         index.project_previously_indexed(&project, cx)
-                    })
+                    })?
                     .await
                     .unwrap_or(false);
                 if previously_indexed {
                     let _ = semantic_index
                         .update(&mut cx, |index, cx| {
                             index.index_project(project.clone(), cx)
-                        })
+                        })?
                         .await;
                 }
                 anyhow::Ok(())
@@ -357,8 +332,8 @@ impl AssistantPanel {
         }
 
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
-        let inline_assistant = cx.add_view(|cx| {
-            let assistant = InlineAssistant::new(
+        let inline_assistant = cx.new_view(|cx| {
+            InlineAssistant::new(
                 inline_assist_id,
                 measurements.clone(),
                 self.include_conversation_in_next_inline_assist,
@@ -369,9 +344,7 @@ impl AssistantPanel {
                 self.retrieve_context_in_next_inline_assist,
                 self.semantic_index.clone(),
                 project.clone(),
-            );
-            cx.focus_self();
-            assistant
+            )
         });
         let block_id = editor.update(cx, |editor, cx| {
             editor.change_selections(None, cx, |selections| {
@@ -389,7 +362,7 @@ impl AssistantPanel {
                                 anchor_x: cx.anchor_x,
                                 gutter_width: cx.gutter_width,
                             });
-                            ChildView::new(&inline_assistant, cx).into_any()
+                            inline_assistant.clone().into_any_element()
                         }
                     }),
                     disposition: if selection.reversed {
@@ -415,10 +388,12 @@ impl AssistantPanel {
                     cx.subscribe(editor, {
                         let inline_assistant = inline_assistant.downgrade();
                         move |_, editor, event, cx| {
-                            if let Some(inline_assistant) = inline_assistant.upgrade(cx) {
-                                if let editor::Event::SelectionsChanged { local } = event {
-                                    if *local && inline_assistant.read(cx).has_focus {
-                                        cx.focus(&editor);
+                            if let Some(inline_assistant) = inline_assistant.upgrade() {
+                                if let EditorEvent::SelectionsChanged { local } = event {
+                                    if *local
+                                        && inline_assistant.focus_handle(cx).contains_focused(cx)
+                                    {
+                                        cx.focus_view(&editor);
                                     }
                                 }
                             }
@@ -427,7 +402,7 @@ impl AssistantPanel {
                     cx.observe(&codegen, {
                         let editor = editor.downgrade();
                         move |this, _, cx| {
-                            if let Some(editor) = editor.upgrade(cx) {
+                            if let Some(editor) = editor.upgrade() {
                                 this.update_highlights_for_editor(&editor, cx);
                             }
                         }
@@ -451,7 +426,7 @@ impl AssistantPanel {
                                 .map(|error| format!("Inline assistant error: {}", error));
                             if let Some(error) = error {
                                 if pending_assist.inline_assistant.is_none() {
-                                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                                    if let Some(workspace) = this.workspace.upgrade() {
                                         workspace.update(cx, |workspace, cx| {
                                             workspace.show_toast(
                                                 Toast::new(inline_assist_id, error),
@@ -479,7 +454,7 @@ impl AssistantPanel {
 
     fn handle_inline_assistant_event(
         &mut self,
-        inline_assistant: ViewHandle<InlineAssistant>,
+        inline_assistant: View<InlineAssistant>,
         event: &InlineAssistantEvent,
         cx: &mut ViewContext<Self>,
     ) {
@@ -543,7 +518,7 @@ impl AssistantPanel {
             }
         }
 
-        cx.propagate_action();
+        cx.propagate();
     }
 
     fn finish_inline_assist(&mut self, assist_id: usize, undo: bool, cx: &mut ViewContext<Self>) {
@@ -552,7 +527,7 @@ impl AssistantPanel {
         if let Some(pending_assist) = self.pending_inline_assists.remove(&assist_id) {
             if let hash_map::Entry::Occupied(mut entry) = self
                 .pending_inline_assist_ids_by_editor
-                .entry(pending_assist.editor)
+                .entry(pending_assist.editor.clone())
             {
                 entry.get_mut().retain(|id| *id != assist_id);
                 if entry.get().is_empty() {
@@ -560,7 +535,7 @@ impl AssistantPanel {
                 }
             }
 
-            if let Some(editor) = pending_assist.editor.upgrade(cx) {
+            if let Some(editor) = pending_assist.editor.upgrade() {
                 self.update_highlights_for_editor(&editor, cx);
 
                 if undo {
@@ -574,10 +549,13 @@ impl AssistantPanel {
 
     fn hide_inline_assist(&mut self, assist_id: usize, cx: &mut ViewContext<Self>) {
         if let Some(pending_assist) = self.pending_inline_assists.get_mut(&assist_id) {
-            if let Some(editor) = pending_assist.editor.upgrade(cx) {
-                if let Some((block_id, _)) = pending_assist.inline_assistant.take() {
+            if let Some(editor) = pending_assist.editor.upgrade() {
+                if let Some((block_id, inline_assistant)) = pending_assist.inline_assistant.take() {
                     editor.update(cx, |editor, cx| {
                         editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+                        if inline_assistant.focus_handle(cx).contains_focused(cx) {
+                            editor.focus(cx);
+                        }
                     });
                 }
             }
@@ -606,7 +584,7 @@ impl AssistantPanel {
                 return;
             };
 
-        let editor = if let Some(editor) = pending_assist.editor.upgrade(cx) {
+        let editor = if let Some(editor) = pending_assist.editor.upgrade() {
             editor
         } else {
             return;
@@ -614,7 +592,7 @@ impl AssistantPanel {
 
         let project = pending_assist.project.clone();
 
-        let project_name = if let Some(project) = project.upgrade(cx) {
+        let project_name = if let Some(project) = project.upgrade() {
             Some(
                 project
                     .read(cx)
@@ -679,7 +657,7 @@ impl AssistantPanel {
         let user_prompt = user_prompt.to_string();
 
         let snippets = if retrieve_context {
-            let Some(project) = project.upgrade(cx) else {
+            let Some(project) = project.upgrade() else {
                 return;
             };
 
@@ -688,31 +666,35 @@ impl AssistantPanel {
                     this.search_project(project, user_prompt.to_string(), 10, vec![], vec![], cx)
                 });
 
-                cx.background()
+                cx.background_executor()
                     .spawn(async move { search_results.await.unwrap_or_default() })
             } else {
                 Task::ready(Vec::new())
             };
 
-            let snippets = cx.spawn(|_, cx| async move {
+            let snippets = cx.spawn(|_, mut cx| async move {
                 let mut snippets = Vec::new();
                 for result in search_results.await {
-                    snippets.push(PromptCodeSnippet::new(result.buffer, result.range, &cx));
+                    snippets.push(PromptCodeSnippet::new(
+                        result.buffer,
+                        result.range,
+                        &mut cx,
+                    )?);
                 }
-                snippets
+                anyhow::Ok(snippets)
             });
             snippets
         } else {
-            Task::ready(Vec::new())
+            Task::ready(Ok(Vec::new()))
         };
 
-        let mut model = settings::get::<AssistantSettings>(cx)
+        let mut model = AssistantSettings::get_global(cx)
             .default_open_ai_model
             .clone();
         let model_name = model.full_name();
 
-        let prompt = cx.background().spawn(async move {
-            let snippets = snippets.await;
+        let prompt = cx.background_executor().spawn(async move {
+            let snippets = snippets.await?;
 
             let language_name = language_name.as_deref();
             generate_content_prompt(
@@ -755,17 +737,13 @@ impl AssistantPanel {
                 temperature,
             });
 
-            codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx));
+            codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx))?;
             anyhow::Ok(())
         })
         .detach();
     }
 
-    fn update_highlights_for_editor(
-        &self,
-        editor: &ViewHandle<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn update_highlights_for_editor(&self, editor: &View<Editor>, cx: &mut ViewContext<Self>) {
         let mut background_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
         let empty_inline_assist_ids = Vec::new();
@@ -791,7 +769,7 @@ impl AssistantPanel {
             } else {
                 editor.highlight_background::<PendingInlineAssist>(
                     background_ranges,
-                    |theme| theme.assistant.inline.pending_edit_background,
+                    |theme| theme.editor_active_line_background, // todo!("use the appropriate color")
                     cx,
                 );
             }
@@ -811,8 +789,8 @@ impl AssistantPanel {
         });
     }
 
-    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<ConversationEditor> {
-        let editor = cx.add_view(|cx| {
+    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) -> View<ConversationEditor> {
+        let editor = cx.new_view(|cx| {
             ConversationEditor::new(
                 self.completion_provider.clone(),
                 self.languages.clone(),
@@ -825,11 +803,7 @@ impl AssistantPanel {
         editor
     }
 
-    fn add_conversation(
-        &mut self,
-        editor: ViewHandle<ConversationEditor>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn add_conversation(&mut self, editor: View<ConversationEditor>, cx: &mut ViewContext<Self>) {
         self.subscriptions
             .push(cx.subscribe(&editor, Self::handle_conversation_editor_event));
 
@@ -850,8 +824,8 @@ impl AssistantPanel {
             self.toolbar.update(cx, |toolbar, cx| {
                 toolbar.set_active_item(Some(&editor), cx);
             });
-            if self.has_focus(cx) {
-                cx.focus(&editor);
+            if self.focus_handle.contains_focused(cx) {
+                cx.focus_view(&editor);
             }
         } else {
             self.toolbar.update(cx, |toolbar, cx| {
@@ -864,7 +838,7 @@ impl AssistantPanel {
 
     fn handle_conversation_editor_event(
         &mut self,
-        _: ViewHandle<ConversationEditor>,
+        _: View<ConversationEditor>,
         event: &ConversationEditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
@@ -887,45 +861,46 @@ impl AssistantPanel {
                 self.completion_provider.save_credentials(cx, credential);
 
                 self.api_key_editor.take();
-                cx.focus_self();
+                self.focus_handle.focus(cx);
                 cx.notify();
             }
         } else {
-            cx.propagate_action();
+            cx.propagate();
         }
     }
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
         self.completion_provider.delete_credentials(cx);
         self.api_key_editor = Some(build_api_key_editor(cx));
-        cx.focus_self();
+        self.focus_handle.focus(cx);
         cx.notify();
     }
 
     fn toggle_zoom(&mut self, _: &workspace::ToggleZoom, cx: &mut ViewContext<Self>) {
         if self.zoomed {
-            cx.emit(AssistantPanelEvent::ZoomOut)
+            cx.emit(PanelEvent::ZoomOut)
         } else {
-            cx.emit(AssistantPanelEvent::ZoomIn)
+            cx.emit(PanelEvent::ZoomIn)
         }
     }
 
     fn deploy(&mut self, action: &search::buffer_search::Deploy, cx: &mut ViewContext<Self>) {
-        let mut propagate_action = true;
+        let mut propagate = true;
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| {
                 if search_bar.show(cx) {
                     search_bar.search_suggested(cx);
                     if action.focus {
+                        let focus_handle = search_bar.focus_handle(cx);
                         search_bar.select_query(cx);
-                        cx.focus_self();
+                        cx.focus(&focus_handle);
                     }
-                    propagate_action = false
+                    propagate = false
                 }
             });
         }
-        if propagate_action {
-            cx.propagate_action();
+        if propagate {
+            cx.propagate();
         }
     }
 
@@ -938,7 +913,7 @@ impl AssistantPanel {
                 return;
             }
         }
-        cx.propagate_action();
+        cx.propagate();
     }
 
     fn select_next_match(&mut self, _: &search::SelectNextMatch, cx: &mut ViewContext<Self>) {
@@ -953,201 +928,125 @@ impl AssistantPanel {
         }
     }
 
-    fn active_editor(&self) -> Option<&ViewHandle<ConversationEditor>> {
+    fn active_editor(&self) -> Option<&View<ConversationEditor>> {
         self.editors.get(self.active_editor_index?)
     }
 
-    fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        enum History {}
-        let theme = theme::current(cx);
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::new::<History, _>(0, cx, |state, _| {
-            let style = theme.assistant.hamburger_button.style_for(state);
-            Svg::for_style(style.icon.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-            if this.active_editor().is_some() {
-                this.set_active_editor_index(None, cx);
-            } else {
-                this.set_active_editor_index(this.prev_active_editor_index, cx);
-            }
-        })
-        .with_tooltip::<History>(1, "History", None, tooltip_style, cx)
+    fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
+        IconButton::new("hamburger_button", Icon::Menu)
+            .on_click(cx.listener(|this, _event, cx| {
+                if this.active_editor().is_some() {
+                    this.set_active_editor_index(None, cx);
+                } else {
+                    this.set_active_editor_index(this.prev_active_editor_index, cx);
+                }
+            }))
+            .tooltip(|cx| Tooltip::text("Conversation History", cx))
     }
 
-    fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement<Self>> {
+    fn render_editor_tools(&self, cx: &mut ViewContext<Self>) -> Vec<AnyElement> {
         if self.active_editor().is_some() {
             vec![
-                Self::render_split_button(cx).into_any(),
-                Self::render_quote_button(cx).into_any(),
-                Self::render_assist_button(cx).into_any(),
+                Self::render_split_button(cx).into_any_element(),
+                Self::render_quote_button(cx).into_any_element(),
+                Self::render_assist_button(cx).into_any_element(),
             ]
         } else {
             Default::default()
         }
     }
 
-    fn render_split_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        let theme = theme::current(cx);
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::new::<Split, _>(0, cx, |state, _| {
-            let style = theme.assistant.split_button.style_for(state);
-            Svg::for_style(style.icon.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-            if let Some(active_editor) = this.active_editor() {
-                active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
-            }
-        })
-        .with_tooltip::<Split>(
-            1,
-            "Split Message",
-            Some(Box::new(Split)),
-            tooltip_style,
-            cx,
-        )
+    fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
+        IconButton::new("split_button", Icon::Snip)
+            .on_click(cx.listener(|this, _event, cx| {
+                if let Some(active_editor) = this.active_editor() {
+                    active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
+                }
+            }))
+            .icon_size(IconSize::Small)
+            .tooltip(|cx| Tooltip::for_action("Split Message", &Split, cx))
     }
 
-    fn render_assist_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        let theme = theme::current(cx);
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::new::<Assist, _>(0, cx, |state, _| {
-            let style = theme.assistant.assist_button.style_for(state);
-            Svg::for_style(style.icon.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-            if let Some(active_editor) = this.active_editor() {
-                active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
-            }
-        })
-        .with_tooltip::<Assist>(1, "Assist", Some(Box::new(Assist)), tooltip_style, cx)
+    fn render_assist_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
+        IconButton::new("assist_button", Icon::MagicWand)
+            .on_click(cx.listener(|this, _event, cx| {
+                if let Some(active_editor) = this.active_editor() {
+                    active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
+                }
+            }))
+            .icon_size(IconSize::Small)
+            .tooltip(|cx| Tooltip::for_action("Assist", &Assist, cx))
     }
 
-    fn render_quote_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        let theme = theme::current(cx);
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::new::<QuoteSelection, _>(0, cx, |state, _| {
-            let style = theme.assistant.quote_button.style_for(state);
-            Svg::for_style(style.icon.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-            if let Some(workspace) = this.workspace.upgrade(cx) {
-                cx.window_context().defer(move |cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        ConversationEditor::quote_selection(workspace, &Default::default(), cx)
+    fn render_quote_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
+        IconButton::new("quote_button", Icon::Quote)
+            .on_click(cx.listener(|this, _event, cx| {
+                if let Some(workspace) = this.workspace.upgrade() {
+                    cx.window_context().defer(move |cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            ConversationEditor::quote_selection(workspace, &Default::default(), cx)
+                        });
                     });
-                });
-            }
-        })
-        .with_tooltip::<QuoteSelection>(
-            1,
-            "Quote Selection",
-            Some(Box::new(QuoteSelection)),
-            tooltip_style,
-            cx,
-        )
+                }
+            }))
+            .icon_size(IconSize::Small)
+            .tooltip(|cx| Tooltip::for_action("Quote Selection", &QuoteSelection, cx))
     }
 
-    fn render_plus_button(cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        let theme = theme::current(cx);
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        MouseEventHandler::new::<NewConversation, _>(0, cx, |state, _| {
-            let style = theme.assistant.plus_button.style_for(state);
-            Svg::for_style(style.icon.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this: &mut Self, cx| {
-            this.new_conversation(cx);
-        })
-        .with_tooltip::<NewConversation>(
-            1,
-            "New Conversation",
-            Some(Box::new(NewConversation)),
-            tooltip_style,
-            cx,
-        )
+    fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
+        IconButton::new("plus_button", Icon::Plus)
+            .on_click(cx.listener(|this, _event, cx| {
+                this.new_conversation(cx);
+            }))
+            .icon_size(IconSize::Small)
+            .tooltip(|cx| Tooltip::for_action("New Conversation", &NewConversation, cx))
     }
 
-    fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        enum ToggleZoomButton {}
-
-        let theme = theme::current(cx);
-        let tooltip_style = theme::current(cx).tooltip.clone();
-        let style = if self.zoomed {
-            &theme.assistant.zoom_out_button
-        } else {
-            &theme.assistant.zoom_in_button
-        };
-
-        MouseEventHandler::new::<ToggleZoomButton, _>(0, cx, |state, _| {
-            let style = style.style_for(state);
-            Svg::for_style(style.icon.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this, cx| {
-            this.toggle_zoom(&ToggleZoom, cx);
-        })
-        .with_tooltip::<ToggleZoom>(
-            0,
-            if self.zoomed { "Zoom Out" } else { "Zoom In" },
-            Some(Box::new(ToggleZoom)),
-            tooltip_style,
-            cx,
-        )
+    fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let zoomed = self.zoomed;
+        IconButton::new("zoom_button", Icon::Maximize)
+            .on_click(cx.listener(|this, _event, cx| {
+                this.toggle_zoom(&ToggleZoom, cx);
+            }))
+            .selected(zoomed)
+            .selected_icon(Icon::Minimize)
+            .icon_size(IconSize::Small)
+            .tooltip(move |cx| {
+                Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
+            })
     }
 
     fn render_saved_conversation(
         &mut self,
         index: usize,
         cx: &mut ViewContext<Self>,
-    ) -> impl Element<Self> {
+    ) -> impl IntoElement {
         let conversation = &self.saved_conversations[index];
         let path = conversation.path.clone();
-        MouseEventHandler::new::<SavedConversationMetadata, _>(index, cx, move |state, cx| {
-            let style = &theme::current(cx).assistant.saved_conversation;
-            Flex::row()
-                .with_child(
-                    Label::new(
-                        conversation.mtime.format("%F %I:%M%p").to_string(),
-                        style.saved_at.text.clone(),
+
+        ButtonLike::new(index)
+            .on_click(cx.listener(move |this, _, cx| {
+                this.open_conversation(path.clone(), cx)
+                    .detach_and_log_err(cx)
+            }))
+            .full_width()
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        Label::new(conversation.mtime.format("%F %I:%M%p").to_string())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
                     )
-                    .aligned()
-                    .contained()
-                    .with_style(style.saved_at.container),
-                )
-                .with_child(
-                    Label::new(conversation.title.clone(), style.title.text.clone())
-                        .aligned()
-                        .contained()
-                        .with_style(style.title.container),
-                )
-                .contained()
-                .with_style(*style.container.style_for(state))
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.open_conversation(path.clone(), cx)
-                .detach_and_log_err(cx)
-        })
+                    .child(Label::new(conversation.title.clone()).size(LabelSize::Small)),
+            )
     }
 
     fn open_conversation(&mut self, path: PathBuf, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        cx.focus(&self.focus_handle);
+
         if let Some(ix) = self.editor_index_for_path(&path, cx) {
             self.set_active_editor_index(Some(ix), cx);
             return Task::ready(Ok(()));
@@ -1159,16 +1058,16 @@ impl AssistantPanel {
         cx.spawn(|this, mut cx| async move {
             let saved_conversation = fs.load(&path).await?;
             let saved_conversation = serde_json::from_str(&saved_conversation)?;
-            let conversation = cx.add_model(|cx| {
+            let conversation = cx.new_model(|cx| {
                 Conversation::deserialize(saved_conversation, path.clone(), languages, cx)
-            });
+            })?;
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
                 // the same conversation, we don't want to open it again.
                 if let Some(ix) = this.editor_index_for_path(&path, cx) {
                     this.set_active_editor_index(Some(ix), cx);
                 } else {
-                    let editor = cx.add_view(|cx| {
+                    let editor = cx.new_view(|cx| {
                         ConversationEditor::for_conversation(conversation, fs, workspace, cx)
                     });
                     this.add_conversation(editor, cx);
@@ -1193,168 +1092,133 @@ impl AssistantPanel {
     }
 }
 
-fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> ViewHandle<Editor> {
-    cx.add_view(|cx| {
-        let mut editor = Editor::single_line(
-            Some(Arc::new(|theme| theme.assistant.api_key_editor.clone())),
-            cx,
-        );
+fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
+    cx.new_view(|cx| {
+        let mut editor = Editor::single_line(cx);
         editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
         editor
     })
 }
 
-impl Entity for AssistantPanel {
-    type Event = AssistantPanelEvent;
-}
-
-impl View for AssistantPanel {
-    fn ui_name() -> &'static str {
-        "AssistantPanel"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &theme::current(cx);
-        let style = &theme.assistant;
-        if let Some(api_key_editor) = self.api_key_editor.as_ref() {
-            Flex::column()
-                .with_child(
-                    Text::new(
-                        "To use the assistant panel or inline assistant, you need to add your OpenAI api key.",
-                        style.api_key_prompt.text.clone(),
-                    ),
-                )
-                .with_child(
-                    Text::new(
-                        " - Having a subscription for another service like GitHub Copilot won't work.",
-                        style.api_key_prompt.text.clone(),
-                    ),
-                )
-                .with_child(
-                    Text::new(
-                        " - You can create a api key at: platform.openai.com/api-keys",
-                        style.api_key_prompt.text.clone(),
-                    ),
-                )
-                .with_child(
-                    Text::new(
-                        " ",
-                        style.api_key_prompt.text.clone(),
-                    )
-                    .aligned(),
-                )
-                .with_child(
-                    Text::new(
-                        "Paste your OpenAI API key and press Enter to use the assistant",
-                        style.api_key_prompt.text.clone(),
-                    )
-                    .aligned(),
-                )
-                .with_child(
-                    ChildView::new(api_key_editor, cx)
-                        .contained()
-                        .with_style(style.api_key_editor.container)
-                        .aligned(),
-                )
-                .with_child(
-                    Text::new(
-                        " ",
-                        style.api_key_prompt.text.clone(),
-                    )
-                    .aligned(),
-                )
-                .with_child(
-                    Text::new(
-                        "Click on the Z button in the status bar to close this panel.",
-                        style.api_key_prompt.text.clone(),
-                    )
-                    .aligned(),
-                )
-                .contained()
-                .with_style(style.api_key_prompt.container)
-                .aligned()
-                .into_any()
+impl Render for AssistantPanel {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        if let Some(api_key_editor) = self.api_key_editor.clone() {
+            v_stack()
+                .on_action(cx.listener(AssistantPanel::save_credentials))
+                .track_focus(&self.focus_handle)
+                .child(Label::new(
+                    "To use the assistant panel or inline assistant, you need to add your OpenAI api key.",
+                ))
+                .child(Label::new(
+                    " - Having a subscription for another service like GitHub Copilot won't work."
+                ))
+                .child(Label::new(
+                    " - You can create a api key at: platform.openai.com/api-keys"
+                ))
+                .child(Label::new(
+                    " "
+                ))
+                .child(Label::new(
+                    "Paste your OpenAI API key and press Enter to use the assistant"
+                ))
+                .child(api_key_editor)
+                .child(Label::new(
+                    "Click on the Z button in the status bar to close this panel."
+                ))
+                .border()
+                .border_color(gpui::red())
         } else {
-            let title = self.active_editor().map(|editor| {
-                Label::new(editor.read(cx).title(cx), style.title.text.clone())
-                    .contained()
-                    .with_style(style.title.container)
-                    .aligned()
-                    .left()
-                    .flex(1., false)
-            });
-            let mut header = Flex::row()
-                .with_child(Self::render_hamburger_button(cx).aligned())
-                .with_children(title);
-            if self.has_focus {
-                header.add_children(
-                    self.render_editor_tools(cx)
-                        .into_iter()
-                        .map(|tool| tool.aligned().flex_float()),
-                );
-                header.add_child(Self::render_plus_button(cx).aligned().flex_float());
-                header.add_child(self.render_zoom_button(cx).aligned());
-            }
-
-            Flex::column()
-                .with_child(
-                    header
-                        .contained()
-                        .with_style(theme.workspace.tab_bar.container)
-                        .expanded()
-                        .constrained()
-                        .with_height(theme.workspace.tab_bar.height),
+            let header = TabBar::new("assistant_header")
+                .start_child(
+                    h_stack().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
                 )
-                .with_children(if self.toolbar.read(cx).hidden() {
+                .children(self.active_editor().map(|editor| {
+                    h_stack()
+                        .h(rems(Tab::HEIGHT_IN_REMS))
+                        .flex_1()
+                        .px_2()
+                        .child(Label::new(editor.read(cx).title(cx)).into_element())
+                }))
+                .end_child(if self.focus_handle.contains_focused(cx) {
+                    h_stack()
+                        .gap_2()
+                        .child(h_stack().gap_1().children(self.render_editor_tools(cx)))
+                        .child(
+                            ui::Divider::vertical()
+                                .inset()
+                                .color(ui::DividerColor::Border),
+                        )
+                        .child(
+                            h_stack()
+                                .gap_1()
+                                .child(Self::render_plus_button(cx))
+                                .child(self.render_zoom_button(cx)),
+                        )
+                } else {
+                    div()
+                });
+
+            v_stack()
+                .size_full()
+                .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
+                    this.new_conversation(cx);
+                }))
+                .on_action(cx.listener(AssistantPanel::reset_credentials))
+                .on_action(cx.listener(AssistantPanel::toggle_zoom))
+                .on_action(cx.listener(AssistantPanel::deploy))
+                .on_action(cx.listener(AssistantPanel::select_next_match))
+                .on_action(cx.listener(AssistantPanel::select_prev_match))
+                .on_action(cx.listener(AssistantPanel::handle_editor_cancel))
+                .track_focus(&self.focus_handle)
+                .child(header)
+                .children(if self.toolbar.read(cx).hidden() {
                     None
                 } else {
-                    Some(ChildView::new(&self.toolbar, cx).expanded())
+                    Some(self.toolbar.clone())
                 })
-                .with_child(if let Some(editor) = self.active_editor() {
-                    ChildView::new(editor, cx).flex(1., true).into_any()
-                } else {
-                    UniformList::new(
-                        self.saved_conversations_list_state.clone(),
-                        self.saved_conversations.len(),
-                        cx,
-                        |this, range, items, cx| {
-                            for ix in range {
-                                items.push(this.render_saved_conversation(ix, cx).into_any());
-                            }
-                        },
-                    )
-                    .flex(1., true)
-                    .into_any()
-                })
-                .into_any()
+                .child(
+                    div()
+                        .flex_1()
+                        .child(if let Some(editor) = self.active_editor() {
+                            editor.clone().into_any_element()
+                        } else {
+                            let view = cx.view().clone();
+                            let scroll_handle = self.saved_conversations_scroll_handle.clone();
+                            let conversation_count = self.saved_conversations.len();
+                            canvas(move |bounds, cx| {
+                                uniform_list(
+                                    view,
+                                    "saved_conversations",
+                                    conversation_count,
+                                    |this, range, cx| {
+                                        range
+                                            .map(|ix| this.render_saved_conversation(ix, cx))
+                                            .collect()
+                                    },
+                                )
+                                .track_scroll(scroll_handle)
+                                .into_any_element()
+                                .draw(
+                                    bounds.origin,
+                                    bounds.size.map(AvailableSpace::Definite),
+                                    cx,
+                                );
+                            })
+                            .size_full()
+                            .into_any_element()
+                        }),
+                )
         }
-    }
-
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.has_focus = true;
-        self.toolbar
-            .update(cx, |toolbar, cx| toolbar.focus_changed(true, cx));
-        cx.notify();
-        if cx.is_self_focused() {
-            if let Some(editor) = self.active_editor() {
-                cx.focus(editor);
-            } else if let Some(api_key_editor) = self.api_key_editor.as_ref() {
-                cx.focus(api_key_editor);
-            }
-        }
-    }
-
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.has_focus = false;
-        self.toolbar
-            .update(cx, |toolbar, cx| toolbar.focus_changed(false, cx));
-        cx.notify();
     }
 }
 
 impl Panel for AssistantPanel {
+    fn persistent_name() -> &'static str {
+        "AssistantPanel"
+    }
+
     fn position(&self, cx: &WindowContext) -> DockPosition {
-        match settings::get::<AssistantSettings>(cx).dock {
+        match AssistantSettings::get_global(cx).dock {
             AssistantDockPosition::Left => DockPosition::Left,
             AssistantDockPosition::Bottom => DockPosition::Bottom,
             AssistantDockPosition::Right => DockPosition::Right,
@@ -1376,8 +1240,8 @@ impl Panel for AssistantPanel {
         });
     }
 
-    fn size(&self, cx: &WindowContext) -> f32 {
-        let settings = settings::get::<AssistantSettings>(cx);
+    fn size(&self, cx: &WindowContext) -> Pixels {
+        let settings = AssistantSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or_else(|| settings.default_width)
@@ -1386,20 +1250,12 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
         cx.notify();
-    }
-
-    fn should_zoom_in_on_event(event: &AssistantPanelEvent) -> bool {
-        matches!(event, AssistantPanelEvent::ZoomIn)
-    }
-
-    fn should_zoom_out_on_event(event: &AssistantPanelEvent) -> bool {
-        matches!(event, AssistantPanelEvent::ZoomOut)
     }
 
     fn is_zoomed(&self, _: &WindowContext) -> bool {
@@ -1421,34 +1277,24 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon_path(&self, cx: &WindowContext) -> Option<&'static str> {
-        settings::get::<AssistantSettings>(cx)
-            .button
-            .then(|| "icons/ai.svg")
+    fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Ai)
     }
 
-    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-        ("Assistant Panel".into(), Some(Box::new(ToggleFocus)))
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        Some("Assistant Panel")
     }
 
-    fn should_change_position_on_event(event: &Self::Event) -> bool {
-        matches!(event, AssistantPanelEvent::DockPositionChanged)
+    fn toggle_action(&self) -> Box<dyn Action> {
+        Box::new(ToggleFocus)
     }
+}
 
-    fn should_activate_on_event(_: &Self::Event) -> bool {
-        false
-    }
+impl EventEmitter<PanelEvent> for AssistantPanel {}
 
-    fn should_close_on_event(event: &AssistantPanelEvent) -> bool {
-        matches!(event, AssistantPanelEvent::Close)
-    }
-
-    fn has_focus(&self, _: &WindowContext) -> bool {
-        self.has_focus
-    }
-
-    fn is_focus_event(event: &Self::Event) -> bool {
-        matches!(event, AssistantPanelEvent::Focus)
+impl FocusableView for AssistantPanel {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -1466,7 +1312,7 @@ struct Summary {
 
 struct Conversation {
     id: Option<String>,
-    buffer: ModelHandle<Buffer>,
+    buffer: Model<Buffer>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     next_message_id: MessageId,
@@ -1484,9 +1330,7 @@ struct Conversation {
     completion_provider: Arc<dyn CompletionProvider>,
 }
 
-impl Entity for Conversation {
-    type Event = ConversationEvent;
-}
+impl EventEmitter<ConversationEvent> for Conversation {}
 
 impl Conversation {
     fn new(
@@ -1495,24 +1339,21 @@ impl Conversation {
         completion_provider: Arc<dyn CompletionProvider>,
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
-        let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.model_id() as u64, "");
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), "");
             buffer.set_language_registry(language_registry);
-            cx.spawn_weak(|buffer, mut cx| async move {
+            cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
-                let buffer = buffer
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
                     buffer.set_language(Some(markdown), cx)
-                });
+                })?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
             buffer
         });
 
-        let settings = settings::get::<AssistantSettings>(cx);
+        let settings = AssistantSettings::get_global(cx);
         let model = settings.default_open_ai_model.clone();
 
         let mut this = Self {
@@ -1587,14 +1428,14 @@ impl Conversation {
         };
         let model = saved_conversation.model;
         let completion_provider: Arc<dyn CompletionProvider> = Arc::new(
-            OpenAICompletionProvider::new(model.full_name(), cx.background().clone()),
+            OpenAICompletionProvider::new(model.full_name(), cx.background_executor().clone()),
         );
         completion_provider.retrieve_credentials(cx);
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
-        let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.model_id() as u64, saved_conversation.text);
+        let buffer = cx.new_model(|cx| {
+            let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), saved_conversation.text);
             for message in saved_conversation.messages {
                 message_anchors.push(MessageAnchor {
                     id: message.id,
@@ -1603,14 +1444,11 @@ impl Conversation {
                 next_message_id = cmp::max(next_message_id, MessageId(message.id.0 + 1));
             }
             buffer.set_language_registry(language_registry);
-            cx.spawn_weak(|buffer, mut cx| async move {
+            cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
-                let buffer = buffer
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
                     buffer.set_language(Some(markdown), cx)
-                });
+                })?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -1645,7 +1483,7 @@ impl Conversation {
 
     fn handle_buffer_event(
         &mut self,
-        _: ModelHandle<Buffer>,
+        _: Model<Buffer>,
         event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1681,24 +1519,24 @@ impl Conversation {
             })
             .collect::<Vec<_>>();
         let model = self.model.clone();
-        self.pending_token_count = cx.spawn_weak(|this, mut cx| {
+        self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
-                cx.background().timer(Duration::from_millis(200)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
                 let token_count = cx
-                    .background()
+                    .background_executor()
                     .spawn(async move {
                         tiktoken_rs::num_tokens_from_messages(&model.full_name(), &messages)
                     })
                     .await?;
 
-                this.upgrade(&cx)
-                    .ok_or_else(|| anyhow!("conversation was dropped"))?
-                    .update(&mut cx, |this, cx| {
-                        this.max_token_count =
-                            tiktoken_rs::model::get_context_size(&this.model.full_name());
-                        this.token_count = Some(token_count);
-                        cx.notify()
-                    });
+                this.update(&mut cx, |this, cx| {
+                    this.max_token_count =
+                        tiktoken_rs::model::get_context_size(&this.model.full_name());
+                    this.token_count = Some(token_count);
+                    cx.notify()
+                })?;
                 anyhow::Ok(())
             }
             .log_err()
@@ -1785,7 +1623,7 @@ impl Conversation {
                 .unwrap();
             user_messages.push(user_message);
 
-            let task = cx.spawn_weak({
+            let task = cx.spawn({
                 |this, mut cx| async move {
                     let assistant_message_id = assistant_message.id;
                     let stream_completion = async {
@@ -1794,59 +1632,56 @@ impl Conversation {
                         while let Some(message) = messages.next().await {
                             let text = message?;
 
-                            this.upgrade(&cx)
-                                .ok_or_else(|| anyhow!("conversation was dropped"))?
-                                .update(&mut cx, |this, cx| {
-                                    let message_ix = this
-                                        .message_anchors
+                            this.update(&mut cx, |this, cx| {
+                                let message_ix = this
+                                    .message_anchors
+                                    .iter()
+                                    .position(|message| message.id == assistant_message_id)?;
+                                this.buffer.update(cx, |buffer, cx| {
+                                    let offset = this.message_anchors[message_ix + 1..]
                                         .iter()
-                                        .position(|message| message.id == assistant_message_id)?;
-                                    this.buffer.update(cx, |buffer, cx| {
-                                        let offset = this.message_anchors[message_ix + 1..]
-                                            .iter()
-                                            .find(|message| message.start.is_valid(buffer))
-                                            .map_or(buffer.len(), |message| {
-                                                message.start.to_offset(buffer).saturating_sub(1)
-                                            });
-                                        buffer.edit([(offset..offset, text)], None, cx);
-                                    });
-                                    cx.emit(ConversationEvent::StreamedCompletion);
-
-                                    Some(())
+                                        .find(|message| message.start.is_valid(buffer))
+                                        .map_or(buffer.len(), |message| {
+                                            message.start.to_offset(buffer).saturating_sub(1)
+                                        });
+                                    buffer.edit([(offset..offset, text)], None, cx);
                                 });
+                                cx.emit(ConversationEvent::StreamedCompletion);
+
+                                Some(())
+                            })?;
                             smol::future::yield_now().await;
                         }
 
-                        this.upgrade(&cx)
-                            .ok_or_else(|| anyhow!("conversation was dropped"))?
-                            .update(&mut cx, |this, cx| {
-                                this.pending_completions
-                                    .retain(|completion| completion.id != this.completion_count);
-                                this.summarize(cx);
-                            });
+                        this.update(&mut cx, |this, cx| {
+                            this.pending_completions
+                                .retain(|completion| completion.id != this.completion_count);
+                            this.summarize(cx);
+                        })?;
 
                         anyhow::Ok(())
                     };
 
                     let result = stream_completion.await;
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| {
-                            if let Some(metadata) =
-                                this.messages_metadata.get_mut(&assistant_message.id)
-                            {
-                                match result {
-                                    Ok(_) => {
-                                        metadata.status = MessageStatus::Done;
-                                    }
-                                    Err(error) => {
-                                        metadata.status =
-                                            MessageStatus::Error(error.to_string().trim().into());
-                                    }
+
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(metadata) =
+                            this.messages_metadata.get_mut(&assistant_message.id)
+                        {
+                            match result {
+                                Ok(_) => {
+                                    metadata.status = MessageStatus::Done;
                                 }
-                                cx.notify();
+                                Err(error) => {
+                                    metadata.status = MessageStatus::Error(SharedString::from(
+                                        error.to_string().trim().to_string(),
+                                    ));
+                                }
                             }
-                        });
-                    }
+                            cx.notify();
+                        }
+                    })
+                    .ok();
                 }
             });
 
@@ -2069,7 +1904,7 @@ impl Conversation {
                                 .text
                                 .push_str(&text);
                             cx.emit(ConversationEvent::SummaryChanged);
-                        });
+                        })?;
                     }
 
                     this.update(&mut cx, |this, cx| {
@@ -2077,7 +1912,7 @@ impl Conversation {
                             summary.done = true;
                             cx.emit(ConversationEvent::SummaryChanged);
                         }
-                    });
+                    })?;
 
                     anyhow::Ok(())
                 }
@@ -2166,7 +2001,7 @@ impl Conversation {
     ) {
         self.pending_save = cx.spawn(|this, mut cx| async move {
             if let Some(debounce) = debounce {
-                cx.background().timer(debounce).await;
+                cx.background_executor().timer(debounce).await;
             }
 
             let (old_path, summary) = this.read_with(&cx, |this, _| {
@@ -2181,10 +2016,10 @@ impl Conversation {
                     None
                 };
                 (path, summary)
-            });
+            })?;
 
             if let Some(summary) = summary {
-                let conversation = this.read_with(&cx, |this, cx| this.serialize(cx));
+                let conversation = this.read_with(&cx, |this, cx| this.serialize(cx))?;
                 let path = if let Some(old_path) = old_path {
                     old_path
                 } else {
@@ -2208,7 +2043,7 @@ impl Conversation {
                 fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
                 fs.atomic_write(path.clone(), serde_json::to_string(&conversation).unwrap())
                     .await?;
-                this.update(&mut cx, |this, _| this.path = Some(path));
+                this.update(&mut cx, |this, _| this.path = Some(path))?;
             }
 
             Ok(())
@@ -2227,15 +2062,15 @@ enum ConversationEditorEvent {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct ScrollPosition {
-    offset_before_cursor: Vector2F,
+    offset_before_cursor: gpui::Point<f32>,
     cursor: Anchor,
 }
 
 struct ConversationEditor {
-    conversation: ModelHandle<Conversation>,
+    conversation: Model<Conversation>,
     fs: Arc<dyn Fs>,
-    workspace: WeakViewHandle<Workspace>,
-    editor: ViewHandle<Editor>,
+    workspace: WeakView<Workspace>,
+    editor: View<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
@@ -2246,21 +2081,21 @@ impl ConversationEditor {
         completion_provider: Arc<dyn CompletionProvider>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        workspace: WeakViewHandle<Workspace>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let conversation =
-            cx.add_model(|cx| Conversation::new(language_registry, cx, completion_provider));
+            cx.new_model(|cx| Conversation::new(language_registry, cx, completion_provider));
         Self::for_conversation(conversation, fs, workspace, cx)
     }
 
     fn for_conversation(
-        conversation: ModelHandle<Conversation>,
+        conversation: Model<Conversation>,
         fs: Arc<dyn Fs>,
-        workspace: WeakViewHandle<Workspace>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let editor = cx.add_view(|cx| {
+        let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(conversation.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
@@ -2332,7 +2167,7 @@ impl ConversationEditor {
             .conversation
             .update(cx, |conversation, _| conversation.cancel_last_assist())
         {
-            cx.propagate_action();
+            cx.propagate();
         }
     }
 
@@ -2358,7 +2193,7 @@ impl ConversationEditor {
 
     fn handle_conversation_event(
         &mut self,
-        _: ModelHandle<Conversation>,
+        _: Model<Conversation>,
         event: &ConversationEvent,
         cx: &mut ViewContext<Self>,
     ) {
@@ -2381,9 +2216,9 @@ impl ConversationEditor {
                         let snapshot = editor.snapshot(cx);
                         let cursor_point = scroll_position.cursor.to_display_point(&snapshot);
                         let scroll_top =
-                            cursor_point.row() as f32 - scroll_position.offset_before_cursor.y();
+                            cursor_point.row() as f32 - scroll_position.offset_before_cursor.y;
                         editor.set_scroll_position(
-                            vec2f(scroll_position.offset_before_cursor.x(), scroll_top),
+                            point(scroll_position.offset_before_cursor.x, scroll_top),
                             cx,
                         );
                     }
@@ -2394,12 +2229,12 @@ impl ConversationEditor {
 
     fn handle_editor_event(
         &mut self,
-        _: ViewHandle<Editor>,
-        event: &editor::Event,
+        _: View<Editor>,
+        event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::ScrollPositionChanged { autoscroll, .. } => {
+            EditorEvent::ScrollPositionChanged { autoscroll, .. } => {
                 let cursor_scroll_position = self.cursor_scroll_position(cx);
                 if *autoscroll {
                     self.scroll_position = cursor_scroll_position;
@@ -2407,7 +2242,7 @@ impl ConversationEditor {
                     self.scroll_position = None;
                 }
             }
-            editor::Event::SelectionsChanged { .. } => {
+            EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
             }
             _ => {}
@@ -2424,14 +2259,11 @@ impl ConversationEditor {
                 .anchor()
                 .scroll_position(&snapshot.display_snapshot);
 
-            let scroll_bottom = scroll_position.y() + editor.visible_line_count().unwrap_or(0.);
-            if (scroll_position.y()..scroll_bottom).contains(&cursor_row) {
+            let scroll_bottom = scroll_position.y + editor.visible_line_count().unwrap_or(0.);
+            if (scroll_position.y..scroll_bottom).contains(&cursor_row) {
                 Some(ScrollPosition {
                     cursor,
-                    offset_before_cursor: vec2f(
-                        scroll_position.x(),
-                        cursor_row - scroll_position.y(),
-                    ),
+                    offset_before_cursor: point(scroll_position.x, cursor_row - scroll_position.y),
                 })
             } else {
                 None
@@ -2454,90 +2286,67 @@ impl ConversationEditor {
                     style: BlockStyle::Sticky,
                     render: Arc::new({
                         let conversation = self.conversation.clone();
-                        // let metadata = message.metadata.clone();
-                        // let message = message.clone();
-                        move |cx| {
-                            enum Sender {}
-                            enum ErrorTooltip {}
-
-                            let theme = theme::current(cx);
-                            let style = &theme.assistant;
+                        move |_cx| {
                             let message_id = message.id;
-                            let sender = MouseEventHandler::new::<Sender, _>(
-                                message_id.0,
-                                cx,
-                                |state, _| match message.role {
-                                    Role::User => {
-                                        let style = style.user_sender.style_for(state);
-                                        Label::new("You", style.text.clone())
-                                            .contained()
-                                            .with_style(style.container)
-                                    }
+                            let sender = ButtonLike::new("role")
+                                .child(match message.role {
+                                    Role::User => Label::new("You").color(Color::Default),
                                     Role::Assistant => {
-                                        let style = style.assistant_sender.style_for(state);
-                                        Label::new("Assistant", style.text.clone())
-                                            .contained()
-                                            .with_style(style.container)
+                                        Label::new("Assistant").color(Color::Modified)
                                     }
-                                    Role::System => {
-                                        let style = style.system_sender.style_for(state);
-                                        Label::new("System", style.text.clone())
-                                            .contained()
-                                            .with_style(style.container)
-                                    }
-                                },
-                            )
-                            .with_cursor_style(CursorStyle::PointingHand)
-                            .on_down(MouseButton::Left, {
-                                let conversation = conversation.clone();
-                                move |_, _, cx| {
-                                    conversation.update(cx, |conversation, cx| {
-                                        conversation.cycle_message_roles(
-                                            HashSet::from_iter(Some(message_id)),
-                                            cx,
-                                        )
-                                    })
-                                }
-                            });
-
-                            Flex::row()
-                                .with_child(sender.aligned())
-                                .with_child(
-                                    Label::new(
-                                        message.sent_at.format("%I:%M%P").to_string(),
-                                        style.sent_at.text.clone(),
+                                    Role::System => Label::new("System").color(Color::Warning),
+                                })
+                                .tooltip(|cx| {
+                                    Tooltip::with_meta(
+                                        "Toggle message role",
+                                        None,
+                                        "Available roles: You (User), Assistant, System",
+                                        cx,
                                     )
-                                    .contained()
-                                    .with_style(style.sent_at.container)
-                                    .aligned(),
+                                })
+                                .on_click({
+                                    let conversation = conversation.clone();
+                                    move |_, cx| {
+                                        conversation.update(cx, |conversation, cx| {
+                                            conversation.cycle_message_roles(
+                                                HashSet::from_iter(Some(message_id)),
+                                                cx,
+                                            )
+                                        })
+                                    }
+                                });
+
+                            h_stack()
+                                .id(("message_header", message_id.0))
+                                .h_11()
+                                .gap_1()
+                                .p_1()
+                                .child(sender)
+                                // TODO: Only show this if the message if the message has been sent
+                                .child(
+                                    Label::new(
+                                        FormatDistance::from_now(DateTimeType::Local(
+                                            message.sent_at,
+                                        ))
+                                        .hide_prefix(true)
+                                        .add_suffix(true)
+                                        .to_string(),
+                                    )
+                                    .color(Color::Muted),
                                 )
-                                .with_children(
-                                    if let MessageStatus::Error(error) = &message.status {
+                                .children(
+                                    if let MessageStatus::Error(error) = message.status.clone() {
                                         Some(
-                                            Svg::new("icons/error.svg")
-                                                .with_color(style.error_icon.color)
-                                                .constrained()
-                                                .with_width(style.error_icon.width)
-                                                .contained()
-                                                .with_style(style.error_icon.container)
-                                                .with_tooltip::<ErrorTooltip>(
-                                                    message_id.0,
-                                                    error.to_string(),
-                                                    None,
-                                                    theme.tooltip.clone(),
-                                                    cx,
-                                                )
-                                                .aligned(),
+                                            div()
+                                                .id("error")
+                                                .tooltip(move |cx| Tooltip::text(error.clone(), cx))
+                                                .child(IconElement::new(Icon::XCircle)),
                                         )
                                     } else {
                                         None
                                     },
                                 )
-                                .aligned()
-                                .left()
-                                .contained()
-                                .with_style(style.message_header)
-                                .into_any()
+                                .into_any_element()
                         }
                     }),
                     disposition: BlockDisposition::Above,
@@ -2565,36 +2374,35 @@ impl ConversationEditor {
             return;
         };
 
-        let text = editor.read_with(cx, |editor, cx| {
-            let range = editor.selections.newest::<usize>(cx).range();
-            let buffer = editor.buffer().read(cx).snapshot(cx);
-            let start_language = buffer.language_at(range.start);
-            let end_language = buffer.language_at(range.end);
-            let language_name = if start_language == end_language {
-                start_language.map(|language| language.name())
-            } else {
-                None
-            };
-            let language_name = language_name.as_deref().unwrap_or("").to_lowercase();
+        let editor = editor.read(cx);
+        let range = editor.selections.newest::<usize>(cx).range();
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let start_language = buffer.language_at(range.start);
+        let end_language = buffer.language_at(range.end);
+        let language_name = if start_language == end_language {
+            start_language.map(|language| language.name())
+        } else {
+            None
+        };
+        let language_name = language_name.as_deref().unwrap_or("").to_lowercase();
 
-            let selected_text = buffer.text_for_range(range).collect::<String>();
-            if selected_text.is_empty() {
-                None
+        let selected_text = buffer.text_for_range(range).collect::<String>();
+        let text = if selected_text.is_empty() {
+            None
+        } else {
+            Some(if language_name == "markdown" {
+                selected_text
+                    .lines()
+                    .map(|line| format!("> {}", line))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
-                Some(if language_name == "markdown" {
-                    selected_text
-                        .lines()
-                        .map(|line| format!("> {}", line))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else {
-                    format!("```{language_name}\n{selected_text}\n```")
-                })
-            }
-        });
+                format!("```{language_name}\n{selected_text}\n```")
+            })
+        };
 
         // Activate the panel
-        if !panel.read(cx).has_focus(cx) {
+        if !panel.focus_handle(cx).contains_focused(cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
         }
 
@@ -2638,13 +2446,12 @@ impl ConversationEditor {
             }
 
             if spanned_messages > 1 {
-                cx.platform()
-                    .write_to_clipboard(ClipboardItem::new(copied_text));
+                cx.write_to_clipboard(ClipboardItem::new(copied_text));
                 return;
             }
         }
 
-        cx.propagate_action();
+        cx.propagate();
     }
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
@@ -2682,80 +2489,65 @@ impl ConversationEditor {
             .unwrap_or_else(|| "New Conversation".into())
     }
 
-    fn render_current_model(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> impl Element<Self> {
-        enum Model {}
-
-        MouseEventHandler::new::<Model, _>(0, cx, |state, cx| {
-            let style = style.model.style_for(state);
-            let model_display_name = self.conversation.read(cx).model.short_name();
-            Label::new(model_display_name, style.text.clone())
-                .contained()
-                .with_style(style.container)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, this, cx| this.cycle_model(cx))
-    }
-
-    fn render_remaining_tokens(
-        &self,
-        style: &AssistantStyle,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<impl Element<Self>> {
-        let remaining_tokens = self.conversation.read(cx).remaining_tokens()?;
-        let remaining_tokens_style = if remaining_tokens <= 0 {
-            &style.no_remaining_tokens
-        } else if remaining_tokens <= 500 {
-            &style.low_remaining_tokens
-        } else {
-            &style.remaining_tokens
-        };
-        Some(
-            Label::new(
-                remaining_tokens.to_string(),
-                remaining_tokens_style.text.clone(),
-            )
-            .contained()
-            .with_style(remaining_tokens_style.container),
+    fn render_current_model(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Button::new(
+            "current_model",
+            self.conversation.read(cx).model.short_name(),
         )
+        .style(ButtonStyle::Filled)
+        .tooltip(move |cx| Tooltip::text("Change Model", cx))
+        .on_click(cx.listener(|this, _, cx| this.cycle_model(cx)))
+    }
+
+    fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+        let remaining_tokens = self.conversation.read(cx).remaining_tokens()?;
+        let remaining_tokens_color = if remaining_tokens <= 0 {
+            Color::Error
+        } else if remaining_tokens <= 500 {
+            Color::Warning
+        } else {
+            Color::Default
+        };
+        Some(Label::new(remaining_tokens.to_string()).color(remaining_tokens_color))
     }
 }
 
-impl Entity for ConversationEditor {
-    type Event = ConversationEditorEvent;
+impl EventEmitter<ConversationEditorEvent> for ConversationEditor {}
+
+impl Render for ConversationEditor {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        div()
+            .key_context("ConversationEditor")
+            .capture_action(cx.listener(ConversationEditor::cancel_last_assist))
+            .capture_action(cx.listener(ConversationEditor::save))
+            .capture_action(cx.listener(ConversationEditor::copy))
+            .capture_action(cx.listener(ConversationEditor::cycle_message_role))
+            .on_action(cx.listener(ConversationEditor::assist))
+            .on_action(cx.listener(ConversationEditor::split))
+            .size_full()
+            .relative()
+            .child(
+                div()
+                    .size_full()
+                    .pl_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(self.editor.clone()),
+            )
+            .child(
+                h_stack()
+                    .absolute()
+                    .gap_1()
+                    .top_3()
+                    .right_5()
+                    .child(self.render_current_model(cx))
+                    .children(self.render_remaining_tokens(cx)),
+            )
+    }
 }
 
-impl View for ConversationEditor {
-    fn ui_name() -> &'static str {
-        "ConversationEditor"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &theme::current(cx).assistant;
-        Stack::new()
-            .with_child(
-                ChildView::new(&self.editor, cx)
-                    .contained()
-                    .with_style(theme.container),
-            )
-            .with_child(
-                Flex::row()
-                    .with_child(self.render_current_model(theme, cx))
-                    .with_children(self.render_remaining_tokens(theme, cx))
-                    .aligned()
-                    .top()
-                    .right(),
-            )
-            .into_any()
-    }
-
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.editor);
-        }
+impl FocusableView for ConversationEditor {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.editor.focus_handle(cx)
     }
 }
 
@@ -2806,142 +2598,104 @@ enum InlineAssistantEvent {
 
 struct InlineAssistant {
     id: usize,
-    prompt_editor: ViewHandle<Editor>,
-    workspace: WeakViewHandle<Workspace>,
+    prompt_editor: View<Editor>,
+    workspace: WeakView<Workspace>,
     confirmed: bool,
-    has_focus: bool,
     include_conversation: bool,
     measurements: Rc<Cell<BlockMeasurements>>,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
-    codegen: ModelHandle<Codegen>,
+    codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
     retrieve_context: bool,
-    semantic_index: Option<ModelHandle<SemanticIndex>>,
+    semantic_index: Option<Model<SemanticIndex>>,
     semantic_permissioned: Option<bool>,
-    project: WeakModelHandle<Project>,
+    project: WeakModel<Project>,
     maintain_rate_limit: Option<Task<()>>,
 }
 
-impl Entity for InlineAssistant {
-    type Event = InlineAssistantEvent;
-}
+impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 
-impl View for InlineAssistant {
-    fn ui_name() -> &'static str {
-        "InlineAssistant"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        enum ErrorIcon {}
-        let theme = theme::current(cx);
-
-        Flex::row()
-            .with_children([Flex::row()
-                .with_child(
-                    Button::action(ToggleIncludeConversation)
-                        .with_tooltip("Include Conversation", theme.tooltip.clone())
-                        .with_id(self.id)
-                        .with_contents(theme::components::svg::Svg::new("icons/ai.svg"))
-                        .toggleable(self.include_conversation)
-                        .with_style(theme.assistant.inline.include_conversation.clone())
-                        .element()
-                        .aligned(),
-                )
-                .with_children(if SemanticIndex::enabled(cx) {
-                    Some(
-                        Button::action(ToggleRetrieveContext)
-                            .with_tooltip("Retrieve Context", theme.tooltip.clone())
-                            .with_id(self.id)
-                            .with_contents(theme::components::svg::Svg::new(
-                                "icons/magnifying_glass.svg",
-                            ))
-                            .toggleable(self.retrieve_context)
-                            .with_style(theme.assistant.inline.retrieve_context.clone())
-                            .element()
-                            .aligned(),
+impl Render for InlineAssistant {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        let measurements = self.measurements.get();
+        h_stack()
+            .w_full()
+            .py_2()
+            .border_y_1()
+            .border_color(cx.theme().colors().border)
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::toggle_include_conversation))
+            .on_action(cx.listener(Self::toggle_retrieve_context))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::move_down))
+            .child(
+                h_stack()
+                    .justify_center()
+                    .w(measurements.gutter_width)
+                    .child(
+                        IconButton::new("include_conversation", Icon::Ai)
+                            .on_click(cx.listener(|this, _, cx| {
+                                this.toggle_include_conversation(&ToggleIncludeConversation, cx)
+                            }))
+                            .selected(self.include_conversation)
+                            .tooltip(|cx| {
+                                Tooltip::for_action(
+                                    "Include Conversation",
+                                    &ToggleIncludeConversation,
+                                    cx,
+                                )
+                            }),
                     )
-                } else {
-                    None
-                })
-                .with_children(if let Some(error) = self.codegen.read(cx).error() {
-                    Some(
-                        Svg::new("icons/error.svg")
-                            .with_color(theme.assistant.error_icon.color)
-                            .constrained()
-                            .with_width(theme.assistant.error_icon.width)
-                            .contained()
-                            .with_style(theme.assistant.error_icon.container)
-                            .with_tooltip::<ErrorIcon>(
-                                self.id,
-                                error.to_string(),
-                                None,
-                                theme.tooltip.clone(),
-                                cx,
-                            )
-                            .aligned(),
-                    )
-                } else {
-                    None
-                })
-                .aligned()
-                .constrained()
-                .dynamically({
-                    let measurements = self.measurements.clone();
-                    move |constraint, _, _| {
-                        let measurements = measurements.get();
-                        SizeConstraint {
-                            min: vec2f(measurements.gutter_width, constraint.min.y()),
-                            max: vec2f(measurements.gutter_width, constraint.max.y()),
-                        }
-                    }
-                })])
-            .with_child(Empty::new().constrained().dynamically({
-                let measurements = self.measurements.clone();
-                move |constraint, _, _| {
-                    let measurements = measurements.get();
-                    SizeConstraint {
-                        min: vec2f(
-                            measurements.anchor_x - measurements.gutter_width,
-                            constraint.min.y(),
-                        ),
-                        max: vec2f(
-                            measurements.anchor_x - measurements.gutter_width,
-                            constraint.max.y(),
-                        ),
-                    }
-                }
-            }))
-            .with_child(
-                ChildView::new(&self.prompt_editor, cx)
-                    .aligned()
-                    .left()
-                    .flex(1., true),
+                    .children(if SemanticIndex::enabled(cx) {
+                        Some(
+                            IconButton::new("retrieve_context", Icon::MagnifyingGlass)
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.toggle_retrieve_context(&ToggleRetrieveContext, cx)
+                                }))
+                                .selected(self.retrieve_context)
+                                .tooltip(|cx| {
+                                    Tooltip::for_action(
+                                        "Retrieve Context",
+                                        &ToggleRetrieveContext,
+                                        cx,
+                                    )
+                                }),
+                        )
+                    } else {
+                        None
+                    })
+                    .children(if let Some(error) = self.codegen.read(cx).error() {
+                        let error_message = SharedString::from(error.to_string());
+                        Some(
+                            div()
+                                .id("error")
+                                .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
+                                .child(IconElement::new(Icon::XCircle).color(Color::Error)),
+                        )
+                    } else {
+                        None
+                    }),
             )
-            .with_children(if self.retrieve_context {
-                Some(
-                    Flex::row()
-                        .with_children(self.retrieve_context_status(cx))
-                        .flex(1., true)
-                        .aligned(),
-                )
+            .child(
+                h_stack()
+                    .w_full()
+                    .ml(measurements.anchor_x - measurements.gutter_width)
+                    .child(self.render_prompt_editor(cx)),
+            )
+            .children(if self.retrieve_context {
+                self.retrieve_context_status(cx)
             } else {
                 None
             })
-            .contained()
-            .with_style(theme.assistant.inline.container)
-            .into_any()
-            .into_any()
     }
+}
 
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.prompt_editor);
-        self.has_focus = true;
-    }
-
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
-        self.has_focus = false;
+impl FocusableView for InlineAssistant {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.prompt_editor.focus_handle(cx)
     }
 }
 
@@ -2951,18 +2705,15 @@ impl InlineAssistant {
         measurements: Rc<Cell<BlockMeasurements>>,
         include_conversation: bool,
         prompt_history: VecDeque<String>,
-        codegen: ModelHandle<Codegen>,
-        workspace: WeakViewHandle<Workspace>,
+        codegen: Model<Codegen>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
         retrieve_context: bool,
-        semantic_index: Option<ModelHandle<SemanticIndex>>,
-        project: ModelHandle<Project>,
+        semantic_index: Option<Model<SemanticIndex>>,
+        project: Model<Project>,
     ) -> Self {
-        let prompt_editor = cx.add_view(|cx| {
-            let mut editor = Editor::single_line(
-                Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
-                cx,
-            );
+        let prompt_editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
             let placeholder = match codegen.read(cx).kind() {
                 CodegenKind::Transform { .. } => "Enter transformation prompt…",
                 CodegenKind::Generate { .. } => "Enter generation prompt…",
@@ -2970,6 +2721,8 @@ impl InlineAssistant {
             editor.set_placeholder_text(placeholder, cx);
             editor
         });
+        cx.focus_view(&prompt_editor);
+
         let mut subscriptions = vec![
             cx.observe(&codegen, Self::handle_codegen_changed),
             cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events),
@@ -2984,7 +2737,6 @@ impl InlineAssistant {
             prompt_editor,
             workspace,
             confirmed: false,
-            has_focus: false,
             include_conversation,
             measurements,
             prompt_history,
@@ -3009,7 +2761,7 @@ impl InlineAssistant {
             return Task::ready(Ok(value));
         }
 
-        let Some(project) = self.project.upgrade(cx) else {
+        let Some(project) = self.project.upgrade() else {
             return Task::ready(Err(anyhow!("project was dropped")));
         };
 
@@ -3023,11 +2775,11 @@ impl InlineAssistant {
 
     fn handle_prompt_editor_events(
         &mut self,
-        _: ViewHandle<Editor>,
-        event: &editor::Event,
+        _: View<Editor>,
+        event: &EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::Event::Edited = event {
+        if let EditorEvent::Edited = event {
             self.pending_prompt = self.prompt_editor.read(cx).text(cx);
             cx.notify();
         }
@@ -3035,10 +2787,10 @@ impl InlineAssistant {
 
     fn semantic_index_changed(
         &mut self,
-        semantic_index: ModelHandle<SemanticIndex>,
+        semantic_index: Model<SemanticIndex>,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(project) = self.project.upgrade(cx) else {
+        let Some(project) = self.project.upgrade() else {
             return;
         };
 
@@ -3051,7 +2803,7 @@ impl InlineAssistant {
                 if self.maintain_rate_limit.is_none() {
                     self.maintain_rate_limit = Some(cx.spawn(|this, mut cx| async move {
                         loop {
-                            cx.background().timer(Duration::from_secs(1)).await;
+                            cx.background_executor().timer(Duration::from_secs(1)).await;
                             this.update(&mut cx, |_, cx| cx.notify()).log_err();
                         }
                     }));
@@ -3064,26 +2816,16 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: ModelHandle<Codegen>, cx: &mut ViewContext<Self>) {
+    fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
         let is_read_only = !self.codegen.read(cx).idle();
-        self.prompt_editor.update(cx, |editor, cx| {
+        self.prompt_editor.update(cx, |editor, _cx| {
             let was_read_only = editor.read_only();
             if was_read_only != is_read_only {
                 if is_read_only {
                     editor.set_read_only(true);
-                    editor.set_field_editor_style(
-                        Some(Arc::new(|theme| {
-                            theme.assistant.inline.disabled_editor.clone()
-                        })),
-                        cx,
-                    );
                 } else {
                     self.confirmed = false;
                     editor.set_read_only(false);
-                    editor.set_field_editor_style(
-                        Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
-                        cx,
-                    );
                 }
             }
         });
@@ -3101,15 +2843,8 @@ impl InlineAssistant {
             report_assistant_event(self.workspace.clone(), None, AssistantKind::Inline, cx);
 
             let prompt = self.prompt_editor.read(cx).text(cx);
-            self.prompt_editor.update(cx, |editor, cx| {
-                editor.set_read_only(true);
-                editor.set_field_editor_style(
-                    Some(Arc::new(|theme| {
-                        theme.assistant.inline.disabled_editor.clone()
-                    })),
-                    cx,
-                );
-            });
+            self.prompt_editor
+                .update(cx, |editor, _cx| editor.set_read_only(true));
             cx.emit(InlineAssistantEvent::Confirmed {
                 prompt,
                 include_conversation: self.include_conversation,
@@ -3123,7 +2858,7 @@ impl InlineAssistant {
     fn toggle_retrieve_context(&mut self, _: &ToggleRetrieveContext, cx: &mut ViewContext<Self>) {
         let semantic_permissioned = self.semantic_permissioned(cx);
 
-        let Some(project) = self.project.upgrade(cx) else {
+        let Some(project) = self.project.upgrade() else {
             return;
         };
 
@@ -3141,7 +2876,7 @@ impl InlineAssistant {
         cx.spawn(|this, mut cx| async move {
             // If Necessary prompt user
             if !semantic_permissioned.await.unwrap_or(false) {
-                let mut answer = this.update(&mut cx, |_, cx| {
+                let answer = this.update(&mut cx, |_, cx| {
                     cx.prompt(
                         PromptLevel::Info,
                         prompt_text.as_str(),
@@ -3149,7 +2884,7 @@ impl InlineAssistant {
                     )
                 })?;
 
-                if answer.next().await == Some(0) {
+                if answer.await? == 0 {
                     this.update(&mut cx, |this, _| {
                         this.semantic_permissioned = Some(true);
                     })?;
@@ -3179,7 +2914,7 @@ impl InlineAssistant {
     }
 
     fn index_project(&self, cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
-        let Some(project) = self.project.upgrade(cx) else {
+        let Some(project) = self.project.upgrade() else {
             return Err(anyhow!("project was dropped!"));
         };
 
@@ -3189,7 +2924,7 @@ impl InlineAssistant {
                 // This has to be updated to accomodate for semantic_permissions
                 if semantic_permissioned.await.unwrap_or(false) {
                     semantic_index
-                        .update(&mut cx, |index, cx| index.index_project(project, cx))
+                        .update(&mut cx, |index, cx| index.index_project(project, cx))?
                         .await
                 } else {
                     Err(anyhow!("project is not permissioned for semantic indexing"))
@@ -3201,152 +2936,71 @@ impl InlineAssistant {
         anyhow::Ok(())
     }
 
-    fn retrieve_context_status(
-        &self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement<InlineAssistant>> {
-        enum ContextStatusIcon {}
-
-        let Some(project) = self.project.upgrade(cx) else {
+    fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let Some(project) = self.project.upgrade() else {
             return None;
         };
 
-        if let Some(semantic_index) = SemanticIndex::global(cx) {
-            let status = semantic_index.update(cx, |index, _| index.status(&project));
-            let theme = theme::current(cx);
-            match status {
-                SemanticIndexStatus::NotAuthenticated {} => Some(
-                    Svg::new("icons/error.svg")
-                        .with_color(theme.assistant.error_icon.color)
-                        .constrained()
-                        .with_width(theme.assistant.error_icon.width)
-                        .contained()
-                        .with_style(theme.assistant.error_icon.container)
-                        .with_tooltip::<ContextStatusIcon>(
-                            self.id,
-                            "Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.",
-                            None,
-                            theme.tooltip.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .into_any(),
-                ),
-                SemanticIndexStatus::NotIndexed {} => Some(
-                    Svg::new("icons/error.svg")
-                        .with_color(theme.assistant.inline.context_status.error_icon.color)
-                        .constrained()
-                        .with_width(theme.assistant.inline.context_status.error_icon.width)
-                        .contained()
-                        .with_style(theme.assistant.inline.context_status.error_icon.container)
-                        .with_tooltip::<ContextStatusIcon>(
-                            self.id,
-                            "Not Indexed",
-                            None,
-                            theme.tooltip.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .into_any(),
-                ),
-                SemanticIndexStatus::Indexing {
-                    remaining_files,
-                    rate_limit_expiry,
-                } => {
+        let semantic_index = SemanticIndex::global(cx)?;
+        let status = semantic_index.update(cx, |index, _| index.status(&project));
+        match status {
+            SemanticIndexStatus::NotAuthenticated {} => Some(
+                div()
+                    .id("error")
+                    .tooltip(|cx| Tooltip::text("Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.", cx))
+                    .child(IconElement::new(Icon::XCircle))
+                    .into_any_element()
+            ),
 
-                    let mut status_text = if remaining_files == 0 {
-                        "Indexing...".to_string()
-                    } else {
-                        format!("Remaining files to index: {remaining_files}")
-                    };
+            SemanticIndexStatus::NotIndexed {} => Some(
+                div()
+                    .id("error")
+                    .tooltip(|cx| Tooltip::text("Not Indexed", cx))
+                    .child(IconElement::new(Icon::XCircle))
+                    .into_any_element()
+            ),
 
-                    if let Some(rate_limit_expiry) = rate_limit_expiry {
-                        let remaining_seconds = rate_limit_expiry.duration_since(Instant::now());
-                        if remaining_seconds > Duration::from_secs(0) && remaining_files > 0 {
-                            write!(
-                                status_text,
-                                " (rate limit expires in {}s)",
-                                remaining_seconds.as_secs()
-                            )
-                            .unwrap();
-                        }
+            SemanticIndexStatus::Indexing {
+                remaining_files,
+                rate_limit_expiry,
+            } => {
+                let mut status_text = if remaining_files == 0 {
+                    "Indexing...".to_string()
+                } else {
+                    format!("Remaining files to index: {remaining_files}")
+                };
+
+                if let Some(rate_limit_expiry) = rate_limit_expiry {
+                    let remaining_seconds = rate_limit_expiry.duration_since(Instant::now());
+                    if remaining_seconds > Duration::from_secs(0) && remaining_files > 0 {
+                        write!(
+                            status_text,
+                            " (rate limit expires in {}s)",
+                            remaining_seconds.as_secs()
+                        )
+                        .unwrap();
                     }
-                    Some(
-                        Svg::new("icons/update.svg")
-                            .with_color(theme.assistant.inline.context_status.in_progress_icon.color)
-                            .constrained()
-                            .with_width(theme.assistant.inline.context_status.in_progress_icon.width)
-                            .contained()
-                            .with_style(theme.assistant.inline.context_status.in_progress_icon.container)
-                            .with_tooltip::<ContextStatusIcon>(
-                                self.id,
-                                status_text,
-                                None,
-                                theme.tooltip.clone(),
-                                cx,
-                            )
-                            .aligned()
-                            .into_any(),
-                    )
                 }
-                SemanticIndexStatus::Indexed {} => Some(
-                    Svg::new("icons/check.svg")
-                        .with_color(theme.assistant.inline.context_status.complete_icon.color)
-                        .constrained()
-                        .with_width(theme.assistant.inline.context_status.complete_icon.width)
-                        .contained()
-                        .with_style(theme.assistant.inline.context_status.complete_icon.container)
-                        .with_tooltip::<ContextStatusIcon>(
-                            self.id,
-                            "Index up to date",
-                            None,
-                            theme.tooltip.clone(),
-                            cx,
-                        )
-                        .aligned()
-                        .into_any(),
-                ),
+
+                let status_text = SharedString::from(status_text);
+                Some(
+                    div()
+                        .id("update")
+                        .tooltip(move |cx| Tooltip::text(status_text.clone(), cx))
+                        .child(IconElement::new(Icon::Update).color(Color::Info))
+                        .into_any_element()
+                )
             }
-        } else {
-            None
+
+            SemanticIndexStatus::Indexed {} => Some(
+                div()
+                    .id("check")
+                    .tooltip(|cx| Tooltip::text("Index up to date", cx))
+                    .child(IconElement::new(Icon::Check).color(Color::Success))
+                    .into_any_element()
+            ),
         }
     }
-
-    // fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> String {
-    //     let project = self.project.clone();
-    //     if let Some(semantic_index) = self.semantic_index.clone() {
-    //         let status = semantic_index.update(cx, |index, cx| index.status(&project));
-    //         return match status {
-    //             // This theoretically shouldnt be a valid code path
-    //             // As the inline assistant cant be launched without an API key
-    //             // We keep it here for safety
-    //             semantic_index::SemanticIndexStatus::NotAuthenticated => {
-    //                 "Not Authenticated!\nPlease ensure you have an `OPENAI_API_KEY` in your environment variables.".to_string()
-    //             }
-    //             semantic_index::SemanticIndexStatus::Indexed => {
-    //                 "Indexing Complete!".to_string()
-    //             }
-    //             semantic_index::SemanticIndexStatus::Indexing { remaining_files, rate_limit_expiry } => {
-
-    //                 let mut status = format!("Remaining files to index for Context Retrieval: {remaining_files}");
-
-    //                 if let Some(rate_limit_expiry) = rate_limit_expiry {
-    //                     let remaining_seconds =
-    //                             rate_limit_expiry.duration_since(Instant::now());
-    //                     if remaining_seconds > Duration::from_secs(0) {
-    //                         write!(status, " (rate limit resets in {}s)", remaining_seconds.as_secs()).unwrap();
-    //                     }
-    //                 }
-    //                 status
-    //             }
-    //             semantic_index::SemanticIndexStatus::NotIndexed => {
-    //                 "Not Indexed for Context Retrieval".to_string()
-    //             }
-    //         };
-    //     }
-
-    //     "".to_string()
-    // }
 
     fn toggle_include_conversation(
         &mut self,
@@ -3396,21 +3050,50 @@ impl InlineAssistant {
             });
         });
     }
+
+    fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if self.prompt_editor.read(cx).read_only() {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+        EditorElement::new(
+            &self.prompt_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
 }
 
 // This wouldn't need to exist if we could pass parameters when rendering child views.
 #[derive(Copy, Clone, Default)]
 struct BlockMeasurements {
-    anchor_x: f32,
-    gutter_width: f32,
+    anchor_x: Pixels,
+    gutter_width: Pixels,
 }
 
 struct PendingInlineAssist {
-    editor: WeakViewHandle<Editor>,
-    inline_assistant: Option<(BlockId, ViewHandle<InlineAssistant>)>,
-    codegen: ModelHandle<Codegen>,
+    editor: WeakView<Editor>,
+    inline_assistant: Option<(BlockId, View<InlineAssistant>)>,
+    codegen: Model<Codegen>,
     _subscriptions: Vec<Subscription>,
-    project: WeakModelHandle<Project>,
+    project: WeakModel<Project>,
 }
 
 fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
@@ -3444,12 +3127,13 @@ mod tests {
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
 
         let completion_provider = Arc::new(FakeCompletionProvider::new());
-        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3574,12 +3258,13 @@ mod tests {
 
     #[gpui::test]
     fn test_message_splitting(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
 
-        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3672,11 +3357,12 @@ mod tests {
 
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
-        let conversation = cx.add_model(|cx| Conversation::new(registry, cx, completion_provider));
+        let conversation = cx.new_model(|cx| Conversation::new(registry, cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
 
         let message_1 = conversation.read(cx).message_anchors[0].clone();
@@ -3740,7 +3426,7 @@ mod tests {
         );
 
         fn message_ids_for_offsets(
-            conversation: &ModelHandle<Conversation>,
+            conversation: &Model<Conversation>,
             offsets: &[usize],
             cx: &AppContext,
         ) -> Vec<MessageId> {
@@ -3755,12 +3441,13 @@ mod tests {
 
     #[gpui::test]
     fn test_serialization(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         init(cx);
         let registry = Arc::new(LanguageRegistry::test());
         let completion_provider = Arc::new(FakeCompletionProvider::new());
         let conversation =
-            cx.add_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
+            cx.new_model(|cx| Conversation::new(registry.clone(), cx, completion_provider));
         let buffer = conversation.read(cx).buffer.clone();
         let message_0 = conversation.read(cx).message_anchors[0].id;
         let message_1 = conversation.update(cx, |conversation, cx| {
@@ -3793,7 +3480,7 @@ mod tests {
             ]
         );
 
-        let deserialized_conversation = cx.add_model(|cx| {
+        let deserialized_conversation = cx.new_model(|cx| {
             Conversation::deserialize(
                 conversation.read(cx).serialize(cx),
                 Default::default(),
@@ -3814,7 +3501,7 @@ mod tests {
     }
 
     fn messages(
-        conversation: &ModelHandle<Conversation>,
+        conversation: &Model<Conversation>,
         cx: &AppContext,
     ) -> Vec<(MessageId, Role, Range<usize>)> {
         conversation
@@ -3826,23 +3513,23 @@ mod tests {
 }
 
 fn report_assistant_event(
-    workspace: WeakViewHandle<Workspace>,
+    workspace: WeakView<Workspace>,
     conversation_id: Option<String>,
     assistant_kind: AssistantKind,
     cx: &AppContext,
 ) {
-    let Some(workspace) = workspace.upgrade(cx) else {
+    let Some(workspace) = workspace.upgrade() else {
         return;
     };
 
     let client = workspace.read(cx).project().read(cx).client();
     let telemetry = client.telemetry();
 
-    let model = settings::get::<AssistantSettings>(cx)
+    let model = AssistantSettings::get_global(cx)
         .default_open_ai_model
         .clone();
 
-    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+    let telemetry_settings = TelemetrySettings::get_global(cx).clone();
 
     telemetry.report_assistant_event(
         telemetry_settings,

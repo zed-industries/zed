@@ -3,8 +3,6 @@ mod neovim_backed_test_context;
 mod neovim_connection;
 mod vim_test_context;
 
-use std::sync::Arc;
-
 use command_palette::CommandPalette;
 use editor::DisplayPoint;
 pub use neovim_backed_binding_test_context::*;
@@ -96,7 +94,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    search_bar.read_with(cx.cx, |bar, cx| {
+    cx.update_view(search_bar, |bar, cx| {
         assert_eq!(bar.query(cx), "");
     })
 }
@@ -149,9 +147,10 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.set_state("aˇbc\n", Mode::Normal);
     cx.simulate_keystrokes(["i", "cmd-shift-p"]);
 
-    assert!(cx.workspace(|workspace, _| workspace.modal::<CommandPalette>().is_some()));
+    assert!(cx.workspace(|workspace, cx| workspace.active_modal::<CommandPalette>(cx).is_some()));
     cx.simulate_keystroke("escape");
-    assert!(!cx.workspace(|workspace, _| workspace.modal::<CommandPalette>().is_some()));
+    cx.run_until_parked();
+    assert!(!cx.workspace(|workspace, cx| workspace.active_modal::<CommandPalette>(cx).is_some()));
     cx.assert_state("aˇbc\n", Mode::Insert);
 }
 
@@ -182,7 +181,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    search_bar.read_with(cx.cx, |bar, cx| {
+    cx.update_view(search_bar, |bar, cx| {
         assert_eq!(bar.query(cx), "cc");
     });
 
@@ -204,12 +203,8 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_status_indicator(
-    cx: &mut gpui::TestAppContext,
-    deterministic: Arc<gpui::executor::Deterministic>,
-) {
+async fn test_status_indicator(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
-    deterministic.run_until_parked();
 
     let mode_indicator = cx.workspace(|workspace, cx| {
         let status_bar = workspace.status_bar().read(cx);
@@ -225,7 +220,6 @@ async fn test_status_indicator(
 
     // shows the correct mode
     cx.simulate_keystrokes(["i"]);
-    deterministic.run_until_parked();
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
         Some(Mode::Insert)
@@ -233,7 +227,6 @@ async fn test_status_indicator(
 
     // shows even in search
     cx.simulate_keystrokes(["escape", "v", "/"]);
-    deterministic.run_until_parked();
     assert_eq!(
         cx.workspace(|_, cx| mode_indicator.read(cx).mode),
         Some(Mode::Visual)
@@ -241,7 +234,7 @@ async fn test_status_indicator(
 
     // hides if vim mode is disabled
     cx.disable_vim();
-    deterministic.run_until_parked();
+    cx.run_until_parked();
     cx.workspace(|workspace, cx| {
         let status_bar = workspace.status_bar().read(cx);
         let mode_indicator = status_bar.item_of_type::<ModeIndicator>().unwrap();
@@ -249,7 +242,7 @@ async fn test_status_indicator(
     });
 
     cx.enable_vim();
-    deterministic.run_until_parked();
+    cx.run_until_parked();
     cx.workspace(|workspace, cx| {
         let status_bar = workspace.status_bar().read(cx);
         let mode_indicator = status_bar.item_of_type::<ModeIndicator>().unwrap();

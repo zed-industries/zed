@@ -33,9 +33,9 @@ search = { path = "../search" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 theme = { path = "../theme" }
-language_selector = { path = "../language_selector"}
+ui = { path = "../ui"}
 diagnostics = { path = "../diagnostics" }
-zed-actions = { path = "../zed-actions" }
+zed_actions = { path = "../zed_actions" }
 
 [dev-dependencies]
 indoc.workspace = true

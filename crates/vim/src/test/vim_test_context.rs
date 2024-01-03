@@ -4,9 +4,9 @@ use editor::test::{
     editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
 };
 use futures::Future;
-use gpui::ContextHandle;
+use gpui::{Context, View, VisualContext};
 use lsp::request;
-use search::{BufferSearchBar, ProjectSearchBar};
+use search::BufferSearchBar;
 
 use crate::{state::Operator, *};
 
@@ -15,12 +15,28 @@ pub struct VimTestContext<'a> {
 }
 
 impl<'a> VimTestContext<'a> {
+    pub fn init(cx: &mut gpui::TestAppContext) {
+        if cx.has_global::<Vim>() {
+            dbg!("OOPS");
+            return;
+        }
+        cx.update(|cx| {
+            search::init(cx);
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            command_palette::init(cx);
+            crate::init(cx);
+        });
+    }
+
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
+        Self::init(cx);
         let lsp = EditorLspTestContext::new_rust(Default::default(), cx).await;
         Self::new_with_lsp(lsp, enabled)
     }
 
     pub async fn new_typescript(cx: &'a mut gpui::TestAppContext) -> VimTestContext<'a> {
+        Self::init(cx);
         Self::new_with_lsp(
             EditorLspTestContext::new_typescript(Default::default(), cx).await,
             true,
@@ -28,12 +44,6 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext<'a>, enabled: bool) -> VimTestContext<'a> {
-        cx.update(|cx| {
-            search::init(cx);
-            crate::init(cx);
-            command_palette::init(cx);
-        });
-
         cx.update(|cx| {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
@@ -47,14 +57,15 @@ impl<'a> VimTestContext<'a> {
             observe_keystrokes(cx);
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = cx.add_view(BufferSearchBar::new);
+                    let buffer_search_bar = cx.new_view(BufferSearchBar::new);
                     toolbar.add_item(buffer_search_bar, cx);
-                    let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                    toolbar.add_item(project_search_bar, cx);
+                    // todo!();
+                    // let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                    // toolbar.add_item(project_search_bar, cx);
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = cx.add_view(ModeIndicator::new);
+                let vim_mode_indicator = cx.new_view(ModeIndicator::new);
                 status_bar.add_right_item(vim_mode_indicator, cx);
             });
         });
@@ -62,11 +73,21 @@ impl<'a> VimTestContext<'a> {
         Self { cx }
     }
 
-    pub fn workspace<F, T>(&mut self, read: F) -> T
+    pub fn update_view<F, T, R>(&mut self, view: View<T>, update: F) -> R
     where
-        F: FnOnce(&Workspace, &ViewContext<Workspace>) -> T,
+        T: 'static,
+        F: FnOnce(&mut T, &mut ViewContext<T>) -> R + 'static,
     {
-        self.cx.workspace.read_with(self.cx.cx.cx, read)
+        let window = self.window.clone();
+        self.update_window(window, move |_, cx| view.update(cx, update))
+            .unwrap()
+    }
+
+    pub fn workspace<F, T>(&mut self, update: F) -> T
+    where
+        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+    {
+        self.cx.update_workspace(update)
     }
 
     pub fn enable_vim(&mut self) {
@@ -94,16 +115,16 @@ impl<'a> VimTestContext<'a> {
             .read(|cx| cx.global::<Vim>().state().operator_stack.last().copied())
     }
 
-    pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
+    pub fn set_state(&mut self, text: &str, mode: Mode) {
         let window = self.window;
-        let context_handle = self.cx.set_state(text);
-        window.update(self.cx.cx.cx, |cx| {
+        self.cx.set_state(text);
+        self.update_window(window, |_, cx| {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, cx);
             })
-        });
-        self.cx.foreground().run_until_parked();
-        context_handle
+        })
+        .unwrap();
+        self.cx.cx.cx.run_until_parked();
     }
 
     #[track_caller]

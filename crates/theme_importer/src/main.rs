@@ -78,7 +78,7 @@ struct Args {
 
 fn main() -> Result<()> {
     const SOURCE_PATH: &str = "assets/themes/src/vscode";
-    const OUT_PATH: &str = "crates/theme2/src/themes";
+    const OUT_PATH: &str = "crates/theme/src/themes";
 
     let args = Args::parse();
 
@@ -376,6 +376,6 @@ fn main() -> Result<()> {
 
 fn format_themes_crate() -> std::io::Result<std::process::Output> {
     Command::new("cargo")
-        .args(["fmt", "--package", "theme2"])
+        .args(["fmt", "--package", "theme"])
         .output()
 }

@@ -18,13 +18,14 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
 multi_buffer = { path = "../multi_buffer" }
+project = { path = "../project" }
 search = { path = "../search" }
+semantic_index = { path = "../semantic_index" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-semantic_index = { path = "../semantic_index" }
-project = { path = "../project" }
 
 uuid.workspace = true
 log.workspace = true
@@ -43,9 +44,9 @@ smol.workspace = true
 tiktoken-rs.workspace = true
 
 [dev-dependencies]
+ai = { path = "../ai", features = ["test-support"]}
 editor = { path = "../editor", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
-ai = { path = "../ai", features = ["test-support"]}
 
 ctor.workspace = true
 env_logger.workspace = true

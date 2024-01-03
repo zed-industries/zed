@@ -9,25 +9,26 @@ path = "src/project_panel.rs"
 doctest = false
 
 [dependencies]
-context_menu = { path = "../context_menu" }
 collections = { path = "../collections" }
 db = { path = "../db" }
-drag_and_drop = { path = "../drag_and_drop" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
-menu = { path = "../menu" }
+menu = {  path = "../menu" }
 project = { path = "../project" }
+search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 util = { path = "../util" }
-workspace = { path = "../workspace" }
+workspace = { path = "../workspace", package = "workspace" }
+anyhow.workspace = true
 postage.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
 schemars.workspace = true
+smallvec.workspace = true
 pretty_assertions.workspace = true
 unicase = "2.6"
 

@@ -2,19 +2,21 @@ pub mod items;
 mod project_diagnostics_settings;
 mod toolbar_controls;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
     highlight_diagnostic_message,
     scroll::autoscroll::Autoscroll,
-    Editor, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
+    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use futures::future::try_join_all;
 use gpui::{
-    actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
-    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
+    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
+    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -23,23 +25,22 @@ use language::{
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
 use project_diagnostics_settings::ProjectDiagnosticsSettings;
-use serde_json::json;
-use smallvec::SmallVec;
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    borrow::Cow,
     cmp::Ordering,
     mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
 };
-use theme::ThemeSettings;
+use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
+use ui::{h_stack, prelude::*, Icon, IconElement, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
-    ItemNavHistory, Pane, PaneBackdrop, ToolbarItemLocation, Workspace,
+    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
@@ -47,20 +48,18 @@ actions!(diagnostics, [Deploy, ToggleWarnings]);
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut AppContext) {
-    settings::register::<ProjectDiagnosticsSettings>(cx);
-    cx.add_action(ProjectDiagnosticsEditor::deploy);
-    cx.add_action(ProjectDiagnosticsEditor::toggle_warnings);
-    items::init(cx);
+    ProjectDiagnosticsSettings::register(cx);
+    cx.observe_new_views(ProjectDiagnosticsEditor::register)
+        .detach();
 }
 
-type Event = editor::Event;
-
 struct ProjectDiagnosticsEditor {
-    project: ModelHandle<Project>,
-    workspace: WeakViewHandle<Workspace>,
-    editor: ViewHandle<Editor>,
+    project: Model<Project>,
+    workspace: WeakView<Workspace>,
+    focus_handle: FocusHandle,
+    editor: View<Editor>,
     summary: DiagnosticSummary,
-    excerpts: ModelHandle<MultiBuffer>,
+    excerpts: Model<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
@@ -89,71 +88,38 @@ struct DiagnosticGroupState {
     block_count: usize,
 }
 
-impl Entity for ProjectDiagnosticsEditor {
-    type Event = Event;
-}
+impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
-impl View for ProjectDiagnosticsEditor {
-    fn ui_name() -> &'static str {
-        "ProjectDiagnosticsEditor"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if self.path_states.is_empty() {
-            let theme = &theme::current(cx).project_diagnostics;
-            PaneBackdrop::new(
-                cx.view_id(),
-                Label::new("No problems in workspace", theme.empty_message.clone())
-                    .aligned()
-                    .contained()
-                    .with_style(theme.container)
-                    .into_any(),
-            )
-            .into_any()
+impl Render for ProjectDiagnosticsEditor {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+        let child = if self.path_states.is_empty() {
+            div()
+                .bg(cx.theme().colors().editor_background)
+                .flex()
+                .items_center()
+                .justify_center()
+                .size_full()
+                .child(Label::new("No problems in workspace"))
         } else {
-            ChildView::new(&self.editor, cx).into_any()
-        }
-    }
+            div().size_full().child(self.editor.clone())
+        };
 
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() && !self.path_states.is_empty() {
-            cx.focus(&self.editor);
-        }
-    }
-
-    fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
-        let project = self.project.read(cx);
-        json!({
-            "project": json!({
-                "language_servers": project.language_server_statuses().collect::<Vec<_>>(),
-                "summary": project.diagnostic_summary(false, cx),
-            }),
-            "summary": self.summary,
-            "paths_to_update": self.paths_to_update.iter().map(|(server_id, paths)|
-                (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
-            ).collect::<HashMap<_, _>>(),
-            "current_diagnostics": self.current_diagnostics.iter().map(|(server_id, paths)|
-                (server_id.0, paths.into_iter().map(|path| path.path.to_string_lossy()).collect::<Vec<_>>())
-            ).collect::<HashMap<_, _>>(),
-            "paths_states": self.path_states.iter().map(|state|
-                json!({
-                    "path": state.path.path.to_string_lossy(),
-                    "groups": state.diagnostic_groups.iter().map(|group|
-                        json!({
-                            "block_count": group.blocks.len(),
-                            "excerpt_count": group.excerpts.len(),
-                        })
-                    ).collect::<Vec<_>>(),
-                })
-            ).collect::<Vec<_>>(),
-        })
+        div()
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .on_action(cx.listener(Self::toggle_warnings))
+            .child(child)
     }
 }
 
 impl ProjectDiagnosticsEditor {
+    fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(Self::deploy);
+    }
+
     fn new(
-        project_handle: ModelHandle<Project>,
-        workspace: WeakViewHandle<Workspace>,
+        project_handle: Model<Project>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let project_event_subscription =
@@ -180,19 +146,25 @@ impl ProjectDiagnosticsEditor {
                 _ => {}
             });
 
-        let excerpts = cx.add_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
-        let editor = cx.add_view(|cx| {
+        let focus_handle = cx.focus_handle();
+
+        let focus_in_subscription =
+            cx.on_focus_in(&focus_handle, |diagnostics, cx| diagnostics.focus_in(cx));
+
+        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
+        let editor = cx.new_view(|cx| {
             let mut editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
-        let editor_event_subscription = cx.subscribe(&editor, |this, _, event, cx| {
-            cx.emit(event.clone());
-            if event == &editor::Event::Focused && this.path_states.is_empty() {
-                cx.focus_self()
-            }
-        });
+        let editor_event_subscription =
+            cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
+                cx.emit(event.clone());
+                if event == &EditorEvent::Focused && this.path_states.is_empty() {
+                    cx.focus(&this.focus_handle);
+                }
+            });
 
         let project = project_handle.read(cx);
         let summary = project.diagnostic_summary(false, cx);
@@ -201,12 +173,17 @@ impl ProjectDiagnosticsEditor {
             summary,
             workspace,
             excerpts,
+            focus_handle,
             editor,
             path_states: Default::default(),
             paths_to_update: HashMap::default(),
-            include_warnings: settings::get::<ProjectDiagnosticsSettings>(cx).include_warnings,
+            include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             current_diagnostics: HashMap::default(),
-            _subscriptions: vec![project_event_subscription, editor_event_subscription],
+            _subscriptions: vec![
+                project_event_subscription,
+                editor_event_subscription,
+                focus_in_subscription,
+            ],
         };
         this.update_excerpts(None, cx);
         this
@@ -216,8 +193,8 @@ impl ProjectDiagnosticsEditor {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, cx);
         } else {
-            let workspace_handle = cx.weak_handle();
-            let diagnostics = cx.add_view(|cx| {
+            let workspace_handle = cx.view().downgrade();
+            let diagnostics = cx.new_view(|cx| {
                 ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
             workspace.add_item(Box::new(diagnostics), cx);
@@ -229,6 +206,12 @@ impl ProjectDiagnosticsEditor {
         self.paths_to_update = self.current_diagnostics.clone();
         self.update_excerpts(None, cx);
         cx.notify();
+    }
+
+    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+        if self.focus_handle.is_focused(cx) && !self.path_states.is_empty() {
+            self.editor.focus_handle(cx).focus(cx)
+        }
     }
 
     fn update_excerpts(
@@ -304,9 +287,10 @@ impl ProjectDiagnosticsEditor {
                 let _: Vec<()> = try_join_all(paths_to_recheck.into_iter().map(|path| {
                     let mut cx = cx.clone();
                     let project = project.clone();
+                    let this = this.clone();
                     async move {
                         let buffer = project
-                            .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
+                            .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
                             .await
                             .with_context(|| format!("opening buffer for path {path:?}"))?;
                         this.update(&mut cx, |this, cx| {
@@ -321,7 +305,7 @@ impl ProjectDiagnosticsEditor {
 
                 this.update(&mut cx, |this, cx| {
                     this.summary = this.project.read(cx).diagnostic_summary(false, cx);
-                    cx.emit(Event::TitleChanged);
+                    cx.emit(EditorEvent::TitleChanged);
                 })?;
                 anyhow::Ok(())
             }
@@ -334,7 +318,7 @@ impl ProjectDiagnosticsEditor {
         &mut self,
         path: ProjectPath,
         language_server_id: Option<LanguageServerId>,
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) {
         let was_empty = self.path_states.is_empty();
@@ -618,41 +602,32 @@ impl ProjectDiagnosticsEditor {
         });
 
         if self.path_states.is_empty() {
-            if self.editor.is_focused(cx) {
-                cx.focus_self();
+            if self.editor.focus_handle(cx).is_focused(cx) {
+                cx.focus(&self.focus_handle);
             }
-        } else if cx.handle().is_focused(cx) {
-            cx.focus(&self.editor);
+        } else if self.focus_handle.is_focused(cx) {
+            let focus_handle = self.editor.focus_handle(cx);
+            cx.focus(&focus_handle);
         }
         cx.notify();
     }
 }
 
+impl FocusableView for ProjectDiagnosticsEditor {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Item for ProjectDiagnosticsEditor {
-    fn tab_content<T: 'static>(
-        &self,
-        _detail: Option<usize>,
-        style: &theme::Tab,
-        cx: &AppContext,
-    ) -> AnyElement<T> {
-        render_summary(
-            &self.summary,
-            &style.label.text,
-            &theme::current(cx).project_diagnostics,
-        )
+    type Event = EditorEvent;
+
+    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+        Editor::to_item_events(event, f)
     }
 
-    fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
-        self.editor.for_each_project_item(cx, f)
-    }
-
-    fn is_singleton(&self, _: &AppContext) -> bool {
-        false
-    }
-
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| editor.deactivated(cx));
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
@@ -660,8 +635,80 @@ impl Item for ProjectDiagnosticsEditor {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
         Some("Project Diagnostics".into())
+    }
+
+    fn tab_content(&self, _detail: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+        if self.summary.error_count == 0 && self.summary.warning_count == 0 {
+            let label = Label::new("No problems");
+            label.into_any_element()
+        } else {
+            h_stack()
+                .gap_1()
+                .when(self.summary.error_count > 0, |then| {
+                    then.child(
+                        h_stack()
+                            .gap_1()
+                            .child(IconElement::new(Icon::XCircle).color(Color::Error))
+                            .child(Label::new(self.summary.error_count.to_string()).color(
+                                if selected {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                },
+                            )),
+                    )
+                })
+                .when(self.summary.warning_count > 0, |then| {
+                    then.child(
+                        h_stack()
+                            .gap_1()
+                            .child(
+                                IconElement::new(Icon::ExclamationTriangle).color(Color::Warning),
+                            )
+                            .child(Label::new(self.summary.warning_count.to_string()).color(
+                                if selected {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                },
+                            )),
+                    )
+                })
+                .into_any_element()
+        }
+    }
+
+    fn for_each_project_item(
+        &self,
+        cx: &AppContext,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+    ) {
+        self.editor.for_each_project_item(cx, f)
+    }
+
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        false
+    }
+
+    fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, _| {
+            editor.set_nav_history(Some(nav_history));
+        });
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: workspace::WorkspaceId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new_view(|cx| {
+            ProjectDiagnosticsEditor::new(self.project.clone(), self.workspace.clone(), cx)
+        }))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -676,207 +723,131 @@ impl Item for ProjectDiagnosticsEditor {
         true
     }
 
-    fn save(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    fn save(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         self.editor.save(project, cx)
-    }
-
-    fn reload(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        self.editor.reload(project, cx)
     }
 
     fn save_as(
         &mut self,
-        _: ModelHandle<Project>,
+        _: Model<Project>,
         _: PathBuf,
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
     }
 
-    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-        Editor::to_item_events(event)
-    }
-
-    fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
-        self.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
-        });
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: workspace::WorkspaceId,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        Some(ProjectDiagnosticsEditor::new(
-            self.project.clone(),
-            self.workspace.clone(),
-            cx,
-        ))
+    fn reload(&mut self, project: Model<Project>, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        self.editor.reload(project, cx)
     }
 
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a ViewHandle<Self>,
+        self_handle: &'a View<Self>,
         _: &'a AppContext,
-    ) -> Option<&AnyViewHandle> {
+    ) -> Option<AnyView> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle)
+            Some(self_handle.to_any())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(&self.editor)
+            Some(self.editor.to_any())
         } else {
             None
         }
     }
 
-    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor.update(cx, |editor, cx| editor.deactivated(cx));
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        Some("diagnostics")
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        ToolbarItemLocation::PrimaryLeft
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.editor.breadcrumbs(theme, cx)
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft { flex: None }
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
+    }
+
+    fn serialized_item_kind() -> Option<&'static str> {
+        Some("diagnostics")
     }
 
     fn deserialize(
-        project: ModelHandle<Project>,
-        workspace: WeakViewHandle<Workspace>,
+        project: Model<Project>,
+        workspace: WeakView<Workspace>,
         _workspace_id: workspace::WorkspaceId,
         _item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<ViewHandle<Self>>> {
-        Task::ready(Ok(cx.add_view(|cx| Self::new(project, workspace, cx))))
+    ) -> Task<Result<View<Self>>> {
+        Task::ready(Ok(cx.new_view(|cx| Self::new(project, workspace, cx))))
     }
 }
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
-    let (message, highlights) = highlight_diagnostic_message(Vec::new(), &diagnostic.message);
+    let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
+    let message: SharedString = message.into();
     Arc::new(move |cx| {
-        let settings = settings::get::<ThemeSettings>(cx);
-        let theme = &settings.theme.editor;
-        let style = theme.diagnostic_header.clone();
-        let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
-        let icon_width = cx.em_width * style.icon_width_factor;
-        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-            Svg::new("icons/error.svg").with_color(theme.error_diagnostic.message.text.color)
-        } else {
-            Svg::new("icons/warning.svg").with_color(theme.warning_diagnostic.message.text.color)
-        };
-
-        Flex::row()
-            .with_child(
-                icon.constrained()
-                    .with_width(icon_width)
-                    .aligned()
-                    .contained()
-                    .with_margin_right(cx.gutter_padding),
+        let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
+        h_stack()
+            .id("diagnostic header")
+            .py_2()
+            .pl_10()
+            .pr_5()
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .child(
+                h_stack()
+                    .gap_3()
+                    .map(|stack| {
+                        stack.child(
+                            svg()
+                                .size(cx.text_style().font_size)
+                                .flex_none()
+                                .map(|icon| {
+                                    if diagnostic.severity == DiagnosticSeverity::ERROR {
+                                        icon.path(Icon::XCircle.path())
+                                            .text_color(Color::Error.color(cx))
+                                    } else {
+                                        icon.path(Icon::ExclamationTriangle.path())
+                                            .text_color(Color::Warning.color(cx))
+                                    }
+                                }),
+                        )
+                    })
+                    .child(
+                        h_stack()
+                            .gap_1()
+                            .child(
+                                StyledText::new(message.clone()).with_highlights(
+                                    &cx.text_style(),
+                                    code_ranges
+                                        .iter()
+                                        .map(|range| (range.clone(), highlight_style)),
+                                ),
+                            )
+                            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                                stack.child(
+                                    div()
+                                        .child(SharedString::from(format!("({code})")))
+                                        .text_color(cx.theme().colors().text_muted),
+                                )
+                            }),
+                    ),
             )
-            .with_children(diagnostic.source.as_ref().map(|source| {
-                Label::new(
-                    format!("{source}: "),
-                    style.source.label.clone().with_font_size(font_size),
-                )
-                .contained()
-                .with_style(style.message.container)
-                .aligned()
-            }))
-            .with_child(
-                Label::new(
-                    message.clone(),
-                    style.message.label.clone().with_font_size(font_size),
-                )
-                .with_highlights(highlights.clone())
-                .contained()
-                .with_style(style.message.container)
-                .aligned(),
+            .child(
+                h_stack()
+                    .gap_1()
+                    .when_some(diagnostic.source.as_ref(), |stack, source| {
+                        stack.child(
+                            div()
+                                .child(SharedString::from(source.clone()))
+                                .text_color(cx.theme().colors().text_muted),
+                        )
+                    }),
             )
-            .with_children(diagnostic.code.clone().map(|code| {
-                Label::new(code, style.code.text.clone().with_font_size(font_size))
-                    .contained()
-                    .with_style(style.code.container)
-                    .aligned()
-            }))
-            .contained()
-            .with_style(style.container)
-            .with_padding_left(cx.gutter_padding)
-            .with_padding_right(cx.gutter_padding)
-            .expanded()
-            .into_any_named("diagnostic header")
+            .into_any_element()
     })
-}
-
-pub(crate) fn render_summary<T: 'static>(
-    summary: &DiagnosticSummary,
-    text_style: &TextStyle,
-    theme: &theme::ProjectDiagnostics,
-) -> AnyElement<T> {
-    if summary.error_count == 0 && summary.warning_count == 0 {
-        Label::new("No problems", text_style.clone()).into_any()
-    } else {
-        let icon_width = theme.tab_icon_width;
-        let icon_spacing = theme.tab_icon_spacing;
-        let summary_spacing = theme.tab_summary_spacing;
-        Flex::row()
-            .with_child(
-                Svg::new("icons/error.svg")
-                    .with_color(text_style.color)
-                    .constrained()
-                    .with_width(icon_width)
-                    .aligned()
-                    .contained()
-                    .with_margin_right(icon_spacing),
-            )
-            .with_child(
-                Label::new(
-                    summary.error_count.to_string(),
-                    LabelStyle {
-                        text: text_style.clone(),
-                        highlight_text: None,
-                    },
-                )
-                .aligned(),
-            )
-            .with_child(
-                Svg::new("icons/warning.svg")
-                    .with_color(text_style.color)
-                    .constrained()
-                    .with_width(icon_width)
-                    .aligned()
-                    .contained()
-                    .with_margin_left(summary_spacing)
-                    .with_margin_right(icon_spacing),
-            )
-            .with_child(
-                Label::new(
-                    summary.warning_count.to_string(),
-                    LabelStyle {
-                        text: text_style.clone(),
-                        highlight_text: None,
-                    },
-                )
-                .aligned(),
-            )
-            .into_any()
-    }
 }
 
 fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
@@ -904,7 +875,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint,
     };
-    use gpui::{TestAppContext, WindowContext};
+    use gpui::{px, TestAppContext, VisualTestContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -915,7 +886,7 @@ mod tests {
     async fn test_diagnostics(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/test",
             json!({
@@ -945,7 +916,8 @@ mod tests {
         let language_server_id = LanguageServerId(0);
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let workspace = window.root(cx);
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let workspace = window.root(cx).unwrap();
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
@@ -1032,7 +1004,7 @@ mod tests {
         });
 
         // Open the project diagnostics view while there are already diagnostics.
-        let view = window.add_view(cx, |cx| {
+        let view = window.build_view(cx, |cx| {
             ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
         });
 
@@ -1320,7 +1292,7 @@ mod tests {
     async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/test",
             json!({
@@ -1339,9 +1311,10 @@ mod tests {
         let server_id_2 = LanguageServerId(101);
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let workspace = window.root(cx);
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let workspace = window.root(cx).unwrap();
 
-        let view = window.add_view(cx, |cx| {
+        let view = window.build_view(cx, |cx| {
             ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
         });
 
@@ -1376,7 +1349,7 @@ mod tests {
         });
 
         // Only the first language server's diagnostics are shown.
-        cx.foreground().run_until_parked();
+        cx.executor().run_until_parked();
         view.update(cx, |view, cx| {
             assert_eq!(
                 editor_blocks(&view.editor, cx),
@@ -1424,7 +1397,7 @@ mod tests {
         });
 
         // Both language server's diagnostics are shown.
-        cx.foreground().run_until_parked();
+        cx.executor().run_until_parked();
         view.update(cx, |view, cx| {
             assert_eq!(
                 editor_blocks(&view.editor, cx),
@@ -1492,7 +1465,7 @@ mod tests {
         });
 
         // Only the first language server's diagnostics are updated.
-        cx.foreground().run_until_parked();
+        cx.executor().run_until_parked();
         view.update(cx, |view, cx| {
             assert_eq!(
                 editor_blocks(&view.editor, cx),
@@ -1550,7 +1523,7 @@ mod tests {
         });
 
         // Both language servers' diagnostics are updated.
-        cx.foreground().run_until_parked();
+        cx.executor().run_until_parked();
         view.update(cx, |view, cx| {
             assert_eq!(
                 editor_blocks(&view.editor, cx),
@@ -1586,8 +1559,9 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            cx.set_global(SettingsStore::test(cx));
-            theme::init((), cx);
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             client::init_settings(cx);
             workspace::init_settings(cx);
@@ -1596,7 +1570,7 @@ mod tests {
         });
     }
 
-    fn editor_blocks(editor: &ViewHandle<Editor>, cx: &mut WindowContext) -> Vec<(u32, String)> {
+    fn editor_blocks(editor: &View<Editor>, cx: &mut WindowContext) -> Vec<(u32, SharedString)> {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             snapshot
@@ -1607,23 +1581,25 @@ mod tests {
                         TransformBlock::Custom(block) => block
                             .render(&mut BlockContext {
                                 view_context: cx,
-                                anchor_x: 0.,
-                                scroll_x: 0.,
-                                gutter_padding: 0.,
-                                gutter_width: 0.,
-                                line_height: 0.,
-                                em_width: 0.,
+                                anchor_x: px(0.),
+                                gutter_padding: px(0.),
+                                gutter_width: px(0.),
+                                line_height: px(0.),
+                                em_width: px(0.),
                                 block_id: ix,
+                                editor_style: &editor::EditorStyle::default(),
                             })
-                            .name()?
-                            .to_string(),
+                            .inner_id()?
+                            .try_into()
+                            .ok()?,
+
                         TransformBlock::ExcerptHeader {
                             starts_new_buffer, ..
                         } => {
                             if *starts_new_buffer {
-                                "path header block".to_string()
+                                "path header block".into()
                             } else {
-                                "collapsed context".to_string()
+                                "collapsed context".into()
                             }
                         }
                     };

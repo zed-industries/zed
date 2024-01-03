@@ -185,7 +185,7 @@ pub fn write_and_log<F>(cx: &mut AppContext, db_write: impl FnOnce() -> F + Send
 where
     F: Future<Output = anyhow::Result<()>> + Send,
 {
-    cx.background()
+    cx.background_executor()
         .spawn(async move { db_write().await.log_err() })
         .detach()
 }
@@ -226,7 +226,9 @@ mod tests {
 
     /// Test that DB exists but corrupted (causing recreate)
     #[gpui::test]
-    async fn test_db_corruption() {
+    async fn test_db_corruption(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
         enum CorruptedDB {}
 
         impl Domain for CorruptedDB {
@@ -268,7 +270,9 @@ mod tests {
 
     /// Test that DB exists but corrupted (causing recreate)
     #[gpui::test(iterations = 30)]
-    async fn test_simultaneous_db_corruption() {
+    async fn test_simultaneous_db_corruption(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
         enum CorruptedDB {}
 
         impl Domain for CorruptedDB {

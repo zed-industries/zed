@@ -6,7 +6,7 @@ use ai::embedding::Embedding;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::channel::oneshot;
-use gpui::executor;
+use gpui::BackgroundExecutor;
 use ndarray::{Array1, Array2};
 use ordered_float::OrderedFloat;
 use project::Fs;
@@ -48,7 +48,7 @@ impl VectorDatabase {
     pub async fn new(
         fs: Arc<dyn Fs>,
         path: Arc<Path>,
-        executor: Arc<executor::Background>,
+        executor: BackgroundExecutor,
     ) -> Result<Self> {
         if let Some(db_directory) = path.parent() {
             fs.create_dir(db_directory).await?;

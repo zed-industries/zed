@@ -1,8 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
-
-use gpui::{fonts, AppContext};
+use gpui::{px, AbsoluteLength, AppContext, FontFeatures, Pixels};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -16,18 +15,18 @@ pub enum TerminalDockPosition {
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
-    font_size: Option<f32>,
+    pub font_size: Option<Pixels>,
     pub font_family: Option<String>,
     pub line_height: TerminalLineHeight,
-    pub font_features: Option<fonts::Features>,
+    pub font_features: Option<FontFeatures>,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
     pub copy_on_select: bool,
     pub dock: TerminalDockPosition,
-    pub default_width: f32,
-    pub default_height: f32,
+    pub default_width: Pixels,
+    pub default_height: Pixels,
     pub detect_venv: VenvSettings,
 }
 
@@ -79,7 +78,7 @@ pub struct TerminalSettingsContent {
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
     pub line_height: Option<TerminalLineHeight>,
-    pub font_features: Option<fonts::Features>,
+    pub font_features: Option<FontFeatures>,
     pub env: Option<HashMap<String, String>>,
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,
@@ -91,14 +90,7 @@ pub struct TerminalSettingsContent {
     pub detect_venv: Option<VenvSettings>,
 }
 
-impl TerminalSettings {
-    pub fn font_size(&self, cx: &AppContext) -> Option<f32> {
-        self.font_size
-            .map(|size| theme::adjusted_font_size(size, cx))
-    }
-}
-
-impl settings::Setting for TerminalSettings {
+impl settings::Settings for TerminalSettings {
     const KEY: Option<&'static str> = Some("terminal");
 
     type FileContent = TerminalSettingsContent;
@@ -106,7 +98,7 @@ impl settings::Setting for TerminalSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &AppContext,
+        _: &mut AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }
@@ -122,12 +114,13 @@ pub enum TerminalLineHeight {
 }
 
 impl TerminalLineHeight {
-    pub fn value(&self) -> f32 {
-        match self {
+    pub fn value(&self) -> AbsoluteLength {
+        let value = match self {
             TerminalLineHeight::Comfortable => 1.618,
             TerminalLineHeight::Standard => 1.3,
             TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
-        }
+        };
+        px(value).into()
     }
 }
 

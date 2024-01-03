@@ -34,7 +34,7 @@ impl Connection {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn in_memory(
-        executor: std::sync::Arc<gpui::executor::Background>,
+        executor: gpui::BackgroundExecutor,
     ) -> (Self, Self, std::sync::Arc<std::sync::atomic::AtomicBool>) {
         use std::sync::{
             atomic::{AtomicBool, Ordering::SeqCst},
@@ -53,7 +53,7 @@ impl Connection {
         #[allow(clippy::type_complexity)]
         fn channel(
             killed: Arc<AtomicBool>,
-            executor: Arc<gpui::executor::Background>,
+            executor: gpui::BackgroundExecutor,
         ) -> (
             Box<dyn Send + Unpin + futures::Sink<WebSocketMessage, Error = anyhow::Error>>,
             Box<dyn Send + Unpin + futures::Stream<Item = Result<WebSocketMessage, anyhow::Error>>>,
@@ -66,14 +66,12 @@ impl Connection {
 
             let tx = tx.sink_map_err(|error| anyhow!(error)).with({
                 let killed = killed.clone();
-                let executor = Arc::downgrade(&executor);
+                let executor = executor.clone();
                 move |msg| {
                     let killed = killed.clone();
                     let executor = executor.clone();
                     Box::pin(async move {
-                        if let Some(executor) = executor.upgrade() {
-                            executor.simulate_random_delay().await;
-                        }
+                        executor.simulate_random_delay().await;
 
                         // Writes to a half-open TCP connection will error.
                         if killed.load(SeqCst) {
@@ -87,14 +85,12 @@ impl Connection {
 
             let rx = rx.then({
                 let killed = killed;
-                let executor = Arc::downgrade(&executor);
+                let executor = executor.clone();
                 move |msg| {
                     let killed = killed.clone();
                     let executor = executor.clone();
                     Box::pin(async move {
-                        if let Some(executor) = executor.upgrade() {
-                            executor.simulate_random_delay().await;
-                        }
+                        executor.simulate_random_delay().await;
 
                         // Reads from a half-open TCP connection will hang.
                         if killed.load(SeqCst) {

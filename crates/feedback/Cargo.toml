@@ -12,27 +12,33 @@ test-support = []
 
 [dependencies]
 client = { path = "../client" }
+db = { path = "../db" }
 editor = { path = "../editor" }
-language = { path = "../language" }
 gpui = { path = "../gpui" }
+language = { path = "../language" }
+menu = { path = "../menu" }
 project = { path = "../project" }
-regex.workspace = true
 search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 util = { path = "../util" }
-workspace = { path = "../workspace" }
+workspace = { path = "../workspace"}
 
-log.workspace = true
-futures.workspace = true
-anyhow.workspace = true
-smallvec.workspace = true
+bitflags = "2.4.1"
 human_bytes = "0.4.1"
+
+anyhow.workspace = true
+futures.workspace = true
 isahc.workspace = true
 lazy_static.workspace = true
+log.workspace = true
 postage.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+smallvec.workspace = true
+smol.workspace = true
 sysinfo.workspace = true
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 urlencoding = "2.1.2"

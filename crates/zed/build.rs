@@ -3,10 +3,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
 
-    if let Ok(value) = std::env::var("ZED_PREVIEW_CHANNEL") {
-        println!("cargo:rustc-env=ZED_PREVIEW_CHANNEL={value}");
-    }
-
+    println!("cargo:rerun-if-env-changed=ZED_BUNDLE");
     if std::env::var("ZED_BUNDLE").ok().as_deref() == Some("true") {
         // Find WebRTC.framework in the Frameworks folder when running as part of an application bundle.
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
@@ -24,31 +21,24 @@ fn main() {
     // Register exported Objective-C selectors, protocols, etc
     println!("cargo:rustc-link-arg=-Wl,-ObjC");
 
-    // Install dependencies for theme-generation
-    let output = Command::new("npm")
-        .current_dir("../../styles")
-        .args(["install", "--no-save"])
-        .output()
-        .expect("failed to run npm");
-    if !output.status.success() {
-        panic!(
-            "failed to install theme dependencies {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    // Populate git sha environment variable if git is available
+    println!("cargo:rerun-if-changed=.git/logs/HEAD");
+    if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {
+        if output.status.success() {
+            let git_sha = String::from_utf8_lossy(&output.stdout);
+            let git_sha = git_sha.trim();
 
-    // Regenerate themes
-    let output = Command::new("npm")
-        .current_dir("../../styles")
-        .args(["run", "build"])
-        .output()
-        .expect("failed to run npm");
-    if !output.status.success() {
-        panic!(
-            "build script failed {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+            println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
 
-    println!("cargo:rerun-if-changed=../../styles/src");
+            if let Ok(build_profile) = std::env::var("PROFILE") {
+                if build_profile == "release" {
+                    // This is currently the best way to make `cargo build ...`'s build script
+                    // to print something to stdout without extra verbosity.
+                    println!(
+                        "cargo:warning=Info: using '{git_sha}' hash for ZED_COMMIT_SHA env var"
+                    );
+                }
+            }
+        }
+    }
 }
