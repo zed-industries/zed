@@ -12,7 +12,7 @@ doctest = false
 ai = { path = "../ai" }
 collections = { path = "../collections" }
 gpui = { package = "gpui2", path = "../gpui2" }
-language = { package = "language2", path = "../language2" }
+language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
@@ -42,7 +42,7 @@ ndarray = { version = "0.15.0" }
 ai = { path = "../ai", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
-language = { package = "language2", path = "../language2", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

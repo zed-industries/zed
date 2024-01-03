@@ -13,7 +13,7 @@ client = { package = "client2", path = "../client2" }
 editor = { path = "../editor" }
 feature_flags = { path = "../feature_flags" }
 fs = { package = "fs2", path = "../fs2" }
-fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
 picker = { path = "../picker" }
 settings = { package = "settings2", path = "../settings2" }

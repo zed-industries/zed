@@ -13,13 +13,13 @@ collections = { path = "../collections" }
 editor = { path = "../editor" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
-language = { package = "language2", path = "../language2" }
+language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 gpui = { package = "gpui2", path = "../gpui2" }
 ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
-lsp = { package = "lsp2", path = "../lsp2" }
+lsp = { path = "../lsp" }
 futures.workspace = true
 serde.workspace = true
 anyhow.workspace = true

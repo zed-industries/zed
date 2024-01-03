@@ -9,5 +9,5 @@ path = "src/fuzzy.rs"
 doctest = false
 
 [dependencies]
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }

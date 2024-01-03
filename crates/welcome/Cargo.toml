@@ -14,7 +14,7 @@ test-support = []
 client = { package = "client2", path = "../client2" }
 editor = { path = "../editor" }
 fs = { package = "fs2", path = "../fs2" }
-fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
 ui = { package = "ui2", path = "../ui2" }
 db = { package = "db2", path = "../db2" }

@@ -27,7 +27,7 @@ collections = { path = "../collections" }
 fs = { path = "../fs2", package = "fs2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 install_cli = { path = "../install_cli" }
-language = { path = "../language2", package = "language2" }
+language = { path = "../language" }
 #menu = { path = "../menu" }
 node_runtime = { path = "../node_runtime" }
 project = { path = "../project" }

@@ -6,7 +6,7 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fuzzy = {package = "fuzzy2", path = "../fuzzy2"}
+fuzzy = { path = "../fuzzy"}
 fs = {package = "fs2", path = "../fs2"}
 gpui = {package = "gpui2", path = "../gpui2"}
 picker = {path = "../picker"}

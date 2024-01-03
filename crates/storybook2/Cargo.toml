@@ -16,11 +16,11 @@ chrono = "0.4"
 clap = { version = "4.4", features = ["derive", "string"] }
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 editor = { path = "../editor" }
-fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
 indoc.workspace = true
 itertools = "0.11.0"
-language = { package = "language2", path = "../language2" }
+language = { path = "../language" }
 log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true

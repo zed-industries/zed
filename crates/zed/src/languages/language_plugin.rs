@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::lock::Mutex;
 use gpui::executor::Background;
-use language2::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp2::LanguageServerBinary;
 use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};

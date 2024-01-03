@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 auto_update = { path = "../auto_update" }
 editor = { path = "../editor" }
-language = { path = "../language2", package = "language2" }
+language = { path = "../language" }
 gpui = { path = "../gpui2", package = "gpui2" }
 project = { path = "../project" }
 settings = { path = "../settings2", package = "settings2" }

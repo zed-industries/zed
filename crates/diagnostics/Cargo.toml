@@ -13,8 +13,8 @@ collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 ui = { package = "ui2", path = "../ui2" }
-language = { package = "language2", path = "../language2" }
-lsp = { package = "lsp2", path = "../lsp2" }
+language = { path = "../language" }
+lsp = { path = "../lsp" }
 project = { path = "../project" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
@@ -33,8 +33,8 @@ postage.workspace = true
 [dev-dependencies]
 client = { package = "client2", path = "../client2", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
-language = { package = "language2", path = "../language2", features = ["test-support"] }
-lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
+lsp = { path = "../lsp", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 workspace = {path = "../workspace", features = ["test-support"] }
 theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
