@@ -122,7 +122,7 @@ pub fn summercamp() -> UserThemeFamily {
                     modified: Some(rgba(0xf1fe29ff).into()),
                     modified_background: Some(rgba(0x556305ff).into()),
                     modified_border: Some(rgba(0x727f0aff).into()),
-                    predictive: Some(rgba(0x5dea5aff).into()),
+                    predictive: Some(rgba(0x79434bff).into()),
                     predictive_background: Some(rgba(0x0a4d13ff).into()),
                     predictive_border: Some(rgba(0x1a6a20ff).into()),
                     renamed: Some(rgba(0x499befff).into()),

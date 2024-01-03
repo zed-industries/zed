@@ -122,7 +122,7 @@ pub fn andromeda() -> UserThemeFamily {
                     modified: Some(rgba(0xfee56dff).into()),
                     modified_background: Some(rgba(0x5c5015ff).into()),
                     modified_border: Some(rgba(0x796b26ff).into()),
-                    predictive: Some(rgba(0x96df72ff).into()),
+                    predictive: Some(rgba(0x315f70ff).into()),
                     predictive_background: Some(rgba(0x194618ff).into()),
                     predictive_border: Some(rgba(0x306129ff).into()),
                     renamed: Some(rgba(0x11a793ff).into()),
