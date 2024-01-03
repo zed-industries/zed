@@ -67,7 +67,7 @@ impl super::LspAdapter for GoLspAdapter {
             "Could not install the Go language server `gopls`, because `go` was not found.";
 
         let delegate = delegate.clone();
-        Some(cx.spawn(|mut cx| async move {
+        Some(cx.spawn(|cx| async move {
             let install_output = process::Command::new("go").args(["version"]).output().await;
             if install_output.is_err() {
                 if DID_SHOW_NOTIFICATION
@@ -76,7 +76,7 @@ impl super::LspAdapter for GoLspAdapter {
                 {
                     cx.update(|cx| {
                         delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                    })
+                    })?
                 }
                 return Err(anyhow!("cannot install gopls"));
             }
@@ -372,7 +372,7 @@ fn adjust_runs(
 mod tests {
     use super::*;
     use crate::languages::language;
-    use gpui::color::Color;
+    use gpui::Hsla;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -384,12 +384,12 @@ mod tests {
         )
         .await;
 
-        let theme = SyntaxTheme::new(vec![
-            ("type".into(), Color::green().into()),
-            ("keyword".into(), Color::blue().into()),
-            ("function".into(), Color::red().into()),
-            ("number".into(), Color::yellow().into()),
-            ("property".into(), Color::white().into()),
+        let theme = SyntaxTheme::new_test([
+            ("type", Hsla::default()),
+            ("keyword", Hsla::default()),
+            ("function", Hsla::default()),
+            ("number", Hsla::default()),
+            ("property", Hsla::default()),
         ]);
         language.set_theme(&theme);
 

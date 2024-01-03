@@ -129,7 +129,6 @@ members = [
     "crates/welcome2",
     "crates/xtask",
     "crates/zed",
-    "crates/zed2",
     "crates/zed-actions",
     "crates/zed_actions2"
 ]

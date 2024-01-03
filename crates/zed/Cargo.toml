@@ -1,5 +1,4 @@
 [package]
-authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
@@ -12,71 +11,69 @@ path = "src/zed.rs"
 doctest = false
 
 [[bin]]
-name = "Zed"
+name = "zed"
 path = "src/main.rs"
 
-[[example]]
-name = "semantic_index_eval"
-
 [dependencies]
-audio = { path = "../audio" }
-activity_indicator = { path = "../activity_indicator" }
-auto_update = { path = "../auto_update" }
-breadcrumbs = { path = "../breadcrumbs" }
-call = { path = "../call" }
-channel = { path = "../channel" }
+ai = { package = "ai2", path = "../ai2"}
+audio = { package = "audio2", path = "../audio2" }
+activity_indicator = { package = "activity_indicator2", path = "../activity_indicator2"}
+auto_update = { package = "auto_update2", path = "../auto_update2" }
+breadcrumbs = { package = "breadcrumbs2", path = "../breadcrumbs2" }
+call = { package = "call2", path = "../call2" }
+channel = { package = "channel2", path = "../channel2" }
 cli = { path = "../cli" }
-collab_ui = { path = "../collab_ui" }
+collab_ui = { package = "collab_ui2", path = "../collab_ui2" }
 collections = { path = "../collections" }
-command_palette = { path = "../command_palette" }
-component_test = { path = "../component_test" }
-context_menu = { path = "../context_menu" }
-client = { path = "../client" }
-clock = { path = "../clock" }
-copilot = { path = "../copilot" }
-copilot_button = { path = "../copilot_button" }
-diagnostics = { path = "../diagnostics" }
-db = { path = "../db" }
-editor = { path = "../editor" }
-feedback = { path = "../feedback" }
-file_finder = { path = "../file_finder" }
-search = { path = "../search" }
-fs = { path = "../fs" }
+command_palette = { package="command_palette2", path = "../command_palette2" }
+# component_test = { path = "../component_test" }
+client = { package = "client2", path = "../client2" }
+# clock = { path = "../clock" }
+copilot = { package = "copilot2", path = "../copilot2" }
+copilot_button = { package = "copilot_button2", path = "../copilot_button2" }
+diagnostics = { package = "diagnostics2", path = "../diagnostics2" }
+db = { package = "db2", path = "../db2" }
+editor = { package="editor2", path = "../editor2" }
+feedback = { package="feedback2", path = "../feedback2" }
+file_finder = { package="file_finder2", path = "../file_finder2" }
+search = { package = "search2", path = "../search2" }
+fs = { package = "fs2", path = "../fs2" }
 fsevent = { path = "../fsevent" }
-fuzzy = { path = "../fuzzy" }
-go_to_line = { path = "../go_to_line" }
-gpui = { path = "../gpui" }
-install_cli = { path = "../install_cli" }
-journal = { path = "../journal" }
-language = { path = "../language" }
-language_selector = { path = "../language_selector" }
-lsp = { path = "../lsp" }
-language_tools = { path = "../language_tools" }
+go_to_line = { package = "go_to_line2", path = "../go_to_line2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+install_cli = { package = "install_cli2", path = "../install_cli2" }
+journal = { package = "journal2", path = "../journal2" }
+language = { package = "language2", path = "../language2" }
+language_selector = { package = "language_selector2", path = "../language_selector2" }
+lsp = { package = "lsp2", path = "../lsp2" }
+menu = { package = "menu2", path = "../menu2" }
+language_tools = { package = "language_tools2", path = "../language_tools2" }
 node_runtime = { path = "../node_runtime" }
-notifications = { path = "../notifications" }
-assistant = { path = "../assistant" }
-outline = { path = "../outline" }
-plugin_runtime = { path = "../plugin_runtime",optional = true }
-project = { path = "../project" }
-project_panel = { path = "../project_panel" }
-project_symbols = { path = "../project_symbols" }
-quick_action_bar = { path = "../quick_action_bar" }
-recent_projects = { path = "../recent_projects" }
-rpc = { path = "../rpc" }
-settings = { path = "../settings" }
-feature_flags = { path = "../feature_flags" }
+notifications = { package = "notifications2", path = "../notifications2" }
+assistant = { package = "assistant2", path = "../assistant2" }
+outline = { package = "outline2", path = "../outline2" }
+# plugin_runtime = { path = "../plugin_runtime",optional = true }
+project = { package = "project2", path = "../project2" }
+project_panel = { package = "project_panel2", path = "../project_panel2" }
+project_symbols = { package = "project_symbols2", path = "../project_symbols2" }
+quick_action_bar = { package = "quick_action_bar2", path = "../quick_action_bar2" }
+recent_projects = { package = "recent_projects2", path = "../recent_projects2" }
+rope = { package = "rope2", path = "../rope2"}
+rpc = { package = "rpc2", path = "../rpc2" }
+settings = { package = "settings2", path = "../settings2" }
+feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
 sum_tree = { path = "../sum_tree" }
 shellexpand = "2.1.0"
-text = { path = "../text" }
-terminal_view = { path = "../terminal_view" }
-theme = { path = "../theme" }
-theme_selector = { path = "../theme_selector" }
+text = { package = "text2", path = "../text2" }
+terminal_view = { package = "terminal_view2", path = "../terminal_view2" }
+theme = { package = "theme2", path = "../theme2" }
+theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
 util = { path = "../util" }
-semantic_index = { path = "../semantic_index" }
-vim = { path = "../vim" }
-workspace = { path = "../workspace" }
-welcome = { path = "../welcome" }
-zed-actions = {path = "../zed-actions"}
+semantic_index = { package = "semantic_index2", path = "../semantic_index2" }
+vim = { package = "vim2", path = "../vim2" }
+workspace = { package = "workspace2", path = "../workspace2" }
+welcome = { package = "welcome2", path = "../welcome2" }
+zed_actions = {package = "zed_actions2", path = "../zed_actions2"}
 anyhow.workspace = true
 async-compression.workspace = true
 async-tar = "0.4.2"
@@ -147,20 +144,19 @@ urlencoding = "2.1.2"
 uuid.workspace = true
 
 [dev-dependencies]
-ai = { path = "../ai" }
-call = { path = "../call", features = ["test-support"] }
-client = { path = "../client", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
-lsp = { path = "../lsp", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
-text = { path = "../text", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
-
+call = { package = "call2", path = "../call2", features = ["test-support"] }
+# client = { path = "../client", features = ["test-support"] }
+# editor = { path = "../editor", features = ["test-support"] }
+# gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+language = { package = "language2", path = "../language2", features = ["test-support"] }
+# lsp = { path = "../lsp", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
+# rpc = { path = "../rpc", features = ["test-support"] }
+# settings = { path = "../settings", features = ["test-support"] }
+text = { package = "text2", path = "../text2", features = ["test-support"] }
+# util = { path = "../util", features = ["test-support"] }
+# workspace = { path = "../workspace", features = ["test-support"] }
 unindent.workspace = true
 
 [package.metadata.bundle-dev]
@@ -170,6 +166,14 @@ name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed-dev"]
+
+[package.metadata.bundle-nightly]
+icon = ["resources/app-icon-nightly@2x.png", "resources/app-icon-nightly.png"]
+identifier = "dev.zed.Zed-Nightly"
+name = "Zed Nightly"
+osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zed-nightly"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]

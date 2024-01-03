@@ -273,18 +273,19 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    use gpui::{Context, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
     #[gpui::test]
     async fn test_c_autoindent(cx: &mut TestAppContext) {
-        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
-            cx.set_global(SettingsStore::test(cx));
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
             language::init(cx);
-            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |s| {
                     s.defaults.tab_size = NonZeroU32::new(2);
                 });
@@ -292,8 +293,9 @@ mod tests {
         });
         let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
 
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, cx.model_id() as u64, "").with_language(language, cx);
+        cx.new_model(|cx| {
+            let mut buffer =
+                Buffer::new(0, cx.entity_id().as_u64(), "").with_language(language, cx);
 
             // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);
