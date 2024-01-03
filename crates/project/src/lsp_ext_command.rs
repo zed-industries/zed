@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use gpui::{AppContext, AsyncAppContext, ModelHandle};
+use gpui::{AppContext, AsyncAppContext, Model};
 use language::{point_to_lsp, proto::deserialize_anchor, Buffer};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
@@ -67,8 +67,8 @@ impl LspCommand for ExpandMacro {
     async fn response_from_lsp(
         self,
         message: Option<ExpandedMacro>,
-        _: ModelHandle<Project>,
-        _: ModelHandle<Buffer>,
+        _: Model<Project>,
+        _: Model<Buffer>,
         _: LanguageServerId,
         _: AsyncAppContext,
     ) -> anyhow::Result<ExpandedMacro> {
@@ -92,8 +92,8 @@ impl LspCommand for ExpandMacro {
 
     async fn from_proto(
         message: Self::ProtoRequest,
-        _: ModelHandle<Project>,
-        buffer: ModelHandle<Buffer>,
+        _: Model<Project>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         let position = message
@@ -101,7 +101,7 @@ impl LspCommand for ExpandMacro {
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer)),
+            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -121,8 +121,8 @@ impl LspCommand for ExpandMacro {
     async fn response_from_proto(
         self,
         message: proto::LspExtExpandMacroResponse,
-        _: ModelHandle<Project>,
-        _: ModelHandle<Buffer>,
+        _: Model<Project>,
+        _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> anyhow::Result<ExpandedMacro> {
         Ok(ExpandedMacro {

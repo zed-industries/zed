@@ -30,7 +30,7 @@ install_cli = { path = "../install_cli" }
 language = { path = "../language2", package = "language2" }
 #menu = { path = "../menu" }
 node_runtime = { path = "../node_runtime" }
-project = { path = "../project2", package = "project2" }
+project = { path = "../project" }
 settings = { path = "../settings2", package = "settings2" }
 terminal = { path = "../terminal2", package = "terminal2" }
 theme = { path = "../theme2", package = "theme2" }
@@ -57,7 +57,7 @@ uuid.workspace = true
 call = { path = "../call2", package = "call2", features = ["test-support"] }
 client = { path = "../client2", package = "client2", features = ["test-support"] }
 gpui = { path = "../gpui2", package = "gpui2", features = ["test-support"] }
-project = { path = "../project2", package = "project2", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings2", package = "settings2", features = ["test-support"] }
 fs = { path = "../fs2", package = "fs2", features = ["test-support"] }
 db = { path = "../db2", package = "db2", features = ["test-support"] }

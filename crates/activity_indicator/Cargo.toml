@@ -13,7 +13,7 @@ auto_update = { path = "../auto_update" }
 editor = { path = "../editor" }
 language = { path = "../language2", package = "language2" }
 gpui = { path = "../gpui2", package = "gpui2" }
-project = { path = "../project2", package = "project2" }
+project = { path = "../project" }
 settings = { path = "../settings2", package = "settings2" }
 ui = { path = "../ui2", package = "ui2" }
 util = { path = "../util" }

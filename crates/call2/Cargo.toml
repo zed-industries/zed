@@ -28,7 +28,7 @@ live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2" }
 fs = { package = "fs2", path = "../fs2" }
 language = { package = "language2", path = "../language2" }
 media = { path = "../media" }
-project = { package = "project2", path = "../project2" }
+project = { path = "../project" }
 settings = { package = "settings2", path = "../settings2" }
 util = { path = "../util" }
 
@@ -50,5 +50,5 @@ language = { package = "language2", path = "../language2", features = ["test-sup
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2", features = ["test-support"] }
-project = { package = "project2", path = "../project2", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

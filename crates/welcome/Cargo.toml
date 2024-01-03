@@ -19,7 +19,7 @@ gpui = { package = "gpui2", path = "../gpui2" }
 ui = { package = "ui2", path = "../ui2" }
 db = { package = "db2", path = "../db2" }
 install_cli = { path = "../install_cli" }
-project = { package = "project2", path = "../project2" }
+project = { path = "../project" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
 theme_selector = { path = "../theme_selector" }

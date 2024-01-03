@@ -14,7 +14,7 @@ db = { path = "../db2", package = "db2" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui2", package = "gpui2" }
 menu = { path = "../menu2", package = "menu2" }
-project = { path = "../project2", package = "project2" }
+project = { path = "../project" }
 search = { path = "../search" }
 settings = { path = "../settings2", package = "settings2" }
 theme = { path = "../theme2", package = "theme2" }

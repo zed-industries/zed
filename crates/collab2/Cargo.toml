@@ -75,7 +75,7 @@ lsp = { package = "lsp2", path = "../lsp2", features = ["test-support"] }
 node_runtime = { path = "../node_runtime" }
 notifications = { package = "notifications2", path = "../notifications2", features = ["test-support"] }
 
-project = { package = "project2", path = "../project2", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 theme = { package = "theme2", path = "../theme2" }

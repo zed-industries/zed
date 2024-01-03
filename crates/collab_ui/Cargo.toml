@@ -40,7 +40,7 @@ menu = { package = "menu2",  path = "../menu2" }
 notifications = { package = "notifications2",  path = "../notifications2" }
 rich_text = { path = "../rich_text" }
 picker = { path = "../picker" }
-project = { package = "project2", path = "../project2" }
+project = { path = "../project" }
 recent_projects = { path = "../recent_projects" }
 rpc = { package ="rpc2",  path = "../rpc2" }
 settings = { package = "settings2", path = "../settings2" }
@@ -71,7 +71,7 @@ collections = { path = "../collections", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 notifications = { package = "notifications2", path = "../notifications2", features = ["test-support"] }
-project = { package = "project2", path = "../project2", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
