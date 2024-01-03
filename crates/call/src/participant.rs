@@ -43,6 +43,7 @@ pub struct LocalParticipant {
 pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub peer_id: proto::PeerId,
+    pub role: proto::ChannelRole,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
     pub participant_index: ParticipantIndex,

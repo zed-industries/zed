@@ -151,6 +151,9 @@ enum ListEntry {
         peer_id: Option<PeerId>,
         is_last: bool,
     },
+    GuestCount {
+        count: usize,
+    },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     ChannelInvite(Arc<Channel>),
@@ -380,10 +383,13 @@ impl CollabPanel {
 
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
+                let mut guest_count_ix = 0;
+                let mut guest_count = if room.read_only() { 1 } else { 0 };
 
                 if let Some(channel_id) = room.channel_id() {
                     self.entries.push(ListEntry::ChannelNotes { channel_id });
-                    self.entries.push(ListEntry::ChannelChat { channel_id })
+                    self.entries.push(ListEntry::ChannelChat { channel_id });
+                    guest_count_ix = self.entries.len();
                 }
 
                 // Populate the active user.
@@ -402,7 +408,7 @@ impl CollabPanel {
                         &Default::default(),
                         executor.clone(),
                     ));
-                    if !matches.is_empty() {
+                    if !matches.is_empty() && !room.read_only() {
                         let user_id = user.id;
                         self.entries.push(ListEntry::CallParticipant {
                             user,
@@ -430,13 +436,21 @@ impl CollabPanel {
                 // Populate remote participants.
                 self.match_candidates.clear();
                 self.match_candidates
-                    .extend(room.remote_participants().iter().map(|(_, participant)| {
-                        StringMatchCandidate {
-                            id: participant.user.id as usize,
-                            string: participant.user.github_login.clone(),
-                            char_bag: participant.user.github_login.chars().collect(),
-                        }
-                    }));
+                    .extend(
+                        room.remote_participants()
+                            .iter()
+                            .filter_map(|(_, participant)| {
+                                if participant.role == proto::ChannelRole::Guest {
+                                    guest_count += 1;
+                                    return None;
+                                }
+                                Some(StringMatchCandidate {
+                                    id: participant.user.id as usize,
+                                    string: participant.user.github_login.clone(),
+                                    char_bag: participant.user.github_login.chars().collect(),
+                                })
+                            }),
+                    );
                 let matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
@@ -469,6 +483,10 @@ impl CollabPanel {
                             is_last: true,
                         });
                     }
+                }
+                if guest_count > 0 {
+                    self.entries
+                        .insert(guest_count_ix, ListEntry::GuestCount { count: guest_count });
                 }
 
                 // Populate pending participants.
@@ -959,6 +977,34 @@ impl CollabPanel {
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
     }
 
+    fn render_guest_count(
+        &self,
+        count: usize,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        // TODO! disable manage_members for guests.
+        ListItem::new("guest_count")
+            .selected(is_selected)
+            .on_click(cx.listener(move |this, _, cx| {
+                if let Some(channel_id) = ActiveCall::global(cx).read(cx).channel_id(cx) {
+                    this.manage_members(channel_id, cx)
+                }
+            }))
+            .start_slot(
+                h_stack()
+                    .gap_1()
+                    .child(render_tree_branch(false, cx))
+                    .child(""),
+            )
+            .child(Label::new(if count == 1 {
+                format!("{} guest", count)
+            } else {
+                format!("{} guests", count)
+            }))
+            .tooltip(move |cx| Tooltip::text("Manage Members", cx))
+    }
+
     fn has_subchannels(&self, ix: usize) -> bool {
         self.entries.get(ix).map_or(false, |entry| {
             if let ListEntry::Channel { has_children, .. } = entry {
@@ -1178,6 +1224,11 @@ impl CollabPanel {
                             workspace.update(cx, |workspace, cx| {
                                 workspace.open_shared_screen(*peer_id, cx)
                             });
+                        }
+                    }
+                    ListEntry::GuestCount { .. } => {
+                        if let Some(channel_id) = ActiveCall::global(cx).read(cx).channel_id(cx) {
+                            self.manage_members(channel_id, cx)
                         }
                     }
                     ListEntry::Channel { channel, .. } => {
@@ -1734,6 +1785,9 @@ impl CollabPanel {
                 .into_any_element(),
             ListEntry::ParticipantScreen { peer_id, is_last } => self
                 .render_participant_screen(*peer_id, *is_last, is_selected, cx)
+                .into_any_element(),
+            ListEntry::GuestCount { count } => self
+                .render_guest_count(*count, is_selected, cx)
                 .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
                 .render_channel_notes(*channel_id, is_selected, cx)
@@ -2501,6 +2555,11 @@ impl PartialEq for ListEntry {
             }
             ListEntry::ContactPlaceholder => {
                 if let ListEntry::ContactPlaceholder = other {
+                    return true;
+                }
+            }
+            ListEntry::GuestCount { .. } => {
+                if let ListEntry::GuestCount { .. } = other {
                     return true;
                 }
             }

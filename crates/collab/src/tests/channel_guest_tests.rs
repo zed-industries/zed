@@ -7,8 +7,8 @@ use workspace::Workspace;
 #[gpui::test]
 async fn test_channel_guests(
     executor: BackgroundExecutor,
-    mut cx_a: &mut TestAppContext,
-    mut cx_b: &mut TestAppContext,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
 ) {
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -37,15 +37,13 @@ async fn test_channel_guests(
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
 
     // Client A shares a project in the channel
     active_call_a
         .update(cx_a, |call, cx| call.join_channel(channel_id, cx))
         .await
         .unwrap();
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await

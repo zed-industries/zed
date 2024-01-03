@@ -1,7 +1,7 @@
-use gpui::{hsla, Hsla};
+use gpui::Hsla;
 use serde_derive::Deserialize;
 
-use crate::{amber, blue, gray, jade, lime, orange, pink, purple, red};
+use crate::{amber, blue, jade, lime, orange, pink, purple, red};
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
 pub struct PlayerColor {

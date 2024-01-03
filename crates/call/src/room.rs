@@ -610,6 +610,12 @@ impl Room {
             .find(|p| p.peer_id == peer_id)
     }
 
+    pub fn role_for_user(&self, user_id: u64) -> Option<proto::ChannelRole> {
+        self.remote_participants
+            .get(&user_id)
+            .map(|participant| participant.role)
+    }
+
     pub fn pending_participants(&self) -> &[Arc<User>] {
         &self.pending_participants
     }
@@ -784,6 +790,7 @@ impl Room {
                             });
                         }
 
+                        let role = participant.role();
                         let location = ParticipantLocation::from_proto(participant.location)
                             .unwrap_or(ParticipantLocation::External);
                         if let Some(remote_participant) =
@@ -792,8 +799,11 @@ impl Room {
                             remote_participant.peer_id = peer_id;
                             remote_participant.projects = participant.projects;
                             remote_participant.participant_index = participant_index;
-                            if location != remote_participant.location {
+                            if location != remote_participant.location
+                                || role != remote_participant.role
+                            {
                                 remote_participant.location = location;
+                                remote_participant.role = role;
                                 cx.emit(Event::ParticipantLocationChanged {
                                     participant_id: peer_id,
                                 });
@@ -807,6 +817,7 @@ impl Room {
                                     peer_id,
                                     projects: participant.projects,
                                     location,
+                                    role,
                                     muted: true,
                                     speaking: false,
                                     video_tracks: Default::default(),
@@ -1251,9 +1262,9 @@ impl Room {
             .unwrap_or(false)
     }
 
-    pub fn can_publish(&self) -> bool {
-        self.local_participant().role == proto::ChannelRole::Member
-            || self.local_participant().role == proto::ChannelRole::Admin
+    pub fn read_only(&self) -> bool {
+        !(self.local_participant().role == proto::ChannelRole::Member
+            || self.local_participant().role == proto::ChannelRole::Admin)
     }
 
     pub fn is_speaking(&self) -> bool {

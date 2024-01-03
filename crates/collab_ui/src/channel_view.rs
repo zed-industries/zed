@@ -172,7 +172,7 @@ impl ChannelView {
                 cx.notify();
             }),
             ChannelBufferEvent::ChannelChanged => {
-                self.editor.update(cx, |editor, cx| {
+                self.editor.update(cx, |_, cx| {
                     cx.emit(editor::EditorEvent::TitleChanged);
                     cx.notify()
                 });

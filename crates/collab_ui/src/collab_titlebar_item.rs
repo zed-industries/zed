@@ -10,6 +10,7 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
+use rpc::proto;
 use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
@@ -173,9 +174,9 @@ impl Render for CollabTitlebarItem {
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
-                        let can_publish = room.can_publish();
+                        let read_only = room.read_only();
 
-                        this.when(is_local && can_publish, |this| {
+                        this.when(is_local && !read_only, |this| {
                             this.child(
                                 Button::new(
                                     "toggle_sharing",
@@ -204,7 +205,7 @@ impl Render for CollabTitlebarItem {
                                         .detach_and_log_err(cx);
                                 }),
                         )
-                        .when(can_publish, |this| {
+                        .when(!read_only, |this| {
                             this.child(
                                 IconButton::new(
                                     "mute-microphone",
@@ -233,7 +234,7 @@ impl Render for CollabTitlebarItem {
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
-                                if can_publish {
+                                if !read_only {
                                     Tooltip::with_meta(
                                         "Deafen Audio",
                                         None,
@@ -246,7 +247,7 @@ impl Render for CollabTitlebarItem {
                             })
                             .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
                         )
-                        .when(can_publish, |this| {
+                        .when(!read_only, |this| {
                             this.child(
                                 IconButton::new("screen-share", ui::Icon::Screen)
                                     .style(ButtonStyle::Subtle)
@@ -420,6 +421,10 @@ impl CollabTitlebarItem {
         project_id: Option<u64>,
         current_user: &Arc<User>,
     ) -> Option<FacePile> {
+        if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
+            return None;
+        }
+
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
 
         let pile = FacePile::default()
