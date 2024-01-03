@@ -110,7 +110,7 @@ pub fn summercamp() -> UserThemeFamily {
                     hidden: Some(rgba(0x4c4735ff).into()),
                     hidden_background: Some(rgba(0x2a261cff).into()),
                     hidden_border: Some(rgba(0x2e2a1fff).into()),
-                    hint: Some(rgba(0x499befff).into()),
+                    hint: Some(rgba(0x246e61ff).into()),
                     hint_background: Some(rgba(0x0e2242ff).into()),
                     hint_border: Some(rgba(0x193761ff).into()),
                     ignored: Some(rgba(0x736e55ff).into()),
