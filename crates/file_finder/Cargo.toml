@@ -14,7 +14,7 @@ collections = { path = "../collections" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 gpui = { package = "gpui2", path = "../gpui2" }
 menu = { package = "menu2", path = "../menu2" }
-picker = { package = "picker2", path = "../picker2" }
+picker = { path = "../picker" }
 project = { package = "project2", path = "../project2" }
 settings = { package = "settings2", path = "../settings2" }
 text = { package = "text2", path = "../text2" }

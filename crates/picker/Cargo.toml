@@ -9,20 +9,20 @@ path = "src/picker.rs"
 doctest = false
 
 [dependencies]
-editor = { path = "../editor" }
-gpui = { path = "../gpui" }
-menu = { path = "../menu" }
-settings = { path = "../settings" }
+editor = { package = "editor2", path = "../editor2" }
+ui = { package = "ui2", path = "../ui2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+menu = { package = "menu2", path = "../menu2" }
+settings = { package = "settings2", path = "../settings2" }
 util = { path = "../util" }
-theme = { path = "../theme" }
-workspace = { path = "../workspace" }
+theme = { package = "theme2", path = "../theme2" }
+workspace = { package = "workspace2", path = "../workspace2"}
 
 parking_lot.workspace = true
 
 [dev-dependencies]
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 serde_json.workspace = true
-workspace = { path = "../workspace", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true

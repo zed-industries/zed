@@ -71,7 +71,6 @@ members = [
     "crates/outline",
     "crates/outline2",
     "crates/picker",
-    "crates/picker2",
     "crates/plugin",
     "crates/plugin_macros",
     "crates/prettier",

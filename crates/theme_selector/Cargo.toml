@@ -15,7 +15,7 @@ feature_flags = { package = "feature_flags2", path = "../feature_flags2" }
 fs = { package = "fs2", path = "../fs2" }
 fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
 gpui = { package = "gpui2", path = "../gpui2" }
-picker = { package = "picker2", path = "../picker2" }
+picker = { path = "../picker" }
 settings = { package = "settings2", path = "../settings2" }
 theme = { package = "theme2", path = "../theme2" }
 ui = { package = "ui2", path = "../ui2" }

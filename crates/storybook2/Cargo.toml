@@ -34,7 +34,7 @@ theme2 = { path = "../theme2" }
 menu = { package = "menu2", path = "../menu2" }
 ui = { package = "ui2", path = "../ui2", features = ["stories"] }
 util = { path = "../util" }
-picker = { package = "picker2", path = "../picker2" }
+picker = { path = "../picker" }
 
 [dev-dependencies]
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
