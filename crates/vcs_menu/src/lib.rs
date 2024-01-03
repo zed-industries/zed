@@ -2,57 +2,95 @@ use anyhow::{anyhow, bail, Result};
 use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions,
-    elements::*,
-    platform::{CursorStyle, MouseButton},
-    AppContext, MouseState, Task, ViewContext, ViewHandle,
+    actions, rems, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use picker::{Picker, PickerDelegate, PickerEvent};
+use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
+use ui::{
+    h_stack, v_stack, Button, ButtonCommon, Clickable, HighlightedLabel, Label, LabelCommon,
+    LabelSize, ListItem, ListItemSpacing, Selectable,
+};
 use util::ResultExt;
-use workspace::{Toast, Workspace};
+use workspace::{ModalView, Toast, Workspace};
 
 actions!(branches, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
-    Picker::<BranchListDelegate>::init(cx);
-    cx.add_action(toggle);
+    // todo!() po
+    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, action, cx| {
+            BranchList::toggle_modal(workspace, action, cx).log_err();
+        });
+    })
+    .detach();
 }
-pub type BranchList = Picker<BranchListDelegate>;
+
+pub struct BranchList {
+    pub picker: View<Picker<BranchListDelegate>>,
+    rem_width: f32,
+    _subscription: Subscription,
+}
+
+impl BranchList {
+    fn new(delegate: BranchListDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx));
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        Self {
+            picker,
+            rem_width,
+            _subscription,
+        }
+    }
+    fn toggle_modal(
+        workspace: &mut Workspace,
+        _: &OpenRecent,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Result<()> {
+        // Modal branch picker has a longer trailoff than a popover one.
+        let delegate = BranchListDelegate::new(workspace, cx.view().clone(), 70, cx)?;
+        workspace.toggle_modal(cx, |cx| BranchList::new(delegate, 34., cx));
+
+        Ok(())
+    }
+}
+impl ModalView for BranchList {}
+impl EventEmitter<DismissEvent> for BranchList {}
+
+impl FocusableView for BranchList {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for BranchList {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_stack()
+            .w(rems(self.rem_width))
+            .child(self.picker.clone())
+            .on_mouse_down_out(cx.listener(|this, _, cx| {
+                this.picker.update(cx, |this, cx| {
+                    this.cancel(&Default::default(), cx);
+                })
+            }))
+    }
+}
 
 pub fn build_branch_list(
-    workspace: ViewHandle<Workspace>,
-    cx: &mut ViewContext<BranchList>,
-) -> Result<BranchList> {
-    let delegate = workspace.read_with(cx, |workspace, cx| {
-        BranchListDelegate::new(workspace, cx.handle(), 29, cx)
+    workspace: View<Workspace>,
+    cx: &mut WindowContext<'_>,
+) -> Result<View<BranchList>> {
+    let delegate = workspace.update(cx, |workspace, cx| {
+        BranchListDelegate::new(workspace, cx.view().clone(), 29, cx)
     })?;
-
-    Ok(Picker::new(delegate, cx).with_theme(|theme| theme.picker.clone()))
-}
-
-fn toggle(
-    workspace: &mut Workspace,
-    _: &OpenRecent,
-    cx: &mut ViewContext<Workspace>,
-) -> Result<()> {
-    // Modal branch picker has a longer trailoff than a popover one.
-    let delegate = BranchListDelegate::new(workspace, cx.handle(), 70, cx)?;
-    workspace.toggle_modal(cx, |_, cx| {
-        cx.add_view(|cx| {
-            Picker::new(delegate, cx)
-                .with_theme(|theme| theme.picker.clone())
-                .with_max_size(800., 1200.)
-        })
-    });
-
-    Ok(())
+    Ok(cx.new_view(move |cx| BranchList::new(delegate, 20., cx)))
 }
 
 pub struct BranchListDelegate {
     matches: Vec<StringMatch>,
     all_branches: Vec<Branch>,
-    workspace: ViewHandle<Workspace>,
+    workspace: View<Workspace>,
     selected_index: usize,
     last_query: String,
     /// Max length of branch name before we truncate it and add a trailing `...`.
@@ -62,7 +100,7 @@ pub struct BranchListDelegate {
 impl BranchListDelegate {
     fn new(
         workspace: &Workspace,
-        handle: ViewHandle<Workspace>,
+        handle: View<Workspace>,
         branch_name_trailoff_after: usize,
         cx: &AppContext,
     ) -> Result<Self> {
@@ -87,7 +125,7 @@ impl BranchListDelegate {
         })
     }
 
-    fn display_error_toast(&self, message: String, cx: &mut ViewContext<BranchList>) {
+    fn display_error_toast(&self, message: String, cx: &mut WindowContext<'_>) {
         const GIT_CHECKOUT_FAILURE_ID: usize = 2048;
         self.workspace.update(cx, |model, ctx| {
             model.show_toast(Toast::new(GIT_CHECKOUT_FAILURE_ID, message), ctx)
@@ -96,6 +134,8 @@ impl BranchListDelegate {
 }
 
 impl PickerDelegate for BranchListDelegate {
+    type ListItem = ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Select branch...".into()
     }
@@ -114,9 +154,9 @@ impl PickerDelegate for BranchListDelegate {
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
-            let candidates = picker.read_with(&mut cx, |view, _| {
+            let candidates = picker.update(&mut cx, |view, _| {
                 const RECENT_BRANCHES_COUNT: usize = 10;
-                let mut branches = view.delegate().all_branches.clone();
+                let mut branches = view.delegate.all_branches.clone();
                 if query.is_empty() && branches.len() > RECENT_BRANCHES_COUNT {
                     // Truncate list of recent branches
                     // Do a partial sort to show recent-ish branches first.
@@ -157,13 +197,13 @@ impl PickerDelegate for BranchListDelegate {
                     true,
                     10000,
                     &Default::default(),
-                    cx.background(),
+                    cx.background_executor().clone(),
                 )
                 .await
             };
             picker
                 .update(&mut cx, |picker, _| {
-                    let delegate = picker.delegate_mut();
+                    let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
@@ -189,7 +229,7 @@ impl PickerDelegate for BranchListDelegate {
         cx.spawn(|picker, mut cx| async move {
             picker
                 .update(&mut cx, |this, cx| {
-                    let project = this.delegate().workspace.read(cx).project().read(cx);
+                    let project = this.delegate.workspace.read(cx).project().read(cx);
                     let mut cwd = project
                         .visible_worktrees(cx)
                         .next()
@@ -210,10 +250,10 @@ impl PickerDelegate for BranchListDelegate {
                         .lock()
                         .change_branch(&current_pick);
                     if status.is_err() {
-                        this.delegate().display_error_toast(format!("Failed to checkout branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                        this.delegate.display_error_toast(format!("Failed to checkout branch '{current_pick}', check for conflicts or unstashed files"), cx);
                         status?;
                     }
-                    cx.emit(PickerEvent::Dismiss);
+                    cx.emit(DismissEvent);
 
                     Ok::<(), anyhow::Error>(())
                 })
@@ -223,123 +263,96 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        cx.emit(PickerEvent::Dismiss);
+        cx.emit(DismissEvent);
     }
 
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &mut MouseState,
         selected: bool,
-        cx: &gpui::AppContext,
-    ) -> AnyElement<Picker<Self>> {
-        let theme = &theme::current(cx);
+        _cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =
             util::truncate_and_trailoff(&hit.string, self.branch_name_trailoff_after);
-        let highlights = hit
+        let highlights: Vec<_> = hit
             .positions
             .iter()
+            .filter(|index| index < &&self.branch_name_trailoff_after)
             .copied()
-            .filter(|index| index < &self.branch_name_trailoff_after)
             .collect();
-        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
-        Flex::row()
-            .with_child(
-                Label::new(shortened_branch_name.clone(), style.label.clone())
-                    .with_highlights(highlights)
-                    .contained()
-                    .aligned()
-                    .left(),
-            )
-            .contained()
-            .with_style(style.container)
-            .constrained()
-            .with_height(theme.collab_panel.tabbed_modal.row_height)
-            .into_any()
+        Some(
+            ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .start_slot(HighlightedLabel::new(shortened_branch_name, highlights)),
+        )
     }
-    fn render_header(
-        &self,
-        cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<AnyElement<Picker<Self>>> {
-        let theme = &theme::current(cx);
-        let style = theme.picker.header.clone();
+    fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         let label = if self.last_query.is_empty() {
-            Flex::row()
-                .with_child(Label::new("Recent branches", style.label.clone()))
-                .contained()
-                .with_style(style.container)
+            h_stack()
+                .ml_3()
+                .child(Label::new("Recent branches").size(LabelSize::Small))
         } else {
-            Flex::row()
-                .with_child(Label::new("Branches", style.label.clone()))
-                .with_children(self.matches.is_empty().not().then(|| {
-                    let suffix = if self.matches.len() == 1 { "" } else { "es" };
-                    Label::new(
-                        format!("{} match{}", self.matches.len(), suffix),
-                        style.label,
-                    )
-                    .flex_float()
-                }))
-                .contained()
-                .with_style(style.container)
+            let match_label = self.matches.is_empty().not().then(|| {
+                let suffix = if self.matches.len() == 1 { "" } else { "es" };
+                Label::new(format!("{} match{}", self.matches.len(), suffix)).size(LabelSize::Small)
+            });
+            h_stack()
+                .px_3()
+                .h_full()
+                .justify_between()
+                .child(Label::new("Branches").size(LabelSize::Small))
+                .children(match_label)
         };
         Some(label.into_any())
     }
-    fn render_footer(
-        &self,
-        cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<AnyElement<Picker<Self>>> {
-        if !self.last_query.is_empty() {
-            let theme = &theme::current(cx);
-            let style = theme.picker.footer.clone();
-            enum BranchCreateButton {}
-            Some(
-                Flex::row().with_child(MouseEventHandler::new::<BranchCreateButton, _>(0, cx, |state, _| {
-                    let style = style.style_for(state);
-                    Label::new("Create branch", style.label.clone())
-                        .contained()
-                        .with_style(style.container)
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_down(MouseButton::Left, |_, _, cx| {
-                    cx.spawn(|picker, mut cx| async move {
-                        picker.update(&mut cx, |this, cx| {
-                            let project = this.delegate().workspace.read(cx).project().read(cx);
-                            let current_pick = &this.delegate().last_query;
-                            let mut cwd = project
-                            .visible_worktrees(cx)
-                            .next()
-                            .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
-                            .read(cx)
-                            .abs_path()
-                            .to_path_buf();
-                            cwd.push(".git");
-                            let repo = project
-                                .fs()
-                                .open_repo(&cwd)
-                                .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
-                            let repo = repo
-                                .lock();
-                            let status = repo
-                                .create_branch(&current_pick);
-                            if status.is_err() {
-                                this.delegate().display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                status?;
-                            }
-                            let status = repo.change_branch(&current_pick);
-                            if status.is_err() {
-                                this.delegate().display_error_toast(format!("Failed to chec branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                status?;
-                            }
-                            cx.emit(PickerEvent::Dismiss);
-                            Ok::<(), anyhow::Error>(())
-                })
-                    }).detach();
-                })).aligned().right()
-                .into_any(),
-            )
-        } else {
-            None
+    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        if self.last_query.is_empty() {
+            return None;
         }
+
+        Some(
+            h_stack().mr_3().pb_2().child(h_stack().w_full()).child(
+            Button::new("branch-picker-create-branch-button", "Create branch").on_click(
+                cx.listener(|_, _, cx| {
+                    cx.spawn(|picker, mut cx| async move {
+                                        picker.update(&mut cx, |this, cx| {
+                                            let project = this.delegate.workspace.read(cx).project().read(cx);
+                                            let current_pick = &this.delegate.last_query;
+                                            let mut cwd = project
+                                            .visible_worktrees(cx)
+                                            .next()
+                                            .ok_or_else(|| anyhow!("There are no visisible worktrees."))?
+                                            .read(cx)
+                                            .abs_path()
+                                            .to_path_buf();
+                                            cwd.push(".git");
+                                            let repo = project
+                                                .fs()
+                                                .open_repo(&cwd)
+                                                .ok_or_else(|| anyhow!("Could not open repository at path `{}`", cwd.as_os_str().to_string_lossy()))?;
+                                            let repo = repo
+                                                .lock();
+                                            let status = repo
+                                                .create_branch(&current_pick);
+                                            if status.is_err() {
+                                                this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                                status?;
+                                            }
+                                            let status = repo.change_branch(&current_pick);
+                                            if status.is_err() {
+                                                this.delegate.display_error_toast(format!("Failed to chec branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                                status?;
+                                            }
+                                            this.cancel(&Default::default(), cx);
+                                            Ok::<(), anyhow::Error>(())
+                                })
+
+                    }).detach_and_log_err(cx);
+                }),
+            ).style(ui::ButtonStyle::Filled)).into_any_element(),
+        )
     }
 }

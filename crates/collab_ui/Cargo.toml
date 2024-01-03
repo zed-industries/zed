@@ -22,35 +22,36 @@ test-support = [
 ]
 
 [dependencies]
-auto_update = { path = "../auto_update" }
-db = { path = "../db" }
-call = { path = "../call" }
-client = { path = "../client" }
-channel = { path = "../channel" }
+auto_update = { package = "auto_update2", path = "../auto_update2" }
+db = { package = "db2", path = "../db2" }
+call = { package = "call2", path = "../call2" }
+client = { package = "client2", path = "../client2" }
+channel = { package = "channel2", path = "../channel2" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
-drag_and_drop = { path = "../drag_and_drop" }
-editor = { path = "../editor" }
-feedback = { path = "../feedback" }
-fuzzy = { path = "../fuzzy" }
-gpui = { path = "../gpui" }
-language = { path = "../language" }
-menu = { path = "../menu" }
-notifications = { path = "../notifications" }
-rich_text = { path = "../rich_text" }
-picker = { path = "../picker" }
-project = { path = "../project" }
-recent_projects = { path = "../recent_projects" }
-rpc = { path = "../rpc" }
-settings = { path = "../settings" }
-feature_flags = {path = "../feature_flags"}
-theme = { path = "../theme" }
-theme_selector = { path = "../theme_selector" }
+# context_menu = { path = "../context_menu" }
+# drag_and_drop = { path = "../drag_and_drop" }
+editor = { package="editor2", path = "../editor2" }
+feedback = { package = "feedback2", path = "../feedback2" }
+fuzzy = { package = "fuzzy2", path = "../fuzzy2" }
+gpui = { package = "gpui2", path = "../gpui2" }
+language = { package = "language2", path = "../language2" }
+menu = { package = "menu2",  path = "../menu2" }
+notifications = { package = "notifications2",  path = "../notifications2" }
+rich_text = { package = "rich_text2", path = "../rich_text2" }
+picker = { package = "picker2", path = "../picker2" }
+project = { package = "project2", path = "../project2" }
+recent_projects = { package = "recent_projects2", path = "../recent_projects2" }
+rpc = { package ="rpc2",  path = "../rpc2" }
+settings = { package = "settings2", path = "../settings2" }
+feature_flags = { package = "feature_flags2", path = "../feature_flags2"}
+theme = { package = "theme2", path = "../theme2" }
+theme_selector = { package = "theme_selector2", path = "../theme_selector2" }
 vcs_menu = { path = "../vcs_menu" }
+ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
-workspace = { path = "../workspace" }
-zed-actions = {path = "../zed-actions"}
+workspace = { package = "workspace2", path = "../workspace2" }
+zed-actions = { package="zed_actions2", path = "../zed_actions2"}
 
 anyhow.workspace = true
 futures.workspace = true
@@ -64,17 +65,17 @@ time.workspace = true
 smallvec.workspace = true
 
 [dev-dependencies]
-call = { path = "../call", features = ["test-support"] }
-client = { path = "../client", features = ["test-support"] }
+call = { package = "call2", path = "../call2", features = ["test-support"] }
+client = { package = "client2", path = "../client2", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-notifications = { path = "../notifications", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+editor = { package = "editor2", path = "../editor2", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+notifications = { package = "notifications2", path = "../notifications2", features = ["test-support"] }
+project = { package = "project2", path = "../project2", features = ["test-support"] }
+rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
 
 pretty_assertions.workspace = true
 tree-sitter-markdown.workspace = true

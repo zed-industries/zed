@@ -1762,7 +1762,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "async-tungstenite",
- "audio2",
+ "audio",
  "axum",
  "axum-extra",
  "base64 0.13.1",
@@ -1771,7 +1771,7 @@ dependencies = [
  "clap 3.2.25",
  "client2",
  "clock",
- "collab_ui2",
+ "collab_ui",
  "collections",
  "ctor",
  "dashmap",
@@ -1833,53 +1833,6 @@ name = "collab_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "auto_update",
- "call",
- "channel",
- "client",
- "clock",
- "collections",
- "context_menu",
- "db",
- "drag_and_drop",
- "editor",
- "feature_flags",
- "feedback",
- "futures 0.3.28",
- "fuzzy",
- "gpui",
- "language",
- "lazy_static",
- "log",
- "menu",
- "notifications",
- "picker",
- "postage",
- "pretty_assertions",
- "project",
- "recent_projects",
- "rich_text",
- "rpc",
- "schemars",
- "serde",
- "serde_derive",
- "settings",
- "smallvec",
- "theme",
- "theme_selector",
- "time",
- "tree-sitter-markdown",
- "util",
- "vcs_menu",
- "workspace",
- "zed-actions",
-]
-
-[[package]]
-name = "collab_ui2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "auto_update2",
  "call2",
  "channel2",
@@ -1916,7 +1869,7 @@ dependencies = [
  "tree-sitter-markdown",
  "ui2",
  "util",
- "vcs_menu2",
+ "vcs_menu",
  "workspace2",
  "zed_actions2",
 ]
@@ -7010,7 +6963,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "quick_action_bar2"
+name = "quick_action_bar"
 version = "0.1.0"
 dependencies = [
  "assistant2",
@@ -10606,20 +10559,6 @@ name = "vcs_menu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fs",
- "fuzzy",
- "gpui",
- "picker",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "vcs_menu2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "fs2",
  "fuzzy2",
  "gpui2",
@@ -11095,31 +11034,6 @@ name = "welcome"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
- "db",
- "editor",
- "fs",
- "fuzzy",
- "gpui",
- "install_cli",
- "log",
- "picker",
- "project",
- "schemars",
- "serde",
- "settings",
- "theme",
- "theme_selector",
- "util",
- "vim",
- "workspace",
-]
-
-[[package]]
-name = "welcome2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "client2",
  "db2",
  "editor2",
@@ -11557,7 +11471,7 @@ dependencies = [
  "chrono",
  "cli",
  "client2",
- "collab_ui2",
+ "collab_ui",
  "collections",
  "command_palette2",
  "copilot2",
@@ -11598,7 +11512,7 @@ dependencies = [
  "project2",
  "project_panel2",
  "project_symbols2",
- "quick_action_bar2",
+ "quick_action_bar",
  "rand 0.8.5",
  "recent_projects2",
  "regex",
@@ -11661,7 +11575,7 @@ dependencies = [
  "util",
  "uuid 1.4.1",
  "vim2",
- "welcome2",
+ "welcome",
  "workspace2",
  "zed_actions2",
 ]

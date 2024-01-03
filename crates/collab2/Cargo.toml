@@ -60,7 +60,7 @@ tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
 uuid.workspace = true
 
 [dev-dependencies]
-audio = { package = "audio2", path = "../audio2" }
+audio = { path = "../audio" }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 call = { package = "call2", path = "../call2", features = ["test-support"] }
@@ -81,7 +81,7 @@ settings = { package = "settings2", path = "../settings2", features = ["test-sup
 theme = { package = "theme2", path = "../theme2" }
 workspace = { package = "workspace2", path = "../workspace2", features = ["test-support"] }
 
-collab_ui = { path = "../collab_ui2", package = "collab_ui2", features = ["test-support"] }
+collab_ui = { path = "../collab_ui", features = ["test-support"] }
 
 async-trait.workspace = true
 pretty_assertions.workspace = true
