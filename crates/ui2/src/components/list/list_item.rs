@@ -224,6 +224,9 @@ impl RenderOnce for ListItem {
                     }))
                     .child(
                         h_stack()
+                            // HACK: We need to set *any* width value here in order for this container to size correctly.
+                            // Without this the `h_stack` will overflow the parent `inner_list_item`.
+                            .w_px()
                             .flex_1()
                             .gap_1()
                             .children(self.start_slot)
