@@ -715,14 +715,14 @@ fn replace_value_in_json_text(
 
     lazy_static! {
         static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(
-            tree_sitter_json::language(),
+            &tree_sitter_json::language(),
             "(pair key: (string) @key value: (_) @value)",
         )
         .unwrap();
     }
 
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(tree_sitter_json::language()).unwrap();
+    parser.set_language(&tree_sitter_json::language()).unwrap();
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();

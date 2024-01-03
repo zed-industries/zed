@@ -1166,7 +1166,7 @@ fn parse_text(
             .set_included_ranges(&ranges)
             .expect("overlapping ranges");
         parser
-            .set_language(grammar.ts_language)
+            .set_language(&grammar.ts_language)
             .expect("incompatible grammar");
         parser
             .parse_with(
