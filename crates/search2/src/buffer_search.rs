@@ -7,7 +7,7 @@ use crate::{
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::{Editor, EditorElement, EditorStyle, Tab};
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
@@ -190,6 +190,7 @@ impl Render for BufferSearchBar {
             .w_full()
             .gap_2()
             .key_context(key_context)
+            .capture_action(cx.listener(Self::tab))
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
             .on_action(cx.listener(Self::dismiss))
@@ -929,6 +930,14 @@ impl BufferSearchBar {
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
             cx.notify();
+        }
+    }
+
+    fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if let Some(item) = self.active_searchable_item.as_ref() {
+            let focus_handle = item.focus_handle(cx);
+            cx.focus(&focus_handle);
+            cx.stop_propagation();
         }
     }
 
