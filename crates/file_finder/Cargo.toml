@@ -11,7 +11,7 @@ doctest = false
 [dependencies]
 editor = { path = "../editor" }
 collections = { path = "../collections" }
-fuzzy = { path = "../fuzzy" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 picker = { path = "../picker" }
@@ -20,8 +20,10 @@ settings = { path = "../settings" }
 text = { path = "../text" }
 util = { path = "../util" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 workspace = { path = "../workspace" }
 postage.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

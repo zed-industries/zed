@@ -3,7 +3,7 @@ use ai::completion::{CompletionProvider, CompletionRequest};
 use anyhow::Result;
 use editor::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
-use gpui::{Entity, ModelContext, ModelHandle, Task};
+use gpui::{EventEmitter, Model, ModelContext, Task};
 use language::{Rope, TransactionId};
 use multi_buffer;
 use std::{cmp, future, ops::Range, sync::Arc};
@@ -21,7 +21,7 @@ pub enum CodegenKind {
 
 pub struct Codegen {
     provider: Arc<dyn CompletionProvider>,
-    buffer: ModelHandle<MultiBuffer>,
+    buffer: Model<MultiBuffer>,
     snapshot: MultiBufferSnapshot,
     kind: CodegenKind,
     last_equal_ranges: Vec<Range<Anchor>>,
@@ -32,13 +32,11 @@ pub struct Codegen {
     _subscription: gpui::Subscription,
 }
 
-impl Entity for Codegen {
-    type Event = Event;
-}
+impl EventEmitter<Event> for Codegen {}
 
 impl Codegen {
     pub fn new(
-        buffer: ModelHandle<MultiBuffer>,
+        buffer: Model<MultiBuffer>,
         kind: CodegenKind,
         provider: Arc<dyn CompletionProvider>,
         cx: &mut ModelContext<Self>,
@@ -60,7 +58,7 @@ impl Codegen {
 
     fn handle_buffer_event(
         &mut self,
-        _buffer: ModelHandle<MultiBuffer>,
+        _buffer: Model<MultiBuffer>,
         event: &multi_buffer::Event,
         cx: &mut ModelContext<Self>,
     ) {
@@ -111,13 +109,13 @@ impl Codegen {
             .unwrap_or_else(|| snapshot.indent_size_for_line(selection_start.row));
 
         let response = self.provider.complete(prompt);
-        self.generation = cx.spawn_weak(|this, mut cx| {
+        self.generation = cx.spawn(|this, mut cx| {
             async move {
                 let generate = async {
                     let mut edit_start = range.start.to_offset(&snapshot);
 
                     let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
-                    let diff = cx.background().spawn(async move {
+                    let diff = cx.background_executor().spawn(async move {
                         let chunks = strip_invalid_spans_from_codeblock(response.await?);
                         futures::pin_mut!(chunks);
                         let mut diff = StreamingDiff::new(selected_text.to_string());
@@ -183,12 +181,6 @@ impl Codegen {
                     });
 
                     while let Some(hunks) = hunks_rx.next().await {
-                        let this = if let Some(this) = this.upgrade(&cx) {
-                            this
-                        } else {
-                            break;
-                        };
-
                         this.update(&mut cx, |this, cx| {
                             this.last_equal_ranges.clear();
 
@@ -245,7 +237,7 @@ impl Codegen {
                             }
 
                             cx.notify();
-                        });
+                        })?;
                     }
 
                     diff.await?;
@@ -253,17 +245,16 @@ impl Codegen {
                 };
 
                 let result = generate.await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        this.last_equal_ranges.clear();
-                        this.idle = true;
-                        if let Err(error) = result {
-                            this.error = Some(error);
-                        }
-                        cx.emit(Event::Finished);
-                        cx.notify();
-                    });
-                }
+                this.update(&mut cx, |this, cx| {
+                    this.last_equal_ranges.clear();
+                    this.idle = true;
+                    if let Err(error) = result {
+                        this.error = Some(error);
+                    }
+                    cx.emit(Event::Finished);
+                    cx.notify();
+                })
+                .ok();
             }
         });
         self.error.take();
@@ -372,7 +363,7 @@ mod tests {
     use super::*;
     use ai::test::FakeCompletionProvider;
     use futures::stream::{self};
-    use gpui::{executor::Deterministic, TestAppContext};
+    use gpui::{Context, TestAppContext};
     use indoc::indoc;
     use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
     use rand::prelude::*;
@@ -391,12 +382,8 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_transform_autoindent(
-        cx: &mut TestAppContext,
-        mut rng: StdRng,
-        deterministic: Arc<Deterministic>,
-    ) {
-        cx.set_global(cx.read(SettingsStore::test));
+    async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
+        cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -408,14 +395,14 @@ mod tests {
             }
         "};
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
         let provider = Arc::new(FakeCompletionProvider::new());
-        let codegen = cx.add_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
                 CodegenKind::Transform { range },
@@ -442,10 +429,10 @@ mod tests {
             println!("CHUNK: {:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
-            deterministic.run_until_parked();
+            cx.background_executor.run_until_parked();
         }
         provider.finish_completion();
-        deterministic.run_until_parked();
+        cx.background_executor.run_until_parked();
 
         assert_eq!(
             buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
@@ -464,9 +451,8 @@ mod tests {
     async fn test_autoindent_when_generating_past_indentation(
         cx: &mut TestAppContext,
         mut rng: StdRng,
-        deterministic: Arc<Deterministic>,
     ) {
-        cx.set_global(cx.read(SettingsStore::test));
+        cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
         let text = indoc! {"
@@ -475,14 +461,14 @@ mod tests {
             }
         "};
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let position = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))
         });
         let provider = Arc::new(FakeCompletionProvider::new());
-        let codegen = cx.add_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
                 CodegenKind::Generate { position },
@@ -508,10 +494,10 @@ mod tests {
             let (chunk, suffix) = new_text.split_at(len);
             provider.send_completion(chunk);
             new_text = suffix;
-            deterministic.run_until_parked();
+            cx.background_executor.run_until_parked();
         }
         provider.finish_completion();
-        deterministic.run_until_parked();
+        cx.background_executor.run_until_parked();
 
         assert_eq!(
             buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
@@ -530,9 +516,8 @@ mod tests {
     async fn test_autoindent_when_generating_before_indentation(
         cx: &mut TestAppContext,
         mut rng: StdRng,
-        deterministic: Arc<Deterministic>,
     ) {
-        cx.set_global(cx.read(SettingsStore::test));
+        cx.set_global(cx.update(SettingsStore::test));
         cx.update(language_settings::init);
 
         let text = concat!(
@@ -541,14 +526,14 @@ mod tests {
             "}\n" //
         );
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let position = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))
         });
         let provider = Arc::new(FakeCompletionProvider::new());
-        let codegen = cx.add_model(|cx| {
+        let codegen = cx.new_model(|cx| {
             Codegen::new(
                 buffer.clone(),
                 CodegenKind::Generate { position },
@@ -575,10 +560,10 @@ mod tests {
             println!("{:?}", &chunk);
             provider.send_completion(chunk);
             new_text = suffix;
-            deterministic.run_until_parked();
+            cx.background_executor.run_until_parked();
         }
         provider.finish_completion();
-        deterministic.run_until_parked();
+        cx.background_executor.run_until_parked();
 
         assert_eq!(
             buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),

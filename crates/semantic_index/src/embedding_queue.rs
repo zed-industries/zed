@@ -1,6 +1,6 @@
 use crate::{parsing::Span, JobHandle};
 use ai::embedding::EmbeddingProvider;
-use gpui::executor::Background;
+use gpui::BackgroundExecutor;
 use parking_lot::Mutex;
 use smol::channel;
 use std::{mem, ops::Range, path::Path, sync::Arc, time::SystemTime};
@@ -37,7 +37,7 @@ impl PartialEq for FileToEmbed {
 pub struct EmbeddingQueue {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     pending_batch: Vec<FileFragmentToEmbed>,
-    executor: Arc<Background>,
+    executor: BackgroundExecutor,
     pending_batch_token_count: usize,
     finished_files_tx: channel::Sender<FileToEmbed>,
     finished_files_rx: channel::Receiver<FileToEmbed>,
@@ -50,7 +50,10 @@ pub struct FileFragmentToEmbed {
 }
 
 impl EmbeddingQueue {
-    pub fn new(embedding_provider: Arc<dyn EmbeddingProvider>, executor: Arc<Background>) -> Self {
+    pub fn new(
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+        executor: BackgroundExecutor,
+    ) -> Self {
         let (finished_files_tx, finished_files_rx) = channel::unbounded();
         Self {
             embedding_provider,

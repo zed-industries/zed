@@ -1,5 +1,6 @@
-use anyhow::{anyhow, Result};
-use gpui::AssetSource;
+use anyhow::anyhow;
+
+use gpui::{AssetSource, Result, SharedString};
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
@@ -7,6 +8,7 @@ use rust_embed::RustEmbed;
 #[include = "fonts/**/*"]
 #[include = "icons/**/*"]
 #[include = "themes/**/*"]
+#[exclude = "themes/src/*"]
 #[include = "sounds/**/*"]
 #[include = "*.md"]
 #[exclude = "*.DS_Store"]
@@ -19,7 +21,15 @@ impl AssetSource for Assets {
             .ok_or_else(|| anyhow!("could not find asset at path \"{}\"", path))
     }
 
-    fn list(&self, path: &str) -> Vec<std::borrow::Cow<'static, str>> {
-        Self::iter().filter(|p| p.starts_with(path)).collect()
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        Ok(Self::iter()
+            .filter_map(|p| {
+                if p.starts_with(path) {
+                    Some(p.into())
+                } else {
+                    None
+                }
+            })
+            .collect())
     }
 }

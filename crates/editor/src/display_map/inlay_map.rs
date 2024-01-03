@@ -1,6 +1,6 @@
 use crate::{Anchor, InlayId, MultiBufferSnapshot, ToOffset};
 use collections::{BTreeMap, BTreeSet};
-use gpui::fonts::HighlightStyle;
+use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{MultiBufferChunks, MultiBufferRows};
 use std::{
@@ -1889,7 +1889,8 @@ mod tests {
     }
 
     fn init_test(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
-        theme::init((), cx);
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        theme::init(theme::LoadThemes::JustBase, cx);
     }
 }

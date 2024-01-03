@@ -1,6 +1,7 @@
-use gpui::Action;
+use gpui::{Action, SharedString};
 
 use crate::{ActivateRegexMode, ActivateSemanticMode, ActivateTextMode};
+
 // TODO: Update the default search mode to get from config
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum SearchMode {
@@ -8,12 +9,6 @@ pub enum SearchMode {
     Text,
     Semantic,
     Regex,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum Side {
-    Left,
-    Right,
 }
 
 impl SearchMode {
@@ -24,28 +19,14 @@ impl SearchMode {
             SearchMode::Regex => "Regex",
         }
     }
-
-    pub(crate) fn region_id(&self) -> usize {
-        match self {
-            SearchMode::Text => 3,
-            SearchMode::Semantic => 4,
-            SearchMode::Regex => 5,
-        }
+    pub(crate) fn tooltip(&self) -> SharedString {
+        format!("Activate {} Mode", self.label()).into()
     }
-
-    pub(crate) fn tooltip_text(&self) -> &'static str {
+    pub(crate) fn action(&self) -> Box<dyn Action> {
         match self {
-            SearchMode::Text => "Activate Text Search",
-            SearchMode::Semantic => "Activate Semantic Search",
-            SearchMode::Regex => "Activate Regex Search",
-        }
-    }
-
-    pub(crate) fn activate_action(&self) -> Box<dyn Action> {
-        match self {
-            SearchMode::Text => Box::new(ActivateTextMode),
-            SearchMode::Semantic => Box::new(ActivateSemanticMode),
-            SearchMode::Regex => Box::new(ActivateRegexMode),
+            SearchMode::Text => ActivateTextMode.boxed_clone(),
+            SearchMode::Semantic => ActivateSemanticMode.boxed_clone(),
+            SearchMode::Regex => ActivateRegexMode.boxed_clone(),
         }
     }
 }

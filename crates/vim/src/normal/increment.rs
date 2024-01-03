@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use editor::{scroll::autoscroll::Autoscroll, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{impl_actions, AppContext, WindowContext};
+use gpui::{impl_actions, ViewContext, WindowContext};
 use language::{Bias, Point};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -24,8 +24,8 @@ struct Decrement {
 
 impl_actions!(vim, [Increment, Decrement]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(|_: &mut Workspace, action: &Increment, cx| {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, action: &Increment, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let count = vim.take_count(cx).unwrap_or(1);
@@ -33,7 +33,7 @@ pub fn init(cx: &mut AppContext) {
             increment(vim, count as i32, step, cx)
         })
     });
-    cx.add_action(|_: &mut Workspace, action: &Decrement, cx| {
+    workspace.register_action(|_: &mut Workspace, action: &Decrement, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let count = vim.take_count(cx).unwrap_or(1);

@@ -1,7 +1,8 @@
 use anyhow;
+use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
+use settings::Settings;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAIModel {
@@ -51,8 +52,8 @@ pub enum AssistantDockPosition {
 pub struct AssistantSettings {
     pub button: bool,
     pub dock: AssistantDockPosition,
-    pub default_width: f32,
-    pub default_height: f32,
+    pub default_width: Pixels,
+    pub default_height: Pixels,
     pub default_open_ai_model: OpenAIModel,
 }
 
@@ -65,7 +66,7 @@ pub struct AssistantSettingsContent {
     pub default_open_ai_model: Option<OpenAIModel>,
 }
 
-impl Setting for AssistantSettings {
+impl Settings for AssistantSettings {
     const KEY: Option<&'static str> = Some("assistant");
 
     type FileContent = AssistantSettingsContent;
@@ -73,7 +74,7 @@ impl Setting for AssistantSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }

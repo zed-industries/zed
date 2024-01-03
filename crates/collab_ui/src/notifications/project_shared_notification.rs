@@ -2,13 +2,11 @@ use crate::notification_window_options;
 use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
-use gpui::{
-    elements::*,
-    geometry::vector::vec2f,
-    platform::{CursorStyle, MouseButton},
-    AppContext, Entity, View, ViewContext,
-};
+use gpui::{img, px, AppContext, ParentElement, Render, Size, Styled, ViewContext, VisualContext};
+use settings::Settings;
 use std::sync::{Arc, Weak};
+use theme::ThemeSettings;
+use ui::{h_stack, prelude::*, v_stack, Button, Label};
 use workspace::AppState;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
@@ -21,38 +19,54 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             project_id,
             worktree_root_names,
         } => {
-            let theme = &theme::current(cx).project_shared_notification;
-            let window_size = vec2f(theme.window_width, theme.window_height);
+            let window_size = Size {
+                width: px(400.),
+                height: px(72.),
+            };
 
-            for screen in cx.platform().screens() {
-                let window =
-                    cx.add_window(notification_window_options(screen, window_size), |_| {
+            for screen in cx.displays() {
+                let options = notification_window_options(screen, window_size);
+                let window = cx.open_window(options, |cx| {
+                    cx.new_view(|_| {
                         ProjectSharedNotification::new(
                             owner.clone(),
                             *project_id,
                             worktree_root_names.clone(),
                             app_state.clone(),
                         )
-                    });
+                    })
+                });
                 notification_windows
                     .entry(*project_id)
                     .or_insert(Vec::new())
                     .push(window);
             }
         }
+
         room::Event::RemoteProjectUnshared { project_id }
         | room::Event::RemoteProjectJoined { project_id }
         | room::Event::RemoteProjectInvitationDiscarded { project_id } => {
             if let Some(windows) = notification_windows.remove(&project_id) {
                 for window in windows {
-                    window.remove(cx);
+                    window
+                        .update(cx, |_, cx| {
+                            // todo!()
+                            cx.remove_window();
+                        })
+                        .ok();
                 }
             }
         }
+
         room::Event::Left => {
             for (_, windows) in notification_windows.drain() {
                 for window in windows {
-                    window.remove(cx);
+                    window
+                        .update(cx, |_, cx| {
+                            // todo!()
+                            cx.remove_window();
+                        })
+                        .ok();
                 }
             }
         }
@@ -101,117 +115,66 @@ impl ProjectSharedNotification {
             });
         }
     }
+}
 
-    fn render_owner(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &theme::current(cx).project_shared_notification;
-        Flex::row()
-            .with_children(self.owner.avatar.clone().map(|avatar| {
-                Image::from_data(avatar)
-                    .with_style(theme.owner_avatar)
-                    .aligned()
-            }))
-            .with_child(
-                Flex::column()
-                    .with_child(
-                        Label::new(
-                            self.owner.github_login.clone(),
-                            theme.owner_username.text.clone(),
-                        )
-                        .contained()
-                        .with_style(theme.owner_username.container),
-                    )
-                    .with_child(
-                        Label::new(
-                            format!(
-                                "is sharing a project in Zed{}",
-                                if self.worktree_root_names.is_empty() {
-                                    ""
-                                } else {
-                                    ":"
-                                }
-                            ),
-                            theme.message.text.clone(),
-                        )
-                        .contained()
-                        .with_style(theme.message.container),
-                    )
-                    .with_children(if self.worktree_root_names.is_empty() {
+impl Render for ProjectSharedNotification {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        // TODO: Is there a better place for us to initialize the font?
+        let (ui_font, ui_font_size) = {
+            let theme_settings = ThemeSettings::get_global(cx);
+            (
+                theme_settings.ui_font.family.clone(),
+                theme_settings.ui_font_size.clone(),
+            )
+        };
+
+        cx.set_rem_size(ui_font_size);
+
+        h_stack()
+            .font(ui_font)
+            .text_ui()
+            .justify_between()
+            .size_full()
+            .overflow_hidden()
+            .elevation_3(cx)
+            .p_2()
+            .gap_2()
+            .child(
+                img(self.owner.avatar_uri.clone())
+                    .w_12()
+                    .h_12()
+                    .rounded_full(),
+            )
+            .child(
+                v_stack()
+                    .overflow_hidden()
+                    .child(Label::new(self.owner.github_login.clone()))
+                    .child(Label::new(format!(
+                        "is sharing a project in Zed{}",
+                        if self.worktree_root_names.is_empty() {
+                            ""
+                        } else {
+                            ":"
+                        }
+                    )))
+                    .children(if self.worktree_root_names.is_empty() {
                         None
                     } else {
-                        Some(
-                            Label::new(
-                                self.worktree_root_names.join(", "),
-                                theme.worktree_roots.text.clone(),
-                            )
-                            .contained()
-                            .with_style(theme.worktree_roots.container),
-                        )
-                    })
-                    .contained()
-                    .with_style(theme.owner_metadata)
-                    .aligned(),
+                        Some(Label::new(self.worktree_root_names.join(", ")))
+                    }),
             )
-            .contained()
-            .with_style(theme.owner_container)
-            .flex(1., true)
-            .into_any()
-    }
-
-    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        enum Open {}
-        enum Dismiss {}
-
-        let theme = theme::current(cx);
-        Flex::column()
-            .with_child(
-                MouseEventHandler::new::<Open, _>(0, cx, |_, _| {
-                    let theme = &theme.project_shared_notification;
-                    Label::new("Open", theme.open_button.text.clone())
-                        .aligned()
-                        .contained()
-                        .with_style(theme.open_button.container)
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, this, cx| this.join(cx))
-                .flex(1., true),
+            .child(
+                v_stack()
+                    .child(Button::new("open", "Open").on_click(cx.listener(
+                        move |this, _event, cx| {
+                            this.join(cx);
+                        },
+                    )))
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        move |this, _event, cx| {
+                            this.dismiss(cx);
+                        },
+                    ))),
             )
-            .with_child(
-                MouseEventHandler::new::<Dismiss, _>(0, cx, |_, _| {
-                    let theme = &theme.project_shared_notification;
-                    Label::new("Dismiss", theme.dismiss_button.text.clone())
-                        .aligned()
-                        .contained()
-                        .with_style(theme.dismiss_button.container)
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, this, cx| {
-                    this.dismiss(cx);
-                })
-                .flex(1., true),
-            )
-            .constrained()
-            .with_width(theme.project_shared_notification.button_width)
-            .into_any()
-    }
-}
-
-impl Entity for ProjectSharedNotification {
-    type Event = ();
-}
-
-impl View for ProjectSharedNotification {
-    fn ui_name() -> &'static str {
-        "ProjectSharedNotification"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::AnyElement<Self> {
-        let background = theme::current(cx).project_shared_notification.background;
-        Flex::row()
-            .with_child(self.render_owner(cx))
-            .with_child(self.render_buttons(cx))
-            .contained()
-            .with_background_color(background)
-            .expanded()
-            .into_any()
     }
 }

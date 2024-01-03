@@ -12,6 +12,7 @@ doctest = false
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+ui = { path = "../ui" }
 language = { path = "../language" }
 project = { path = "../project" }
 search = { path = "../search" }

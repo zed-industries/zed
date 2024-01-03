@@ -1,8 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
+use settings::Settings;
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
@@ -57,7 +57,7 @@ pub struct ScrollbarContent {
     pub selections: Option<bool>,
 }
 
-impl Setting for EditorSettings {
+impl Settings for EditorSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = EditorSettingsContent;
@@ -65,7 +65,7 @@ impl Setting for EditorSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }

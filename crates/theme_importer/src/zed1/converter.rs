@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
 use gpui::{serde_json, Hsla, Rgba};
-use gpui1::color::Color as Zed1Color;
-use gpui1::fonts::HighlightStyle as Zed1HighlightStyle;
 use theme::{
     color_alpha, Appearance, PlayerColor, PlayerColors, StatusColorsRefinement,
     ThemeColorsRefinement, UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme,
     UserTheme, UserThemeStylesRefinement,
 };
-use theme1::{ColorScheme, Theme as Zed1Theme};
+
+use crate::zed1::theme::{
+    Color as Zed1Color, ColorScheme, HighlightStyle as Zed1HighlightStyle, Theme as Zed1Theme,
+    Weight,
+};
 
 fn zed1_color_to_hsla(color: Zed1Color) -> Hsla {
     let r = color.r as f32 / 255.;
@@ -30,7 +32,17 @@ fn zed1_highlight_style_to_user_highlight_style(
                 UserFontStyle::Normal
             }
         }),
-        font_weight: highlight.weight.map(|weight| UserFontWeight(weight.0)),
+        font_weight: highlight.weight.map(|weight| match weight {
+            Weight::thin => UserFontWeight::THIN,
+            Weight::extra_light => UserFontWeight::EXTRA_LIGHT,
+            Weight::light => UserFontWeight::LIGHT,
+            Weight::normal => UserFontWeight::NORMAL,
+            Weight::medium => UserFontWeight::MEDIUM,
+            Weight::semibold => UserFontWeight::SEMIBOLD,
+            Weight::bold => UserFontWeight::BOLD,
+            Weight::extra_bold => UserFontWeight::EXTRA_BOLD,
+            Weight::black => UserFontWeight::BLACK,
+        }),
     }
 }
 

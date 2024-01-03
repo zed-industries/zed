@@ -7,7 +7,7 @@ use call::ActiveCall;
 use channel::{ChannelId, ChannelMembership, ChannelStore};
 use client::User;
 use futures::future::try_join_all;
-use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
+use gpui::{BackgroundExecutor, Model, SharedString, TestAppContext};
 use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
@@ -16,12 +16,11 @@ use std::sync::Arc;
 
 #[gpui::test]
 async fn test_core_channels(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -40,28 +39,30 @@ async fn test_core_channels(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_channels(
         client_a.channel_store(),
         cx_a,
         &[
             ExpectedChannel {
                 id: channel_a_id,
-                name: "channel-a".to_string(),
+                name: "channel-a".into(),
                 depth: 0,
                 role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_b_id,
-                name: "channel-b".to_string(),
+                name: "channel-b".into(),
                 depth: 1,
                 role: ChannelRole::Admin,
             },
         ],
     );
 
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert!(channels.ordered_channels().collect::<Vec<_>>().is_empty())
+    cx_b.read(|cx| {
+        client_b.channel_store().read_with(cx, |channels, _| {
+            assert!(channels.ordered_channels().collect::<Vec<_>>().is_empty())
+        })
     });
 
     // Invite client B to channel A as client A.
@@ -85,13 +86,13 @@ async fn test_core_channels(
         .unwrap();
 
     // Client A sees that B has been invited.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_channel_invitations(
         client_b.channel_store(),
         cx_b,
         &[ExpectedChannel {
             id: channel_a_id,
-            name: "channel-a".to_string(),
+            name: "channel-a".into(),
             depth: 0,
             role: ChannelRole::Member,
         }],
@@ -129,7 +130,7 @@ async fn test_core_channels(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Client B now sees that they are a member of channel A and its existing subchannels.
     assert_channel_invitations(client_b.channel_store(), cx_b, &[]);
@@ -139,13 +140,13 @@ async fn test_core_channels(
         &[
             ExpectedChannel {
                 id: channel_a_id,
-                name: "channel-a".to_string(),
+                name: "channel-a".into(),
                 role: ChannelRole::Member,
                 depth: 0,
             },
             ExpectedChannel {
                 id: channel_b_id,
-                name: "channel-b".to_string(),
+                name: "channel-b".into(),
                 role: ChannelRole::Member,
                 depth: 1,
             },
@@ -160,26 +161,26 @@ async fn test_core_channels(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_channels(
         client_b.channel_store(),
         cx_b,
         &[
             ExpectedChannel {
                 id: channel_a_id,
-                name: "channel-a".to_string(),
+                name: "channel-a".into(),
                 role: ChannelRole::Member,
                 depth: 0,
             },
             ExpectedChannel {
                 id: channel_b_id,
-                name: "channel-b".to_string(),
+                name: "channel-b".into(),
                 role: ChannelRole::Member,
                 depth: 1,
             },
             ExpectedChannel {
                 id: channel_c_id,
-                name: "channel-c".to_string(),
+                name: "channel-c".into(),
                 role: ChannelRole::Member,
                 depth: 2,
             },
@@ -199,7 +200,7 @@ async fn test_core_channels(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Observe that client B is now an admin of channel A, and that
     // their admin priveleges extend to subchannels of channel A.
@@ -210,19 +211,19 @@ async fn test_core_channels(
         &[
             ExpectedChannel {
                 id: channel_a_id,
-                name: "channel-a".to_string(),
+                name: "channel-a".into(),
                 depth: 0,
                 role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_b_id,
-                name: "channel-b".to_string(),
+                name: "channel-b".into(),
                 depth: 1,
                 role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_c_id,
-                name: "channel-c".to_string(),
+                name: "channel-c".into(),
                 depth: 2,
                 role: ChannelRole::Admin,
             },
@@ -238,13 +239,13 @@ async fn test_core_channels(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_channels(
         client_a.channel_store(),
         cx_a,
         &[ExpectedChannel {
             id: channel_a_id,
-            name: "channel-a".to_string(),
+            name: "channel-a".into(),
             depth: 0,
             role: ChannelRole::Admin,
         }],
@@ -254,7 +255,7 @@ async fn test_core_channels(
         cx_b,
         &[ExpectedChannel {
             id: channel_a_id,
-            name: "channel-a".to_string(),
+            name: "channel-a".into(),
             depth: 0,
             role: ChannelRole::Admin,
         }],
@@ -269,7 +270,7 @@ async fn test_core_channels(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Client A still has their channel
     assert_channels(
@@ -277,7 +278,7 @@ async fn test_core_channels(
         cx_a,
         &[ExpectedChannel {
             id: channel_a_id,
-            name: "channel-a".to_string(),
+            name: "channel-a".into(),
             depth: 0,
             role: ChannelRole::Admin,
         }],
@@ -288,7 +289,7 @@ async fn test_core_channels(
 
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
 
     server
         .app_state
@@ -302,13 +303,13 @@ async fn test_core_channels(
         .unwrap();
 
     server.allow_connections();
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     assert_channels(
         client_a.channel_store(),
         cx_a,
         &[ExpectedChannel {
             id: channel_a_id,
-            name: "channel-a-renamed".to_string(),
+            name: "channel-a-renamed".into(),
             depth: 0,
             role: ChannelRole::Admin,
         }],
@@ -339,12 +340,11 @@ fn assert_members_eq(
 
 #[gpui::test]
 async fn test_joining_channel_ancestor_member(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -371,13 +371,12 @@ async fn test_joining_channel_ancestor_member(
 
 #[gpui::test]
 async fn test_channel_room(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -400,15 +399,18 @@ async fn test_channel_room(
         .unwrap();
 
     // Give everyone a chance to observe user A joining
-    deterministic.run_until_parked();
-    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    room_a.read_with(cx_a, |room, _| assert!(room.is_connected()));
+    executor.run_until_parked();
+    let room_a =
+        cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a.read(|cx| room_a.read_with(cx, |room, _| assert!(room.is_connected())));
 
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_a.user_id().unwrap()],
-        );
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_a.user_id().unwrap()],
+            );
+        })
     });
 
     assert_channels(
@@ -416,23 +418,27 @@ async fn test_channel_room(
         cx_b,
         &[ExpectedChannel {
             id: zed_id,
-            name: "zed".to_string(),
+            name: "zed".into(),
             depth: 0,
             role: ChannelRole::Member,
         }],
     );
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_a.user_id().unwrap()],
-        );
+    cx_b.read(|cx| {
+        client_b.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_a.user_id().unwrap()],
+            );
+        })
     });
 
-    client_c.channel_store().read_with(cx_c, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_a.user_id().unwrap()],
-        );
+    cx_c.read(|cx| {
+        client_c.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_a.user_id().unwrap()],
+            );
+        })
     });
 
     active_call_b
@@ -440,31 +446,38 @@ async fn test_channel_room(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
-        );
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
+            );
+        })
     });
 
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
-        );
+    cx_b.read(|cx| {
+        client_b.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
+            );
+        })
     });
 
-    client_c.channel_store().read_with(cx_c, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
-        );
+    cx_c.read(|cx| {
+        client_c.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
+            );
+        })
     });
 
-    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    room_a.read_with(cx_a, |room, _| assert!(room.is_connected()));
+    let room_a =
+        cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a.read(|cx| room_a.read_with(cx, |room, _| assert!(room.is_connected())));
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -473,8 +486,9 @@ async fn test_channel_room(
         }
     );
 
-    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
-    room_b.read_with(cx_b, |room, _| assert!(room.is_connected()));
+    let room_b =
+        cx_b.read(|cx| active_call_b.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_b.read(|cx| room_b.read_with(cx, |room, _| assert!(room.is_connected())));
     assert_eq!(
         room_participants(&room_b, cx_b),
         RoomParticipants {
@@ -490,27 +504,33 @@ async fn test_channel_room(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_b.user_id().unwrap()],
-        );
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_b.user_id().unwrap()],
+            );
+        })
     });
 
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_b.user_id().unwrap()],
-        );
+    cx_b.read(|cx| {
+        client_b.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_b.user_id().unwrap()],
+            );
+        })
     });
 
-    client_c.channel_store().read_with(cx_c, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_b.user_id().unwrap()],
-        );
+    cx_c.read(|cx| {
+        client_c.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_b.user_id().unwrap()],
+            );
+        })
     });
 
     active_call_b
@@ -518,18 +538,24 @@ async fn test_channel_room(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_participants_eq(channels.channel_participants(zed_id), &[]);
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(channels.channel_participants(zed_id), &[]);
+        })
     });
 
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_participants_eq(channels.channel_participants(zed_id), &[]);
+    cx_b.read(|cx| {
+        client_b.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(channels.channel_participants(zed_id), &[]);
+        })
     });
 
-    client_c.channel_store().read_with(cx_c, |channels, _| {
-        assert_participants_eq(channels.channel_participants(zed_id), &[]);
+    cx_c.read(|cx| {
+        client_c.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(channels.channel_participants(zed_id), &[]);
+        })
     });
 
     active_call_a
@@ -542,10 +568,11 @@ async fn test_channel_room(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
-    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    room_a.read_with(cx_a, |room, _| assert!(room.is_connected()));
+    let room_a =
+        cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a.read(|cx| room_a.read_with(cx, |room, _| assert!(room.is_connected())));
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -554,8 +581,9 @@ async fn test_channel_room(
         }
     );
 
-    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
-    room_b.read_with(cx_b, |room, _| assert!(room.is_connected()));
+    let room_b =
+        cx_b.read(|cx| active_call_b.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_b.read(|cx| room_b.read_with(cx, |room, _| assert!(room.is_connected())));
     assert_eq!(
         room_participants(&room_b, cx_b),
         RoomParticipants {
@@ -566,9 +594,8 @@ async fn test_channel_room(
 }
 
 #[gpui::test]
-async fn test_channel_jumping(deterministic: Arc<Deterministic>, cx_a: &mut TestAppContext) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+async fn test_channel_jumping(executor: BackgroundExecutor, cx_a: &mut TestAppContext) {
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
 
     let zed_id = server
@@ -586,14 +613,16 @@ async fn test_channel_jumping(deterministic: Arc<Deterministic>, cx_a: &mut Test
         .unwrap();
 
     // Give everything a chance to observe user A joining
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(zed_id),
-            &[client_a.user_id().unwrap()],
-        );
-        assert_participants_eq(channels.channel_participants(rust_id), &[]);
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(zed_id),
+                &[client_a.user_id().unwrap()],
+            );
+            assert_participants_eq(channels.channel_participants(rust_id), &[]);
+        })
     });
 
     active_call_a
@@ -603,25 +632,26 @@ async fn test_channel_jumping(deterministic: Arc<Deterministic>, cx_a: &mut Test
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_participants_eq(channels.channel_participants(zed_id), &[]);
-        assert_participants_eq(
-            channels.channel_participants(rust_id),
-            &[client_a.user_id().unwrap()],
-        );
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(channels.channel_participants(zed_id), &[]);
+            assert_participants_eq(
+                channels.channel_participants(rust_id),
+                &[client_a.user_id().unwrap()],
+            );
+        })
     });
 }
 
 #[gpui::test]
 async fn test_permissions_update_while_invited(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -642,7 +672,7 @@ async fn test_permissions_update_while_invited(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     assert_channel_invitations(
         client_b.channel_store(),
@@ -650,7 +680,7 @@ async fn test_permissions_update_while_invited(
         &[ExpectedChannel {
             depth: 0,
             id: rust_id,
-            name: "rust".to_string(),
+            name: "rust".into(),
             role: ChannelRole::Member,
         }],
     );
@@ -670,7 +700,7 @@ async fn test_permissions_update_while_invited(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     assert_channel_invitations(
         client_b.channel_store(),
@@ -678,7 +708,7 @@ async fn test_permissions_update_while_invited(
         &[ExpectedChannel {
             depth: 0,
             id: rust_id,
-            name: "rust".to_string(),
+            name: "rust".into(),
             role: ChannelRole::Member,
         }],
     );
@@ -687,12 +717,11 @@ async fn test_permissions_update_while_invited(
 
 #[gpui::test]
 async fn test_channel_rename(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -709,7 +738,7 @@ async fn test_channel_rename(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Client A sees the channel with its new name.
     assert_channels(
@@ -718,7 +747,7 @@ async fn test_channel_rename(
         &[ExpectedChannel {
             depth: 0,
             id: rust_id,
-            name: "rust-archive".to_string(),
+            name: "rust-archive".into(),
             role: ChannelRole::Admin,
         }],
     );
@@ -730,7 +759,7 @@ async fn test_channel_rename(
         &[ExpectedChannel {
             depth: 0,
             id: rust_id,
-            name: "rust-archive".to_string(),
+            name: "rust-archive".into(),
             role: ChannelRole::Member,
         }],
     );
@@ -738,13 +767,12 @@ async fn test_channel_rename(
 
 #[gpui::test]
 async fn test_call_from_channel(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -778,47 +806,54 @@ async fn test_call_from_channel(
         .unwrap();
 
     // Client B accepts the call.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
 
     // Client B sees that they are now in the channel
-    deterministic.run_until_parked();
-    active_call_b.read_with(cx_b, |call, cx| {
-        assert_eq!(call.channel_id(cx), Some(channel_id));
+    executor.run_until_parked();
+    cx_b.read(|cx| {
+        active_call_b.read_with(cx, |call, cx| {
+            assert_eq!(call.channel_id(cx), Some(channel_id));
+        })
     });
-    client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(channel_id),
-            &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
-        );
+    cx_b.read(|cx| {
+        client_b.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(channel_id),
+                &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
+            );
+        })
     });
 
     // Clients A and C also see that client B is in the channel.
-    client_a.channel_store().read_with(cx_a, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(channel_id),
-            &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
-        );
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(channel_id),
+                &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
+            );
+        })
     });
-    client_c.channel_store().read_with(cx_c, |channels, _| {
-        assert_participants_eq(
-            channels.channel_participants(channel_id),
-            &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
-        );
+    cx_c.read(|cx| {
+        client_c.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(channel_id),
+                &[client_a.user_id().unwrap(), client_b.user_id().unwrap()],
+            );
+        })
     });
 }
 
 #[gpui::test]
 async fn test_lost_channel_creation(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -844,7 +879,7 @@ async fn test_lost_channel_creation(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Sanity check, B has the invitation
     assert_channel_invitations(
@@ -853,7 +888,7 @@ async fn test_lost_channel_creation(
         &[ExpectedChannel {
             depth: 0,
             id: channel_id,
-            name: "x".to_string(),
+            name: "x".into(),
             role: ChannelRole::Member,
         }],
     );
@@ -867,7 +902,7 @@ async fn test_lost_channel_creation(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Make sure A sees their new channel
     assert_channels(
@@ -877,13 +912,13 @@ async fn test_lost_channel_creation(
             ExpectedChannel {
                 depth: 0,
                 id: channel_id,
-                name: "x".to_string(),
+                name: "x".into(),
                 role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 depth: 1,
                 id: subchannel_id,
-                name: "subchannel".to_string(),
+                name: "subchannel".into(),
                 role: ChannelRole::Admin,
             },
         ],
@@ -898,7 +933,7 @@ async fn test_lost_channel_creation(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Client B should now see the channel
     assert_channels(
@@ -908,13 +943,13 @@ async fn test_lost_channel_creation(
             ExpectedChannel {
                 depth: 0,
                 id: channel_id,
-                name: "x".to_string(),
+                name: "x".into(),
                 role: ChannelRole::Member,
             },
             ExpectedChannel {
                 depth: 1,
                 id: subchannel_id,
-                name: "subchannel".to_string(),
+                name: "subchannel".into(),
                 role: ChannelRole::Member,
             },
         ],
@@ -923,14 +958,12 @@ async fn test_lost_channel_creation(
 
 #[gpui::test]
 async fn test_channel_link_notifications(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -953,7 +986,7 @@ async fn test_channel_link_notifications(
     .await
     .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     client_b
         .channel_store()
@@ -971,7 +1004,7 @@ async fn test_channel_link_notifications(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // we have an admin (a), member (b) and guest (c) all part of the zed channel.
 
@@ -983,6 +1016,8 @@ async fn test_channel_link_notifications(
         })
         .await
         .unwrap();
+
+    executor.run_until_parked();
 
     // the new channel shows for b and not c
     assert_channels_list_shape(
@@ -1021,7 +1056,7 @@ async fn test_channel_link_notifications(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // the new channel shows for b and c
     assert_channels_list_shape(
@@ -1093,6 +1128,8 @@ async fn test_channel_link_notifications(
         .await
         .unwrap();
 
+    executor.run_until_parked();
+
     // the members-only channel is still shown for c, but hidden for b
     assert_channels_list_shape(
         client_b.channel_store(),
@@ -1104,9 +1141,8 @@ async fn test_channel_link_notifications(
             (helix_channel, 3),
         ],
     );
-    client_b
-        .channel_store()
-        .read_with(cx_b, |channel_store, _| {
+    cx_b.read(|cx| {
+        client_b.channel_store().read_with(cx, |channel_store, _| {
             assert_eq!(
                 channel_store
                     .channel_for_id(vim_channel)
@@ -1114,22 +1150,19 @@ async fn test_channel_link_notifications(
                     .visibility,
                 proto::ChannelVisibility::Members
             )
-        });
+        })
+    });
 
     assert_channels_list_shape(client_c.channel_store(), cx_c, &[(zed_channel, 0)]);
 }
 
 #[gpui::test]
 async fn test_channel_membership_notifications(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-
-    deterministic.forbid_parking();
-
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_c").await;
 
@@ -1160,7 +1193,7 @@ async fn test_channel_membership_notifications(
     .await
     .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     client_b
         .channel_store()
@@ -1178,7 +1211,7 @@ async fn test_channel_membership_notifications(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // we have an admin (a), and a guest (b) with access to all of zed, and membership in vim.
     assert_channels(
@@ -1188,13 +1221,13 @@ async fn test_channel_membership_notifications(
             ExpectedChannel {
                 depth: 0,
                 id: zed_channel,
-                name: "zed".to_string(),
+                name: "zed".into(),
                 role: ChannelRole::Guest,
             },
             ExpectedChannel {
                 depth: 1,
                 id: vim_channel,
-                name: "vim".to_string(),
+                name: "vim".into(),
                 role: ChannelRole::Member,
             },
         ],
@@ -1208,7 +1241,7 @@ async fn test_channel_membership_notifications(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     assert_channels(
         client_b.channel_store(),
@@ -1217,13 +1250,13 @@ async fn test_channel_membership_notifications(
             ExpectedChannel {
                 depth: 0,
                 id: zed_channel,
-                name: "zed".to_string(),
+                name: "zed".into(),
                 role: ChannelRole::Guest,
             },
             ExpectedChannel {
                 depth: 1,
                 id: vim_channel,
-                name: "vim".to_string(),
+                name: "vim".into(),
                 role: ChannelRole::Guest,
             },
         ],
@@ -1232,13 +1265,11 @@ async fn test_channel_membership_notifications(
 
 #[gpui::test]
 async fn test_guest_access(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -1281,7 +1312,7 @@ async fn test_guest_access(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_channels_list_shape(
         client_a.channel_store(),
         cx_a,
@@ -1314,19 +1345,17 @@ async fn test_guest_access(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_channels_list_shape(client_b.channel_store(), cx_b, &[(channel_b, 0)]);
 }
 
 #[gpui::test]
 async fn test_invite_access(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -1365,7 +1394,7 @@ async fn test_invite_access(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     client_b.channel_store().update(cx_b, |channel_store, _| {
         assert!(channel_store.channel_for_id(channel_b_id).is_some());
@@ -1381,13 +1410,12 @@ async fn test_invite_access(
 
 #[gpui::test]
 async fn test_channel_moving(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     _cx_b: &mut TestAppContext,
     _cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     // let client_b = server.create_client(cx_b, "user_b").await;
     // let client_c = server.create_client(cx_c, "user_c").await;
@@ -1448,64 +1476,68 @@ async fn test_channel_moving(
 struct ExpectedChannel {
     depth: usize,
     id: ChannelId,
-    name: String,
+    name: SharedString,
     role: ChannelRole,
 }
 
 #[track_caller]
 fn assert_channel_invitations(
-    channel_store: &ModelHandle<ChannelStore>,
+    channel_store: &Model<ChannelStore>,
     cx: &TestAppContext,
     expected_channels: &[ExpectedChannel],
 ) {
-    let actual = channel_store.read_with(cx, |store, _| {
-        store
-            .channel_invitations()
-            .iter()
-            .map(|channel| ExpectedChannel {
-                depth: 0,
-                name: channel.name.clone(),
-                id: channel.id,
-                role: channel.role,
-            })
-            .collect::<Vec<_>>()
+    let actual = cx.read(|cx| {
+        channel_store.read_with(cx, |store, _| {
+            store
+                .channel_invitations()
+                .iter()
+                .map(|channel| ExpectedChannel {
+                    depth: 0,
+                    name: channel.name.clone(),
+                    id: channel.id,
+                    role: channel.role,
+                })
+                .collect::<Vec<_>>()
+        })
     });
     assert_eq!(actual, expected_channels);
 }
 
 #[track_caller]
 fn assert_channels(
-    channel_store: &ModelHandle<ChannelStore>,
+    channel_store: &Model<ChannelStore>,
     cx: &TestAppContext,
     expected_channels: &[ExpectedChannel],
 ) {
-    let actual = channel_store.read_with(cx, |store, _| {
-        store
-            .ordered_channels()
-            .map(|(depth, channel)| ExpectedChannel {
-                depth,
-                name: channel.name.clone(),
-                id: channel.id,
-                role: channel.role,
-            })
-            .collect::<Vec<_>>()
+    let actual = cx.read(|cx| {
+        channel_store.read_with(cx, |store, _| {
+            store
+                .ordered_channels()
+                .map(|(depth, channel)| ExpectedChannel {
+                    depth,
+                    name: channel.name.clone().into(),
+                    id: channel.id,
+                    role: channel.role,
+                })
+                .collect::<Vec<_>>()
+        })
     });
     pretty_assertions::assert_eq!(actual, expected_channels);
 }
 
 #[track_caller]
 fn assert_channels_list_shape(
-    channel_store: &ModelHandle<ChannelStore>,
+    channel_store: &Model<ChannelStore>,
     cx: &TestAppContext,
     expected_channels: &[(u64, usize)],
 ) {
-    cx.foreground().run_until_parked();
-
-    let actual = channel_store.read_with(cx, |store, _| {
-        store
-            .ordered_channels()
-            .map(|(depth, channel)| (channel.id, depth))
-            .collect::<Vec<_>>()
+    let actual = cx.read(|cx| {
+        channel_store.read_with(cx, |store, _| {
+            store
+                .ordered_channels()
+                .map(|(depth, channel)| (channel.id, depth))
+                .collect::<Vec<_>>()
+        })
     });
     pretty_assertions::assert_eq!(actual, expected_channels);
 }

@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
+use settings::Settings;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub enum BaseKeymap {
@@ -44,7 +44,7 @@ impl BaseKeymap {
     }
 }
 
-impl Setting for BaseKeymap {
+impl Settings for BaseKeymap {
     const KEY: Option<&'static str> = Some("base_keymap");
 
     type FileContent = Option<Self>;
@@ -52,7 +52,7 @@ impl Setting for BaseKeymap {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self>
     where
         Self: Sized,

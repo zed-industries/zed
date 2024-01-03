@@ -1,39 +1,33 @@
-mod appearance;
-mod atlas;
+//! Macos screen have a y axis that goings up from the bottom of the screen and
+//! an origin at the bottom left of the main display.
 mod dispatcher;
-mod event;
-mod fonts;
-mod geometry;
-mod image_cache;
+mod display;
+mod display_linker;
+mod events;
+mod metal_atlas;
+mod metal_renderer;
+mod open_type;
 mod platform;
-mod renderer;
-mod screen;
-mod sprite_cache;
-mod status_item;
+mod text_system;
 mod window;
+mod window_appearence;
 
+use crate::{px, size, GlobalPixels, Pixels, Size};
 use cocoa::{
-    base::{id, nil, BOOL, NO, YES},
-    foundation::{NSAutoreleasePool, NSNotFound, NSString, NSUInteger},
+    base::{id, nil},
+    foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger},
 };
-pub use dispatcher::Dispatcher;
-pub use fonts::FontSystem;
-use platform::{MacForegroundPlatform, MacPlatform};
-pub use renderer::Surface;
-use std::{ops::Range, rc::Rc, sync::Arc};
-use window::MacWindow;
+use metal_renderer::*;
+use objc::runtime::{BOOL, NO, YES};
+use std::ops::Range;
 
-use crate::executor;
-
-pub fn platform() -> Arc<dyn super::Platform> {
-    Arc::new(MacPlatform::new())
-}
-
-pub(crate) fn foreground_platform(
-    foreground: Rc<executor::Foreground>,
-) -> Rc<dyn super::ForegroundPlatform> {
-    Rc::new(MacForegroundPlatform::new(foreground))
-}
+pub use dispatcher::*;
+pub use display::*;
+pub use display_linker::*;
+pub use metal_atlas::*;
+pub use platform::*;
+pub use text_system::*;
+pub use window::*;
 
 trait BoolExt {
     fn to_objc(self) -> BOOL;
@@ -102,3 +96,44 @@ unsafe impl objc::Encode for NSRange {
 unsafe fn ns_string(string: &str) -> id {
     NSString::alloc(nil).init_str(string).autorelease()
 }
+
+impl From<NSSize> for Size<Pixels> {
+    fn from(value: NSSize) -> Self {
+        Size {
+            width: px(value.width as f32),
+            height: px(value.height as f32),
+        }
+    }
+}
+
+pub trait NSRectExt {
+    fn size(&self) -> Size<Pixels>;
+    fn intersects(&self, other: Self) -> bool;
+}
+
+impl From<NSRect> for Size<Pixels> {
+    fn from(rect: NSRect) -> Self {
+        let NSSize { width, height } = rect.size;
+        size(width.into(), height.into())
+    }
+}
+
+impl From<NSRect> for Size<GlobalPixels> {
+    fn from(rect: NSRect) -> Self {
+        let NSSize { width, height } = rect.size;
+        size(width.into(), height.into())
+    }
+}
+
+// impl NSRectExt for NSRect {
+//     fn intersects(&self, other: Self) -> bool {
+//         self.size.width > 0.
+//             && self.size.height > 0.
+//             && other.size.width > 0.
+//             && other.size.height > 0.
+//             && self.origin.x <= other.origin.x + other.size.width
+//             && self.origin.x + self.size.width >= other.origin.x
+//             && self.origin.y <= other.origin.y + other.size.height
+//             && self.origin.y + self.size.height >= other.origin.y
+//     }
+// }

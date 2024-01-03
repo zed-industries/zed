@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
+fuzzy = {   path = "../fuzzy" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 project = { path = "../project" }

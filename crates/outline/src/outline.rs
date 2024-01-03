@@ -1,68 +1,109 @@
 use editor::{
-    combine_syntax_and_fuzzy_match_highlights, display_map::ToDisplayPoint,
-    scroll::autoscroll::Autoscroll, Anchor, AnchorRangeExt, DisplayPoint, Editor, ToPoint,
+    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Anchor, AnchorRangeExt,
+    DisplayPoint, Editor, EditorMode, ToPoint,
 };
 use fuzzy::StringMatch;
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, AppContext, MouseState, Task, ViewContext,
-    ViewHandle, WindowContext,
+    actions, div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    FontStyle, FontWeight, HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task,
+    TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate, PickerEvent};
+use picker::{Picker, PickerDelegate};
+use settings::Settings;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
-use workspace::Workspace;
+
+use theme::{color_alpha, ActiveTheme, ThemeSettings};
+use ui::{prelude::*, ListItem, ListItemSpacing};
+use util::ResultExt;
+use workspace::ModalView;
 
 actions!(outline, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(toggle);
-    OutlineView::init(cx);
+    cx.observe_new_views(OutlineView::register).detach();
 }
 
-pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-    if let Some(editor) = workspace
-        .active_item(cx)
-        .and_then(|item| item.downcast::<Editor>())
-    {
-        let outline = editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .snapshot(cx)
-            .outline(Some(theme::current(cx).editor.syntax.as_ref()));
-        if let Some(outline) = outline {
-            workspace.toggle_modal(cx, |_, cx| {
-                cx.add_view(|cx| {
-                    OutlineView::new(OutlineViewDelegate::new(outline, editor, cx), cx)
-                        .with_max_size(800., 1200.)
-                })
-            });
-        }
+pub fn toggle(editor: View<Editor>, _: &Toggle, cx: &mut WindowContext) {
+    let outline = editor
+        .read(cx)
+        .buffer()
+        .read(cx)
+        .snapshot(cx)
+        .outline(Some(&cx.theme().syntax()));
+
+    if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(cx, |cx| OutlineView::new(outline, editor, cx));
+        })
     }
 }
 
-type OutlineView = Picker<OutlineViewDelegate>;
+pub struct OutlineView {
+    picker: View<Picker<OutlineViewDelegate>>,
+}
+
+impl FocusableView for OutlineView {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl EventEmitter<DismissEvent> for OutlineView {}
+impl ModalView for OutlineView {}
+
+impl Render for OutlineView {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_stack().w(rems(34.)).child(self.picker.clone())
+    }
+}
+
+impl OutlineView {
+    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        if editor.mode() == EditorMode::Full {
+            let handle = cx.view().downgrade();
+            editor.register_action(move |action, cx| {
+                if let Some(editor) = handle.upgrade() {
+                    toggle(editor, action, cx);
+                }
+            });
+        }
+    }
+
+    fn new(
+        outline: Outline<Anchor>,
+        editor: View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> OutlineView {
+        let delegate = OutlineViewDelegate::new(cx.view().downgrade(), outline, editor, cx);
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx).max_height(vh(0.75, cx)));
+        OutlineView { picker }
+    }
+}
 
 struct OutlineViewDelegate {
-    active_editor: ViewHandle<Editor>,
+    outline_view: WeakView<OutlineView>,
+    active_editor: View<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
-    prev_scroll_position: Option<Vector2F>,
+    prev_scroll_position: Option<Point<f32>>,
     matches: Vec<StringMatch>,
     last_query: String,
 }
 
 impl OutlineViewDelegate {
     fn new(
+        outline_view: WeakView<OutlineView>,
         outline: Outline<Anchor>,
-        editor: ViewHandle<Editor>,
+        editor: View<Editor>,
         cx: &mut ViewContext<OutlineView>,
     ) -> Self {
         Self {
+            outline_view,
             last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
@@ -81,11 +122,18 @@ impl OutlineViewDelegate {
         })
     }
 
-    fn set_selected_index(&mut self, ix: usize, navigate: bool, cx: &mut ViewContext<OutlineView>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        navigate: bool,
+        cx: &mut ViewContext<Picker<OutlineViewDelegate>>,
+    ) {
         self.selected_match_index = ix;
+
         if navigate && !self.matches.is_empty() {
             let selected_match = &self.matches[self.selected_match_index];
             let outline_item = &self.outline.items[selected_match.candidate_id];
+
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let buffer_snapshot = &snapshot.buffer_snapshot;
@@ -101,6 +149,8 @@ impl OutlineViewDelegate {
 }
 
 impl PickerDelegate for OutlineViewDelegate {
+    type ListItem = ListItem;
+
     fn placeholder_text(&self) -> Arc<str> {
         "Search buffer symbols...".into()
     }
@@ -113,15 +163,15 @@ impl PickerDelegate for OutlineViewDelegate {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<OutlineView>) {
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<OutlineViewDelegate>>) {
         self.set_selected_index(ix, true, cx);
     }
 
-    fn center_selection_after_match_updates(&self) -> bool {
-        true
-    }
-
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<OutlineView>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        cx: &mut ViewContext<Picker<OutlineViewDelegate>>,
+    ) -> Task<()> {
         let selected_index;
         if query.is_empty() {
             self.restore_active_editor(cx);
@@ -163,7 +213,10 @@ impl PickerDelegate for OutlineViewDelegate {
                 .map(|(ix, _, _)| ix)
                 .unwrap_or(0);
         } else {
-            self.matches = smol::block_on(self.outline.search(&query, cx.background().clone()));
+            self.matches = smol::block_on(
+                self.outline
+                    .search(&query, cx.background_executor().clone()),
+            );
             selected_index = self
                 .matches
                 .iter()
@@ -177,8 +230,9 @@ impl PickerDelegate for OutlineViewDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<OutlineView>) {
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<OutlineViewDelegate>>) {
         self.prev_scroll_position.take();
+
         self.active_editor.update(cx, |active_editor, cx| {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
@@ -187,39 +241,69 @@ impl PickerDelegate for OutlineViewDelegate {
                     s.select_ranges([position..position])
                 });
                 active_editor.highlight_rows(None);
+                active_editor.focus(cx);
             }
         });
-        cx.emit(PickerEvent::Dismiss);
+
+        self.dismissed(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<OutlineView>) {
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<OutlineViewDelegate>>) {
+        self.outline_view
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
         self.restore_active_editor(cx);
     }
 
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &mut MouseState,
         selected: bool,
-        cx: &AppContext,
-    ) -> AnyElement<Picker<Self>> {
-        let theme = theme::current(cx);
-        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
-        let string_match = &self.matches[ix];
-        let outline_item = &self.outline.items[string_match.candidate_id];
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let settings = ThemeSettings::get_global(cx);
 
-        Text::new(outline_item.text.clone(), style.label.text.clone())
-            .with_soft_wrap(false)
-            .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                &outline_item.text,
-                style.label.text.clone().into(),
-                outline_item.highlight_ranges.iter().cloned(),
-                &string_match.positions,
-            ))
-            .contained()
-            .with_padding_left(20. * outline_item.depth as f32)
-            .contained()
-            .with_style(style.container)
-            .into_any()
+        // TODO: We probably shouldn't need to build a whole new text style here
+        // but I'm not sure how to get the current one and modify it.
+        // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features,
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        let mut highlight_style = HighlightStyle::default();
+        highlight_style.background_color = Some(color_alpha(cx.theme().colors().text_accent, 0.3));
+
+        let mat = &self.matches[ix];
+        let outline_item = &self.outline.items[mat.candidate_id];
+
+        let highlights = gpui::combine_highlights(
+            mat.ranges().map(|range| (range, highlight_style)),
+            outline_item.highlight_ranges.iter().cloned(),
+        );
+
+        let styled_text =
+            StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights);
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .child(
+                    div()
+                        .text_ui()
+                        .pl(rems(outline_item.depth as f32))
+                        .child(styled_text),
+                ),
+        )
     }
 }

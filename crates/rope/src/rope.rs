@@ -906,7 +906,7 @@ impl Chunk {
 
     fn clip_offset_utf16(&self, target: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
         let mut code_units = self.0.encode_utf16();
-        let mut offset = code_units.by_ref().take(target.0 as usize).count();
+        let mut offset = code_units.by_ref().take(target.0).count();
         if char::decode_utf16(code_units).next().transpose().is_err() {
             match bias {
                 Bias::Left => offset -= 1,

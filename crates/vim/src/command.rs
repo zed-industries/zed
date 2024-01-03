@@ -1,6 +1,6 @@
 use command_palette::CommandInterceptResult;
 use editor::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
-use gpui::{impl_actions, Action, AppContext};
+use gpui::{impl_actions, Action, AppContext, ViewContext};
 use serde_derive::Deserialize;
 use workspace::{SaveIntent, Workspace};
 
@@ -22,8 +22,8 @@ pub struct GoToLine {
 
 impl_actions!(vim, [GoToLine]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(|_: &mut Workspace, action: &GoToLine, cx| {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, action: &GoToLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.switch_mode(Mode::Normal, false, cx);
             move_cursor(vim, Motion::StartOfDocument, Some(action.line as usize), cx);
@@ -293,14 +293,11 @@ mod test {
     use std::path::Path;
 
     use crate::test::{NeovimBackedTestContext, VimTestContext};
-    use gpui::{executor::Foreground, TestAppContext};
+    use gpui::TestAppContext;
     use indoc::indoc;
 
     #[gpui::test]
     async fn test_command_basics(cx: &mut TestAppContext) {
-        if let Foreground::Deterministic { cx_id: _, executor } = cx.foreground().as_ref() {
-            executor.run_until_parked();
-        }
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
@@ -410,15 +407,14 @@ mod test {
         // conflict!
         cx.simulate_keystrokes(["i", "@", "escape"]);
         cx.simulate_keystrokes([":", "w", "enter"]);
-        let window = cx.window;
-        assert!(window.has_pending_prompt(cx.cx));
+        assert!(cx.has_pending_prompt());
         // "Cancel"
-        window.simulate_prompt_answer(0, cx.cx);
+        cx.simulate_prompt_answer(0);
         assert_eq!(fs.load(&path).await.unwrap(), "oops\n");
-        assert!(!window.has_pending_prompt(cx.cx));
+        assert!(!cx.has_pending_prompt());
         // force overwrite
         cx.simulate_keystrokes([":", "w", "!", "enter"]);
-        assert!(!window.has_pending_prompt(cx.cx));
+        assert!(!cx.has_pending_prompt());
         assert_eq!(fs.load(&path).await.unwrap(), "@@\n");
     }
 

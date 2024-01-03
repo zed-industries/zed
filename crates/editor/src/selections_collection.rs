@@ -6,7 +6,7 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{AppContext, ModelHandle};
+use gpui::{AppContext, Model, Pixels};
 use itertools::Itertools;
 use language::{Bias, Point, Selection, SelectionGoal, TextDimension, ToPoint};
 use util::post_inc;
@@ -25,8 +25,8 @@ pub struct PendingSelection {
 
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
-    display_map: ModelHandle<DisplayMap>,
-    buffer: ModelHandle<MultiBuffer>,
+    display_map: Model<DisplayMap>,
+    buffer: Model<MultiBuffer>,
     pub next_selection_id: usize,
     pub line_mode: bool,
     disjoint: Arc<[Selection<Anchor>]>,
@@ -34,7 +34,7 @@ pub struct SelectionsCollection {
 }
 
 impl SelectionsCollection {
-    pub fn new(display_map: ModelHandle<DisplayMap>, buffer: ModelHandle<MultiBuffer>) -> Self {
+    pub fn new(display_map: Model<DisplayMap>, buffer: Model<MultiBuffer>) -> Self {
         Self {
             display_map,
             buffer,
@@ -306,19 +306,19 @@ impl SelectionsCollection {
         &mut self,
         display_map: &DisplaySnapshot,
         row: u32,
-        positions: &Range<f32>,
+        positions: &Range<Pixels>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
 
-        let layed_out_line = display_map.lay_out_line_for_row(row, &text_layout_details);
+        let line = display_map.layout_row(row, &text_layout_details);
 
-        let start_col = layed_out_line.closest_index_for_x(positions.start) as u32;
-        if start_col < line_len || (is_empty && positions.start == layed_out_line.width()) {
+        let start_col = line.closest_index_for_x(positions.start) as u32;
+        if start_col < line_len || (is_empty && positions.start == line.width) {
             let start = DisplayPoint::new(row, start_col);
-            let end_col = layed_out_line.closest_index_for_x(positions.end) as u32;
+            let end_col = line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
 
             Some(Selection {
@@ -327,8 +327,8 @@ impl SelectionsCollection {
                 end: end.to_point(display_map),
                 reversed,
                 goal: SelectionGoal::HorizontalRange {
-                    start: positions.start,
-                    end: positions.end,
+                    start: positions.start.into(),
+                    end: positions.end.into(),
                 },
             })
         } else {
@@ -592,7 +592,10 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select(selections)
     }
 
-    pub fn select_anchor_ranges<I: IntoIterator<Item = Range<Anchor>>>(&mut self, ranges: I) {
+    pub fn select_anchor_ranges<I>(&mut self, ranges: I)
+    where
+        I: IntoIterator<Item = Range<Anchor>>,
+    {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let selections = ranges
             .into_iter()
@@ -614,7 +617,6 @@ impl<'a> MutableSelectionsCollection<'a> {
                 }
             })
             .collect::<Vec<_>>();
-
         self.select_anchors(selections)
     }
 

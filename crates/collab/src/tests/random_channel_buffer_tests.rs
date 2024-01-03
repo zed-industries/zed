@@ -3,10 +3,14 @@ use crate::db::ChannelRole;
 use super::{run_randomized_test, RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
 use anyhow::Result;
 use async_trait::async_trait;
-use gpui::{executor::Deterministic, TestAppContext};
+use gpui::{BackgroundExecutor, SharedString, TestAppContext};
 use rand::prelude::*;
 use serde_derive::{Deserialize, Serialize};
-use std::{ops::Range, rc::Rc, sync::Arc};
+use std::{
+    ops::{Deref, DerefMut, Range},
+    rc::Rc,
+    sync::Arc,
+};
 use text::Bias;
 
 #[gpui::test(
@@ -15,10 +19,10 @@ use text::Bias;
 )]
 async fn test_random_channel_buffers(
     cx: &mut TestAppContext,
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     rng: StdRng,
 ) {
-    run_randomized_test::<RandomChannelBufferTest>(cx, deterministic, rng).await;
+    run_randomized_test::<RandomChannelBufferTest>(cx, executor, rng).await;
 }
 
 struct RandomChannelBufferTest;
@@ -26,13 +30,13 @@ struct RandomChannelBufferTest;
 #[derive(Clone, Serialize, Deserialize)]
 enum ChannelBufferOperation {
     JoinChannelNotes {
-        channel_name: String,
+        channel_name: SharedString,
     },
     LeaveChannelNotes {
-        channel_name: String,
+        channel_name: SharedString,
     },
     EditChannelNotes {
-        channel_name: String,
+        channel_name: SharedString,
         edits: Vec<(Range<usize>, Arc<str>)>,
     },
     Noop,
@@ -69,11 +73,11 @@ impl RandomizedTest for RandomChannelBufferTest {
         cx: &TestAppContext,
     ) -> ChannelBufferOperation {
         let channel_store = client.channel_store().clone();
-        let channel_buffers = client.channel_buffers();
+        let mut channel_buffers = client.channel_buffers();
 
         // When signed out, we can't do anything unless a channel buffer is
         // already open.
-        if channel_buffers.is_empty()
+        if channel_buffers.deref_mut().is_empty()
             && channel_store.read_with(cx, |store, _| store.channel_count() == 0)
         {
             return ChannelBufferOperation::Noop;
@@ -97,7 +101,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                 }
 
                 30..=40 => {
-                    if let Some(buffer) = channel_buffers.iter().choose(rng) {
+                    if let Some(buffer) = channel_buffers.deref().iter().choose(rng) {
                         let channel_name =
                             buffer.read_with(cx, |b, cx| b.channel(cx).unwrap().name.clone());
                         break ChannelBufferOperation::LeaveChannelNotes { channel_name };
@@ -105,7 +109,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                 }
 
                 _ => {
-                    if let Some(buffer) = channel_buffers.iter().choose(rng) {
+                    if let Some(buffer) = channel_buffers.deref().iter().choose(rng) {
                         break buffer.read_with(cx, |b, cx| {
                             let channel_name = b.channel(cx).unwrap().name.clone();
                             let edits = b
@@ -147,13 +151,13 @@ impl RandomizedTest for RandomChannelBufferTest {
                     "{}: opening notes for channel {channel_name}",
                     client.username
                 );
-                client.channel_buffers().insert(buffer.await?);
+                client.channel_buffers().deref_mut().insert(buffer.await?);
             }
 
             ChannelBufferOperation::LeaveChannelNotes { channel_name } => {
                 let buffer = cx.update(|cx| {
                     let mut left_buffer = Err(TestError::Inapplicable);
-                    client.channel_buffers().retain(|buffer| {
+                    client.channel_buffers().deref_mut().retain(|buffer| {
                         if buffer.read(cx).channel(cx).unwrap().name == channel_name {
                             left_buffer = Ok(buffer.clone());
                             false
@@ -179,6 +183,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                     .read(|cx| {
                         client
                             .channel_buffers()
+                            .deref()
                             .iter()
                             .find(|buffer| {
                                 buffer.read(cx).channel(cx).unwrap().name == channel_name
@@ -215,13 +220,6 @@ impl RandomizedTest for RandomChannelBufferTest {
         Ok(())
     }
 
-    async fn on_client_added(client: &Rc<TestClient>, cx: &mut TestAppContext) {
-        let channel_store = client.channel_store();
-        while channel_store.read_with(cx, |store, _| store.channel_count() == 0) {
-            channel_store.next_notification(cx).await;
-        }
-    }
-
     async fn on_quiesce(server: &mut TestServer, clients: &mut [(Rc<TestClient>, TestAppContext)]) {
         let channels = server.app_state.db.all_channels().await.unwrap();
 
@@ -229,6 +227,7 @@ impl RandomizedTest for RandomChannelBufferTest {
             client_cx.update(|cx| {
                 client
                     .channel_buffers()
+                    .deref_mut()
                     .retain(|b| b.read(cx).is_connected());
             });
         }
@@ -252,6 +251,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                 client_cx.read(|cx| {
                     if let Some(channel_buffer) = client
                         .channel_buffers()
+                        .deref()
                         .iter()
                         .find(|b| b.read(cx).channel_id == channel_id.to_proto())
                     {

@@ -1,9 +1,10 @@
 use call::Room;
-use gpui::{ModelHandle, TestAppContext};
+use gpui::{Model, TestAppContext};
 
 mod channel_buffer_tests;
 mod channel_message_tests;
 mod channel_tests;
+mod editor_tests;
 mod following_tests;
 mod integration_tests;
 mod notification_tests;
@@ -23,7 +24,7 @@ struct RoomParticipants {
     pending: Vec<String>,
 }
 
-fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
+fn room_participants(room: &Model<Room>, cx: &mut TestAppContext) -> RoomParticipants {
     room.read_with(cx, |room, _| {
         let mut remote = room
             .remote_participants()
@@ -41,6 +42,6 @@ fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomP
     })
 }
 
-fn channel_id(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> Option<u64> {
+fn channel_id(room: &Model<Room>, cx: &mut TestAppContext) -> Option<u64> {
     cx.read(|cx| room.read(cx).channel_id())
 }
