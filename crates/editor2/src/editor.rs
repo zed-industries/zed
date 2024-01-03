@@ -1195,7 +1195,6 @@ impl CompletionsMenu {
                     .min_w(px(260.))
                     .max_w(px(640.))
                     .w(px(500.))
-                    .text_ui()
                     .overflow_y_scroll()
                     // Prevent a mouse down on documentation from being propagated to the editor,
                     // because that would move the cursor.
@@ -1251,7 +1250,6 @@ impl CompletionsMenu {
                             .max_w(px(540.))
                             .whitespace_nowrap()
                             .overflow_hidden()
-                            .text_ui()
                             .px_1()
                             .rounded(px(4.))
                             .bg(cx.theme().colors().ghost_element_background)
@@ -1425,7 +1423,6 @@ impl CodeActionsMenu {
                         let colors = cx.theme().colors();
                         div()
                             .px_2()
-                            .text_ui()
                             .text_color(colors.text)
                             .when(selected, |style| {
                                 style

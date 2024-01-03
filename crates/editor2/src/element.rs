@@ -52,7 +52,7 @@ use std::{
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
-use ui::{h_stack, ButtonLike, ButtonStyle, IconButton, Label, Tooltip};
+use ui::{h_stack, ButtonLike, ButtonStyle, IconButton, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2305,13 +2305,17 @@ impl EditorElement {
                                         h_stack().gap_3().child(
                                             h_stack()
                                                 .gap_2()
-                                                .child(Label::new(
+                                                .child(
                                                     filename
                                                         .map(SharedString::from)
                                                         .unwrap_or_else(|| "untitled".into()),
-                                                ))
+                                                )
                                                 .when_some(parent_path, |then, path| {
-                                                    then.child(Label::new(path).color(Color::Muted))
+                                                    then.child(
+                                                        div().child(path).text_color(
+                                                            cx.theme().colors().text_muted,
+                                                        ),
+                                                    )
                                                 }),
                                         ),
                                     )
@@ -2373,8 +2377,6 @@ impl EditorElement {
                                     this.child(div().size_full().bg(gpui::green()))
                                 }
                             })
-                        // .child("⋯")
-                        // .children(jump_icon) // .p_x(gutter_padding)
                     };
                     element.into_any()
                 }
@@ -2811,50 +2813,65 @@ impl Element for EditorElement {
     ) {
         let editor = self.editor.clone();
 
-        let mut layout = self.compute_layout(bounds, cx);
-        let gutter_bounds = Bounds {
-            origin: bounds.origin,
-            size: layout.gutter_size,
-        };
-        let text_bounds = Bounds {
-            origin: gutter_bounds.upper_right(),
-            size: layout.text_size,
-        };
+        cx.with_text_style(
+            Some(gpui::TextStyleRefinement {
+                font_size: Some(self.style.text.font_size),
+                ..Default::default()
+            }),
+            |cx| {
+                let mut layout = self.compute_layout(bounds, cx);
+                let gutter_bounds = Bounds {
+                    origin: bounds.origin,
+                    size: layout.gutter_size,
+                };
+                let text_bounds = Bounds {
+                    origin: gutter_bounds.upper_right(),
+                    size: layout.text_size,
+                };
 
-        let focus_handle = editor.focus_handle(cx);
-        let key_context = self.editor.read(cx).key_context(cx);
-        cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
-            self.register_actions(cx);
-            self.register_key_listeners(cx);
+                let focus_handle = editor.focus_handle(cx);
+                let key_context = self.editor.read(cx).key_context(cx);
+                cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
+                    self.register_actions(cx);
+                    self.register_key_listeners(cx);
 
-            cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                let input_handler = ElementInputHandler::new(bounds, self.editor.clone(), cx);
-                cx.handle_input(&focus_handle, input_handler);
+                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                        let input_handler =
+                            ElementInputHandler::new(bounds, self.editor.clone(), cx);
+                        cx.handle_input(&focus_handle, input_handler);
 
-                self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                if layout.gutter_size.width > Pixels::ZERO {
-                    self.paint_gutter(gutter_bounds, &mut layout, cx);
-                }
-                self.paint_text(text_bounds, &mut layout, cx);
+                        self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                        if layout.gutter_size.width > Pixels::ZERO {
+                            self.paint_gutter(gutter_bounds, &mut layout, cx);
+                        }
+                        self.paint_text(text_bounds, &mut layout, cx);
 
-                cx.with_z_index(0, |cx| {
-                    self.paint_mouse_listeners(bounds, gutter_bounds, text_bounds, &layout, cx);
-                });
-                if !layout.blocks.is_empty() {
-                    cx.with_z_index(0, |cx| {
-                        cx.with_element_id(Some("editor_blocks"), |cx| {
-                            self.paint_blocks(bounds, &mut layout, cx);
+                        cx.with_z_index(0, |cx| {
+                            self.paint_mouse_listeners(
+                                bounds,
+                                gutter_bounds,
+                                text_bounds,
+                                &layout,
+                                cx,
+                            );
                         });
-                    })
-                }
+                        if !layout.blocks.is_empty() {
+                            cx.with_z_index(0, |cx| {
+                                cx.with_element_id(Some("editor_blocks"), |cx| {
+                                    self.paint_blocks(bounds, &mut layout, cx);
+                                });
+                            })
+                        }
 
-                cx.with_z_index(1, |cx| {
-                    self.paint_overlays(text_bounds, &mut layout, cx);
-                });
+                        cx.with_z_index(1, |cx| {
+                            self.paint_overlays(text_bounds, &mut layout, cx);
+                        });
 
-                cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
-            });
-        })
+                        cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
+                    });
+                })
+            },
+        );
     }
 }
 
