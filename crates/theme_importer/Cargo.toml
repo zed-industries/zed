@@ -15,6 +15,7 @@ indexmap = { version = "1.6.2", features = ["serde"] }
 json_comments = "0.2.2"
 log.workspace = true
 palette = { version = "0.7.3", default-features = false, features = ["std"] }
+pathfinder_color = "0.5"
 rust-embed.workspace = true
 serde.workspace = true
 simplelog = "0.9"

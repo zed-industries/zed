@@ -9964,6 +9964,7 @@ dependencies = [
  "json_comments",
  "log",
  "palette",
+ "pathfinder_color",
  "rust-embed",
  "serde",
  "simplelog",
