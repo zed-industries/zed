@@ -1126,6 +1126,7 @@ impl Database {
                         projects: Default::default(),
                         location: Some(proto::ParticipantLocation { variant: location }),
                         participant_index: participant_index as u32,
+                        role: db_participant.role.unwrap_or(ChannelRole::Member).into(),
                     },
                 );
             } else {
@@ -1137,6 +1138,7 @@ impl Database {
             }
         }
         drop(db_participants);
+        dbg!(&participants);
 
         let mut db_projects = db_room
             .find_related(project::Entity)

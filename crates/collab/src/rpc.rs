@@ -1504,7 +1504,7 @@ async fn join_project(
     // First, we send the metadata associated with each worktree.
     response.send(proto::JoinProjectResponse {
         worktrees: worktrees.clone(),
-        replica_id: replica_id.0 as u32,
+        replica_id: Some(replica_id.0 as u32),
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
     })?;

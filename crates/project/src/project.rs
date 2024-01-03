@@ -713,7 +713,8 @@ impl Project {
             })
             .await?;
         let this = cx.new_model(|cx| {
-            let replica_id = response.payload.replica_id as ReplicaId;
+            // todo!()
+            let replica_id = response.payload.replica_id.unwrap() as ReplicaId;
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
