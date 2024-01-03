@@ -173,8 +173,9 @@ impl Render for CollabTitlebarItem {
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
+                        let can_publish = room.can_publish();
 
-                        this.when(is_local, |this| {
+                        this.when(is_local && can_publish, |this| {
                             this.child(
                                 Button::new(
                                     "toggle_sharing",
@@ -203,20 +204,22 @@ impl Render for CollabTitlebarItem {
                                         .detach_and_log_err(cx);
                                 }),
                         )
-                        .child(
-                            IconButton::new(
-                                "mute-microphone",
-                                if is_muted {
-                                    ui::Icon::MicMute
-                                } else {
-                                    ui::Icon::Mic
-                                },
+                        .when(can_publish, |this| {
+                            this.child(
+                                IconButton::new(
+                                    "mute-microphone",
+                                    if is_muted {
+                                        ui::Icon::MicMute
+                                    } else {
+                                        ui::Icon::Mic
+                                    },
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .icon_size(IconSize::Small)
+                                .selected(is_muted)
+                                .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
-                            .style(ButtonStyle::Subtle)
-                            .icon_size(IconSize::Small)
-                            .selected(is_muted)
-                            .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
-                        )
+                        })
                         .child(
                             IconButton::new(
                                 "mute-sound",
@@ -230,19 +233,30 @@ impl Render for CollabTitlebarItem {
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
-                                Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
+                                if can_publish {
+                                    Tooltip::with_meta(
+                                        "Deafen Audio",
+                                        None,
+                                        "Mic will be muted",
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::text("Deafen Audio", cx)
+                                }
                             })
-                            .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
+                            .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
                         )
-                        .child(
-                            IconButton::new("screen-share", ui::Icon::Screen)
-                                .style(ButtonStyle::Subtle)
-                                .icon_size(IconSize::Small)
-                                .selected(is_screen_sharing)
-                                .on_click(move |_, cx| {
-                                    crate::toggle_screen_sharing(&Default::default(), cx)
-                                }),
-                        )
+                        .when(can_publish, |this| {
+                            this.child(
+                                IconButton::new("screen-share", ui::Icon::Screen)
+                                    .style(ButtonStyle::Subtle)
+                                    .icon_size(IconSize::Small)
+                                    .selected(is_screen_sharing)
+                                    .on_click(move |_, cx| {
+                                        crate::toggle_screen_sharing(&Default::default(), cx)
+                                    }),
+                            )
+                        })
                     })
                     .map(|el| {
                         let status = self.client.status();

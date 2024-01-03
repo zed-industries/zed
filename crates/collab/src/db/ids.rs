@@ -132,6 +132,14 @@ impl ChannelRole {
             Admin | Member | Banned => false,
         }
     }
+
+    pub fn can_share_projects(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member => true,
+            Guest | Banned => false,
+        }
+    }
 }
 
 impl From<proto::ChannelRole> for ChannelRole {

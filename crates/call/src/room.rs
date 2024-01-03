@@ -1251,6 +1251,11 @@ impl Room {
             .unwrap_or(false)
     }
 
+    pub fn can_publish(&self) -> bool {
+        self.local_participant().role == proto::ChannelRole::Member
+            || self.local_participant().role == proto::ChannelRole::Admin
+    }
+
     pub fn is_speaking(&self) -> bool {
         self.live_kit
             .as_ref()

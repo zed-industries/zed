@@ -46,6 +46,13 @@ impl Database {
             if participant.room_id != room_id {
                 return Err(anyhow!("shared project on unexpected room"))?;
             }
+            if !participant
+                .role
+                .unwrap_or(ChannelRole::Member)
+                .can_share_projects()
+            {
+                return Err(anyhow!("guests cannot share projects"))?;
+            }
 
             let project = project::ActiveModel {
                 room_id: ActiveValue::set(participant.room_id),
