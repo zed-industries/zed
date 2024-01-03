@@ -12,7 +12,7 @@ anyhow.workspace = true
 clock = { path = "../clock" }
 lazy_static.workspace = true
 sum_tree = { path = "../sum_tree" }
-text = { package = "text2", path = "../text2" }
+text = { path = "../text" }
 collections = { path = "../collections" }
 util = { path = "../util" }
 log.workspace = true

@@ -12,7 +12,7 @@ doctest = false
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }

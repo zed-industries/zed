@@ -14,11 +14,11 @@ gpui = { package = "gpui2", path = "../gpui2" }
 menu = { path = "../menu" }
 serde.workspace = true
 settings = { path = "../settings" }
-text = { package = "text2", path = "../text2" }
+text = { path = "../text" }
 workspace = { path = "../workspace" }
 postage.workspace = true
 theme = { package = "theme2", path = "../theme2" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 
 [dev-dependencies]

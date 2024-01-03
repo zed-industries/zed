@@ -17,7 +17,7 @@ language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 gpui = { package = "gpui2", path = "../gpui2" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 lsp = { path = "../lsp" }
 futures.workspace = true

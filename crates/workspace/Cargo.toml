@@ -35,7 +35,7 @@ settings = { path = "../settings" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme2", package = "theme2" }
 util = { path = "../util" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 
 async-recursion = "1.0.0"
 itertools = "0.10"

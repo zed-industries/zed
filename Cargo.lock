@@ -16,7 +16,7 @@ dependencies = [
  "settings",
  "smallvec",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -333,7 +333,7 @@ dependencies = [
  "smol",
  "theme2",
  "tiktoken-rs",
- "ui2",
+ "ui",
  "util",
  "uuid 1.4.1",
  "workspace",
@@ -1018,7 +1018,7 @@ dependencies = [
  "search",
  "settings",
  "theme2",
- "ui2",
+ "ui",
  "workspace",
 ]
 
@@ -1217,7 +1217,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempfile",
- "text2",
+ "text",
  "thiserror",
  "time",
  "tiny_http",
@@ -1390,7 +1390,7 @@ dependencies = [
  "sum_tree",
  "sysinfo",
  "tempfile",
- "text2",
+ "text",
  "thiserror",
  "time",
  "tiny_http",
@@ -1500,7 +1500,7 @@ dependencies = [
  "sha-1 0.9.8",
  "smallvec",
  "sqlx",
- "text2",
+ "text",
  "theme2",
  "time",
  "tokio",
@@ -1556,7 +1556,7 @@ dependencies = [
  "theme_selector",
  "time",
  "tree-sitter-markdown",
- "ui2",
+ "ui",
  "util",
  "vcs_menu",
  "workspace",
@@ -1612,7 +1612,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
  "zed_actions",
@@ -1714,7 +1714,7 @@ dependencies = [
  "settings",
  "smol",
  "theme2",
- "ui2",
+ "ui",
  "util",
 ]
 
@@ -2242,7 +2242,7 @@ dependencies = [
  "settings",
  "smallvec",
  "theme2",
- "ui2",
+ "ui",
  "unindent",
  "util",
  "workspace",
@@ -2422,13 +2422,13 @@ dependencies = [
  "snippet",
  "sqlez",
  "sum_tree",
- "text2",
+ "text",
  "theme2",
  "tree-sitter",
  "tree-sitter-html",
  "tree-sitter-rust",
  "tree-sitter-typescript",
- "ui2",
+ "ui",
  "unindent",
  "util",
  "workspace",
@@ -2638,7 +2638,7 @@ dependencies = [
  "sysinfo",
  "theme2",
  "tree-sitter-markdown",
- "ui2",
+ "ui",
  "urlencoding",
  "util",
  "workspace",
@@ -2662,9 +2662,9 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "text2",
+ "text",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -2835,7 +2835,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempfile",
- "text2",
+ "text",
  "time",
  "util",
 ]
@@ -3095,7 +3095,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "smol",
  "sum_tree",
- "text2",
+ "text",
  "unindent",
  "util",
 ]
@@ -3154,9 +3154,9 @@ dependencies = [
  "postage",
  "serde",
  "settings",
- "text2",
+ "text",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -3960,7 +3960,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
- "text2",
+ "text",
  "theme2",
  "tree-sitter",
  "tree-sitter-elixir",
@@ -3991,7 +3991,7 @@ dependencies = [
  "project",
  "settings",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -4014,7 +4014,7 @@ dependencies = [
  "settings",
  "theme2",
  "tree-sitter",
- "ui2",
+ "ui",
  "unindent",
  "util",
  "workspace",
@@ -4624,7 +4624,7 @@ dependencies = [
  "smol",
  "snippet",
  "sum_tree",
- "text2",
+ "text",
  "theme2",
  "tree-sitter",
  "tree-sitter-html",
@@ -4798,7 +4798,7 @@ dependencies = [
  "rpc",
  "settings",
  "sum_tree",
- "text2",
+ "text",
  "time",
  "util",
 ]
@@ -5202,9 +5202,9 @@ dependencies = [
  "postage",
  "settings",
  "smol",
- "text2",
+ "text",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -5425,7 +5425,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -5746,7 +5746,7 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "terminal",
- "text2",
+ "text",
  "thiserror",
  "toml 0.5.11",
  "unindent",
@@ -5777,7 +5777,7 @@ dependencies = [
  "settings",
  "smallvec",
  "theme2",
- "ui2",
+ "ui",
  "unicase",
  "util",
  "workspace",
@@ -5800,7 +5800,7 @@ dependencies = [
  "project",
  "settings",
  "smol",
- "text2",
+ "text",
  "theme2",
  "util",
  "workspace",
@@ -5970,7 +5970,7 @@ dependencies = [
  "editor",
  "gpui2",
  "search",
- "ui2",
+ "ui",
  "workspace",
 ]
 
@@ -6149,9 +6149,9 @@ dependencies = [
  "postage",
  "settings",
  "smol",
- "text2",
+ "text",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -6934,7 +6934,7 @@ dependencies = [
  "smallvec",
  "smol",
  "theme2",
- "ui2",
+ "ui",
  "unindent",
  "util",
  "workspace",
@@ -7753,7 +7753,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "storybook2"
+name = "storybook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7778,7 +7778,7 @@ dependencies = [
  "story",
  "strum",
  "theme2",
- "ui2",
+ "ui",
  "util",
 ]
 
@@ -8115,36 +8115,13 @@ dependencies = [
  "terminal",
  "theme2",
  "thiserror",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
 
 [[package]]
 name = "text"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clock",
- "collections",
- "ctor",
- "digest 0.9.0",
- "env_logger",
- "gpui",
- "lazy_static",
- "log",
- "parking_lot 0.11.2",
- "postage",
- "rand 0.8.5",
- "regex",
- "rope",
- "smallvec",
- "sum_tree",
- "util",
-]
-
-[[package]]
-name = "text2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -8251,7 +8228,7 @@ dependencies = [
  "settings",
  "smol",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -9055,7 +9032,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
 
 [[package]]
-name = "ui2"
+name = "ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -9315,7 +9292,7 @@ dependencies = [
  "fuzzy",
  "gpui2",
  "picker",
- "ui2",
+ "ui",
  "util",
  "workspace",
 ]
@@ -9354,7 +9331,7 @@ dependencies = [
  "settings",
  "theme2",
  "tokio",
- "ui2",
+ "ui",
  "util",
  "workspace",
  "zed_actions",
@@ -9767,7 +9744,7 @@ dependencies = [
  "settings",
  "theme2",
  "theme_selector",
- "ui2",
+ "ui",
  "util",
  "vim",
  "workspace",
@@ -10045,7 +10022,7 @@ dependencies = [
  "smallvec",
  "terminal",
  "theme2",
- "ui2",
+ "ui",
  "util",
  "uuid 1.4.1",
 ]
@@ -10212,7 +10189,7 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "terminal_view",
- "text2",
+ "text",
  "theme2",
  "theme_selector",
  "thiserror",

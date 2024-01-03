@@ -11,7 +11,7 @@ fs = {path = "../fs"}
 gpui = {package = "gpui2", path = "../gpui2"}
 picker = {path = "../picker"}
 util = {path = "../util"}
-ui = {package = "ui2", path = "../ui2"}
+ui = {path = "../ui"}
 workspace = { path = "../workspace" }
 
 anyhow.workspace = true

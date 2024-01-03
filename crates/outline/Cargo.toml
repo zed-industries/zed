@@ -12,11 +12,11 @@ doctest = false
 editor = { path = "../editor" }
 fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 language = { path = "../language" }
 picker = { path = "../picker" }
 settings = { path = "../settings" }
-text = { package = "text2", path = "../text2" }
+text = { path = "../text" }
 theme = { package = "theme2", path = "../theme2" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }

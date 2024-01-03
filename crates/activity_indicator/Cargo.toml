@@ -15,7 +15,7 @@ language = { path = "../language" }
 gpui = { path = "../gpui2", package = "gpui2" }
 project = { path = "../project" }
 settings = { path = "../settings" }
-ui = { path = "../ui2", package = "ui2" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 theme = { path = "../theme2", package = "theme2" }
 workspace = { path = "../workspace", package = "workspace" }

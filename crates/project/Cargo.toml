@@ -20,7 +20,7 @@ test-support = [
 ]
 
 [dependencies]
-text = { package = "text2", path = "../text2" }
+text = { path = "../text" }
 copilot = { path = "../copilot" }
 client = { path = "../client" }
 clock = { path = "../clock" }

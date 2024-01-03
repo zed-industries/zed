@@ -17,10 +17,10 @@ menu = { path = "../menu" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 settings = { path = "../settings" }
-text = { package = "text2", path = "../text2" }
+text = { path = "../text" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 workspace = { path = "../workspace" }
 postage.workspace = true
 serde.workspace = true

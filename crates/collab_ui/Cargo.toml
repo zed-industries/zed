@@ -48,7 +48,7 @@ feature_flags = { path = "../feature_flags"}
 theme = { package = "theme2", path = "../theme2" }
 theme_selector = { path = "../theme_selector" }
 vcs_menu = { path = "../vcs_menu" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 zed_actions = { path = "../zed_actions"}

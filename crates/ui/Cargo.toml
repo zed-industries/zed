@@ -1,12 +1,12 @@
 [package]
-name = "ui2"
+name = "ui"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-name = "ui2"
-path = "src/ui2.rs"
+name = "ui"
+path = "src/ui.rs"
 
 [dependencies]
 anyhow.workspace = true

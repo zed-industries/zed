@@ -19,7 +19,7 @@ project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
-ui = {package = "ui2", path = "../ui2"}
+ui = {path = "../ui"}
 workspace = { path = "../workspace" }
 semantic_index = { path = "../semantic_index" }
 anyhow.workspace = true

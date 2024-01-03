@@ -16,7 +16,7 @@ gpui = { package = "gpui2", path = "../gpui2" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 settings = { path = "../settings" }
-ui = { package = "ui2", path = "../ui2" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }
 workspace = { path = "../workspace" }

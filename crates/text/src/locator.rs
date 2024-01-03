@@ -20,11 +20,11 @@ impl Locator {
     }
 
     pub fn min_ref() -> &'static Self {
-        &*MIN
+        &MIN
     }
 
     pub fn max_ref() -> &'static Self {
-        &*MAX
+        &MAX
     }
 
     pub fn assign(&mut self, other: &Self) {

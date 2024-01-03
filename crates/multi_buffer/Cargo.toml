@@ -31,7 +31,7 @@ rich_text = { path = "../rich_text" }
 settings = { path = "../settings" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
-text = { package = "text2", path = "../text2" }
+text = { path = "../text" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 
@@ -60,7 +60,7 @@ tree-sitter-typescript = { workspace = true, optional = true }
 
 [dev-dependencies]
 copilot = { path = "../copilot", features = ["test-support"] }
-text = { package = "text2", path = "../text2", features = ["test-support"] }
+text = { path = "../text", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }

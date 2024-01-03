@@ -1,12 +1,12 @@
 [package]
-name = "storybook2"
+name = "storybook"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [[bin]]
 name = "storybook"
-path = "src/storybook2.rs"
+path = "src/storybook.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -31,7 +31,7 @@ story = { path = "../story" }
 strum = { version = "0.25.0", features = ["derive"] }
 theme2 = { path = "../theme2" }
 menu = { path = "../menu" }
-ui = { package = "ui2", path = "../ui2", features = ["stories"] }
+ui = { path = "../ui", features = ["stories"] }
 util = { path = "../util" }
 picker = { path = "../picker" }
 
