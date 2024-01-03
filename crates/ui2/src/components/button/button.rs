@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, IconPosition};
+use crate::{prelude::*, IconPosition, KeyBinding};
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize, Label, LineHeightStyle,
 };
@@ -19,6 +19,7 @@ pub struct Button {
     icon_size: Option<IconSize>,
     icon_color: Option<Color>,
     selected_icon: Option<Icon>,
+    key_binding: Option<KeyBinding>,
 }
 
 impl Button {
@@ -34,6 +35,7 @@ impl Button {
             icon_size: None,
             icon_color: None,
             selected_icon: None,
+            key_binding: None,
         }
     }
 
@@ -74,6 +76,11 @@ impl Button {
 
     pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
         self.selected_icon = icon.into();
+        self
+    }
+
+    pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
+        self.key_binding = key_binding.into();
         self
     }
 }
@@ -169,10 +176,16 @@ impl RenderOnce for Button {
                     }))
                 })
                 .child(
-                    Label::new(label)
-                        .color(label_color)
-                        .size(self.label_size.unwrap_or_default())
-                        .line_height_style(LineHeightStyle::UiLabel),
+                    h_stack()
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            Label::new(label)
+                                .color(label_color)
+                                .size(self.label_size.unwrap_or_default())
+                                .line_height_style(LineHeightStyle::UiLabel),
+                        )
+                        .children(self.key_binding),
                 )
                 .when(!self.icon_position.is_some(), |this| {
                     this.children(self.icon.map(|icon| {
