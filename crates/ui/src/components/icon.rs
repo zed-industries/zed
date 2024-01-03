@@ -121,7 +121,7 @@ impl Icon {
             Icon::ArrowUpRight => "icons/arrow_up_right.svg",
             Icon::AtSign => "icons/at_sign.svg",
             Icon::AudioOff => "icons/speaker_off.svg",
-            Icon::AudioOn => "icons/speaker-loud.svg",
+            Icon::AudioOn => "icons/speaker_loud.svg",
             Icon::Backspace => "icons/backspace.svg",
             Icon::Bell => "icons/bell.svg",
             Icon::BellOff => "icons/bell_off.svg",
