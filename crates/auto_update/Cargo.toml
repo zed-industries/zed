@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 db = { package = "db2", path = "../db2" }
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 gpui = { package = "gpui2", path = "../gpui2" }
 menu = { package = "menu2", path = "../menu2" }
 project = { path = "../project" }

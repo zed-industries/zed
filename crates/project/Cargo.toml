@@ -22,7 +22,7 @@ test-support = [
 [dependencies]
 text = { package = "text2", path = "../text2" }
 copilot = { path = "../copilot" }
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 db = { package = "db2", path = "../db2" }
@@ -69,7 +69,7 @@ itertools = "0.10"
 ctor.workspace = true
 env_logger.workspace = true
 pretty_assertions.workspace = true
-client = { package = "client2", path = "../client2", features = ["test-support"] }
+client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 db = { package = "db2", path = "../db2", features = ["test-support"] }
 fs = { package = "fs2", path = "../fs2",  features = ["test-support"] }

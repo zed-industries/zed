@@ -48,7 +48,7 @@ rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 settings = { package = "settings2", path = "../settings2", features = ["test-support"]}
 rust-embed = { version = "8.0", features = ["include-exclude"] }
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 node_runtime = { path = "../node_runtime"}
 
 pretty_assertions.workspace = true

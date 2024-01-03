@@ -305,7 +305,7 @@ dependencies = [
  "ai",
  "anyhow",
  "chrono",
- "client2",
+ "client",
  "collections",
  "ctor",
  "editor",
@@ -687,7 +687,7 @@ name = "auto_update"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client2",
+ "client",
  "db2",
  "gpui2",
  "isahc",
@@ -1119,34 +1119,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-broadcast",
- "audio",
- "client",
- "collections",
- "fs",
- "futures 0.3.28",
- "gpui",
- "language",
- "live_kit_client",
- "log",
- "media",
- "postage",
- "project",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
- "util",
-]
-
-[[package]]
-name = "call2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-broadcast",
  "audio2",
- "client2",
+ "client",
  "collections",
  "fs2",
  "futures 0.3.28",
@@ -1234,43 +1208,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "clock",
- "collections",
- "db",
- "feature_flags",
- "futures 0.3.28",
- "gpui",
- "image",
- "language",
- "lazy_static",
- "log",
- "parking_lot 0.11.2",
- "postage",
- "rand 0.8.5",
- "rpc",
- "schemars",
- "serde",
- "serde_derive",
- "settings",
- "smallvec",
- "smol",
- "sum_tree",
- "tempfile",
- "text",
- "thiserror",
- "time",
- "tiny_http",
- "url",
- "util",
- "uuid 1.4.1",
-]
-
-[[package]]
-name = "channel2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client2",
  "clock",
  "collections",
  "db2",
@@ -1447,43 +1384,6 @@ dependencies = [
  "async-tungstenite",
  "chrono",
  "collections",
- "db",
- "feature_flags",
- "futures 0.3.28",
- "gpui",
- "image",
- "lazy_static",
- "log",
- "parking_lot 0.11.2",
- "postage",
- "rand 0.8.5",
- "rpc",
- "schemars",
- "serde",
- "serde_derive",
- "settings",
- "smol",
- "sum_tree",
- "sysinfo",
- "tempfile",
- "text",
- "thiserror",
- "time",
- "tiny_http",
- "url",
- "util",
- "uuid 1.4.1",
-]
-
-[[package]]
-name = "client2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-recursion 0.3.2",
- "async-tungstenite",
- "chrono",
- "collections",
  "db2",
  "feature_flags",
  "futures 0.3.28",
@@ -1641,10 +1541,10 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.13.1",
- "call2",
- "channel2",
+ "call",
+ "channel",
  "clap 3.2.25",
- "client2",
+ "client",
  "clock",
  "collab_ui",
  "collections",
@@ -1709,9 +1609,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
- "call2",
- "channel2",
- "client2",
+ "call",
+ "channel",
+ "client",
  "clock",
  "collections",
  "db2",
@@ -2433,7 +2333,7 @@ name = "diagnostics"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client2",
+ "client",
  "collections",
  "editor",
  "futures 0.3.28",
@@ -2594,7 +2494,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
- "client2",
+ "client",
  "clock",
  "collections",
  "convert_case 0.6.0",
@@ -2823,7 +2723,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags 2.4.1",
- "client2",
+ "client",
  "db2",
  "editor",
  "futures 0.3.28",
@@ -4187,7 +4087,7 @@ dependencies = [
  "anyhow",
  "async-broadcast",
  "async-trait",
- "client2",
+ "client",
  "clock",
  "collections",
  "ctor",
@@ -4257,7 +4157,7 @@ name = "language_tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client2",
+ "client",
  "collections",
  "editor",
  "env_logger",
@@ -4856,7 +4756,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
- "client2",
+ "client",
  "clock",
  "collections",
  "convert_case 0.6.0",
@@ -5071,8 +4971,8 @@ name = "notifications2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "channel2",
- "client2",
+ "channel",
+ "client",
  "clock",
  "collections",
  "db2",
@@ -5903,7 +5803,7 @@ name = "prettier2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client2",
+ "client",
  "collections",
  "fs2",
  "futures 0.3.28",
@@ -6010,7 +5910,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "backtrace",
- "client2",
+ "client",
  "clock",
  "collections",
  "copilot",
@@ -6062,7 +5962,7 @@ name = "project_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client2",
+ "client",
  "collections",
  "db2",
  "editor",
@@ -7265,7 +7165,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags 1.3.2",
- "client2",
+ "client",
  "collections",
  "editor",
  "futures 0.3.28",
@@ -7373,7 +7273,7 @@ dependencies = [
  "ai",
  "anyhow",
  "async-trait",
- "client2",
+ "client",
  "collections",
  "ctor",
  "env_logger",
@@ -8553,7 +8453,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client2",
+ "client",
  "db2",
  "dirs 4.0.0",
  "editor",
@@ -8701,7 +8601,7 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
- "client2",
+ "client",
  "editor",
  "feature_flags",
  "fs2",
@@ -10215,7 +10115,7 @@ name = "welcome"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client2",
+ "client",
  "db2",
  "editor",
  "fs2",
@@ -10482,8 +10382,8 @@ dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
  "bincode",
- "call2",
- "client2",
+ "call",
+ "client",
  "collections",
  "db2",
  "env_logger",
@@ -10607,11 +10507,11 @@ dependencies = [
  "auto_update",
  "backtrace",
  "breadcrumbs",
- "call2",
- "channel2",
+ "call",
+ "channel",
  "chrono",
  "cli",
- "client2",
+ "client",
  "collab_ui",
  "collections",
  "command_palette",

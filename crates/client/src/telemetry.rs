@@ -1,9 +1,11 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use chrono::{DateTime, Utc};
-use gpui::{executor::Background, serde_json, AppContext, Task};
+use futures::Future;
+use gpui::{serde_json, AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
+use settings::Settings;
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{
     CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt,
@@ -14,19 +16,16 @@ use util::{channel::ReleaseChannel, TryFutureExt};
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
-    executor: Arc<Background>,
+    executor: BackgroundExecutor,
     state: Mutex<TelemetryState>,
 }
 
-#[derive(Default)]
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,      // Per logged-in user
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<Arc<str>>,      // Per app launch
-    app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
-    os_name: &'static str,
-    os_version: Option<Arc<str>>,
+    app_metadata: AppMetadata,
     architecture: &'static str,
     clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
     flush_clickhouse_events_task: Option<Task<()>>,
@@ -48,9 +47,9 @@ struct ClickhouseEventRequestBody {
     installation_id: Option<Arc<str>>,
     session_id: Option<Arc<str>>,
     is_staff: Option<bool>,
-    app_version: Option<Arc<str>>,
+    app_version: Option<String>,
     os_name: &'static str,
-    os_version: Option<Arc<str>>,
+    os_version: Option<String>,
     architecture: &'static str,
     release_channel: Option<&'static str>,
     events: Vec<ClickhouseEventWrapper>,
@@ -130,25 +129,23 @@ const MAX_QUEUE_LEN: usize = 50;
 const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
-const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(120);
+const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
-    pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
-        let platform = cx.platform();
+    pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
         let release_channel = if cx.has_global::<ReleaseChannel>() {
             Some(cx.global::<ReleaseChannel>().display_name())
         } else {
             None
         };
+
         // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             http_client: client,
-            executor: cx.background().clone(),
+            executor: cx.background_executor().clone(),
             state: Mutex::new(TelemetryState {
-                os_name: platform.os_name().into(),
-                os_version: platform.os_version().ok().map(|v| v.to_string().into()),
+                app_metadata: cx.app_metadata(),
                 architecture: env::consts::ARCH,
-                app_version: platform.app_version().ok().map(|v| v.to_string().into()),
                 release_channel,
                 installation_id: None,
                 metrics_id: None,
@@ -161,7 +158,28 @@ impl Telemetry {
             }),
         });
 
+        // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
+        // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
+        std::mem::forget(cx.on_app_quit({
+            let this = this.clone();
+            move |cx| this.shutdown_telemetry(cx)
+        }));
+
         this
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn shutdown_telemetry(self: &Arc<Self>, _: &mut AppContext) -> impl Future<Output = ()> {
+        Task::ready(())
+    }
+
+    // Skip calling this function in tests.
+    // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn shutdown_telemetry(self: &Arc<Self>, cx: &mut AppContext) -> impl Future<Output = ()> {
+        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
+        self.report_app_event(telemetry_settings, "close", true);
+        Task::ready(())
     }
 
     pub fn log_file_path(&self) -> Option<PathBuf> {
@@ -180,7 +198,7 @@ impl Telemetry {
         drop(state);
 
         let this = self.clone();
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|cx| async move {
             // Avoiding calling `System::new_all()`, as there have been crashes related to it
             let refresh_kind = RefreshKind::new()
                 .with_memory() // For memory usage
@@ -209,7 +227,13 @@ impl Telemetry {
                     return;
                 };
 
-                let telemetry_settings = cx.update(|cx| *settings::get::<TelemetrySettings>(cx));
+                let telemetry_settings = if let Ok(telemetry_settings) =
+                    cx.update(|cx| *TelemetrySettings::get_global(cx))
+                {
+                    telemetry_settings
+                } else {
+                    break;
+                };
 
                 this.report_memory_event(
                     telemetry_settings,
@@ -232,7 +256,7 @@ impl Telemetry {
         is_staff: bool,
         cx: &AppContext,
     ) {
-        if !settings::get::<TelemetrySettings>(cx).metrics {
+        if !TelemetrySettings::get_global(cx).metrics {
             return;
         }
 
@@ -461,9 +485,15 @@ impl Telemetry {
                             installation_id: state.installation_id.clone(),
                             session_id: state.session_id.clone(),
                             is_staff: state.is_staff.clone(),
-                            app_version: state.app_version.clone(),
-                            os_name: state.os_name,
-                            os_version: state.os_version.clone(),
+                            app_version: state
+                                .app_metadata
+                                .app_version
+                                .map(|version| version.to_string()),
+                            os_name: state.app_metadata.os_name,
+                            os_version: state
+                                .app_metadata
+                                .os_version
+                                .map(|version| version.to_string()),
                             architecture: state.architecture,
 
                             release_channel: state.release_channel,

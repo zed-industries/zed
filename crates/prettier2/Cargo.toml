@@ -12,7 +12,7 @@ doctest = false
 test-support = []
 
 [dependencies]
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 collections = { path = "../collections"}
 language = { path = "../language" }
 gpui = { package = "gpui2", path = "../gpui2" }

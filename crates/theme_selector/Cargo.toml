@@ -9,7 +9,7 @@ path = "src/theme_selector.rs"
 doctest = false
 
 [dependencies]
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 editor = { path = "../editor" }
 feature_flags = { path = "../feature_flags" }
 fs = { package = "fs2", path = "../fs2" }

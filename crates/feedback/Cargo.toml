@@ -11,7 +11,7 @@ path = "src/feedback.rs"
 test-support = []
 
 [dependencies]
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 db = { package = "db2", path = "../db2" }
 editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }

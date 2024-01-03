@@ -19,34 +19,36 @@ test-support = [
 ]
 
 [dependencies]
-audio = { path = "../audio" }
+audio = { package = "audio2", path = "../audio2" }
 client = { path = "../client" }
 collections = { path = "../collections" }
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 log.workspace = true
-live_kit_client = { path = "../live_kit_client" }
-fs = { path = "../fs" }
+live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2" }
+fs = { package = "fs2", path = "../fs2" }
 language = { path = "../language" }
 media = { path = "../media" }
 project = { path = "../project" }
-settings = { path = "../settings" }
+settings = { package = "settings2", path = "../settings2" }
 util = { path = "../util" }
 
 anyhow.workspace = true
 async-broadcast = "0.4"
 futures.workspace = true
+image = "0.23"
 postage.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_derive.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
+fs = { package = "fs2", path = "../fs2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+live_kit_client = { package = "live_kit_client2", path = "../live_kit_client2", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

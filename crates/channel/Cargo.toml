@@ -14,13 +14,13 @@ test-support = ["collections/test-support", "gpui/test-support", "rpc/test-suppo
 [dependencies]
 client = { path = "../client" }
 collections = { path = "../collections" }
-db = { path = "../db" }
-gpui = { path = "../gpui" }
+db = { package = "db2", path = "../db2" }
+gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
-rpc = { path = "../rpc" }
-text = { path = "../text" }
+rpc = { package = "rpc2", path = "../rpc2" }
+text = { package = "text2", path = "../text2" }
 language = { path = "../language" }
-settings = { path = "../settings" }
+settings = { package = "settings2", path = "../settings2" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
 clock = { path = "../clock" }
@@ -47,8 +47,8 @@ tempfile = "3"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
+rpc = { package = "rpc2", path = "../rpc2", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

@@ -20,7 +20,7 @@ test-support = [
 ]
 
 [dependencies]
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 git = { package = "git3", path = "../git3" }

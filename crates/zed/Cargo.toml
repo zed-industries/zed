@@ -20,14 +20,14 @@ audio = { package = "audio2", path = "../audio2" }
 activity_indicator = { path = "../activity_indicator"}
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
-call = { package = "call2", path = "../call2" }
-channel = { package = "channel2", path = "../channel2" }
+call = { path = "../call" }
+channel = { path = "../channel" }
 cli = { path = "../cli" }
 collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
 # component_test = { path = "../component_test" }
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 # clock = { path = "../clock" }
 copilot = { path = "../copilot" }
 copilot_button = { path = "../copilot_button" }
@@ -144,7 +144,7 @@ urlencoding = "2.1.2"
 uuid.workspace = true
 
 [dev-dependencies]
-call = { package = "call2", path = "../call2", features = ["test-support"] }
+call = { path = "../call", features = ["test-support"] }
 # client = { path = "../client", features = ["test-support"] }
 # editor = { path = "../editor", features = ["test-support"] }
 # gpui = { path = "../gpui", features = ["test-support"] }

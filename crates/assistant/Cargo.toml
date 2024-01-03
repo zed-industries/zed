@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 ai = { path = "../ai" }
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 collections = { path = "../collections"}
 editor = { path = "../editor" }
 fs = { package = "fs2", path = "../fs2" }

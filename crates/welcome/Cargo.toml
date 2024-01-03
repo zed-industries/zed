@@ -11,7 +11,7 @@ path = "src/welcome.rs"
 test-support = []
 
 [dependencies]
-client = { package = "client2", path = "../client2" }
+client = { path = "../client" }
 editor = { path = "../editor" }
 fs = { package = "fs2", path = "../fs2" }
 fuzzy = {  path = "../fuzzy" }
