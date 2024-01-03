@@ -66,17 +66,19 @@ impl KeyBinding {
 
     fn icon_for_key(keystroke: &Keystroke) -> Option<Icon> {
         match keystroke.key.as_str() {
-            "left" => Some(Icon::ArrowLeft),
-            "right" => Some(Icon::ArrowRight),
-            "up" => Some(Icon::ArrowUp),
-            "down" => Some(Icon::ArrowDown),
             "backspace" => Some(Icon::Backspace),
             "delete" => Some(Icon::Delete),
+            "down" => Some(Icon::ArrowDown),
             "enter" => Some(Icon::Return),
             "escape" => Some(Icon::Escape),
+            "left" => Some(Icon::ArrowLeft),
+            "pagedown" => Some(Icon::PageDown),
+            "pageup" => Some(Icon::PageUp),
             "return" => Some(Icon::Return),
+            "right" => Some(Icon::ArrowRight),
             "space" => Some(Icon::Space),
             "tab" => Some(Icon::Tab),
+            "up" => Some(Icon::ArrowUp),
             _ => None,
         }
     }
