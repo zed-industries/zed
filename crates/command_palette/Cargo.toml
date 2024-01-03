@@ -15,7 +15,7 @@ fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
 picker = { path = "../picker" }
 project = { path = "../project" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }
@@ -29,7 +29,7 @@ gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
-menu = { package = "menu2", path = "../menu2" }
+menu = { path = "../menu" }
 go_to_line = { path = "../go_to_line" }
 serde_json.workspace = true
 workspace = { path = "../workspace", features = ["test-support"] }

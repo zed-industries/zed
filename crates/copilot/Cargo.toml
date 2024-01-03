@@ -23,7 +23,7 @@ collections = { path = "../collections" }
 # context_menu = { path = "../context_menu" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 theme = { package = "theme2", path = "../theme2" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
@@ -47,5 +47,5 @@ gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
-settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

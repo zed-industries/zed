@@ -30,7 +30,7 @@ editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 search = { path = "../search" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 theme = { package = "theme2", path = "../theme2" }
 ui = { package = "ui2", path = "../ui2"}
@@ -47,7 +47,7 @@ gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 workspace = { path = "../workspace", features = ["test-support"] }
 theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

@@ -3,7 +3,7 @@ use chrono::{Datelike, Local, NaiveTime, Timelike};
 use gpui::{actions, AppContext, ViewContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings2::Settings;
+use settings::Settings;
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -36,7 +36,7 @@ pub enum HourFormat {
     Hour24,
 }
 
-impl settings2::Settings for JournalSettings {
+impl settings::Settings for JournalSettings {
     const KEY: Option<&'static str> = Some("journal");
 
     type FileContent = Self;

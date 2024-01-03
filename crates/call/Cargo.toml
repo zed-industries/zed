@@ -19,7 +19,7 @@ test-support = [
 ]
 
 [dependencies]
-audio = { package = "audio2", path = "../audio2" }
+audio = { path = "../audio" }
 client = { path = "../client" }
 collections = { path = "../collections" }
 gpui = { package = "gpui2", path = "../gpui2" }
@@ -29,7 +29,7 @@ fs = { path = "../fs" }
 language = { path = "../language" }
 media = { path = "../media" }
 project = { path = "../project" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 util = { path = "../util" }
 
 anyhow.workspace = true

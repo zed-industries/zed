@@ -14,7 +14,7 @@ fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 picker = { path = "../picker" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 text = { package = "text2", path = "../text2" }
 util = { path = "../util"}
 theme = { package = "theme2", path = "../theme2" }

@@ -15,7 +15,7 @@ gpui = { package = "gpui2",  path = "../gpui2" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 text = { package = "text2",  path = "../text2" }
-settings = { package = "settings2",  path = "../settings2" }
+settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
@@ -28,7 +28,7 @@ smol.workspace = true
 [dev-dependencies]
 futures.workspace = true
 editor = { path = "../editor", features = ["test-support"] }
-settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

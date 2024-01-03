@@ -17,7 +17,7 @@ picker = { path = "../picker" }
 project = { path = "../project" }
 theme = { package = "theme2", path = "../theme2" }
 ui = { package = "ui2", path = "../ui2" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 anyhow.workspace = true

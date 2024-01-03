@@ -11,7 +11,7 @@ use gpui::{
     WindowOptions,
 };
 use log::LevelFilter;
-use settings2::{default_settings, Settings, SettingsStore};
+use settings::{default_settings, Settings, SettingsStore};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme2::{ThemeRegistry, ThemeSettings};

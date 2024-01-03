@@ -9,15 +9,14 @@ path = "src/audio.rs"
 doctest = false
 
 [dependencies]
-gpui = { path = "../gpui" }
+gpui = { package = "gpui2", path = "../gpui2" }
 collections = { path = "../collections" }
 util = { path = "../util" }
+
 
 rodio ={version = "0.17.1", default-features=false, features = ["wav"]}
 
 log.workspace = true
-
+futures.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
-
-[dev-dependencies]

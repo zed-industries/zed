@@ -11,7 +11,7 @@ graph_file=target/crate-graph.html
 cargo depgraph \
     --workspace-only \
     --offline \
-    --root=zed,cli,collab2 \
+    --root=zed,cli,collab \
     --dedup-transitive-deps \
     | dot -Tsvg > $graph_file
 

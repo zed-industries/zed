@@ -16,12 +16,12 @@ editor = { path = "../editor" }
 fs = { path = "../fs" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
-menu = { package = "menu2", path = "../menu2" }
+menu = { path = "../menu" }
 multi_buffer = { path = "../multi_buffer" }
 project = { path = "../project" }
 search = { path = "../search" }
 semantic_index = { path = "../semantic_index" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 theme = { package = "theme2", path = "../theme2" }
 ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }

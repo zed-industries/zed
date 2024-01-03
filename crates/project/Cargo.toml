@@ -36,9 +36,9 @@ lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime" }
 prettier = { path = "../prettier" }
 rpc = { path = "../rpc" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
-terminal = { package = "terminal2", path = "../terminal2" }
+terminal = { path = "../terminal" }
 util = { path = "../util" }
 
 aho-corasick = "1.1"
@@ -76,7 +76,7 @@ fs = { path = "../fs",  features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
-settings = { package = "settings2", path = "../settings2", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 prettier = { path = "../prettier", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }

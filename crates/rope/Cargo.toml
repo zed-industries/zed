@@ -18,4 +18,4 @@ util = { path = "../util" }
 [dev-dependencies]
 rand.workspace = true
 util = { path = "../util", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"]  }
+gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"]  }

@@ -1,17 +1,17 @@
 [package]
-name = "terminal2"
+name = "terminal"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/terminal2.rs"
+path = "src/terminal.rs"
 doctest = false
 
 
 [dependencies]
 gpui = { package = "gpui2", path = "../gpui2" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 db = { path = "../db" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }

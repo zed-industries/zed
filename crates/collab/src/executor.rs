@@ -1,10 +1,13 @@
 use std::{future::Future, time::Duration};
 
+#[cfg(test)]
+use gpui::BackgroundExecutor;
+
 #[derive(Clone)]
 pub enum Executor {
     Production,
     #[cfg(test)]
-    Deterministic(std::sync::Arc<gpui::executor::Background>),
+    Deterministic(BackgroundExecutor),
 }
 
 impl Executor {
@@ -31,14 +34,6 @@ impl Executor {
                 #[cfg(test)]
                 Executor::Deterministic(background) => background.timer(duration).await,
             }
-        }
-    }
-
-    pub fn record_backtrace(&self) {
-        match self {
-            Executor::Production => {}
-            #[cfg(test)]
-            Executor::Deterministic(background) => background.record_backtrace(),
         }
     }
 }

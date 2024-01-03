@@ -17,7 +17,7 @@ project = { path = "../project" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 anyhow.workspace = true
 postage.workspace = true
 futures.workspace = true
@@ -46,7 +46,7 @@ language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
-settings = { package = "settings2", path = "../settings2", features = ["test-support"]}
+settings = { path = "../settings", features = ["test-support"]}
 rust-embed = { version = "8.0", features = ["include-exclude"] }
 client = { path = "../client" }
 node_runtime = { path = "../node_runtime"}

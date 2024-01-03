@@ -24,13 +24,13 @@ language = { path = "../language" }
 log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
-settings2 = { path = "../settings2" }
+settings = { path = "../settings" }
 simplelog = "0.9"
 smallvec.workspace = true
 story = { path = "../story" }
 strum = { version = "0.25.0", features = ["derive"] }
 theme2 = { path = "../theme2" }
-menu = { package = "menu2", path = "../menu2" }
+menu = { path = "../menu" }
 ui = { package = "ui2", path = "../ui2", features = ["stories"] }
 util = { path = "../util" }
 picker = { path = "../picker" }

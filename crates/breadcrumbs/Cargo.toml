@@ -16,7 +16,7 @@ ui = { package = "ui2", path = "../ui2" }
 language = { path = "../language" }
 project = { path = "../project" }
 search = { path = "../search" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 theme = { package = "theme2", path = "../theme2" }
 workspace = { path = "../workspace" }
 outline = { path = "../outline" }

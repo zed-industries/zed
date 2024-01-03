@@ -13,8 +13,7 @@ editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-settings2 = { path = "../settings2" }
-
+settings = { path = "../settings" }
 anyhow.workspace = true
 chrono = "0.4"
 dirs = "4.0"

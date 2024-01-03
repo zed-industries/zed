@@ -15,7 +15,7 @@ fs = { path = "../fs" }
 zed_actions = { path = "../zed_actions"}
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 workspace = {path = "../workspace" }

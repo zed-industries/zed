@@ -12,8 +12,8 @@ doctest = false
 editor = { path = "../editor" }
 ui = { package = "ui2", path = "../ui2" }
 gpui = { package = "gpui2", path = "../gpui2" }
-menu = { package = "menu2", path = "../menu2" }
-settings = { package = "settings2", path = "../settings2" }
+menu = { path = "../menu" }
+settings = { path = "../settings" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }
 workspace = { path = "../workspace"}

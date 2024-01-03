@@ -13,10 +13,10 @@ editor = { path = "../editor" }
 collections = { path = "../collections" }
 fuzzy = {  path = "../fuzzy" }
 gpui = { package = "gpui2", path = "../gpui2" }
-menu = { package = "menu2", path = "../menu2" }
+menu = { path = "../menu" }
 picker = { path = "../picker" }
 project = { path = "../project" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 text = { package = "text2", path = "../text2" }
 util = { path = "../util" }
 theme = { package = "theme2", path = "../theme2" }

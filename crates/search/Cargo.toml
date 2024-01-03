@@ -14,9 +14,9 @@ collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
-menu = { package = "menu2", path = "../menu2" }
+menu = { path = "../menu" }
 project = { path = "../project" }
-settings = { package = "settings2", path = "../settings2" }
+settings = { path = "../settings" }
 theme = { package = "theme2", path = "../theme2" }
 util = { path = "../util" }
 ui = {package = "ui2", path = "../ui2"}

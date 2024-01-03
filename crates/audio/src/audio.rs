@@ -60,7 +60,7 @@ impl Audio {
             return;
         }
 
-        cx.update_global::<Self, _, _>(|this, cx| {
+        cx.update_global::<Self, _>(|this, cx| {
             let output_handle = this.ensure_output_exists()?;
             let source = SoundRegistry::global(cx).get(sound.file()).log_err()?;
             output_handle.play_raw(source).log_err()?;
@@ -73,7 +73,7 @@ impl Audio {
             return;
         }
 
-        cx.update_global::<Self, _, _>(|this, _| {
+        cx.update_global::<Self, _>(|this, _| {
             this._output_stream.take();
             this.output_handle.take();
         });

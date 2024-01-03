@@ -4,25 +4,23 @@ use crate::{
 };
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
-use client::ParticipantIndex;
-use client::{Collaborator, UserId};
+use client::{Collaborator, ParticipantIndex, UserId};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
+use gpui::{BackgroundExecutor, Model, TestAppContext, ViewContext};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 #[gpui::test]
 async fn test_core_channel_buffers(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -50,7 +48,7 @@ async fn test_core_channel_buffers(
     });
     buffer_a.update(cx_a, |buffer, cx| buffer.undo(cx));
     assert_eq!(buffer_text(&buffer_a, cx_a), "hello, cruel world");
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Client B joins the channel buffer
     let channel_buffer_b = client_b
@@ -77,13 +75,13 @@ async fn test_core_channel_buffers(
     });
 
     // Both A and B see the new edit
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(buffer_text(&buffer_a, cx_a), "hello, beautiful world");
     assert_eq!(buffer_text(&buffer_b, cx_b), "hello, beautiful world");
 
     // Client A closes the channel buffer.
     cx_a.update(|_| drop(channel_buffer_a));
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Client B sees that client A is gone from the channel buffer.
     channel_buffer_b.read_with(cx_b, |buffer, _| {
@@ -96,7 +94,7 @@ async fn test_core_channel_buffers(
         .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Sanity test, make sure we saw A rejoining
     channel_buffer_b.read_with(cx_b, |buffer, _| {
@@ -109,7 +107,7 @@ async fn test_core_channel_buffers(
     // Client A loses connection.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
 
     // Client B observes A disconnect
     channel_buffer_b.read_with(cx_b, |buffer, _| {
@@ -123,13 +121,12 @@ async fn test_core_channel_buffers(
 
 #[gpui::test]
 async fn test_channel_notes_participant_indices(
-    deterministic: Arc<Deterministic>,
-    mut cx_a: &mut TestAppContext,
-    mut cx_b: &mut TestAppContext,
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -157,9 +154,10 @@ async fn test_channel_notes_participant_indices(
     let (project_a, worktree_id_a) = client_a.build_local_project("/root", cx_a).await;
     let project_b = client_b.build_empty_local_project(cx_b);
     let project_c = client_c.build_empty_local_project(cx_c);
-    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-    let workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+
+    let (workspace_a, mut cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, mut cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let (workspace_c, cx_c) = client_c.build_workspace(&project_c, cx_c);
 
     // Clients A, B, and C open the channel notes
     let channel_view_a = cx_a
@@ -184,7 +182,7 @@ async fn test_channel_notes_participant_indices(
             });
         });
     });
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     channel_view_b.update(cx_b, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
             editor.move_down(&Default::default(), cx);
@@ -194,7 +192,7 @@ async fn test_channel_notes_participant_indices(
             });
         });
     });
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     channel_view_c.update(cx_c, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
             editor.move_down(&Default::default(), cx);
@@ -207,7 +205,7 @@ async fn test_channel_notes_participant_indices(
 
     // Client A sees clients B and C without assigned colors, because they aren't
     // in a call together.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     channel_view_a.update(cx_a, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
             assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], cx);
@@ -223,7 +221,7 @@ async fn test_channel_notes_participant_indices(
 
     // Clients A and B see each other with two different assigned colors. Client C
     // still doesn't have a color.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     channel_view_a.update(cx_a, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
             assert_remote_selections(
@@ -249,7 +247,7 @@ async fn test_channel_notes_participant_indices(
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
     // Clients A and B open the same file.
     let editor_a = workspace_a
@@ -279,7 +277,7 @@ async fn test_channel_notes_participant_indices(
             selections.select_ranges(vec![2..3]);
         });
     });
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Clients A and B see each other with the same colors as in the channel notes.
     editor_a.update(cx_a, |editor, cx| {
@@ -314,11 +312,10 @@ fn assert_remote_selections(
 
 #[gpui::test]
 async fn test_multiple_handles_to_channel_buffer(
-    deterministic: Arc<Deterministic>,
+    deterministic: BackgroundExecutor,
     cx_a: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(deterministic.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
 
     let channel_id = server
@@ -340,7 +337,7 @@ async fn test_multiple_handles_to_channel_buffer(
         future::try_join3(channel_buffer_1, channel_buffer_2, channel_buffer_3)
             .await
             .unwrap();
-    let channel_buffer_model_id = channel_buffer.id();
+    let channel_buffer_model_id = channel_buffer.entity_id();
     assert_eq!(channel_buffer, channel_buffer_2);
     assert_eq!(channel_buffer, channel_buffer_3);
 
@@ -364,7 +361,7 @@ async fn test_multiple_handles_to_channel_buffer(
         .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
         .await
         .unwrap();
-    assert_ne!(channel_buffer.id(), channel_buffer_model_id);
+    assert_ne!(channel_buffer.entity_id(), channel_buffer_model_id);
     channel_buffer.update(cx_a, |buffer, cx| {
         buffer.buffer().update(cx, |buffer, _| {
             assert_eq!(buffer.text(), "hello");
@@ -374,12 +371,11 @@ async fn test_multiple_handles_to_channel_buffer(
 
 #[gpui::test]
 async fn test_channel_buffer_disconnect(
-    deterministic: Arc<Deterministic>,
+    deterministic: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(deterministic.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -397,6 +393,7 @@ async fn test_channel_buffer_disconnect(
         .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
         .await
         .unwrap();
+
     let channel_buffer_b = client_b
         .channel_store()
         .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))
@@ -437,12 +434,11 @@ async fn test_channel_buffer_disconnect(
 
 #[gpui::test]
 async fn test_rejoin_channel_buffer(
-    deterministic: Arc<Deterministic>,
+    deterministic: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(deterministic.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -518,13 +514,12 @@ async fn test_rejoin_channel_buffer(
 
 #[gpui::test]
 async fn test_channel_buffers_and_server_restarts(
-    deterministic: Arc<Deterministic>,
+    deterministic: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(deterministic.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -606,13 +601,12 @@ async fn test_channel_buffers_and_server_restarts(
 
 #[gpui::test(iterations = 10)]
 async fn test_following_to_channel_notes_without_a_shared_project(
-    deterministic: Arc<Deterministic>,
+    deterministic: BackgroundExecutor,
     mut cx_a: &mut TestAppContext,
     mut cx_b: &mut TestAppContext,
     mut cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(deterministic.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -664,9 +658,9 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
     let (project_c, _) = client_b.build_local_project("/c", cx_c).await;
-    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-    let _workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let (_workspace_c, _cx_c) = client_c.build_workspace(&project_c, cx_c);
 
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
@@ -691,7 +685,9 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     // Client B follows client A.
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
+            workspace
+                .start_following(client_a.peer_id().unwrap(), cx)
+                .unwrap()
         })
         .await
         .unwrap();
@@ -699,7 +695,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     // Client B is taken to the notes for channel 1, with the same
     // text selected as client A.
     deterministic.run_until_parked();
-    let channel_view_1_b = workspace_b.read_with(cx_b, |workspace, cx| {
+    let channel_view_1_b = workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.leader_for_pane(workspace.active_pane()),
             Some(client_a.peer_id().unwrap())
@@ -710,7 +706,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             .downcast::<ChannelView>()
             .expect("active item is not a channel view")
     });
-    channel_view_1_b.read_with(cx_b, |notes, cx| {
+    channel_view_1_b.update(cx_b, |notes, cx| {
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         let editor = notes.editor.read(cx);
         assert_eq!(editor.text(cx), "Hello from A.");
@@ -718,17 +714,22 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     });
 
     // Client A opens the notes for channel 2.
+    eprintln!("opening -------------------->");
+
     let channel_view_2_a = cx_a
         .update(|cx| ChannelView::open(channel_2_id, workspace_a.clone(), cx))
         .await
         .unwrap();
-    channel_view_2_a.read_with(cx_a, |notes, cx| {
+    channel_view_2_a.update(cx_a, |notes, cx| {
         assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
     });
 
     // Client B is taken to the notes for channel 2.
     deterministic.run_until_parked();
-    let channel_view_2_b = workspace_b.read_with(cx_b, |workspace, cx| {
+
+    eprintln!("opening <--------------------");
+
+    let channel_view_2_b = workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.leader_for_pane(workspace.active_pane()),
             Some(client_a.peer_id().unwrap())
@@ -739,19 +740,18 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             .downcast::<ChannelView>()
             .expect("active item is not a channel view")
     });
-    channel_view_2_b.read_with(cx_b, |notes, cx| {
+    channel_view_2_b.update(cx_b, |notes, cx| {
         assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
     });
 }
 
 #[gpui::test]
 async fn test_channel_buffer_changes(
-    deterministic: Arc<Deterministic>,
+    deterministic: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(deterministic.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -778,7 +778,7 @@ async fn test_channel_buffer_changes(
     });
     deterministic.run_until_parked();
 
-    let has_buffer_changed = cx_b.read(|cx| {
+    let has_buffer_changed = cx_b.update(|cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -789,14 +789,14 @@ async fn test_channel_buffer_changes(
 
     // Opening the buffer should clear the changed flag.
     let project_b = client_b.build_empty_local_project(cx_b);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let channel_view_b = cx_b
         .update(|cx| ChannelView::open(channel_id, workspace_b.clone(), cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
 
-    let has_buffer_changed = cx_b.read(|cx| {
+    let has_buffer_changed = cx_b.update(|cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -826,7 +826,8 @@ async fn test_channel_buffer_changes(
 
     // Test that the server is tracking things correctly, and we retain our 'not changed'
     // state across a disconnect
-    server.simulate_long_connection_interruption(client_b.peer_id().unwrap(), &deterministic);
+    server
+        .simulate_long_connection_interruption(client_b.peer_id().unwrap(), deterministic.clone());
     let has_buffer_changed = cx_b.read(|cx| {
         client_b
             .channel_store()
@@ -877,6 +878,6 @@ fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Op
     );
 }
 
-fn buffer_text(channel_buffer: &ModelHandle<language::Buffer>, cx: &mut TestAppContext) -> String {
+fn buffer_text(channel_buffer: &Model<language::Buffer>, cx: &mut TestAppContext) -> String {
     channel_buffer.read_with(cx, |buffer, _| buffer.text())
 }
