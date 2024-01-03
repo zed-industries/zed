@@ -1266,7 +1266,7 @@ impl CompletionsMenu {
                                         )
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
-                                .child(div().text_ui().child(completion_label))
+                                .child(completion_label)
                                 .end_slot::<Div>(documentation_label),
                         )
                     })
