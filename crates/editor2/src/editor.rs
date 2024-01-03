@@ -1244,7 +1244,13 @@ impl CompletionsMenu {
                                 if text.trim().is_empty() {
                                     None
                                 } else {
-                                    Some(h_stack().ml_2().child(Label::new(text.clone())))
+                                    Some(
+                                        h_stack().ml_4().child(
+                                            Label::new(text.clone())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                    )
                                 }
                             } else {
                                 None
