@@ -611,6 +611,10 @@ impl Panel for ChatPanel {
         Some(ui::Icon::MessageBubbles)
     }
 
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        Some("Chat Panel")
+    }
+
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }

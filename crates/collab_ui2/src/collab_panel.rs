@@ -2362,6 +2362,10 @@ impl Panel for CollabPanel {
             .then(|| ui::Icon::Collab)
     }
 
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
+        Some("Collab Panel")
+    }
+
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
     }
