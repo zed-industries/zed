@@ -23,9 +23,9 @@ impl RenderOnce for KeyBinding {
                 h_stack()
                     .flex_none()
                     .gap_0p5()
-                    .bg(cx.theme().colors().element_background)
                     .p_0p5()
                     .rounded_sm()
+                    .text_color(cx.theme().colors().text_muted)
                     .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
                     .when(keystroke.modifiers.control, |el| {
                         el.child(KeyIcon::new(Icon::Control))
@@ -111,7 +111,7 @@ impl RenderOnce for Key {
             .h(rems(14. / 16.))
             .text_ui()
             .line_height(relative(1.))
-            .text_color(cx.theme().colors().text)
+            .text_color(cx.theme().colors().text_muted)
             .child(self.key.clone())
     }
 }
@@ -131,9 +131,11 @@ impl RenderOnce for KeyIcon {
     type Output = Div;
 
     fn render(self, _cx: &mut WindowContext) -> Self::Output {
-        div()
-            .w(rems(14. / 16.))
-            .child(IconElement::new(self.icon).size(IconSize::Small))
+        div().w(rems(14. / 16.)).child(
+            IconElement::new(self.icon)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        )
     }
 }
 
