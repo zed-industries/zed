@@ -246,7 +246,7 @@ fn distance_string(
 ///
 /// ```rust
 /// use chrono::DateTime;
-/// use ui2::utils::naive_format_distance;
+/// use ui::utils::format_distance;
 ///
 /// fn time_between_moon_landings() -> String {
 ///     let date = DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z").unwrap().naive_local();
@@ -282,7 +282,7 @@ pub fn format_distance(
 ///
 /// ```rust
 /// use chrono::DateTime;
-/// use ui2::utils::naive_format_distance_from_now;
+/// use ui::utils::naive_format_distance_from_now;
 ///
 /// fn time_since_first_moon_landing() -> String {
 ///     let date = DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z").unwrap().naive_local();
