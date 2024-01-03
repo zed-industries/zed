@@ -29,7 +29,7 @@ simplelog = "0.9"
 smallvec.workspace = true
 story = { path = "../story" }
 strum = { version = "0.25.0", features = ["derive"] }
-theme2 = { path = "../theme2" }
+theme = { path = "../theme" }
 menu = { path = "../menu" }
 ui = { path = "../ui", features = ["stories"] }
 util = { path = "../util" }

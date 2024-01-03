@@ -32,7 +32,7 @@ rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 
 anyhow.workspace = true

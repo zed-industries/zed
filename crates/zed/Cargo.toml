@@ -66,7 +66,7 @@ sum_tree = { path = "../sum_tree" }
 shellexpand = "2.1.0"
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 semantic_index = { path = "../semantic_index" }

@@ -15,7 +15,7 @@ gpui = { package = "gpui2", path = "../gpui2" }
 menu = { path = "../menu" }
 settings = { path = "../settings" }
 util = { path = "../util" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 workspace = { path = "../workspace"}
 
 parking_lot.workspace = true

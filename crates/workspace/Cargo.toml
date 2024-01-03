@@ -33,7 +33,7 @@ node_runtime = { path = "../node_runtime" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 terminal = { path = "../terminal" }
-theme = { path = "../theme2", package = "theme2" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 ui = { path = "../ui" }
 

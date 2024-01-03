@@ -21,7 +21,7 @@ db = { path = "../db" }
 install_cli = { path = "../install_cli" }
 project = { path = "../project" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 picker = { path = "../picker" }

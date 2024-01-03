@@ -19,7 +19,7 @@ settings = { path = "../settings" }
 smallvec.workspace = true
 story = { path = "../story", optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 rand = "0.8"
 
 [features]

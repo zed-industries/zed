@@ -17,7 +17,7 @@ language = { path = "../language" }
 project = { path = "../project" }
 search = { path = "../search" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 outline = { path = "../outline" }
 itertools = "0.10"

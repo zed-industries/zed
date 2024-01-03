@@ -12,7 +12,7 @@ doctest = false
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }

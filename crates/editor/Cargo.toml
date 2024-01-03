@@ -42,7 +42,7 @@ settings = { path = "../settings" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
-theme = { package="theme2", path = "../theme2" }
+theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 sqlez = { path = "../sqlez" }

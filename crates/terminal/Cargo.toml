@@ -13,7 +13,7 @@ doctest = false
 gpui = { package = "gpui2", path = "../gpui2" }
 settings = { path = "../settings" }
 db = { path = "../db" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "33306142195b354ef3485ca2b1d8a85dfc6605ca" }

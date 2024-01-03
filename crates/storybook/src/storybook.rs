@@ -14,7 +14,7 @@ use log::LevelFilter;
 use settings::{default_settings, Settings, SettingsStore};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
-use theme2::{ThemeRegistry, ThemeSettings};
+use theme::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 
 use crate::assets::Assets;
@@ -69,7 +69,7 @@ fn main() {
             .unwrap();
         cx.set_global(store);
 
-        theme2::init(theme2::LoadThemes::All, cx);
+        theme::init(theme::LoadThemes::All, cx);
 
         let selector = story_selector;
 

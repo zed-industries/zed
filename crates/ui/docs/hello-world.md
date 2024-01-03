@@ -80,7 +80,7 @@ This may change in the future, but this is a little trick that let's you use fam
 
 ## Building out the container
 
-Let's grab our [theme2::colors::ThemeColors] from the theme and start building out a basic container.
+Let's grab our [theme::colors::ThemeColors] from the theme and start building out a basic container.
 
 We can access the current theme's colors like this:
 

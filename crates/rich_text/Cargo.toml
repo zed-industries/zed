@@ -18,7 +18,7 @@ test-support = [
 collections = { path = "../collections" }
 gpui = { package = "gpui2", path = "../gpui2" }
 sum_tree = { path = "../sum_tree" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 language = { path = "../language" }
 util = { path = "../util" }
 anyhow.workspace = true

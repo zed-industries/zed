@@ -19,7 +19,7 @@ project = { path = "../project" }
 settings = { path = "../settings" }
 text = { path = "../text" }
 util = { path = "../util" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 ui = { path = "../ui" }
 workspace = { path = "../workspace" }
 postage.workspace = true
@@ -30,7 +30,7 @@ editor = { path = "../editor", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
-theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
 
 serde_json.workspace = true
 ctor.workspace = true

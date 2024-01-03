@@ -17,7 +17,7 @@ settings = { path = "../settings" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
 postage.workspace = true
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 

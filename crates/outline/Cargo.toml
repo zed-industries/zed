@@ -17,7 +17,7 @@ language = { path = "../language" }
 picker = { path = "../picker" }
 settings = { path = "../settings" }
 text = { path = "../text" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
 

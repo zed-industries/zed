@@ -24,7 +24,7 @@ collections = { path = "../collections" }
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }

@@ -17,7 +17,7 @@ project = { path = "../project" }
 settings = { path = "../settings" }
 ui = { path = "../ui" }
 util = { path = "../util" }
-theme = { path = "../theme2", package = "theme2" }
+theme = { path = "../theme" }
 workspace = { path = "../workspace", package = "workspace" }
 
 anyhow.workspace = true

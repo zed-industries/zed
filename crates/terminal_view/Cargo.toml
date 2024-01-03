@@ -15,7 +15,7 @@ gpui = { package = "gpui2", path = "../gpui2" }
 project = { path = "../project" }
 # search = { path = "../search" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 db = { path = "../db" }

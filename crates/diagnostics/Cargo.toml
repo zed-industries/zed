@@ -17,7 +17,7 @@ language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = {path = "../workspace" }
 
@@ -37,7 +37,7 @@ language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 workspace = {path = "../workspace", features = ["test-support"] }
-theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
 
 serde_json.workspace = true
 unindent.workspace = true

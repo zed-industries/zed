@@ -254,7 +254,7 @@ pub mod simple_message_notification {
     //         }
 
     //         fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
-    //             let theme = theme2::current(cx).clone();
+    //             let theme = theme::current(cx).clone();
     //             let theme = &theme.simple_message_notification;
 
     //             enum MessageNotificationTag {}

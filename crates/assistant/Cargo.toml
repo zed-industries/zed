@@ -22,7 +22,7 @@ project = { path = "../project" }
 search = { path = "../search" }
 semantic_index = { path = "../semantic_index" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }

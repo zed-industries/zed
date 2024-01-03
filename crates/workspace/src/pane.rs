@@ -272,7 +272,7 @@ pub struct DraggedTab {
 // #[allow(clippy::too_many_arguments)]
 // fn nav_button<A: Action, F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>)>(
 //     svg_path: &'static str,
-//     style: theme2::Interactive<theme2::IconButton>,
+//     style: theme::Interactive<theme2::IconButton>,
 //     nav_button_height: f32,
 //     tooltip_style: TooltipStyle,
 //     enabled: bool,

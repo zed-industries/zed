@@ -32,7 +32,7 @@ language = { path = "../language" }
 search = { path = "../search" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 ui = { path = "../ui"}
 diagnostics = { path = "../diagnostics" }
 zed_actions = { path = "../zed_actions" }
@@ -49,5 +49,5 @@ project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 settings = { path = "../settings" }
 workspace = { path = "../workspace", features = ["test-support"] }
-theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

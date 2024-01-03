@@ -17,7 +17,7 @@ project = { path = "../project" }
 text = { path = "../text" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 
 anyhow.workspace = true
@@ -33,5 +33,5 @@ gpui = { package = "gpui2", path = "../gpui2", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
-theme = { package = "theme2", path = "../theme2", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

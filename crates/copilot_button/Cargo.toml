@@ -16,7 +16,7 @@ zed_actions = { path = "../zed_actions"}
 gpui = { package = "gpui2", path = "../gpui2" }
 language = { path = "../language" }
 settings = { path = "../settings" }
-theme = { package = "theme2", path = "../theme2" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = {path = "../workspace" }
 anyhow.workspace = true
