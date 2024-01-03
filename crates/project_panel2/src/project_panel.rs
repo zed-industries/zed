@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_stack, ContextMenu, IconElement, Label, ListItem};
+use ui::{prelude::*, v_stack, ContextMenu, IconElement, KeyBinding, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1540,7 +1540,20 @@ impl Render for ProjectPanel {
         } else {
             v_stack()
                 .id("empty-project_panel")
+                .size_full()
+                .p_4()
                 .track_focus(&self.focus_handle)
+                .child(
+                    Button::new("open_project", "Open a project")
+                        .style(ButtonStyle::Filled)
+                        .full_width()
+                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.workspace
+                                .update(cx, |workspace, cx| workspace.open(&workspace::Open, cx))
+                                .log_err();
+                        })),
+                )
         }
     }
 }
