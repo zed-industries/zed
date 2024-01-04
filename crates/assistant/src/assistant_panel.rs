@@ -38,7 +38,7 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
-use search::{buffer_search::SearchActionsRegistrar, BufferSearchBar};
+use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::{Settings, SettingsStore};
 use std::{
@@ -1100,26 +1100,6 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
     })
 }
 
-struct SearchRegistrar<'a, 'b> {
-    div: Option<Div>,
-    cx: &'a mut ViewContext<'b, AssistantPanel>,
-}
-
-impl SearchActionsRegistrar for SearchRegistrar<'_, '_> {
-    fn register_handler<A: Action>(
-        &mut self,
-        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
-    ) {
-        self.div = self.div.take().map(|div| {
-            div.on_action(self.cx.listener(move |this, action, cx| {
-                this.toolbar
-                    .read(cx)
-                    .item_of_type::<BufferSearchBar>()
-                    .map(|search_bar| search_bar.update(cx, |this, cx| callback(this, action, cx)));
-            }))
-        });
-    }
-}
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
@@ -1177,12 +1157,12 @@ impl Render for AssistantPanel {
                 });
 
             let contents = if self.active_editor().is_some() {
-                let mut registrar = SearchRegistrar {
-                    div: Some(div()),
+                let mut registrar = DivRegistrar::new(
+                    |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
                     cx,
-                };
+                );
                 BufferSearchBar::register_inner(&mut registrar);
-                registrar.div.unwrap()
+                registrar.into_div()
             } else {
                 div()
             };
