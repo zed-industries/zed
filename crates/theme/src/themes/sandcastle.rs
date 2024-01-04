@@ -59,7 +59,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     scrollbar_thumb_background: Some(rgba(0xfdf4c14c).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x313741ff).into()),
                     scrollbar_thumb_border: Some(rgba(0x313741ff).into()),
-                    scrollbar_track_background: Some(rgba(0x282c34ff).into()),
+                    scrollbar_track_background: Some(rgba(0x00000000).into()),
                     scrollbar_track_border: Some(rgba(0x2a2f38ff).into()),
                     editor_foreground: Some(rgba(0xfdf4c1ff).into()),
                     editor_background: Some(rgba(0x282c34ff).into()),
