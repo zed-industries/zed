@@ -144,6 +144,7 @@ fn main() {
 
         cx.set_global(client.clone());
 
+        zed::init(cx);
         theme::init(theme::LoadThemes::All, cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
@@ -158,7 +159,6 @@ fn main() {
             cx,
         );
         assistant::init(cx);
-        // component_test::init(cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();

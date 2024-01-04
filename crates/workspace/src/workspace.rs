@@ -1095,19 +1095,21 @@ impl Workspace {
     }
 
     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
-        cx.windows().iter().find(|window| {
-            window
-                .update(cx, |_, window| {
-                    if window.is_window_active() {
-                        //This can only get called when the window's project connection has been lost
-                        //so we don't need to prompt the user for anything and instead just close the window
-                        window.remove_window();
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false)
+        cx.defer(|cx| {
+            cx.windows().iter().find(|window| {
+                window
+                    .update(cx, |_, window| {
+                        if window.is_window_active() {
+                            //This can only get called when the window's project connection has been lost
+                            //so we don't need to prompt the user for anything and instead just close the window
+                            window.remove_window();
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            });
         });
     }
 
