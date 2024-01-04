@@ -7762,6 +7762,7 @@ dependencies = [
  "procinfo",
  "project",
  "rand 0.8.5",
+ "search",
  "serde",
  "serde_derive",
  "settings",
