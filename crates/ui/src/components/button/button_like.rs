@@ -46,7 +46,7 @@ pub enum TintColor {
 }
 
 impl TintColor {
-    fn button_style(self, cx: &mut WindowContext) -> ButtonLikeStyles {
+    fn button_like_style(self, cx: &mut WindowContext) -> ButtonLikeStyles {
         match self {
             TintColor::Accent => ButtonLikeStyles {
                 background: cx.theme().status().info_background,
@@ -54,6 +54,7 @@ impl TintColor {
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
+            // TODO: Finish tint colors.
             _ => ButtonLikeStyles {
                 background: gpui::red(),
                 border_color: gpui::red(),
@@ -112,14 +113,7 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
-            // TODO: Finish tint colors
-            ButtonStyle::Tinted(_) => ButtonLikeStyles {
-                background: gpui::red(),
-                border_color: gpui::red(),
-                label_color: gpui::red(),
-                icon_color: gpui::red(),
-            },
+            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: transparent_black(),
@@ -143,14 +137,7 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
-            // TODO: Finish tint colors
-            ButtonStyle::Tinted(_) => ButtonLikeStyles {
-                background: gpui::red(),
-                border_color: gpui::red(),
-                label_color: gpui::red(),
-                icon_color: gpui::red(),
-            },
+            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -176,14 +163,7 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
-            // TODO: Finish tint colors
-            ButtonStyle::Tinted(_) => ButtonLikeStyles {
-                background: gpui::red(),
-                border_color: gpui::red(),
-                label_color: gpui::red(),
-                icon_color: gpui::red(),
-            },
+            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_active,
                 border_color: transparent_black(),
@@ -210,14 +190,7 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
-            // TODO: Finish tint colors
-            ButtonStyle::Tinted(_) => ButtonLikeStyles {
-                background: gpui::red(),
-                border_color: gpui::red(),
-                label_color: gpui::red(),
-                icon_color: gpui::red(),
-            },
+            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border_focused,
@@ -242,14 +215,7 @@ impl ButtonStyle {
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
-            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
-            // TODO: Finish tint colors
-            ButtonStyle::Tinted(_) => ButtonLikeStyles {
-                background: gpui::red(),
-                border_color: gpui::red(),
-                label_color: gpui::red(),
-                icon_color: gpui::red(),
-            },
+            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_disabled,
                 border_color: cx.theme().colors().border_disabled,
