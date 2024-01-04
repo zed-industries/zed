@@ -162,22 +162,20 @@ pub fn mouse_side(
     pos: Point<Pixels>,
     cur_size: TerminalSize,
 ) -> alacritty_terminal::index::Direction {
-    let cell_width = cur_size.cell_width.floor();
+    let cell_width = cur_size.cell_width;
     if cell_width == px(0.) {
         return Side::Right;
     }
 
-    let x = pos.x.floor();
-
-    let cell_x = cmp::max(px(0.), x - cell_width) % cell_width;
-    let half_cell_width = (cur_size.cell_width / 2.0).floor();
+    let cell_x = cmp::max(px(0.), pos.x) % cell_width;
+    let half_cell_width = cur_size.cell_width / 2.0;
     let additional_padding = (cur_size.width() - cur_size.cell_width * 2.) % cur_size.cell_width;
     let end_of_grid = cur_size.width() - cur_size.cell_width - additional_padding;
 
     //Width: Pixels or columns?
     if cell_x > half_cell_width
     // Edge case when mouse leaves the window.
-    || x >= end_of_grid
+    || pos.x >= end_of_grid
     {
         Side::Right
     } else {
