@@ -28,7 +28,8 @@ use futures::{
 };
 
 use mappings::mouse::{
-    alt_scroll, grid_point, mouse_button_report, mouse_moved_report, mouse_side, scroll_report,
+    alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
+    scroll_report,
 };
 
 use procinfo::LocalProcessInfo;
@@ -704,13 +705,11 @@ impl Terminal {
             }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
-                    let point = grid_point(
+                    let (point, side) = grid_point_and_side(
                         *position,
                         self.last_content.size,
                         term.grid().display_offset(),
                     );
-
-                    let side = mouse_side(*position, self.last_content.size);
 
                     selection.update(point, side);
                     term.selection = Some(selection);
@@ -1088,12 +1087,11 @@ impl Terminal {
         let position = e.position - origin;
         self.last_mouse_position = Some(position);
         if self.mouse_mode(e.modifiers.shift) {
-            let point = grid_point(
+            let (point, side) = grid_point_and_side(
                 position,
                 self.last_content.size,
                 self.last_content.display_offset,
             );
-            let side = mouse_side(position, self.last_content.size);
 
             if self.mouse_changed(point, side) {
                 if let Some(bytes) = mouse_moved_report(point, e, self.last_content.mode) {
@@ -1175,14 +1173,11 @@ impl Terminal {
             }
         } else if e.button == MouseButton::Left {
             let position = e.position - origin;
-            let point = grid_point(
+            let (point, side) = grid_point_and_side(
                 position,
                 self.last_content.size,
                 self.last_content.display_offset,
             );
-
-            // Use .opposite so that selection is inclusive of the cell clicked.
-            let side = mouse_side(position, self.last_content.size);
 
             let selection_type = match e.click_count {
                 0 => return, //This is a release

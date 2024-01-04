@@ -3,11 +3,12 @@ use std::{path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, div, serde_json, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
+    actions, serde_json, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
     FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
     Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
+use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
@@ -101,9 +102,9 @@ impl TerminalPanel {
                     })
                     .into_any_element()
             });
-            // let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
-            // pane.toolbar()
-            //     .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
+            let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
+            pane.toolbar()
+                .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
             pane
         });
         let subscriptions = vec![
@@ -329,8 +330,20 @@ impl TerminalPanel {
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().size_full().child(self.pane.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut registrar = DivRegistrar::new(
+            |panel, cx| {
+                panel
+                    .pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+            },
+            cx,
+        );
+        BufferSearchBar::register_inner(&mut registrar);
+        registrar.into_div().size_full().child(self.pane.clone())
     }
 }
 
@@ -409,11 +422,6 @@ impl Panel for TerminalPanel {
     fn persistent_name() -> &'static str {
         "TerminalPanel"
     }
-
-    // todo!()
-    // fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-    //     ("Terminal Panel".into(), Some(Box::new(ToggleFocus)))
-    // }
 
     fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
         Some(Icon::Terminal)

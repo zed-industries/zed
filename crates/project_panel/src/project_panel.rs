@@ -1395,7 +1395,7 @@ impl ProjectPanel {
                     .child(if let Some(icon) = &icon {
                         div().child(IconElement::from_path(icon.to_string()).color(Color::Muted))
                     } else {
-                        div()
+                        div().size(IconSize::default().rems()).invisible()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {

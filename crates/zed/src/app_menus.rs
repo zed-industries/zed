@@ -150,14 +150,6 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
                 MenuItem::separator(),
-                // todo!(): Needs `feedback` crate.
-                // MenuItem::action("Give us feedback", feedback::feedback_editor::GiveFeedback),
-                // MenuItem::action(
-                //     "Copy System Specs Into Clipboard",
-                //     feedback::CopySystemSpecsIntoClipboard,
-                // ),
-                // MenuItem::action("File Bug Report", feedback::FileBugReport),
-                // MenuItem::action("Request Feature", feedback::RequestFeature),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
