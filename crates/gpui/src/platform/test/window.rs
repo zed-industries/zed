@@ -107,7 +107,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn activate(&self) {
-        unimplemented!()
+        //unimplemented!()
     }
 
     fn set_title(&mut self, title: &str) {
