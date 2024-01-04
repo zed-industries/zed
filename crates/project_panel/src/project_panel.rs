@@ -388,8 +388,13 @@ impl ProjectPanel {
             let is_dir = entry.is_dir();
             let worktree_id = worktree.id();
             let is_local = project.is_local();
+            let is_read_only = project.is_read_only();
 
             let context_menu = ContextMenu::build(cx, |mut menu, cx| {
+                if is_read_only {
+                    return menu.action("Copy Relative Path", Box::new(CopyRelativePath));
+                }
+
                 if is_local {
                     menu = menu.action(
                         "Add Folder to Project",
@@ -1482,6 +1487,7 @@ impl ProjectPanel {
 impl Render for ProjectPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let has_worktree = self.visible_entries.len() != 0;
+        let project = self.project.read(cx);
 
         if has_worktree {
             div()
@@ -1494,21 +1500,25 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
-                .on_action(cx.listener(Self::new_file))
-                .on_action(cx.listener(Self::new_directory))
-                .on_action(cx.listener(Self::rename))
-                .on_action(cx.listener(Self::delete))
-                .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::open_file))
+                .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
-                .on_action(cx.listener(Self::cut))
-                .on_action(cx.listener(Self::copy))
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))
-                .on_action(cx.listener(Self::paste))
-                .on_action(cx.listener(Self::reveal_in_finder))
-                .on_action(cx.listener(Self::open_in_terminal))
                 .on_action(cx.listener(Self::new_search_in_directory))
+                .when(!project.is_read_only(), |el| {
+                    el.on_action(cx.listener(Self::new_file))
+                        .on_action(cx.listener(Self::new_directory))
+                        .on_action(cx.listener(Self::rename))
+                        .on_action(cx.listener(Self::delete))
+                        .on_action(cx.listener(Self::cut))
+                        .on_action(cx.listener(Self::copy))
+                        .on_action(cx.listener(Self::paste))
+                })
+                .when(project.is_local(), |el| {
+                    el.on_action(cx.listener(Self::reveal_in_finder))
+                        .on_action(cx.listener(Self::open_in_terminal))
+                })
                 .track_focus(&self.focus_handle)
                 .child(
                     uniform_list(
