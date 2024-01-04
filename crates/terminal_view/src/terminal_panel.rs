@@ -101,9 +101,9 @@ impl TerminalPanel {
                     })
                     .into_any_element()
             });
-            // let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
-            // pane.toolbar()
-            //     .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
+            let buffer_search_bar = cx.add_view(search::BufferSearchBar::new);
+            pane.toolbar()
+                .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
             pane
         });
         let subscriptions = vec![
