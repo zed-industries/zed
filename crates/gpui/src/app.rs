@@ -327,6 +327,7 @@ impl AppContext {
     pub fn refresh(&mut self) {
         self.pending_effects.push_back(Effect::Refresh);
     }
+
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.pending_updates += 1;
         let result = update(self);
@@ -840,10 +841,12 @@ impl AppContext {
     /// Update the global of the given type with a closure. Unlike `global_mut`, this method provides
     /// your closure with mutable access to the `AppContext` and the global simultaneously.
     pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
-        let mut global = self.lease_global::<G>();
-        let result = f(&mut global, self);
-        self.end_global_lease(global);
-        result
+        self.update(|cx| {
+            let mut global = cx.lease_global::<G>();
+            let result = f(&mut global, cx);
+            cx.end_global_lease(global);
+            result
+        })
     }
 
     /// Register a callback to be invoked when a global of the given type is updated.
@@ -938,6 +941,11 @@ impl AppContext {
     /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.lock().add_bindings(bindings);
+        self.pending_effects.push_back(Effect::Refresh);
+    }
+
+    pub fn clear_key_bindings(&mut self) {
+        self.keymap.lock().clear();
         self.pending_effects.push_back(Effect::Refresh);
     }
 

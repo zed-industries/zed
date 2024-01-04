@@ -1230,6 +1230,14 @@ impl EditorElement {
             return;
         }
 
+        // If a drag took place after we started dragging the scrollbar,
+        // cancel the scrollbar drag.
+        if cx.has_active_drag() {
+            self.editor.update(cx, |editor, cx| {
+                editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+            });
+        }
+
         let top = bounds.origin.y;
         let bottom = bounds.lower_left().y;
         let right = bounds.lower_right().x;
@@ -1767,7 +1775,7 @@ impl EditorElement {
             let snapshot = editor.snapshot(cx);
             let style = self.style.clone();
 
-            let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+            let font_id = cx.text_system().resolve_font(&style.text.font());
             let font_size = style.text.font_size.to_pixels(cx.rem_size());
             let line_height = style.text.line_height_in_pixels(cx.rem_size());
             let em_width = cx
@@ -3774,7 +3782,7 @@ fn compute_auto_height_layout(
     }
 
     let style = editor.style.as_ref().unwrap();
-    let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+    let font_id = cx.text_system().resolve_font(&style.text.font());
     let font_size = style.text.font_size.to_pixels(cx.rem_size());
     let line_height = style.text.line_height_in_pixels(cx.rem_size());
     let em_width = cx
