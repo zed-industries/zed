@@ -61,15 +61,7 @@ use lazy_static::lazy_static;
 
 actions!(
     terminal,
-    [
-        Clear,
-        Copy,
-        Paste,
-        ShowCharacterPalette,
-        SearchTest,
-        SendText,
-        SendKeystroke,
-    ]
+    [Clear, Copy, Paste, ShowCharacterPalette, SearchTest,]
 );
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
