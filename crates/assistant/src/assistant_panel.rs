@@ -38,7 +38,7 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
-use search::BufferSearchBar;
+use search::{buffer_search::SearchActionsRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::{Settings, SettingsStore};
 use std::{
@@ -1100,6 +1100,26 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
     })
 }
 
+struct SearchRegistrar<'a, 'b> {
+    div: Option<Div>,
+    cx: &'a mut ViewContext<'b, AssistantPanel>,
+}
+
+impl SearchActionsRegistrar for SearchRegistrar<'_, '_> {
+    fn register_handler<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        self.div = self.div.take().map(|div| {
+            div.on_action(self.cx.listener(move |this, action, cx| {
+                this.toolbar
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .map(|search_bar| search_bar.update(cx, |this, cx| callback(this, action, cx)));
+            }))
+        });
+    }
+}
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
@@ -1156,6 +1176,16 @@ impl Render for AssistantPanel {
                     div()
                 });
 
+            let contents = if self.active_editor().is_some() {
+                let mut registrar = SearchRegistrar {
+                    div: Some(div()),
+                    cx,
+                };
+                BufferSearchBar::register_inner(&mut registrar);
+                registrar.div.unwrap()
+            } else {
+                div()
+            };
             v_stack()
                 .size_full()
                 .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
@@ -1175,7 +1205,7 @@ impl Render for AssistantPanel {
                     Some(self.toolbar.clone())
                 })
                 .child(
-                    div()
+                    contents
                         .flex_1()
                         .child(if let Some(editor) = self.active_editor() {
                             editor.clone().into_any_element()
