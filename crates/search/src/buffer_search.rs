@@ -485,7 +485,6 @@ impl BufferSearchBar {
             cx.propagate();
         });
         registrar.register_handler(|this, deploy, cx| {
-            dbg!("Deploying?");
             this.deploy(deploy, cx);
         })
     }
