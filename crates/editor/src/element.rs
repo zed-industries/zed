@@ -1230,6 +1230,14 @@ impl EditorElement {
             return;
         }
 
+        // If a drag took place after we started dragging the scrollbar,
+        // cancel the scrollbar drag.
+        if cx.has_active_drag() {
+            self.editor.update(cx, |editor, cx| {
+                editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+            });
+        }
+
         let top = bounds.origin.y;
         let bottom = bounds.lower_left().y;
         let right = bounds.lower_right().x;
