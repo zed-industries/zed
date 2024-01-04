@@ -2486,7 +2486,6 @@ dependencies = [
  "postage",
  "project",
  "regex",
- "search",
  "serde",
  "serde_derive",
  "settings",

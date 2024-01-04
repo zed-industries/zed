@@ -18,7 +18,6 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
 project = { path = "../project" }
-search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }

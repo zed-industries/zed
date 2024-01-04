@@ -19,7 +19,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::Item,
     pane,
-    searchable::SearchableItem,
     ui::Icon,
     Pane, Workspace,
 };
@@ -359,7 +358,7 @@ impl Render for TerminalPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let div = div();
         let mut registrar = ActionsRegistrar { div: Some(div), cx };
-        BufferSearchBar::register_inner(&mut registrar, &TerminalView::supported_options());
+        BufferSearchBar::register_inner(&mut registrar);
         registrar.div.unwrap().size_full().child(self.pane.clone())
     }
 }
