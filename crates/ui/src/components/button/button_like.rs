@@ -37,16 +37,42 @@ pub enum IconPosition {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum TintColor {
+    #[default]
+    Accent,
+    Negative,
+    Positive,
+    Warning,
+}
+
+impl TintColor {
+    fn button_style(self, cx: &mut WindowContext) -> ButtonLikeStyles {
+        match self {
+            TintColor::Accent => ButtonLikeStyles {
+                background: cx.theme().status().info_background,
+                border_color: cx.theme().status().info_border,
+                label_color: cx.theme().colors().text,
+                icon_color: cx.theme().colors().text,
+            },
+            _ => ButtonLikeStyles {
+                background: gpui::red(),
+                border_color: gpui::red(),
+                label_color: gpui::red(),
+                icon_color: gpui::red(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ButtonStyle {
     /// A filled button with a solid background color. Provides emphasis versus
     /// the more common subtle button.
     Filled,
 
-    /// 🚧 Under construction 🚧
-    ///
     /// Used to emphasize a button in some way, like a selected state, or a semantic
     /// coloring like an error or success button.
-    Tinted,
+    Tinted(TintColor),
 
     /// The default button style, used for most buttons. Has a transparent background,
     /// but has a background color to indicate states like hover and active.
@@ -86,7 +112,9 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted => ButtonLikeStyles {
+            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
+            // TODO: Finish tint colors
+            ButtonStyle::Tinted(_) => ButtonLikeStyles {
                 background: gpui::red(),
                 border_color: gpui::red(),
                 label_color: gpui::red(),
@@ -115,7 +143,9 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted => ButtonLikeStyles {
+            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
+            // TODO: Finish tint colors
+            ButtonStyle::Tinted(_) => ButtonLikeStyles {
                 background: gpui::red(),
                 border_color: gpui::red(),
                 label_color: gpui::red(),
@@ -146,7 +176,9 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted => ButtonLikeStyles {
+            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
+            // TODO: Finish tint colors
+            ButtonStyle::Tinted(_) => ButtonLikeStyles {
                 background: gpui::red(),
                 border_color: gpui::red(),
                 label_color: gpui::red(),
@@ -178,7 +210,9 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::Tinted => ButtonLikeStyles {
+            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
+            // TODO: Finish tint colors
+            ButtonStyle::Tinted(_) => ButtonLikeStyles {
                 background: gpui::red(),
                 border_color: gpui::red(),
                 label_color: gpui::red(),
@@ -208,7 +242,9 @@ impl ButtonStyle {
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
-            ButtonStyle::Tinted => ButtonLikeStyles {
+            ButtonStyle::Tinted(TintColor::Accent) => TintColor::Accent.button_style(cx),
+            // TODO: Finish tint colors
+            ButtonStyle::Tinted(_) => ButtonLikeStyles {
                 background: gpui::red(),
                 border_color: gpui::red(),
                 label_color: gpui::red(),
