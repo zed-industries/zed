@@ -392,7 +392,12 @@ impl ProjectPanel {
 
             let context_menu = ContextMenu::build(cx, |mut menu, cx| {
                 if is_read_only {
-                    return menu.action("Copy Relative Path", Box::new(CopyRelativePath));
+                    menu = menu.action("Copy Relative Path", Box::new(CopyRelativePath));
+                    if is_dir {
+                        menu = menu.action("Search Inside", Box::new(NewSearchInDirectory))
+                    }
+
+                    return menu;
                 }
 
                 if is_local {
