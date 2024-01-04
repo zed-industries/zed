@@ -430,6 +430,46 @@ pub trait SearchActionsRegistrar {
     );
 }
 
+type GetSearchBar<T> =
+    for<'a, 'b> fn(&'a T, &'a mut ViewContext<'b, T>) -> Option<View<BufferSearchBar>>;
+
+/// Registers search actions on a div that can be taken out.
+pub struct DivRegistrar<'a, 'b, T: 'static> {
+    div: Option<Div>,
+    cx: &'a mut ViewContext<'b, T>,
+    search_getter: GetSearchBar<T>,
+}
+
+impl<'a, 'b, T: 'static> DivRegistrar<'a, 'b, T> {
+    pub fn new(search_getter: GetSearchBar<T>, cx: &'a mut ViewContext<'b, T>) -> Self {
+        Self {
+            div: Some(div()),
+            cx,
+            search_getter,
+        }
+    }
+    pub fn into_div(self) -> Div {
+        // This option is always Some; it's an option in the first place because we want to call methods
+        // on div that require ownership.
+        self.div.unwrap()
+    }
+}
+
+impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
+    fn register_handler<A: gpui::Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        let getter = self.search_getter;
+        self.div = self.div.take().map(|div| {
+            div.on_action(self.cx.listener(move |this, action, cx| {
+                (getter)(this, cx)
+                    .clone()
+                    .map(|search_bar| search_bar.update(cx, |this, cx| callback(this, action, cx)));
+            }))
+        });
+    }
+}
 impl BufferSearchBar {
     pub fn register_inner(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(|this, action: &ToggleCaseSensitive, cx| {
