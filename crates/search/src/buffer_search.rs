@@ -470,6 +470,26 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
         });
     }
 }
+
+/// Register actions for an active pane.
+impl SearchActionsRegistrar for Workspace {
+    fn register_handler<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        self.register_action(move |workspace, action: &A, cx| {
+            let pane = workspace.active_pane();
+            pane.update(cx, move |this, cx| {
+                this.toolbar().update(cx, move |this, cx| {
+                    if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
+                        search_bar.update(cx, move |this, cx| callback(this, action, cx));
+                        cx.notify();
+                    }
+                })
+            });
+        });
+    }
+}
 impl BufferSearchBar {
     pub fn register_inner(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(|this, action: &ToggleCaseSensitive, cx| {
@@ -529,24 +549,6 @@ impl BufferSearchBar {
         })
     }
     fn register(workspace: &mut Workspace) {
-        impl SearchActionsRegistrar for Workspace {
-            fn register_handler<A: Action>(
-                &mut self,
-                callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
-            ) {
-                self.register_action(move |workspace, action: &A, cx| {
-                    let pane = workspace.active_pane();
-                    pane.update(cx, move |this, cx| {
-                        this.toolbar().update(cx, move |this, cx| {
-                            if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                                search_bar.update(cx, move |this, cx| callback(this, action, cx));
-                                cx.notify();
-                            }
-                        })
-                    });
-                });
-            }
-        }
         Self::register_inner(workspace);
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
