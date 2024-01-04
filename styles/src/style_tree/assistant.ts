@@ -293,7 +293,7 @@ export default function assistant(): any {
         }),
 
         split_button: tab_bar_button(theme, {
-            icon: "icons/split_message.svg",
+            icon: "icons/snip.svg",
         }),
         quote_button: tab_bar_button(theme, {
             icon: "icons/quote.svg",
