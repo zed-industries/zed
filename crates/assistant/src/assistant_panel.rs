@@ -1125,8 +1125,6 @@ impl Render for AssistantPanel {
                 .child(Label::new(
                     "Click on the Z button in the status bar to close this panel."
                 ))
-                .border()
-                .border_color(gpui::red())
         } else {
             let header = TabBar::new("assistant_header")
                 .start_child(

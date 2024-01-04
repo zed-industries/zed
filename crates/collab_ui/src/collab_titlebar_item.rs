@@ -110,6 +110,7 @@ impl Render for CollabTitlebarItem {
                                 &room,
                                 project_id,
                                 &current_user,
+                                cx,
                             ))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
@@ -127,6 +128,7 @@ impl Render for CollabTitlebarItem {
                                         &room,
                                         project_id,
                                         &current_user,
+                                        cx,
                                     )?;
 
                                     Some(
@@ -405,6 +407,7 @@ impl CollabTitlebarItem {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
+        cx: &ViewContext<Self>,
     ) -> Option<FacePile> {
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
 
@@ -413,9 +416,9 @@ impl CollabTitlebarItem {
                 Avatar::new(user.avatar_uri.clone())
                     .grayscale(!is_present)
                     .border_color(if is_speaking {
-                        gpui::blue()
+                        cx.theme().status().info_border
                     } else if is_muted {
-                        gpui::red()
+                        cx.theme().status().error_border
                     } else {
                         Hsla::default()
                     }),
