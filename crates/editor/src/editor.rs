@@ -98,7 +98,10 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
-use ui::{h_stack, prelude::*, IconSize, ButtonSize, ButtonStyle, Icon, IconButton, ListItem, Popover, Tooltip};
+use ui::{
+    h_stack, prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, ListItem, Popover,
+    Tooltip,
+};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
