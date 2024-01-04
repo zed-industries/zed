@@ -288,7 +288,7 @@ impl TextSystem {
                     last_font = Some(run.font.clone());
                     font_runs.push(FontRun {
                         len: run_len_within_line,
-                        font_id: self.platform_text_system.font_id(&run.font)?,
+                        font_id: self.resolve_font(&run.font),
                     });
                 }
 
