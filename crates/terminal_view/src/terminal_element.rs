@@ -421,7 +421,7 @@ impl TerminalElement {
             let rem_size = cx.rem_size();
             let font_pixels = text_style.font_size.to_pixels(rem_size);
             let line_height = font_pixels * line_height.to_pixels(rem_size);
-            let font_id = cx.text_system().font_id(&text_style.font()).unwrap();
+            let font_id = cx.text_system().resolve_font(&text_style.font());
 
             // todo!(do we need to keep this unwrap?)
             let cell_width = text_system
