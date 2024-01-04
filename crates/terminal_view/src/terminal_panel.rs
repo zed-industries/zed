@@ -410,11 +410,6 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
-    // todo!()
-    // fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-    //     ("Terminal Panel".into(), Some(Box::new(ToggleFocus)))
-    // }
-
     fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
         Some(Icon::Terminal)
     }
