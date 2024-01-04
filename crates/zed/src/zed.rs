@@ -18,11 +18,11 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::{anyhow, Context as _};
-use futures::{channel::mpsc, StreamExt};
+use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use search::project_search::ProjectSearchBar;
-use settings::{initial_local_settings_content, load_default_keymap, KeymapFile, Settings};
+use settings::{initial_local_settings_content, KeymapFile, Settings, SettingsStore};
 use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
@@ -32,6 +32,7 @@ use util::{
     ResultExt,
 };
 use uuid::Uuid;
+use welcome::BaseKeymap;
 use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
@@ -399,8 +400,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             });
 
         workspace.focus_handle(cx).focus(cx);
-        //todo!()
-        // load_default_keymap(cx);
+        load_default_keymap(cx);
     })
     .detach();
 }
@@ -558,36 +558,56 @@ pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
 ) {
-    cx.spawn(move |cx| async move {
-        //  let mut settings_subscription = None;
-        while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
-            if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
-                cx.update(|cx| reload_keymaps(cx, &keymap_content)).ok();
+    BaseKeymap::register(cx);
 
-                // todo!()
-                // let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
-                // drop(settings_subscription);
-                // settings_subscription = Some(cx.update(|cx| {
-                //     cx.observe_global::<SettingsStore, _>(move |cx| {
-                //         let new_base_keymap = *settings::get::<BaseKeymap>(cx);
-                //         if new_base_keymap != old_base_keymap {
-                //             old_base_keymap = new_base_keymap.clone();
-                //             reload_keymaps(cx, &keymap_content);
-                //         }
-                //     })
-                // }));
+    let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
+    let mut old_base_keymap = *BaseKeymap::get_global(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let new_base_keymap = *BaseKeymap::get_global(cx);
+        if new_base_keymap != old_base_keymap {
+            old_base_keymap = new_base_keymap.clone();
+            base_keymap_tx.unbounded_send(()).unwrap();
+        }
+    })
+    .detach();
+
+    cx.spawn(move |cx| async move {
+        let mut user_keymap = KeymapFile::default();
+        loop {
+            select_biased! {
+                _ = base_keymap_rx.next() => {}
+                user_keymap_content = user_keymap_file_rx.next() => {
+                    if let Some(user_keymap_content) = user_keymap_content {
+                        if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
+                            user_keymap = keymap_content;
+                        } else {
+                            continue
+                        }
+                    }
+                }
             }
+
+            cx.update(|cx| reload_keymaps(cx, &user_keymap)).ok();
         }
     })
     .detach();
 }
 
 fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
-    // todo!()
-    // cx.clear_bindings();
+    cx.clear_key_bindings();
     load_default_keymap(cx);
     keymap_content.clone().add_to_cx(cx).log_err();
     cx.set_menus(app_menus());
+}
+
+pub fn load_default_keymap(cx: &mut AppContext) {
+    for path in ["keymaps/default.json", "keymaps/vim.json"] {
+        KeymapFile::load_asset(path, cx).unwrap();
+    }
+
+    if let Some(asset_path) = BaseKeymap::get_global(cx).asset_path() {
+        KeymapFile::load_asset(asset_path, cx).unwrap();
+    }
 }
 
 fn open_local_settings_file(
