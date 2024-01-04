@@ -400,7 +400,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             });
 
         workspace.focus_handle(cx).focus(cx);
-        load_default_keymap(cx);
     })
     .detach();
 }
@@ -570,6 +569,8 @@ pub fn handle_keymap_file_changes(
         }
     })
     .detach();
+
+    load_default_keymap(cx);
 
     cx.spawn(move |cx| async move {
         let mut user_keymap = KeymapFile::default();
