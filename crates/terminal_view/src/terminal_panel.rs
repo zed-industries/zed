@@ -3,11 +3,13 @@ use std::{path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, div, serde_json, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, div, serde_json, AppContext, AsyncWindowContext, Div, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, FocusableView, InteractiveElement, IntoElement, ParentElement,
+    Pixels, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use project::Fs;
+use search::{buffer_search::SearchActionsRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
@@ -17,6 +19,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::Item,
     pane,
+    searchable::SearchableItem,
     ui::Icon,
     Pane, Workspace,
 };
@@ -328,9 +331,36 @@ impl TerminalPanel {
 
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
+struct ActionsRegistrar<'a, 'b>
+where
+    'b: 'a,
+{
+    div: Option<Div>,
+    cx: &'a mut ViewContext<'b, TerminalPanel>,
+}
+impl SearchActionsRegistrar for ActionsRegistrar<'_, '_> {
+    fn register_handler<A: gpui::Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        self.div = self.div.take().map(|div| {
+            div.on_action(self.cx.listener(move |this, action, cx| {
+                this.pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .map(|search_bar| search_bar.update(cx, |this, cx| callback(this, action, cx)));
+            }))
+        });
+    }
+}
 impl Render for TerminalPanel {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().size_full().child(self.pane.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let div = div();
+        let mut registrar = ActionsRegistrar { div: Some(div), cx };
+        BufferSearchBar::register_inner(&mut registrar, &TerminalView::supported_options());
+        registrar.div.unwrap().size_full().child(self.pane.clone())
     }
 }
 

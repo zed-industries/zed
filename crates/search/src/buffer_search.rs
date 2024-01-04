@@ -422,89 +422,115 @@ impl ToolbarItemView for BufferSearchBar {
     }
 }
 
-impl BufferSearchBar {
-    fn register(workspace: &mut Workspace) {
-        workspace.register_action(move |workspace, deploy: &Deploy, cx| {
-            let pane = workspace.active_pane();
+/// Registrar inverts the dependency between search and it's downstream user, allowing said downstream user to register search action without knowing exactly what those actions are.
+pub trait SearchActionsRegistrar {
+    fn register_handler<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    );
+}
 
-            pane.update(cx, |this, cx| {
-                this.toolbar().update(cx, |this, cx| {
-                    if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        search_bar.update(cx, |this, cx| {
-                            this.deploy(deploy, cx);
-                        });
-                        return;
-                    }
-                    let view = cx.new_view(|cx| BufferSearchBar::new(cx));
-                    this.add_item(view.clone(), cx);
-                    view.update(cx, |this, cx| this.deploy(deploy, cx));
-                    cx.notify();
-                })
+impl BufferSearchBar {
+    pub fn register_inner(
+        registrar: &mut impl SearchActionsRegistrar,
+        supported_options: &workspace::searchable::SearchOptions,
+    ) {
+        // supported_options controls whether the action is registered in the first place,
+        // but we still perform dynamic checks as e.g. if a view (like Workspace) uses SearchableItemHandle, they cannot know in advance
+        // whether a given option is supported.
+        if supported_options.case {
+            registrar.register_handler(|this, action: &ToggleCaseSensitive, cx| {
+                if this.supported_options().case {
+                    this.toggle_case_sensitive(action, cx);
+                }
             });
-        });
-        fn register_action<A: Action>(
-            workspace: &mut Workspace,
-            update: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
-        ) {
-            workspace.register_action(move |workspace, action: &A, cx| {
-                let pane = workspace.active_pane();
-                pane.update(cx, move |this, cx| {
-                    this.toolbar().update(cx, move |this, cx| {
-                        if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                            search_bar.update(cx, move |this, cx| update(this, action, cx));
-                            cx.notify();
-                        }
-                    })
-                });
+        }
+        if supported_options.word {
+            registrar.register_handler(|this, action: &ToggleWholeWord, cx| {
+                if this.supported_options().word {
+                    this.toggle_whole_word(action, cx);
+                }
             });
         }
 
-        register_action(workspace, |this, action: &ToggleCaseSensitive, cx| {
-            if this.supported_options().case {
-                this.toggle_case_sensitive(action, cx);
-            }
-        });
-        register_action(workspace, |this, action: &ToggleWholeWord, cx| {
-            if this.supported_options().word {
-                this.toggle_whole_word(action, cx);
-            }
-        });
-        register_action(workspace, |this, action: &ToggleReplace, cx| {
-            if this.supported_options().replacement {
-                this.toggle_replace(action, cx);
-            }
-        });
-        register_action(workspace, |this, _: &ActivateRegexMode, cx| {
-            if this.supported_options().regex {
-                this.activate_search_mode(SearchMode::Regex, cx);
-            }
-        });
-        register_action(workspace, |this, _: &ActivateTextMode, cx| {
+        if supported_options.replacement {
+            registrar.register_handler(|this, action: &ToggleReplace, cx| {
+                if this.supported_options().replacement {
+                    this.toggle_replace(action, cx);
+                }
+            });
+        }
+
+        if supported_options.regex {
+            registrar.register_handler(|this, _: &ActivateRegexMode, cx| {
+                if this.supported_options().regex {
+                    this.activate_search_mode(SearchMode::Regex, cx);
+                }
+            });
+        }
+
+        registrar.register_handler(|this, _: &ActivateTextMode, cx| {
             this.activate_search_mode(SearchMode::Text, cx);
         });
-        register_action(workspace, |this, action: &CycleMode, cx| {
-            if this.supported_options().regex {
-                // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
-                // cycling.
-                this.cycle_mode(action, cx)
-            }
-        });
-        register_action(workspace, |this, action: &SelectNextMatch, cx| {
+
+        if supported_options.regex {
+            registrar.register_handler(|this, action: &CycleMode, cx| {
+                if this.supported_options().regex {
+                    // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
+                    // cycling.
+                    this.cycle_mode(action, cx)
+                }
+            });
+        }
+
+        registrar.register_handler(|this, action: &SelectNextMatch, cx| {
             this.select_next_match(action, cx);
         });
-        register_action(workspace, |this, action: &SelectPrevMatch, cx| {
+        registrar.register_handler(|this, action: &SelectPrevMatch, cx| {
             this.select_prev_match(action, cx);
         });
-        register_action(workspace, |this, action: &SelectAllMatches, cx| {
+        registrar.register_handler(|this, action: &SelectAllMatches, cx| {
             this.select_all_matches(action, cx);
         });
-        register_action(workspace, |this, _: &editor::Cancel, cx| {
+        registrar.register_handler(|this, _: &editor::Cancel, cx| {
             if !this.dismissed {
                 this.dismiss(&Dismiss, cx);
                 return;
             }
             cx.propagate();
         });
+        registrar.register_handler(|this, deploy, cx| {
+            this.deploy(deploy, cx);
+        })
+    }
+    fn register(workspace: &mut Workspace) {
+        impl SearchActionsRegistrar for Workspace {
+            fn register_handler<A: Action>(
+                &mut self,
+                callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+            ) {
+                self.register_action(move |workspace, action: &A, cx| {
+                    let pane = workspace.active_pane();
+                    pane.update(cx, move |this, cx| {
+                        this.toolbar().update(cx, move |this, cx| {
+                            if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
+                                search_bar.update(cx, move |this, cx| callback(this, action, cx));
+                                cx.notify();
+                            }
+                        })
+                    });
+                });
+            }
+        }
+        Self::register_inner(
+            workspace,
+            &workspace::searchable::SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: true,
+            },
+        );
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.new_view(|cx| Editor::single_line(cx));
