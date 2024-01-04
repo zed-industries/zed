@@ -177,8 +177,7 @@ impl Telemetry {
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>, cx: &mut AppContext) -> impl Future<Output = ()> {
-        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
-        self.report_app_event(telemetry_settings, "close", true);
+        self.report_app_event("close", true, cx);
         Task::ready(())
     }
 
@@ -227,24 +226,11 @@ impl Telemetry {
                     return;
                 };
 
-                let telemetry_settings = if let Ok(telemetry_settings) =
-                    cx.update(|cx| *TelemetrySettings::get_global(cx))
-                {
-                    telemetry_settings
-                } else {
-                    break;
-                };
-
-                this.report_memory_event(
-                    telemetry_settings,
-                    process.memory(),
-                    process.virtual_memory(),
-                );
-                this.report_cpu_event(
-                    telemetry_settings,
-                    process.cpu_usage(),
-                    system.cpus().len() as u32,
-                );
+                cx.update(|cx| {
+                    this.report_memory_event(process.memory(), process.virtual_memory(), cx);
+                    this.report_cpu_event(process.cpu_usage(), system.cpus().len() as u32, cx);
+                })
+                .ok();
             }
         })
         .detach();
@@ -269,12 +255,12 @@ impl Telemetry {
 
     pub fn report_editor_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         file_extension: Option<String>,
         vim_mode: bool,
         operation: &'static str,
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::Editor {
             file_extension,
@@ -285,15 +271,15 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, false)
+        self.report_clickhouse_event(event, false, cx)
     }
 
     pub fn report_copilot_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         suggestion_id: Option<String>,
         suggestion_accepted: bool,
         file_extension: Option<String>,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::Copilot {
             suggestion_id,
@@ -302,15 +288,15 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, false)
+        self.report_clickhouse_event(event, false, cx)
     }
 
     pub fn report_assistant_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         conversation_id: Option<String>,
         kind: AssistantKind,
         model: &'static str,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::Assistant {
             conversation_id,
@@ -319,15 +305,15 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, false)
+        self.report_clickhouse_event(event, false, cx)
     }
 
     pub fn report_call_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         operation: &'static str,
         room_id: Option<u64>,
         channel_id: Option<u64>,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::Call {
             operation,
@@ -336,14 +322,14 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, false)
+        self.report_clickhouse_event(event, false, cx)
     }
 
     pub fn report_cpu_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         usage_as_percentage: f32,
         core_count: u32,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::Cpu {
             usage_as_percentage,
@@ -351,14 +337,14 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, false)
+        self.report_clickhouse_event(event, false, cx)
     }
 
     pub fn report_memory_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         memory_in_bytes: u64,
         virtual_memory_in_bytes: u64,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::Memory {
             memory_in_bytes,
@@ -366,28 +352,28 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, false)
+        self.report_clickhouse_event(event, false, cx)
     }
 
     pub fn report_app_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         operation: &'static str,
         immediate_flush: bool,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, immediate_flush)
+        self.report_clickhouse_event(event, immediate_flush, cx)
     }
 
     pub fn report_setting_event(
         self: &Arc<Self>,
-        telemetry_settings: TelemetrySettings,
         setting: &'static str,
         value: String,
+        cx: &AppContext,
     ) {
         let event = ClickhouseEvent::Setting {
             setting,
@@ -395,7 +381,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, telemetry_settings, false)
+        self.report_clickhouse_event(event, false, cx)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {
@@ -415,10 +401,10 @@ impl Telemetry {
     fn report_clickhouse_event(
         self: &Arc<Self>,
         event: ClickhouseEvent,
-        telemetry_settings: TelemetrySettings,
         immediate_flush: bool,
+        cx: &AppContext,
     ) {
-        if !telemetry_settings.metrics {
+        if !TelemetrySettings::get_global(cx).metrics {
             return;
         }
 

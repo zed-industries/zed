@@ -24,7 +24,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use client::{Client, Collaborator, ParticipantIndex, TelemetrySettings};
+use client::{Client, Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -8864,14 +8864,8 @@ impl Editor {
             .map(|a| a.to_string());
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-        telemetry.report_copilot_event(
-            telemetry_settings,
-            suggestion_id,
-            suggestion_accepted,
-            file_extension,
-        )
+        telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -8909,7 +8903,6 @@ impl Editor {
             .raw_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
-        let telemetry_settings = *TelemetrySettings::get_global(cx);
         let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
         let copilot_enabled_for_language = self
             .buffer
@@ -8919,12 +8912,12 @@ impl Editor {
 
         let telemetry = project.read(cx).client().telemetry().clone();
         telemetry.report_editor_event(
-            telemetry_settings,
             file_extension,
             vim_mode,
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
+            cx,
         )
     }
 

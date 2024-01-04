@@ -172,19 +172,16 @@ fn main() {
         .detach();
 
         client.telemetry().start(installation_id, session_id, cx);
-        let telemetry_settings = *client::TelemetrySettings::get_global(cx);
-        client.telemetry().report_setting_event(
-            telemetry_settings,
-            "theme",
-            cx.theme().name.to_string(),
-        );
+        client
+            .telemetry()
+            .report_setting_event("theme", cx.theme().name.to_string(), cx);
         let event_operation = match existing_installation_id_found {
             Some(false) => "first open",
             _ => "open",
         };
         client
             .telemetry()
-            .report_app_event(telemetry_settings, event_operation, true);
+            .report_app_event(event_operation, true, cx);
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
