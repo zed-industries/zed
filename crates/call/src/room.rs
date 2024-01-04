@@ -616,6 +616,10 @@ impl Room {
             .map(|participant| participant.role)
     }
 
+    pub fn local_participant_is_admin(&self) -> bool {
+        self.local_participant.role == proto::ChannelRole::Admin
+    }
+
     pub fn pending_participants(&self) -> &[Arc<User>] {
         &self.pending_participants
     }
@@ -724,8 +728,7 @@ impl Room {
                     this.local_participant.projects = participant.projects;
                     if this.local_participant.role != role {
                         this.local_participant.role = role;
-                        // TODO!() this may be better done using optional replica ids instead.
-                        // (though need to figure out how to handle promotion? join and leave the project?)
+
                         this.joined_projects.retain(|project| {
                             if let Some(project) = project.upgrade() {
                                 project.update(cx, |project, _| project.set_role(role));

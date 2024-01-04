@@ -153,6 +153,7 @@ enum ListEntry {
     },
     GuestCount {
         count: usize,
+        has_visible_participants: bool,
     },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
@@ -385,6 +386,7 @@ impl CollabPanel {
                 let room = room.read(cx);
                 let mut guest_count_ix = 0;
                 let mut guest_count = if room.read_only() { 1 } else { 0 };
+                let mut non_guest_count = if room.read_only() { 0 } else { 1 };
 
                 if let Some(channel_id) = room.channel_id() {
                     self.entries.push(ListEntry::ChannelNotes { channel_id });
@@ -443,6 +445,8 @@ impl CollabPanel {
                                 if participant.role == proto::ChannelRole::Guest {
                                     guest_count += 1;
                                     return None;
+                                } else {
+                                    non_guest_count += 1;
                                 }
                                 Some(StringMatchCandidate {
                                     id: participant.user.id as usize,
@@ -485,8 +489,13 @@ impl CollabPanel {
                     }
                 }
                 if guest_count > 0 {
-                    self.entries
-                        .insert(guest_count_ix, ListEntry::GuestCount { count: guest_count });
+                    self.entries.insert(
+                        guest_count_ix,
+                        ListEntry::GuestCount {
+                            count: guest_count,
+                            has_visible_participants: non_guest_count > 0,
+                        },
+                    );
                 }
 
                 // Populate pending participants.
@@ -980,21 +989,25 @@ impl CollabPanel {
     fn render_guest_count(
         &self,
         count: usize,
+        has_visible_participants: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        // TODO! disable manage_members for guests.
+        let manageable_channel_id = ActiveCall::global(cx).read(cx).room().and_then(|room| {
+            let room = room.read(cx);
+            if room.local_participant_is_admin() {
+                room.channel_id()
+            } else {
+                None
+            }
+        });
+
         ListItem::new("guest_count")
             .selected(is_selected)
-            .on_click(cx.listener(move |this, _, cx| {
-                if let Some(channel_id) = ActiveCall::global(cx).read(cx).channel_id(cx) {
-                    this.manage_members(channel_id, cx)
-                }
-            }))
             .start_slot(
                 h_stack()
                     .gap_1()
-                    .child(render_tree_branch(false, cx))
+                    .child(render_tree_branch(!has_visible_participants, cx))
                     .child(""),
             )
             .child(Label::new(if count == 1 {
@@ -1002,7 +1015,10 @@ impl CollabPanel {
             } else {
                 format!("{} guests", count)
             }))
-            .tooltip(move |cx| Tooltip::text("Manage Members", cx))
+            .when_some(manageable_channel_id, |el, channel_id| {
+                el.tooltip(move |cx| Tooltip::text("Manage Members", cx))
+                    .on_click(cx.listener(move |this, _, cx| this.manage_members(channel_id, cx)))
+            })
     }
 
     fn has_subchannels(&self, ix: usize) -> bool {
@@ -1227,7 +1243,14 @@ impl CollabPanel {
                         }
                     }
                     ListEntry::GuestCount { .. } => {
-                        if let Some(channel_id) = ActiveCall::global(cx).read(cx).channel_id(cx) {
+                        let Some(room) = ActiveCall::global(cx).read(cx).room() else {
+                            return;
+                        };
+                        let room = room.read(cx);
+                        let Some(channel_id) = room.channel_id() else {
+                            return;
+                        };
+                        if room.local_participant_is_admin() {
                             self.manage_members(channel_id, cx)
                         }
                     }
@@ -1786,8 +1809,11 @@ impl CollabPanel {
             ListEntry::ParticipantScreen { peer_id, is_last } => self
                 .render_participant_screen(*peer_id, *is_last, is_selected, cx)
                 .into_any_element(),
-            ListEntry::GuestCount { count } => self
-                .render_guest_count(*count, is_selected, cx)
+            ListEntry::GuestCount {
+                count,
+                has_visible_participants,
+            } => self
+                .render_guest_count(*count, *has_visible_participants, is_selected, cx)
                 .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
                 .render_channel_notes(*channel_id, is_selected, cx)
