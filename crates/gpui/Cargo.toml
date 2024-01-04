@@ -19,7 +19,7 @@ gpui_macros = { path = "../gpui_macros" }
 util = { path = "../util" }
 sum_tree = { path = "../sum_tree" }
 sqlez = { path = "../sqlez" }
-async-task = "4.0.3"
+async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
 ctor.workspace = true
 linkme = "0.3"
