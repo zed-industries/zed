@@ -56,7 +56,12 @@ impl TextSystem {
             font_ids_by_font: RwLock::default(),
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
-            fallback_font_stack: smallvec![font("Helvetica")],
+            fallback_font_stack: smallvec![
+                // TODO: This is currently Zed-specific.
+                // We should allow GPUI users to provide their own fallback font stack.
+                font("Zed Mono"),
+                font("Helvetica")
+            ],
         }
     }
 
