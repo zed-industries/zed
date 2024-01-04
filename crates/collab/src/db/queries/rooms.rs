@@ -156,8 +156,6 @@ impl Database {
         initial_project_id: Option<ProjectId>,
     ) -> Result<RoomGuard<(proto::Room, proto::IncomingCall)>> {
         self.room_transaction(room_id, |tx| async move {
-            let room = self.get_room(room_id, &tx).await?;
-
             let caller = room_participant::Entity::find()
                 .filter(
                     room_participant::Column::UserId
@@ -196,6 +194,7 @@ impl Database {
             .insert(&*tx)
             .await?;
 
+            let room = self.get_room(room_id, &tx).await?;
             let incoming_call = Self::build_incoming_call(&room, called_user_id)
                 .ok_or_else(|| anyhow!("failed to build incoming call"))?;
             Ok((room, incoming_call))
@@ -1172,7 +1171,6 @@ impl Database {
             }
         }
         drop(db_participants);
-        dbg!(&participants);
 
         let mut db_projects = db_room
             .find_related(project::Entity)

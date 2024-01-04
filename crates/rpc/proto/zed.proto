@@ -369,7 +369,7 @@ message JoinProject {
 }
 
 message JoinProjectResponse {
-    optional uint32 replica_id = 1;
+    uint32 replica_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
