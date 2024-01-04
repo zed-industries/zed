@@ -86,9 +86,7 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     settings::register::<AssistantSettings>(cx);
     cx.add_action(
-        |this: &mut AssistantPanel,
-         _: &workspace::NewFile,
-         cx: &mut ViewContext<AssistantPanel>| {
+        |this: &mut AssistantPanel, _: &NewConversation, cx: &mut ViewContext<AssistantPanel>| {
             this.new_conversation(cx);
         },
     );

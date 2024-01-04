@@ -189,6 +189,7 @@
   {
     "context": "AssistantPanel",
     "bindings": {
+      "cmd-n": "assistant::NewConversation",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch"
     }
