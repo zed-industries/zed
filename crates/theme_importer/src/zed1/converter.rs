@@ -187,7 +187,7 @@ impl Zed1ThemeConverter {
 
         Ok(ThemeColorsRefinement {
             border: convert(lowest.base.default.border),
-            border_variant: convert(lowest.variant.default.border),
+            border_variant: convert(middle.variant.default.border),
             border_focused: convert(lowest.accent.hovered.border),
             border_selected: convert(lowest.accent.default.border),
             border_transparent: Some(gpui::transparent_black()),

@@ -21,7 +21,7 @@ pub fn gruvbox() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xc9b99aff).into()),
-                        border_variant: Some(rgba(0xc9b99aff).into()),
+                        border_variant: Some(rgba(0xddcca7ff).into()),
                         border_focused: Some(rgba(0xaec6cdff).into()),
                         border_selected: Some(rgba(0xaec6cdff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -472,7 +472,7 @@ pub fn gruvbox() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5b534dff).into()),
-                        border_variant: Some(rgba(0x5b534dff).into()),
+                        border_variant: Some(rgba(0x494340ff).into()),
                         border_focused: Some(rgba(0x303a36ff).into()),
                         border_selected: Some(rgba(0x303a36ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -923,7 +923,7 @@ pub fn gruvbox() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xc9b99aff).into()),
-                        border_variant: Some(rgba(0xc9b99aff).into()),
+                        border_variant: Some(rgba(0xddcca7ff).into()),
                         border_focused: Some(rgba(0xaec6cdff).into()),
                         border_selected: Some(rgba(0xaec6cdff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -1374,7 +1374,7 @@ pub fn gruvbox() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5b534dff).into()),
-                        border_variant: Some(rgba(0x5b534dff).into()),
+                        border_variant: Some(rgba(0x494340ff).into()),
                         border_focused: Some(rgba(0x303a36ff).into()),
                         border_selected: Some(rgba(0x303a36ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -1825,7 +1825,7 @@ pub fn gruvbox() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xc9b99aff).into()),
-                        border_variant: Some(rgba(0xc9b99aff).into()),
+                        border_variant: Some(rgba(0xddcca7ff).into()),
                         border_focused: Some(rgba(0xaec6cdff).into()),
                         border_selected: Some(rgba(0xaec6cdff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -2276,7 +2276,7 @@ pub fn gruvbox() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5b534dff).into()),
-                        border_variant: Some(rgba(0x5b534dff).into()),
+                        border_variant: Some(rgba(0x494340ff).into()),
                         border_focused: Some(rgba(0x303a36ff).into()),
                         border_selected: Some(rgba(0x303a36ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),

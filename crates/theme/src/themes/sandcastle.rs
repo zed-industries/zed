@@ -20,7 +20,7 @@ pub fn sandcastle() -> UserThemeFamily {
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0x3d4350ff).into()),
-                    border_variant: Some(rgba(0x3d4350ff).into()),
+                    border_variant: Some(rgba(0x313741ff).into()),
                     border_focused: Some(rgba(0x223232ff).into()),
                     border_selected: Some(rgba(0x223232ff).into()),
                     border_transparent: Some(rgba(0x00000000).into()),

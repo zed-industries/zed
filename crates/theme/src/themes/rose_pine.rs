@@ -21,7 +21,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xdcd6d5ff).into()),
-                        border_variant: Some(rgba(0xdcd6d5ff).into()),
+                        border_variant: Some(rgba(0xe5e0dfff).into()),
                         border_focused: Some(rgba(0xc3d7dbff).into()),
                         border_selected: Some(rgba(0xc3d7dbff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -479,7 +479,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x504c68ff).into()),
-                        border_variant: Some(rgba(0x504c68ff).into()),
+                        border_variant: Some(rgba(0x322f48ff).into()),
                         border_focused: Some(rgba(0x435255ff).into()),
                         border_selected: Some(rgba(0x435255ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -937,7 +937,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x423f55ff).into()),
-                        border_variant: Some(rgba(0x423f55ff).into()),
+                        border_variant: Some(rgba(0x232132ff).into()),
                         border_focused: Some(rgba(0x435255ff).into()),
                         border_selected: Some(rgba(0x435255ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
