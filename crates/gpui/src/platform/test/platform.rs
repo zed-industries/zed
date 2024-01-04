@@ -19,7 +19,7 @@ pub struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
-    active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+    pub(crate) active_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
@@ -106,7 +106,7 @@ impl Platform for TestPlatform {
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
-        unimplemented!()
+        //
     }
 
     fn hide(&self) {
@@ -130,7 +130,10 @@ impl Platform for TestPlatform {
     }
 
     fn active_window(&self) -> Option<crate::AnyWindowHandle> {
-        self.active_window.lock().clone()
+        self.active_window
+            .borrow()
+            .as_ref()
+            .map(|window| window.0.lock().handle)
     }
 
     fn open_window(
@@ -139,12 +142,13 @@ impl Platform for TestPlatform {
         options: WindowOptions,
         _draw: Box<dyn FnMut() -> Result<Scene>>,
     ) -> Box<dyn crate::PlatformWindow> {
-        *self.active_window.lock() = Some(handle);
-        Box::new(TestWindow::new(
+        let window = TestWindow::new(
             options,
+            handle,
             self.weak.clone(),
             self.active_display.clone(),
-        ))
+        );
+        Box::new(window)
     }
 
     fn set_display_link_output_callback(
