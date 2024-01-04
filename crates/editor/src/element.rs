@@ -8,6 +8,7 @@ use crate::{
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
+    items::BufferSearchHighlights,
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, show_link_definition,
         update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
@@ -1275,7 +1276,7 @@ impl EditorElement {
                 let background_ranges = self
                     .editor
                     .read(cx)
-                    .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
+                    .background_highlight_row_ranges::<BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
                         50000,
@@ -1966,7 +1967,7 @@ impl EditorElement {
                     (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
                     ||
                     // Selections
-                    (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
+                    (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
                     // Scrollmanager
                     || editor.scroll_manager.scrollbars_visible()
                 }
