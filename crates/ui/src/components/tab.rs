@@ -126,13 +126,14 @@ impl RenderOnce for Tab {
                     if self.selected {
                         this.border_l().border_r().pb_px()
                     } else {
-                        this.pr_px().pl_px().border_b()
+                        this.pr_px().pl_px().border_b().border_r()
                     }
                 }
                 TabPosition::Middle(Ordering::Equal) => this.border_l().border_r().pb_px(),
                 TabPosition::Middle(Ordering::Less) => this.border_l().pr_px().border_b(),
                 TabPosition::Middle(Ordering::Greater) => this.border_r().pl_px().border_b(),
             })
+            .cursor_pointer()
             .child(
                 h_stack()
                     .group("")

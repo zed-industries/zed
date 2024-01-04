@@ -1157,6 +1157,7 @@ impl Render for AssistantPanel {
                 });
 
             v_stack()
+                .key_context("AssistantPanel")
                 .size_full()
                 .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                     this.new_conversation(cx);

@@ -971,25 +971,16 @@ impl ProjectPanel {
         }
     }
 
-    fn open_in_terminal(&mut self, _: &OpenInTerminal, _cx: &mut ViewContext<Self>) {
-        todo!()
-        // if let Some((worktree, entry)) = self.selected_entry(cx) {
-        //     let window = cx.window();
-        //     let view_id = cx.view_id();
-        //     let path = worktree.abs_path().join(&entry.path);
-
-        //     cx.app_context()
-        //         .spawn(|mut cx| async move {
-        //             window.dispatch_action(
-        //                 view_id,
-        //                 &workspace::OpenTerminal {
-        //                     working_directory: path,
-        //                 },
-        //                 &mut cx,
-        //             );
-        //         })
-        //         .detach();
-        // }
+    fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let path = worktree.abs_path().join(&entry.path);
+            cx.dispatch_action(
+                workspace::OpenTerminal {
+                    working_directory: path,
+                }
+                .boxed_clone(),
+            )
+        }
     }
 
     pub fn new_search_in_directory(
@@ -1404,7 +1395,7 @@ impl ProjectPanel {
                     .child(if let Some(icon) = &icon {
                         div().child(IconElement::from_path(icon.to_string()).color(Color::Muted))
                     } else {
-                        div()
+                        div().size(IconSize::default().rems()).invisible()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {

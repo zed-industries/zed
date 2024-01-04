@@ -405,8 +405,14 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content(&self, _: Option<usize>, _: bool, _: &WindowContext<'_>) -> AnyElement {
-        Label::new("Syntax Tree").into_any_element()
+    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+        Label::new("Syntax Tree")
+            .color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .into_any_element()
     }
 
     fn clone_on_split(
