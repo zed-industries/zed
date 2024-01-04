@@ -8448,6 +8448,12 @@ impl Editor {
             })
     }
 
+    pub fn has_background_highlights<T: 'static>(&self) -> bool {
+        self.background_highlights
+            .get(&TypeId::of::<T>())
+            .map_or(false, |(_, highlights)| !highlights.is_empty())
+    }
+
     pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
