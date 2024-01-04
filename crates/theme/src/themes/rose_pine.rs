@@ -21,7 +21,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xdcd6d5ff).into()),
-                        border_variant: Some(rgba(0xdcd6d5ff).into()),
+                        border_variant: Some(rgba(0xe5e0dfff).into()),
                         border_focused: Some(rgba(0xc3d7dbff).into()),
                         border_selected: Some(rgba(0xc3d7dbff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -60,7 +60,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x5752794c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xe5e0dfff).into()),
                         scrollbar_thumb_border: Some(rgba(0xe5e0dfff).into()),
-                        scrollbar_track_background: Some(rgba(0xfaf4edff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xfdf8f1ff).into()),
                         editor_foreground: Some(rgba(0x575279ff).into()),
                         editor_background: Some(rgba(0xfaf4edff).into()),
@@ -479,7 +479,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x504c68ff).into()),
-                        border_variant: Some(rgba(0x504c68ff).into()),
+                        border_variant: Some(rgba(0x322f48ff).into()),
                         border_focused: Some(rgba(0x435255ff).into()),
                         border_selected: Some(rgba(0x435255ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -518,7 +518,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xe0def44c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x322f48ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x322f48ff).into()),
-                        scrollbar_track_background: Some(rgba(0x232136ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x27243bff).into()),
                         editor_foreground: Some(rgba(0xe0def4ff).into()),
                         editor_background: Some(rgba(0x232136ff).into()),
@@ -937,7 +937,7 @@ pub fn rose_pine() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x423f55ff).into()),
-                        border_variant: Some(rgba(0x423f55ff).into()),
+                        border_variant: Some(rgba(0x232132ff).into()),
                         border_focused: Some(rgba(0x435255ff).into()),
                         border_selected: Some(rgba(0x435255ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -976,7 +976,7 @@ pub fn rose_pine() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xe0def44c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x232132ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x232132ff).into()),
-                        scrollbar_track_background: Some(rgba(0x191724ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x1c1a29ff).into()),
                         editor_foreground: Some(rgba(0xe0def4ff).into()),
                         editor_background: Some(rgba(0x191724ff).into()),
