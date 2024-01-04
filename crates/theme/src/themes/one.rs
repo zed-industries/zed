@@ -21,7 +21,7 @@ pub fn one() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xc9c9caff).into()),
-                        border_variant: Some(rgba(0xc9c9caff).into()),
+                        border_variant: Some(rgba(0xdfdfe0ff).into()),
                         border_focused: Some(rgba(0xcbcdf6ff).into()),
                         border_selected: Some(rgba(0xcbcdf6ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -60,7 +60,7 @@ pub fn one() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x383a414c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xdfdfe0ff).into()),
                         scrollbar_thumb_border: Some(rgba(0xdfdfe0ff).into()),
-                        scrollbar_track_background: Some(rgba(0xfafafaff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xeeeeeeff).into()),
                         editor_foreground: Some(rgba(0x383a41ff).into()),
                         editor_background: Some(rgba(0xfafafaff).into()),
@@ -123,7 +123,7 @@ pub fn one() -> UserThemeFamily {
                         modified: Some(rgba(0xdec184ff).into()),
                         modified_background: Some(rgba(0xfaf2e6ff).into()),
                         modified_border: Some(rgba(0xf5e8d2ff).into()),
-                        predictive: Some(rgba(0x669f59ff).into()),
+                        predictive: Some(rgba(0x9c9fc7ff).into()),
                         predictive_background: Some(rgba(0xe0ebdcff).into()),
                         predictive_border: Some(rgba(0xc8dcc1ff).into()),
                         renamed: Some(rgba(0x5c79e2ff).into()),
@@ -472,7 +472,7 @@ pub fn one() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x464b57ff).into()),
-                        border_variant: Some(rgba(0x464b57ff).into()),
+                        border_variant: Some(rgba(0x363c46ff).into()),
                         border_focused: Some(rgba(0x293c5bff).into()),
                         border_selected: Some(rgba(0x293c5bff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -511,7 +511,7 @@ pub fn one() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xc8ccd44c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x363c46ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x363c46ff).into()),
-                        scrollbar_track_background: Some(rgba(0x282c34ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x2e333cff).into()),
                         editor_foreground: Some(rgba(0xacb2beff).into()),
                         editor_background: Some(rgba(0x282c34ff).into()),
@@ -574,7 +574,7 @@ pub fn one() -> UserThemeFamily {
                         modified: Some(rgba(0xdec184ff).into()),
                         modified_background: Some(rgba(0x41331dff).into()),
                         modified_border: Some(rgba(0x5d4c2fff).into()),
-                        predictive: Some(rgba(0xa1c181ff).into()),
+                        predictive: Some(rgba(0x5b6b88ff).into()),
                         predictive_background: Some(rgba(0x222e1dff).into()),
                         predictive_border: Some(rgba(0x38482fff).into()),
                         renamed: Some(rgba(0x74ade8ff).into()),

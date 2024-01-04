@@ -20,7 +20,7 @@ pub fn sandcastle() -> UserThemeFamily {
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0x3d4350ff).into()),
-                    border_variant: Some(rgba(0x3d4350ff).into()),
+                    border_variant: Some(rgba(0x313741ff).into()),
                     border_focused: Some(rgba(0x223232ff).into()),
                     border_selected: Some(rgba(0x223232ff).into()),
                     border_transparent: Some(rgba(0x00000000).into()),
@@ -59,7 +59,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     scrollbar_thumb_background: Some(rgba(0xfdf4c14c).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x313741ff).into()),
                     scrollbar_thumb_border: Some(rgba(0x313741ff).into()),
-                    scrollbar_track_background: Some(rgba(0x282c34ff).into()),
+                    scrollbar_track_background: Some(rgba(0x00000000).into()),
                     scrollbar_track_border: Some(rgba(0x2a2f38ff).into()),
                     editor_foreground: Some(rgba(0xfdf4c1ff).into()),
                     editor_background: Some(rgba(0x282c34ff).into()),
@@ -122,7 +122,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     modified: Some(rgba(0xa07e3bff).into()),
                     modified_background: Some(rgba(0x231d12ff).into()),
                     modified_border: Some(rgba(0x392e1aff).into()),
-                    predictive: Some(rgba(0x83a598ff).into()),
+                    predictive: Some(rgba(0x5c6152ff).into()),
                     predictive_background: Some(rgba(0x1e2321ff).into()),
                     predictive_border: Some(rgba(0x303a36ff).into()),
                     renamed: Some(rgba(0x528b8bff).into()),

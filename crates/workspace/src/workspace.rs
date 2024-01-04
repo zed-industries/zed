@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, Status, TelemetrySettings, TypedEnvelope, UserStore,
+    Client, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -1095,19 +1095,21 @@ impl Workspace {
     }
 
     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
-        cx.windows().iter().find(|window| {
-            window
-                .update(cx, |_, window| {
-                    if window.is_window_active() {
-                        //This can only get called when the window's project connection has been lost
-                        //so we don't need to prompt the user for anything and instead just close the window
-                        window.remove_window();
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false)
+        cx.defer(|cx| {
+            cx.windows().iter().find(|window| {
+                window
+                    .update(cx, |_, window| {
+                        if window.is_window_active() {
+                            //This can only get called when the window's project connection has been lost
+                            //so we don't need to prompt the user for anything and instead just close the window
+                            window.remove_window();
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            });
         });
     }
 
@@ -1250,10 +1252,9 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
         self.client()
             .telemetry()
-            .report_app_event(telemetry_settings, "open project", false);
+            .report_app_event("open project", false, cx);
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,

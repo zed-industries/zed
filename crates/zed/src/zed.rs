@@ -64,6 +64,13 @@ actions!(
     ]
 );
 
+pub fn init(cx: &mut AppContext) {
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(quit);
+}
+
 pub fn build_window_options(
     bounds: Option<WindowBounds>,
     display_uuid: Option<Uuid>,
@@ -130,7 +137,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(feedback_button, cx);
-            // status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
@@ -207,15 +213,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         workspace
             .register_action(about)
-            .register_action(|_, _: &Hide, cx| {
-                cx.hide();
-            })
-            .register_action(|_, _: &HideOthers, cx| {
-                cx.hide_other_apps();
-            })
-            .register_action(|_, _: &ShowAll, cx| {
-                cx.unhide_other_apps();
-            })
             .register_action(|_, _: &Minimize, cx| {
                 cx.minimize_window();
             })
@@ -225,7 +222,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(|_, _: &ToggleFullScreen, cx| {
                 cx.toggle_full_screen();
             })
-            .register_action(quit)
             .register_action(|_, action: &OpenZedURL, cx| {
                 cx.global::<Arc<OpenListener>>()
                     .open_urls(&[action.url.clone()])
@@ -451,10 +447,10 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
         .detach();
 }
 
-fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
+fn quit(_: &Quit, cx: &mut AppContext) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
-    cx.spawn(|_, mut cx| async move {
-        let mut workspace_windows = cx.update(|_, cx| {
+    cx.spawn(|mut cx| async move {
+        let mut workspace_windows = cx.update(|cx| {
             cx.windows()
                 .into_iter()
                 .filter_map(|window| window.downcast::<Workspace>())
@@ -463,14 +459,14 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        cx.update(|_, cx| {
+        cx.update(|cx| {
             workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
         })
         .log_err();
 
-        if let (true, Some(_)) = (should_confirm, workspace_windows.first().copied()) {
-            let answer = cx
-                .update(|_, cx| {
+        if let (true, Some(workspace)) = (should_confirm, workspace_windows.first().copied()) {
+            let answer = workspace
+                .update(&mut cx, |_, cx| {
                     cx.prompt(
                         PromptLevel::Info,
                         "Are you sure you want to quit?",
@@ -500,9 +496,7 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
                 }
             }
         }
-        cx.update(|_, cx| {
-            cx.quit();
-        })?;
+        cx.update(|cx| cx.quit())?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);

@@ -103,8 +103,6 @@ fn main() -> Result<()> {
     let mut theme_families = Vec::new();
 
     /// Whether VS Code themes should be imported.
-    ///
-    /// For the initial release of Zed2, we will just be using the Zed1 themes ported to Zed2.
     const IMPORT_VS_CODE_THEMES: bool = false;
 
     if IMPORT_VS_CODE_THEMES {

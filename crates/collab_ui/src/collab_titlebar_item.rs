@@ -110,6 +110,7 @@ impl Render for CollabTitlebarItem {
                                 &room,
                                 project_id,
                                 &current_user,
+                                cx,
                             ))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
@@ -127,6 +128,7 @@ impl Render for CollabTitlebarItem {
                                         &room,
                                         project_id,
                                         &current_user,
+                                        cx,
                                     )?;
 
                                     Some(
@@ -303,22 +305,38 @@ impl CollabTitlebarItem {
     // resolve if you are in a room -> render_project_owner
     // render_project_owner -> resolve if you are in a room -> Option<foo>
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
+    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let host = self.project.read(cx).host()?;
-        let host = self.user_store.read(cx).get_cached_user(host.user_id)?;
+        let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
             .user_store
             .read(cx)
             .participant_indices()
-            .get(&host.id)?;
+            .get(&host_user.id)?;
         Some(
-            div().border().border_color(gpui::red()).child(
-                Button::new("project_owner_trigger", host.github_login.clone())
-                    .color(Color::Player(participant_index.0))
-                    .style(ButtonStyle::Subtle)
-                    .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Toggle following", cx)),
-            ),
+            Button::new("project_owner_trigger", host_user.github_login.clone())
+                .color(Color::Player(participant_index.0))
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .tooltip(move |cx| {
+                    Tooltip::text(
+                        format!(
+                            "{} is sharing this project. Click to follow.",
+                            host_user.github_login.clone()
+                        ),
+                        cx,
+                    )
+                })
+                .on_click({
+                    let host_peer_id = host.peer_id.clone();
+                    cx.listener(move |this, _, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.follow(host_peer_id, cx);
+                            })
+                            .log_err();
+                    })
+                }),
         )
     }
 
@@ -389,6 +407,7 @@ impl CollabTitlebarItem {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
+        cx: &ViewContext<Self>,
     ) -> Option<FacePile> {
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
 
@@ -397,9 +416,9 @@ impl CollabTitlebarItem {
                 Avatar::new(user.avatar_uri.clone())
                     .grayscale(!is_present)
                     .border_color(if is_speaking {
-                        gpui::blue()
+                        cx.theme().status().info_border
                     } else if is_muted {
-                        gpui::red()
+                        cx.theme().status().error_border
                     } else {
                         Hsla::default()
                     }),

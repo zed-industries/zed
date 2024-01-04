@@ -1,4 +1,4 @@
-use client::{telemetry::Telemetry, TelemetrySettings};
+use client::telemetry::Telemetry;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
@@ -7,7 +7,7 @@ use gpui::{
     VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_stack, ListItem, ListItemSpacing};
@@ -181,9 +181,8 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         let theme_name = cx.theme().name.clone();
 
-        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
         self.telemetry
-            .report_setting_event(telemetry_settings, "theme", theme_name.to_string());
+            .report_setting_event("theme", theme_name.to_string(), cx);
 
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings| {
             settings.theme = Some(theme_name.to_string());

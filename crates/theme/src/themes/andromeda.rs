@@ -20,7 +20,7 @@ pub fn andromeda() -> UserThemeFamily {
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0x2b2f39ff).into()),
-                    border_variant: Some(rgba(0x2b2f39ff).into()),
+                    border_variant: Some(rgba(0x252931ff).into()),
                     border_focused: Some(rgba(0x183a34ff).into()),
                     border_selected: Some(rgba(0x183a34ff).into()),
                     border_transparent: Some(rgba(0x00000000).into()),
@@ -59,7 +59,7 @@ pub fn andromeda() -> UserThemeFamily {
                     scrollbar_thumb_background: Some(rgba(0xf7f7f84c).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x252931ff).into()),
                     scrollbar_thumb_border: Some(rgba(0x252931ff).into()),
-                    scrollbar_track_background: Some(rgba(0x1e2025ff).into()),
+                    scrollbar_track_background: Some(rgba(0x00000000).into()),
                     scrollbar_track_border: Some(rgba(0x21232aff).into()),
                     editor_foreground: Some(rgba(0xf7f7f8ff).into()),
                     editor_background: Some(rgba(0x1e2025ff).into()),
@@ -122,7 +122,7 @@ pub fn andromeda() -> UserThemeFamily {
                     modified: Some(rgba(0xfee56dff).into()),
                     modified_background: Some(rgba(0x5c5015ff).into()),
                     modified_border: Some(rgba(0x796b26ff).into()),
-                    predictive: Some(rgba(0x96df72ff).into()),
+                    predictive: Some(rgba(0x315f70ff).into()),
                     predictive_background: Some(rgba(0x194618ff).into()),
                     predictive_border: Some(rgba(0x306129ff).into()),
                     renamed: Some(rgba(0x11a793ff).into()),

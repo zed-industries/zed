@@ -117,7 +117,11 @@ impl Zed1ThemeConverter {
                 .or(convert(lowest.accent.default.foreground)),
             hint_background: convert(lowest.accent.default.background),
             hint_border: convert(lowest.accent.default.border),
-            predictive: convert(lowest.positive.default.foreground),
+            predictive: editor
+                .suggestion
+                .color
+                .map(zed1_color_to_hsla)
+                .or(convert(lowest.positive.default.foreground)),
             predictive_background: convert(lowest.positive.default.background),
             predictive_border: convert(lowest.positive.default.border),
             conflict: convert(lowest.warning.default.foreground),
@@ -183,7 +187,7 @@ impl Zed1ThemeConverter {
 
         Ok(ThemeColorsRefinement {
             border: convert(lowest.base.default.border),
-            border_variant: convert(lowest.variant.default.border),
+            border_variant: convert(middle.variant.default.border),
             border_focused: convert(lowest.accent.hovered.border),
             border_selected: convert(lowest.accent.default.border),
             border_transparent: Some(gpui::transparent_black()),
@@ -226,7 +230,7 @@ impl Zed1ThemeConverter {
                 .map(|color| color_alpha(color, 0.3)),
             scrollbar_thumb_hover_background: convert(middle.base.hovered.background),
             scrollbar_thumb_border: convert(middle.base.default.border),
-            scrollbar_track_background: convert(highest.base.default.background),
+            scrollbar_track_background: Some(gpui::transparent_black()),
             scrollbar_track_border: convert(highest.variant.default.border),
             editor_foreground: convert(editor.text_color),
             editor_background: convert(editor.background),

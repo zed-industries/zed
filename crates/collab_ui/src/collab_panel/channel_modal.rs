@@ -164,8 +164,14 @@ impl Render for ChannelModal {
                     .py_1()
                     .rounded_t(px(8.))
                     .bg(cx.theme().colors().element_background)
-                    .child(IconElement::new(Icon::Hash).size(IconSize::Medium))
-                    .child(Label::new(channel_name))
+                    .child(
+                        h_stack()
+                            .w_px()
+                            .flex_1()
+                            .gap_1()
+                            .child(IconElement::new(Icon::Hash).size(IconSize::Medium))
+                            .child(Label::new(channel_name)),
+                    )
                     .child(
                         h_stack()
                             .w_full()
