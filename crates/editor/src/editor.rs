@@ -98,10 +98,7 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
-use ui::{
-    h_stack, ButtonSize, ButtonStyle, Icon, IconButton, ListItem, ListItemSpacing, Popover, Tooltip,
-};
-use ui::{prelude::*, IconSize};
+use ui::{h_stack, prelude::*, IconSize, ButtonSize, ButtonStyle, Icon, IconButton, ListItem, Popover, Tooltip};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
@@ -1259,7 +1256,6 @@ impl CompletionsMenu {
                         div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
-                                .spacing(ListItemSpacing::Sparse)
                                 .selected(item_ix == selected_item)
                                 .on_click(cx.listener(move |editor, _event, cx| {
                                     cx.stop_propagation();
