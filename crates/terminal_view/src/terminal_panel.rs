@@ -101,7 +101,7 @@ impl TerminalPanel {
                     })
                     .into_any_element()
             });
-            let buffer_search_bar = cx.add_view(search::BufferSearchBar::new);
+            let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             pane.toolbar()
                 .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
             pane
