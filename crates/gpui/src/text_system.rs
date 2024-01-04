@@ -87,15 +87,13 @@ impl TextSystem {
     ///
     /// Panics if the font and none of the fallbacks can be resolved.
     pub fn resolve_font(&self, font: &Font) -> FontId {
-        match self.font_id(font) {
-            Ok(font_id) => return font_id,
-            Err(_) => {}
+        if let Ok(font_id) = self.font_id(font) {
+            return font_id;
         }
 
         for fallback in &self.fallback_font_stack {
-            match self.font_id(fallback) {
-                Ok(font_id) => return font_id,
-                Err(_) => {}
+            if let Ok(font_id) = self.font_id(fallback) {
+                return font_id;
             }
         }
 
