@@ -1,4 +1,4 @@
-use crate::{request::PromptUserDeviceFlow, Copilot, Status};
+use copilot::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
     div, size, svg, AppContext, Bounds, ClipboardItem, Element, GlobalPixels, InteractiveElement,
     IntoElement, ParentElement, Point, Render, Styled, ViewContext, VisualContext, WindowBounds,
@@ -80,6 +80,7 @@ pub struct CopilotCodeVerification {
     connect_clicked: bool,
 }
 
+//impl ModalView for CopilotCodeVerification {}
 impl CopilotCodeVerification {
     pub fn new(status: Status) -> Self {
         Self {

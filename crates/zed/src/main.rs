@@ -158,6 +158,7 @@ fn main() {
             node_runtime.clone(),
             cx,
         );
+        copilot_button::init(cx);
         assistant::init(cx);
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))

@@ -1,3 +1,5 @@
+mod sign_in;
+
 use anyhow::Result;
 use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
@@ -24,6 +26,10 @@ use zed_actions::OpenBrowser;
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const COPILOT_STARTING_TOAST_ID: usize = 1337;
 const COPILOT_ERROR_TOAST_ID: usize = 1338;
+
+pub fn init(cx: &mut AppContext) {
+    sign_in::init(cx);
+}
 
 pub struct CopilotButton {
     editor_subscription: Option<(Subscription, usize)>,

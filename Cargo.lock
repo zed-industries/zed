@@ -1684,7 +1684,6 @@ dependencies = [
  "settings",
  "smol",
  "theme",
- "ui",
  "util",
 ]
 
@@ -1702,6 +1701,7 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "ui",
  "util",
  "workspace",
  "zed_actions",

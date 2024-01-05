@@ -17,6 +17,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = {path = "../workspace" }
 anyhow.workspace = true

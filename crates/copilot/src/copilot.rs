@@ -1,6 +1,4 @@
 pub mod request;
-mod sign_in;
-
 use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -98,7 +96,6 @@ pub fn init(
     })
     .detach();
 
-    sign_in::init(cx);
     cx.on_action(|_: &SignIn, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
