@@ -164,7 +164,6 @@ tree-sitter-uiua = {git = "https://github.com/shnarazk/tree-sitter-uiua", rev = 
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "31c40449749c4263a91a43593831b82229049a4c" }
-async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 # wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457

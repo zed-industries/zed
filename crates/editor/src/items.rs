@@ -15,9 +15,11 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
     Point, SelectionGoal,
 };
+use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
+use workspace::item::ItemSettings;
 
 use std::fmt::Write;
 use std::{
@@ -29,7 +31,7 @@ use std::{
     sync::Arc,
 };
 use text::Selection;
-use theme::{ActiveTheme, Theme};
+use theme::Theme;
 use ui::{h_stack, prelude::*, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::{
@@ -579,7 +581,28 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        let _theme = cx.theme();
+        let git_status = if ItemSettings::get_global(cx).git_status {
+            self.buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).project_path(cx))
+                .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
+                .and_then(|entry| entry.git_status())
+        } else {
+            None
+        };
+        let label_color = match git_status {
+            Some(GitFileStatus::Added) => Color::Created,
+            Some(GitFileStatus::Modified) => Color::Modified,
+            Some(GitFileStatus::Conflict) => Color::Conflict,
+            None => {
+                if selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                }
+            }
+        };
 
         let description = detail.and_then(|detail| {
             let path = path_for_buffer(&self.buffer, detail, false, cx)?;
@@ -595,11 +618,7 @@ impl Item for Editor {
 
         h_stack()
             .gap_2()
-            .child(Label::new(self.title(cx).to_string()).color(if selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
+            .child(Label::new(self.title(cx).to_string()).color(label_color))
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)

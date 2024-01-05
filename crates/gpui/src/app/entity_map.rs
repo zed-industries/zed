@@ -1,8 +1,6 @@
 use crate::{private::Sealed, AppContext, Context, Entity, ModelContext};
 use anyhow::{anyhow, Result};
-use collections::HashMap;
 use derive_more::{Deref, DerefMut};
-use lazy_static::lazy_static;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
@@ -17,6 +15,9 @@ use std::{
     },
     thread::panicking,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+use collections::HashMap;
 
 slotmap::new_key_type! { pub struct EntityId; }
 
@@ -600,7 +601,7 @@ impl<T> PartialEq<Model<T>> for WeakModel<T> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-lazy_static! {
+lazy_static::lazy_static! {
     static ref LEAK_BACKTRACE: bool =
         std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
 }

@@ -107,6 +107,7 @@ actions!(
         NewCenterTerminal,
         ToggleTerminalFocus,
         NewSearch,
+        DeploySearch,
         Feedback,
         Restart,
         Welcome,
