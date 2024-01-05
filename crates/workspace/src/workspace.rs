@@ -3266,6 +3266,7 @@ impl Workspace {
         let user_store = project.read(cx).user_store();
 
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
@@ -4764,8 +4765,7 @@ mod tests {
         });
 
         // Deactivating the window saves the file.
-        cx.simulate_deactivation();
-        cx.executor().run_until_parked();
+        cx.deactivate_window();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Autosave on focus change.
@@ -4785,14 +4785,13 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.simulate_activation();
+        cx.update(|cx| cx.activate_window());
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
-        cx.simulate_deactivation();
+        cx.deactivate_window();
 
-        cx.executor().run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // Autosave after delay.
