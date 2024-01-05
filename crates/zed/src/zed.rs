@@ -1748,13 +1748,17 @@ mod tests {
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
-        workspace.update(cx, |_, cx| {
-            editor1.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_display_ranges([DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)])
+        workspace
+            .update(cx, |_, cx| {
+                editor1.update(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select_display_ranges(
+                            [DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)],
+                        )
+                    });
                 });
-            });
-        });
+            })
+            .unwrap();
 
         let editor2 = workspace
             .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
