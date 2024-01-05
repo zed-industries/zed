@@ -207,13 +207,11 @@ fn main() -> Result<()> {
             .map(|theme_license| (theme_license.theme.clone(), theme_license)),
     );
 
-    let mut zed1_themes_by_family: HashMap<String, Vec<UserTheme>> = HashMap::from_iter(
+    let mut zed1_themes_by_family: IndexMap<String, Vec<UserTheme>> = IndexMap::from_iter(
         zed1_theme_familes
             .into_iter()
             .map(|family| (family.to_string(), Vec::new())),
     );
-
-    let mut licenses = Vec::new();
 
     for entry in fs::read_dir(&zed1_themes_path)? {
         let entry = entry?;
@@ -248,25 +246,6 @@ fn main() -> Result<()> {
 
         let theme_name = zed1_theme.meta.name.clone();
 
-        let license = zed1_licenses_by_theme
-            .get(&theme_name)
-            .ok_or_else(|| anyhow!("missing license for theme: '{}'", theme_name))?;
-
-        let license_header = match license.license_url.as_ref() {
-            Some(license_url) => format!("[{theme_name}]({license_url})"),
-            None => theme_name.clone(),
-        };
-
-        licenses.push(formatdoc!(
-            "
-            ## {license_header}
-
-            {license_text}
-            ********************************************************************************
-            ",
-            license_text = license.license_text
-        ));
-
         let converter = Zed1ThemeConverter::new(zed1_theme);
 
         let theme = converter.convert()?;
@@ -282,12 +261,43 @@ fn main() -> Result<()> {
         themes_for_family.push(theme);
     }
 
+    zed1_themes_by_family.sort_keys();
+
+    let mut licenses = Vec::new();
+
     for (family, themes) in zed1_themes_by_family {
-        let theme_family = UserThemeFamily {
+        let mut theme_family = UserThemeFamily {
             name: family,
             author: "Zed Industries".to_string(),
             themes,
         };
+
+        theme_family
+            .themes
+            .sort_unstable_by_key(|theme| theme.name.clone());
+
+        for theme in &theme_family.themes {
+            let license = zed1_licenses_by_theme
+                .get(&theme.name)
+                .ok_or_else(|| anyhow!("missing license for theme: '{}'", theme.name))?;
+
+            let license_header = match license.license_url.as_ref() {
+                Some(license_url) => {
+                    format!("[{theme_name}]({license_url})", theme_name = theme.name)
+                }
+                None => theme.name.clone(),
+            };
+
+            licenses.push(formatdoc!(
+                "
+                ## {license_header}
+
+                {license_text}
+                ********************************************************************************
+                ",
+                license_text = license.license_text
+            ));
+        }
 
         theme_families.push(theme_family);
     }
