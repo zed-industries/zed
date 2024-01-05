@@ -61,12 +61,12 @@ struct ActiveSearches(HashMap<WeakModel<Project>, WeakView<ProjectSearchView>>);
 struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 
 pub fn init(cx: &mut AppContext) {
-    // todo!() po
     cx.set_global(ActiveSearches::default());
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace
-            .register_action(ProjectSearchView::deploy)
+            .register_action(ProjectSearchView::new_search)
+            .register_action(ProjectSearchView::deploy_search)
             .register_action(ProjectSearchBar::search_in_new);
     })
     .detach();
@@ -941,10 +941,40 @@ impl ProjectSearchView {
         });
     }
 
+    // Re-activate the most recently activated search or the most recent if it has been closed.
+    // If no search exists in the workspace, create a new one.
+    fn deploy_search(
+        workspace: &mut Workspace,
+        _: &workspace::DeploySearch,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let active_search = cx
+            .global::<ActiveSearches>()
+            .0
+            .get(&workspace.project().downgrade());
+        let existing = active_search
+            .and_then(|active_search| {
+                workspace
+                    .items_of_type::<ProjectSearchView>(cx)
+                    .filter(|search| &search.downgrade() == active_search)
+                    .last()
+            })
+            .or_else(|| workspace.item_of_type::<ProjectSearchView>(cx));
+        Self::existing_or_new_search(workspace, existing, cx)
+    }
+
     // Add another search tab to the workspace.
-    fn deploy(
+    fn new_search(
         workspace: &mut Workspace,
         _: &workspace::NewSearch,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::existing_or_new_search(workspace, None, cx)
+    }
+
+    fn existing_or_new_search(
+        workspace: &mut Workspace,
+        existing: Option<View<ProjectSearchView>>,
         cx: &mut ViewContext<Workspace>,
     ) {
         // Clean up entries for dropped projects
@@ -962,19 +992,27 @@ impl ProjectSearchView {
             }
         });
 
-        let settings = cx
-            .global::<ActiveSettings>()
-            .0
-            .get(&workspace.project().downgrade());
-
-        let settings = if let Some(settings) = settings {
-            Some(settings.clone())
+        let search = if let Some(existing) = existing {
+            workspace.activate_item(&existing, cx);
+            existing
         } else {
-            None
-        };
+            let settings = cx
+                .global::<ActiveSettings>()
+                .0
+                .get(&workspace.project().downgrade());
 
-        let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
+            let settings = if let Some(settings) = settings {
+                Some(settings.clone())
+            } else {
+                None
+            };
+
+            let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+            let view = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
+
+            workspace.add_item(Box::new(view.clone()), cx);
+            view
+        };
 
         workspace.add_item(Box::new(search.clone()), cx);
 
@@ -2060,7 +2098,7 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_project_search_focus(cx: &mut TestAppContext) {
+    async fn test_deploy_project_search_focus(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -2101,7 +2139,237 @@ pub mod tests {
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
                 });
 
-                ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+            })
+            .unwrap();
+
+        let Some(search_view) = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        }) else {
+            panic!("Search view expected to appear after new search event trigger")
+        };
+
+        cx.spawn(|mut cx| async move {
+            window
+                .update(&mut cx, |_, cx| {
+                    cx.dispatch_action(ToggleFocus.boxed_clone())
+                })
+                .unwrap();
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                assert!(
+                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    "Empty search view should be focused after the toggle focus event: no results panel to focus on",
+                );
+           });
+        }).unwrap();
+
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    let query_editor = &search_view.query_editor;
+                    assert!(
+                        query_editor.focus_handle(cx).is_focused(cx),
+                        "Search view should be focused after the new search view is activated",
+                    );
+                    let query_text = query_editor.read(cx).text(cx);
+                    assert!(
+                        query_text.is_empty(),
+                        "New search query should be empty but got '{query_text}'",
+                    );
+                    let results_text = search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx));
+                    assert!(
+                        results_text.is_empty(),
+                        "Empty search view should have no results but got '{results_text}'"
+                    );
+                });
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.query_editor.update(cx, |query_editor, cx| {
+                        query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", cx)
+                    });
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    results_text.is_empty(),
+                    "Search view for mismatching query should have no results but got '{results_text}'"
+                );
+                assert!(
+                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    "Search view should be focused after mismatching query had been used in search",
+                );
+            });
+        }).unwrap();
+
+        cx.spawn(|mut cx| async move {
+            window.update(&mut cx, |_, cx| {
+                cx.dispatch_action(ToggleFocus.boxed_clone())
+            })
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                assert!(
+                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    "Search view with mismatching query should be focused after the toggle focus event: still no results panel to focus on",
+                );
+            });
+        }).unwrap();
+
+        window
+            .update(cx, |_, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view
+                        .query_editor
+                        .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+                    search_view.search(cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+                    "Search view results should match the query"
+                );
+                assert!(
+                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    "Search view with mismatching query should be focused after search results are available",
+                );
+            });
+        }).unwrap();
+        cx.spawn(|mut cx| async move {
+            window
+                .update(&mut cx, |_, cx| {
+                    cx.dispatch_action(ToggleFocus.boxed_clone())
+                })
+                .unwrap();
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                assert!(
+                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    "Search view with matching query should still have its results editor focused after the toggle focus event",
+                );
+            });
+        }).unwrap();
+
+        workspace
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+            })
+            .unwrap();
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                assert_eq!(search_view.query_editor.read(cx).text(cx), "two", "Query should be updated to first search result after search view 2nd open in a row");
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
+                    "Results should be unchanged after search view 2nd open in a row"
+                );
+                assert!(
+                    search_view.query_editor.focus_handle(cx).is_focused(cx),
+                    "Focus should be moved into query editor again after search view 2nd open in a row"
+                );
+            });
+        }).unwrap();
+
+        cx.spawn(|mut cx| async move {
+            window
+                .update(&mut cx, |_, cx| {
+                    cx.dispatch_action(ToggleFocus.boxed_clone())
+                })
+                .unwrap();
+        })
+        .detach();
+        cx.background_executor.run_until_parked();
+        window.update(cx, |_, cx| {
+            search_view.update(cx, |search_view, cx| {
+                assert!(
+                    search_view.results_editor.focus_handle(cx).is_focused(cx),
+                    "Search view with matching query should switch focus to the results editor after the toggle focus event",
+                );
+            });
+        }).unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_new_project_search_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.clone();
+        let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
+
+        let active_item = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .unwrap()
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+        });
+        assert!(
+            active_item.is_none(),
+            "Expected no search panel to be active"
+        );
+
+        window
+            .update(cx, move |workspace, cx| {
+                assert_eq!(workspace.panes().len(), 1);
+                workspace.panes()[0].update(cx, move |pane, cx| {
+                    pane.toolbar()
+                        .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                });
+
+                ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
             })
             .unwrap();
 
@@ -2250,7 +2518,7 @@ pub mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+                ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
             })
             .unwrap();
         cx.background_executor.run_until_parked();
@@ -2536,7 +2804,7 @@ pub mod tests {
                             .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
                     });
 
-                    ProjectSearchView::deploy(workspace, &workspace::NewSearch, cx)
+                    ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
                 }
             })
             .unwrap();

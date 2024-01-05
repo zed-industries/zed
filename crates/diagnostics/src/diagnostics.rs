@@ -641,8 +641,13 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn tab_content(&self, _detail: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
-            let label = Label::new("No problems");
-            label.into_any_element()
+            Label::new("No problems")
+                .color(if selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                })
+                .into_any_element()
         } else {
             h_stack()
                 .gap_1()

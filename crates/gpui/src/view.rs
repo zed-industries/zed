@@ -143,6 +143,11 @@ impl<V: 'static> WeakView<V> {
         let view = self.upgrade().context("error upgrading view")?;
         Ok(view.update(cx, f)).flatten()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn assert_dropped(&self) {
+        self.model.assert_dropped()
+    }
 }
 
 impl<V> Clone for WeakView<V> {

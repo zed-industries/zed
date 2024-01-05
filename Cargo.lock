@@ -576,8 +576,9 @@ dependencies = [
 
 [[package]]
 name = "async-task"
-version = "4.0.3"
-source = "git+https://github.com/zed-industries/async-task?rev=341b57d6de98cdfd7b418567b8de2022ca993a6e#341b57d6de98cdfd7b418567b8de2022ca993a6e"
+version = "4.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbb36e985947064623dbd357f727af08ffd077f93d696782f3c56365fa2e2799"
 
 [[package]]
 name = "async-tls"
@@ -2486,7 +2487,6 @@ dependencies = [
  "postage",
  "project",
  "regex",
- "search",
  "serde",
  "serde_derive",
  "settings",
@@ -7762,6 +7762,7 @@ dependencies = [
  "procinfo",
  "project",
  "rand 0.8.5",
+ "search",
  "serde",
  "serde_derive",
  "settings",

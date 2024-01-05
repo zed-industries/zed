@@ -38,7 +38,7 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
-use search::BufferSearchBar;
+use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::{Settings, SettingsStore};
 use std::{
@@ -1156,6 +1156,16 @@ impl Render for AssistantPanel {
                     div()
                 });
 
+            let contents = if self.active_editor().is_some() {
+                let mut registrar = DivRegistrar::new(
+                    |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
+                    cx,
+                );
+                BufferSearchBar::register_inner(&mut registrar);
+                registrar.into_div()
+            } else {
+                div()
+            };
             v_stack()
                 .key_context("AssistantPanel")
                 .size_full()
@@ -1176,7 +1186,7 @@ impl Render for AssistantPanel {
                     Some(self.toolbar.clone())
                 })
                 .child(
-                    div()
+                    contents
                         .flex_1()
                         .child(if let Some(editor) = self.active_editor() {
                             editor.clone().into_any_element()

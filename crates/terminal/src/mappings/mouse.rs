@@ -158,39 +158,41 @@ pub fn mouse_moved_report(point: AlacPoint, e: &MouseMoveEvent, mode: TermMode) 
     }
 }
 
-pub fn mouse_side(
+pub fn grid_point(pos: Point<Pixels>, cur_size: TerminalSize, display_offset: usize) -> AlacPoint {
+    grid_point_and_side(pos, cur_size, display_offset).0
+}
+
+pub fn grid_point_and_side(
     pos: Point<Pixels>,
     cur_size: TerminalSize,
-) -> alacritty_terminal::index::Direction {
-    let cell_width = cur_size.cell_width.floor();
-    if cell_width == px(0.) {
-        return Side::Right;
-    }
-
-    let x = pos.x.floor();
-
-    let cell_x = cmp::max(px(0.), x - cell_width) % cell_width;
-    let half_cell_width = (cur_size.cell_width / 2.0).floor();
-    let additional_padding = (cur_size.width() - cur_size.cell_width * 2.) % cur_size.cell_width;
-    let end_of_grid = cur_size.width() - cur_size.cell_width - additional_padding;
-
-    //Width: Pixels or columns?
-    if cell_x > half_cell_width
-    // Edge case when mouse leaves the window.
-    || x >= end_of_grid
-    {
+    display_offset: usize,
+) -> (AlacPoint, Side) {
+    let mut col = GridCol((pos.x / cur_size.cell_width) as usize);
+    let cell_x = cmp::max(px(0.), pos.x) % cur_size.cell_width;
+    let half_cell_width = cur_size.cell_width / 2.0;
+    let mut side = if cell_x > half_cell_width {
         Side::Right
     } else {
         Side::Left
-    }
-}
+    };
 
-pub fn grid_point(pos: Point<Pixels>, cur_size: TerminalSize, display_offset: usize) -> AlacPoint {
-    let col = GridCol((pos.x / cur_size.cell_width) as usize);
+    if col > cur_size.last_column() {
+        col = cur_size.last_column();
+        side = Side::Right;
+    }
     let col = min(col, cur_size.last_column());
-    let line = (pos.y / cur_size.line_height) as i32;
-    let line = min(line, cur_size.bottommost_line().0);
-    AlacPoint::new(GridLine(line - display_offset as i32), col)
+    let mut line = (pos.y / cur_size.line_height) as i32;
+    if line > cur_size.bottommost_line() {
+        line = cur_size.bottommost_line().0 as i32;
+        side = Side::Right;
+    } else if line < 0 {
+        side = Side::Left;
+    }
+
+    (
+        AlacPoint::new(GridLine(line - display_offset as i32), col),
+        side,
+    )
 }
 
 ///Generate the bytes to send to the terminal, from the cell location, a mouse event, and the terminal mode
