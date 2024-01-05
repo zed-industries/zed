@@ -1,5 +1,4 @@
-mod sign_in;
-
+use crate::sign_in::CopilotCodeVerification;
 use anyhow::Result;
 use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
@@ -13,7 +12,6 @@ use language::{
     File, Language,
 };
 use settings::{update_settings_file, Settings, SettingsStore};
-use sign_in::CopilotCodeVerification;
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
 use workspace::{

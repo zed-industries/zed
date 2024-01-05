@@ -123,7 +123,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
         let copilot =
-            cx.new_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
+            cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =

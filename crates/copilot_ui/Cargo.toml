@@ -1,11 +1,11 @@
 [package]
-name = "copilot_button"
+name = "copilot_ui"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/copilot_button.rs"
+path = "src/copilot_ui.rs"
 doctest = false
 
 [dependencies]
