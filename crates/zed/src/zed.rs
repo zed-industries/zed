@@ -1609,48 +1609,68 @@ mod tests {
     //         })
     //     }
 
-    //     #[gpui::test]
-    //     async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
-    //         let app_state = init_test(cx);
-    //         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+    #[gpui::test]
+    async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
-    //         let project = Project::test(app_state.fs.clone(), [], cx).await;
-    //         project.update(cx, |project, _| project.languages().add(rust_lang()));
-    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-    //         let workspace = window.root(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
 
-    //         // Create a new untitled buffer
-    //         cx.dispatch_action(window.into(), NewFile);
-    //         let editor = workspace.read_with(cx, |workspace, cx| {
-    //             workspace
-    //                 .active_item(cx)
-    //                 .unwrap()
-    //                 .downcast::<Editor>()
-    //                 .unwrap()
-    //         });
+        // Create a new untitled buffer
+        cx.dispatch_action(window.into(), NewFile);
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(Arc::ptr_eq(
+                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &languages::PLAIN_TEXT
+                    ));
+                    editor.handle_input("hi", cx);
+                    assert!(editor.is_dirty(cx));
+                });
+            })
+            .unwrap();
 
-    //         editor.update(cx, |editor, cx| {
-    //             assert!(Arc::ptr_eq(
-    //                 &editor.language_at(0, cx).unwrap(),
-    //                 &languages::PLAIN_TEXT
-    //             ));
-    //             editor.handle_input("hi", cx);
-    //             assert!(editor.is_dirty(cx));
-    //         });
-
-    //         // Save the buffer. This prompts for a filename.
-    //         let save_task = workspace.update(cx, |workspace, cx| {
-    //             workspace.save_active_item(SaveIntent::Save, cx)
-    //         });
-    //         cx.foreground().run_until_parked();
-    //         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
-    //         save_task.await.unwrap();
-    //         // The buffer is not dirty anymore and the language is assigned based on the path.
-    //         editor.read_with(cx, |editor, cx| {
-    //             assert!(!editor.is_dirty(cx));
-    //             assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust")
-    //         });
-    //     }
+        // Save the buffer. This prompts for a filename.
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
+        save_task.await.unwrap();
+        // The buffer is not dirty anymore and the language is assigned based on the path.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(0, cx)
+                            .unwrap()
+                            .name()
+                            .as_ref(),
+                        "Rust"
+                    )
+                });
+            })
+            .unwrap();
+    }
 
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
@@ -2743,14 +2763,14 @@ mod tests {
         })
     }
 
-    //     fn rust_lang() -> Arc<language::Language> {
-    //         Arc::new(language::Language::new(
-    //             language::LanguageConfig {
-    //                 name: "Rust".into(),
-    //                 path_suffixes: vec!["rs".to_string()],
-    //                 ..Default::default()
-    //             },
-    //             Some(tree_sitter_rust::language()),
-    //         ))
-    //     }
+    fn rust_lang() -> Arc<language::Language> {
+        Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ))
+    }
 }
