@@ -774,7 +774,7 @@ fn open_bundled_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
+    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
     use fs::{FakeFs, Fs};
     use gpui::{
         actions, div, Action, AnyElement, AnyWindowHandle, AppContext, AssetSource, Element,
@@ -1462,53 +1462,65 @@ mod tests {
     //         });
     //     }
 
-    //     #[gpui::test]
-    //     async fn test_save_conflicting_item(cx: &mut TestAppContext) {
-    //         let app_state = init_test(cx);
-    //         app_state
-    //             .fs
-    //             .as_fake()
-    //             .insert_tree("/root", json!({ "a.txt": "" }))
-    //             .await;
+    #[gpui::test]
+    async fn test_save_conflicting_item(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({ "a.txt": "" }))
+            .await;
 
-    //         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-    //         let workspace = window.root(cx);
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
 
-    //         // Open a file within an existing worktree.
-    //         workspace
-    //             .update(cx, |view, cx| {
-    //                 view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
-    //             })
-    //             .await;
-    //         let editor = cx.read(|cx| {
-    //             let pane = workspace.read(cx).active_pane().read(cx);
-    //             let item = pane.active_item().unwrap();
-    //             item.downcast::<Editor>().unwrap()
-    //         });
+        // Open a file within an existing worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
+            })
+            .unwrap()
+            .await;
+        let editor = cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            let item = pane.active_item().unwrap();
+            item.downcast::<Editor>().unwrap()
+        });
 
-    //         editor.update(cx, |editor, cx| editor.handle_input("x", cx));
-    //         app_state
-    //             .fs
-    //             .as_fake()
-    //             .insert_file("/root/a.txt", "changed".to_string())
-    //             .await;
-    //         editor
-    //             .condition(cx, |editor, cx| editor.has_conflict(cx))
-    //             .await;
-    //         cx.read(|cx| assert!(editor.is_dirty(cx)));
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.handle_input("x", cx));
+            })
+            .unwrap();
 
-    //         let save_task = workspace.update(cx, |workspace, cx| {
-    //             workspace.save_active_item(SaveIntent::Save, cx)
-    //         });
-    //         cx.foreground().run_until_parked();
-    //         window.simulate_prompt_answer(0, cx);
-    //         save_task.await.unwrap();
-    //         editor.read_with(cx, |editor, cx| {
-    //             assert!(!editor.is_dirty(cx));
-    //             assert!(!editor.has_conflict(cx));
-    //         });
-    //     }
+        app_state
+            .fs
+            .as_fake()
+            .insert_file("/root/a.txt", "changed".to_string())
+            .await;
+        editor
+            .condition::<EditorEvent>(cx, |editor, cx| editor.has_conflict(cx))
+            .await;
+        cx.read(|cx| assert!(editor.is_dirty(cx)));
+
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        cx.simulate_prompt_answer(0);
+        save_task.await.unwrap();
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert!(!editor.has_conflict(cx));
+                });
+            })
+            .unwrap();
+    }
 
     #[gpui::test]
     async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
