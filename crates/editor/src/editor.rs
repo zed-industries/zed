@@ -24,7 +24,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use client::{Client, Collaborator, ParticipantIndex, TelemetrySettings};
+use client::{Client, Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -99,9 +99,9 @@ use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_stack, ButtonSize, ButtonStyle, Icon, IconButton, ListItem, ListItemSpacing, Popover, Tooltip,
+    h_stack, prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, ListItem, Popover,
+    Tooltip,
 };
-use ui::{prelude::*, IconSize};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
 
@@ -1259,7 +1259,6 @@ impl CompletionsMenu {
                         div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
-                                .spacing(ListItemSpacing::Sparse)
                                 .selected(item_ix == selected_item)
                                 .on_click(cx.listener(move |editor, _event, cx| {
                                     cx.stop_propagation();
@@ -8451,6 +8450,12 @@ impl Editor {
             })
     }
 
+    pub fn has_background_highlights<T: 'static>(&self) -> bool {
+        self.background_highlights
+            .get(&TypeId::of::<T>())
+            .map_or(false, |(_, highlights)| !highlights.is_empty())
+    }
+
     pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
@@ -8868,14 +8873,8 @@ impl Editor {
             .map(|a| a.to_string());
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        let telemetry_settings = *TelemetrySettings::get_global(cx);
 
-        telemetry.report_copilot_event(
-            telemetry_settings,
-            suggestion_id,
-            suggestion_accepted,
-            file_extension,
-        )
+        telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -8913,7 +8912,6 @@ impl Editor {
             .raw_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
-        let telemetry_settings = *TelemetrySettings::get_global(cx);
         let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
         let copilot_enabled_for_language = self
             .buffer
@@ -8923,12 +8921,12 @@ impl Editor {
 
         let telemetry = project.read(cx).client().telemetry().clone();
         telemetry.report_editor_event(
-            telemetry_settings,
             file_extension,
             vim_mode,
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
+            cx,
         )
     }
 
@@ -9570,7 +9568,7 @@ impl InputHandler for Editor {
     ) -> Option<gpui::Bounds<Pixels>> {
         let text_layout_details = self.text_layout_details(cx);
         let style = &text_layout_details.editor_style;
-        let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+        let font_id = cx.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(cx.rem_size());
         let line_height = style.text.line_height_in_pixels(cx.rem_size());
         let em_width = cx

@@ -307,7 +307,10 @@ mod test {
             div().id("testview").child(
                 div()
                     .key_context("parent")
-                    .on_key_down(cx.listener(|this, _, _| this.saw_key_down = true))
+                    .on_key_down(cx.listener(|this, _, cx| {
+                        cx.stop_propagation();
+                        this.saw_key_down = true
+                    }))
                     .on_action(
                         cx.listener(|this: &mut TestView, _: &TestAction, _| {
                             this.saw_action = true
@@ -343,6 +346,7 @@ mod test {
             .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
             .unwrap();
 
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap(), false);
         cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap(), false);
 
         window

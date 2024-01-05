@@ -1,7 +1,7 @@
 use crate::{
-    point, px, AnyElement, AvailableSpace, BorrowAppContext, Bounds, DispatchPhase, Element,
-    IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    WindowContext,
+    point, px, AnyElement, AvailableSpace, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
+    DispatchPhase, Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -317,7 +317,7 @@ impl Element for List {
 
     fn paint(
         &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
+        bounds: Bounds<crate::Pixels>,
         _state: &mut Self::State,
         cx: &mut crate::WindowContext,
     ) {
@@ -444,13 +444,15 @@ impl Element for List {
         new_items.append(cursor.suffix(&()), &());
 
         // Paint the visible items
-        let mut item_origin = bounds.origin;
-        item_origin.y -= scroll_top.offset_in_item;
-        for item_element in &mut item_elements {
-            let item_height = item_element.measure(available_item_space, cx).height;
-            item_element.draw(item_origin, available_item_space, cx);
-            item_origin.y += item_height;
-        }
+        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+            let mut item_origin = bounds.origin;
+            item_origin.y -= scroll_top.offset_in_item;
+            for item_element in &mut item_elements {
+                let item_height = item_element.measure(available_item_space, cx).height;
+                item_element.draw(item_origin, available_item_space, cx);
+                item_origin.y += item_height;
+            }
+        });
 
         state.items = new_items;
         state.last_layout_bounds = Some(bounds);

@@ -21,7 +21,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x969585ff).into()),
-                        border_variant: Some(rgba(0x969585ff).into()),
+                        border_variant: Some(rgba(0xd1d0c6ff).into()),
                         border_focused: Some(rgba(0xbbddc6ff).into()),
                         border_selected: Some(rgba(0xbbddc6ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -60,7 +60,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x22221b4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xd1d0c6ff).into()),
                         scrollbar_thumb_border: Some(rgba(0xd1d0c6ff).into()),
-                        scrollbar_track_background: Some(rgba(0xf4f3ecff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xedece5ff).into()),
                         editor_foreground: Some(rgba(0x302f27ff).into()),
                         editor_background: Some(rgba(0xf4f3ecff).into()),
@@ -486,7 +486,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x665f5cff).into()),
-                        border_variant: Some(rgba(0x665f5cff).into()),
+                        border_variant: Some(rgba(0x3b3431ff).into()),
                         border_focused: Some(rgba(0x192e5bff).into()),
                         border_selected: Some(rgba(0x192e5bff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -525,7 +525,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xf1efee4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x3b3431ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x3b3431ff).into()),
-                        scrollbar_track_background: Some(rgba(0x1b1918ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x251f1dff).into()),
                         editor_foreground: Some(rgba(0xe6e2e0ff).into()),
                         editor_background: Some(rgba(0x1b1918ff).into()),
@@ -951,7 +951,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8b968eff).into()),
-                        border_variant: Some(rgba(0x8b968eff).into()),
+                        border_variant: Some(rgba(0xc8d1cbff).into()),
                         border_focused: Some(rgba(0xbed4d6ff).into()),
                         border_selected: Some(rgba(0xbed4d6ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -990,7 +990,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x171c194c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xc8d1cbff).into()),
                         scrollbar_thumb_border: Some(rgba(0xc8d1cbff).into()),
-                        scrollbar_track_background: Some(rgba(0xecf4eeff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xe5ede7ff).into()),
                         editor_foreground: Some(rgba(0x232a25ff).into()),
                         editor_background: Some(rgba(0xecf4eeff).into()),
@@ -1416,7 +1416,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x56505eff).into()),
-                        border_variant: Some(rgba(0x56505eff).into()),
+                        border_variant: Some(rgba(0x332f38ff).into()),
                         border_focused: Some(rgba(0x222953ff).into()),
                         border_selected: Some(rgba(0x222953ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -1455,7 +1455,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xefecf44c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x332f38ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x332f38ff).into()),
-                        scrollbar_track_background: Some(rgba(0x19171cff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x201e24ff).into()),
                         editor_foreground: Some(rgba(0xe2dfe7ff).into()),
                         editor_background: Some(rgba(0x19171cff).into()),
@@ -1881,7 +1881,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5d5c4cff).into()),
-                        border_variant: Some(rgba(0x5d5c4cff).into()),
+                        border_variant: Some(rgba(0x3c3b31ff).into()),
                         border_focused: Some(rgba(0x1c3927ff).into()),
                         border_selected: Some(rgba(0x1c3927ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -1920,7 +1920,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xf4f3ec4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x3c3b31ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x3c3b31ff).into()),
-                        scrollbar_track_background: Some(rgba(0x22221bff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x2a2922ff).into()),
                         editor_foreground: Some(rgba(0xe7e6dfff).into()),
                         editor_background: Some(rgba(0x22221bff).into()),
@@ -2346,7 +2346,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5c6485ff).into()),
-                        border_variant: Some(rgba(0x5c6485ff).into()),
+                        border_variant: Some(rgba(0x363f62ff).into()),
                         border_focused: Some(rgba(0x203348ff).into()),
                         border_selected: Some(rgba(0x203348ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -2385,7 +2385,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xf5f7ff4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x363f62ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x363f62ff).into()),
-                        scrollbar_track_background: Some(rgba(0x202746ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x252d4fff).into()),
                         editor_foreground: Some(rgba(0xdfe2f1ff).into()),
                         editor_background: Some(rgba(0x202746ff).into()),
@@ -2811,7 +2811,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x9a9fb6ff).into()),
-                        border_variant: Some(rgba(0x9a9fb6ff).into()),
+                        border_variant: Some(rgba(0xccd0e1ff).into()),
                         border_focused: Some(rgba(0xc2d5efff).into()),
                         border_selected: Some(rgba(0xc2d5efff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -2850,7 +2850,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x2027464c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xccd0e1ff).into()),
                         scrollbar_thumb_border: Some(rgba(0xccd0e1ff).into()),
-                        scrollbar_track_background: Some(rgba(0xf5f7ffff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xe9ebf7ff).into()),
                         editor_foreground: Some(rgba(0x293256ff).into()),
                         editor_background: Some(rgba(0xf5f7ffff).into()),
@@ -3276,7 +3276,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x6c695cff).into()),
-                        border_variant: Some(rgba(0x6c695cff).into()),
+                        border_variant: Some(rgba(0x3b3933ff).into()),
                         border_focused: Some(rgba(0x263056ff).into()),
                         border_selected: Some(rgba(0x263056ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -3315,7 +3315,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xfefbec4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x3b3933ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x3b3933ff).into()),
-                        scrollbar_track_background: Some(rgba(0x20201dff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x252521ff).into()),
                         editor_foreground: Some(rgba(0xe8e4cfff).into()),
                         editor_background: Some(rgba(0x20201dff).into()),
@@ -3741,7 +3741,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x5c6c5cff).into()),
-                        border_variant: Some(rgba(0x5c6c5cff).into()),
+                        border_variant: Some(rgba(0x333b33ff).into()),
                         border_focused: Some(rgba(0x102668ff).into()),
                         border_selected: Some(rgba(0x102668ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -3780,7 +3780,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xf4fbf44c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x333b33ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x333b33ff).into()),
-                        scrollbar_track_background: Some(rgba(0x131513ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x1d201dff).into()),
                         editor_foreground: Some(rgba(0xcfe8cfff).into()),
                         editor_background: Some(rgba(0x131513ff).into()),
@@ -4206,7 +4206,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8f8b96ff).into()),
-                        border_variant: Some(rgba(0x8f8b96ff).into()),
+                        border_variant: Some(rgba(0xcbc8d1ff).into()),
                         border_focused: Some(rgba(0xc9c8f3ff).into()),
                         border_selected: Some(rgba(0xc9c8f3ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -4245,7 +4245,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x19171c4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xcbc8d1ff).into()),
                         scrollbar_thumb_border: Some(rgba(0xcbc8d1ff).into()),
-                        scrollbar_track_background: Some(rgba(0xefecf4ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xe8e5edff).into()),
                         editor_foreground: Some(rgba(0x26232aff).into()),
                         editor_background: Some(rgba(0xefecf4ff).into()),
@@ -4671,7 +4671,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x564e4eff).into()),
-                        border_variant: Some(rgba(0x564e4eff).into()),
+                        border_variant: Some(rgba(0x352f2fff).into()),
                         border_focused: Some(rgba(0x2c2b45ff).into()),
                         border_selected: Some(rgba(0x2c2b45ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -4710,7 +4710,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xf4ecec4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x352f2fff).into()),
                         scrollbar_thumb_border: Some(rgba(0x352f2fff).into()),
-                        scrollbar_track_background: Some(rgba(0x1b1818ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x231f1fff).into()),
                         editor_foreground: Some(rgba(0xe7dfdfff).into()),
                         editor_background: Some(rgba(0x1b1818ff).into()),
@@ -5136,7 +5136,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x675b67ff).into()),
-                        border_variant: Some(rgba(0x675b67ff).into()),
+                        border_variant: Some(rgba(0x393239ff).into()),
                         border_focused: Some(rgba(0x1a2961ff).into()),
                         border_selected: Some(rgba(0x1a2961ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -5175,7 +5175,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xf7f3f74c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x393239ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x393239ff).into()),
-                        scrollbar_track_background: Some(rgba(0x1b181bff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x231e23ff).into()),
                         editor_foreground: Some(rgba(0xd8cad8ff).into()),
                         editor_background: Some(rgba(0x1b181bff).into()),
@@ -5601,7 +5601,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x4f6b78ff).into()),
-                        border_variant: Some(rgba(0x4f6b78ff).into()),
+                        border_variant: Some(rgba(0x2c3b42ff).into()),
                         border_focused: Some(rgba(0x1a2f3cff).into()),
                         border_selected: Some(rgba(0x1a2f3cff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -5640,7 +5640,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xebf8ff4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x2c3b42ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x2c3b42ff).into()),
-                        scrollbar_track_background: Some(rgba(0x161b1dff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x1b2327ff).into()),
                         editor_foreground: Some(rgba(0xc1e4f6ff).into()),
                         editor_background: Some(rgba(0x161b1dff).into()),
@@ -6066,7 +6066,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xaaa3a1ff).into()),
-                        border_variant: Some(rgba(0xaaa3a1ff).into()),
+                        border_variant: Some(rgba(0xd6d1cfff).into()),
                         border_focused: Some(rgba(0xc6cef7ff).into()),
                         border_selected: Some(rgba(0xc6cef7ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -6105,7 +6105,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x1b19184c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xd6d1cfff).into()),
                         scrollbar_thumb_border: Some(rgba(0xd6d1cfff).into()),
-                        scrollbar_track_background: Some(rgba(0xf1efeeff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xebe8e6ff).into()),
                         editor_foreground: Some(rgba(0x2c2421ff).into()),
                         editor_background: Some(rgba(0xf1efeeff).into()),
@@ -6531,7 +6531,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xa8a48eff).into()),
-                        border_variant: Some(rgba(0xa8a48eff).into()),
+                        border_variant: Some(rgba(0xd7d3beff).into()),
                         border_focused: Some(rgba(0xcdd1f5ff).into()),
                         border_selected: Some(rgba(0xcdd1f5ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -6570,7 +6570,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x20201d4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xd7d3beff).into()),
                         scrollbar_thumb_border: Some(rgba(0xd7d3beff).into()),
-                        scrollbar_track_background: Some(rgba(0xfefbecff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xf2eedcff).into()),
                         editor_foreground: Some(rgba(0x292824ff).into()),
                         editor_background: Some(rgba(0xfefbecff).into()),
@@ -6996,7 +6996,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8e8989ff).into()),
-                        border_variant: Some(rgba(0x8e8989ff).into()),
+                        border_variant: Some(rgba(0xcfc7c7ff).into()),
                         border_focused: Some(rgba(0xcecaecff).into()),
                         border_selected: Some(rgba(0xcecaecff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -7035,7 +7035,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x1b18184c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xcfc7c7ff).into()),
                         scrollbar_thumb_border: Some(rgba(0xcfc7c7ff).into()),
-                        scrollbar_track_background: Some(rgba(0xf4ececff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xede5e5ff).into()),
                         editor_foreground: Some(rgba(0x292424ff).into()),
                         editor_background: Some(rgba(0xf4ececff).into()),
@@ -7461,7 +7461,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x8ea88eff).into()),
-                        border_variant: Some(rgba(0x8ea88eff).into()),
+                        border_variant: Some(rgba(0xbed7beff).into()),
                         border_focused: Some(rgba(0xc9c4fdff).into()),
                         border_selected: Some(rgba(0xc9c4fdff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -7500,7 +7500,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x1315134c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xbed7beff).into()),
                         scrollbar_thumb_border: Some(rgba(0xbed7beff).into()),
-                        scrollbar_track_background: Some(rgba(0xf4fbf4ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xdff0dfff).into()),
                         editor_foreground: Some(rgba(0x242924ff).into()),
                         editor_background: Some(rgba(0xf4fbf4ff).into()),
@@ -7926,7 +7926,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x505e55ff).into()),
-                        border_variant: Some(rgba(0x505e55ff).into()),
+                        border_variant: Some(rgba(0x2f3832ff).into()),
                         border_focused: Some(rgba(0x1f3233ff).into()),
                         border_selected: Some(rgba(0x1f3233ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -7965,7 +7965,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0xecf4ee4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0x2f3832ff).into()),
                         scrollbar_thumb_border: Some(rgba(0x2f3832ff).into()),
-                        scrollbar_track_background: Some(rgba(0x171c19ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0x1e2420ff).into()),
                         editor_foreground: Some(rgba(0xdfe7e2ff).into()),
                         editor_background: Some(rgba(0x171c19ff).into()),
@@ -8391,7 +8391,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0xad9dadff).into()),
-                        border_variant: Some(rgba(0xad9dadff).into()),
+                        border_variant: Some(rgba(0xcdbecdff).into()),
                         border_focused: Some(rgba(0xcac7faff).into()),
                         border_selected: Some(rgba(0xcac7faff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -8430,7 +8430,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x1b181b4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xcdbecdff).into()),
                         scrollbar_thumb_border: Some(rgba(0xcdbecdff).into()),
-                        scrollbar_track_background: Some(rgba(0xf7f3f7ff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xe5dce5ff).into()),
                         editor_foreground: Some(rgba(0x292329ff).into()),
                         editor_background: Some(rgba(0xf7f3f7ff).into()),
@@ -8856,7 +8856,7 @@ pub fn atelier() -> UserThemeFamily {
                 styles: UserThemeStylesRefinement {
                     colors: ThemeColorsRefinement {
                         border: Some(rgba(0x80a4b6ff).into()),
-                        border_variant: Some(rgba(0x80a4b6ff).into()),
+                        border_variant: Some(rgba(0xb0d3e5ff).into()),
                         border_focused: Some(rgba(0xbacfe1ff).into()),
                         border_selected: Some(rgba(0xbacfe1ff).into()),
                         border_transparent: Some(rgba(0x00000000).into()),
@@ -8895,7 +8895,7 @@ pub fn atelier() -> UserThemeFamily {
                         scrollbar_thumb_background: Some(rgba(0x161b1d4c).into()),
                         scrollbar_thumb_hover_background: Some(rgba(0xb0d3e5ff).into()),
                         scrollbar_thumb_border: Some(rgba(0xb0d3e5ff).into()),
-                        scrollbar_track_background: Some(rgba(0xebf8ffff).into()),
+                        scrollbar_track_background: Some(rgba(0x00000000).into()),
                         scrollbar_track_border: Some(rgba(0xd3edfaff).into()),
                         editor_foreground: Some(rgba(0x1f292eff).into()),
                         editor_background: Some(rgba(0xebf8ffff).into()),

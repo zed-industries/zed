@@ -8,6 +8,7 @@ use crate::{
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
+    items::BufferSearchHighlights,
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, show_link_definition,
         update_go_to_definition_link, update_inlay_link_and_hover_points, GoToDefinitionTrigger,
@@ -1229,6 +1230,14 @@ impl EditorElement {
             return;
         }
 
+        // If a drag took place after we started dragging the scrollbar,
+        // cancel the scrollbar drag.
+        if cx.has_active_drag() {
+            self.editor.update(cx, |editor, cx| {
+                editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+            });
+        }
+
         let top = bounds.origin.y;
         let bottom = bounds.lower_left().y;
         let right = bounds.lower_right().x;
@@ -1275,7 +1284,7 @@ impl EditorElement {
                 let background_ranges = self
                     .editor
                     .read(cx)
-                    .background_highlight_row_ranges::<crate::items::BufferSearchHighlights>(
+                    .background_highlight_row_ranges::<BufferSearchHighlights>(
                         start_anchor..end_anchor,
                         &layout.position_map.snapshot,
                         50000,
@@ -1766,7 +1775,7 @@ impl EditorElement {
             let snapshot = editor.snapshot(cx);
             let style = self.style.clone();
 
-            let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+            let font_id = cx.text_system().resolve_font(&style.text.font());
             let font_size = style.text.font_size.to_pixels(cx.rem_size());
             let line_height = style.text.line_height_in_pixels(cx.rem_size());
             let em_width = cx
@@ -1972,7 +1981,7 @@ impl EditorElement {
                     (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
                     ||
                     // Selections
-                    (is_singleton && scrollbar_settings.selections && !highlighted_ranges.is_empty())
+                    (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
                     // Scrollmanager
                     || editor.scroll_manager.scrollbars_visible()
                 }
@@ -3779,7 +3788,7 @@ fn compute_auto_height_layout(
     }
 
     let style = editor.style.as_ref().unwrap();
-    let font_id = cx.text_system().font_id(&style.text.font()).unwrap();
+    let font_id = cx.text_system().resolve_font(&style.text.font());
     let font_size = style.text.font_size.to_pixels(cx.rem_size());
     let line_height = style.text.line_height_in_pixels(cx.rem_size());
     let em_width = cx

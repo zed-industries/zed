@@ -18,11 +18,11 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::{anyhow, Context as _};
-use futures::{channel::mpsc, StreamExt};
+use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use search::project_search::ProjectSearchBar;
-use settings::{initial_local_settings_content, load_default_keymap, KeymapFile, Settings};
+use settings::{initial_local_settings_content, KeymapFile, Settings, SettingsStore};
 use std::{borrow::Cow, ops::Deref, sync::Arc};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::{
@@ -32,6 +32,7 @@ use util::{
     ResultExt,
 };
 use uuid::Uuid;
+use welcome::BaseKeymap;
 use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
@@ -63,6 +64,13 @@ actions!(
         Zoom,
     ]
 );
+
+pub fn init(cx: &mut AppContext) {
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(quit);
+}
 
 pub fn build_window_options(
     bounds: Option<WindowBounds>,
@@ -130,7 +138,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(feedback_button, cx);
-            // status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(copilot, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
@@ -207,15 +214,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         workspace
             .register_action(about)
-            .register_action(|_, _: &Hide, cx| {
-                cx.hide();
-            })
-            .register_action(|_, _: &HideOthers, cx| {
-                cx.hide_other_apps();
-            })
-            .register_action(|_, _: &ShowAll, cx| {
-                cx.unhide_other_apps();
-            })
             .register_action(|_, _: &Minimize, cx| {
                 cx.minimize_window();
             })
@@ -225,7 +223,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             .register_action(|_, _: &ToggleFullScreen, cx| {
                 cx.toggle_full_screen();
             })
-            .register_action(quit)
             .register_action(|_, action: &OpenZedURL, cx| {
                 cx.global::<Arc<OpenListener>>()
                     .open_urls(&[action.url.clone()])
@@ -403,8 +400,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             });
 
         workspace.focus_handle(cx).focus(cx);
-        //todo!()
-        // load_default_keymap(cx);
     })
     .detach();
 }
@@ -451,10 +446,10 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
         .detach();
 }
 
-fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
+fn quit(_: &Quit, cx: &mut AppContext) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
-    cx.spawn(|_, mut cx| async move {
-        let mut workspace_windows = cx.update(|_, cx| {
+    cx.spawn(|mut cx| async move {
+        let mut workspace_windows = cx.update(|cx| {
             cx.windows()
                 .into_iter()
                 .filter_map(|window| window.downcast::<Workspace>())
@@ -463,14 +458,14 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        cx.update(|_, cx| {
+        cx.update(|cx| {
             workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
         })
         .log_err();
 
-        if let (true, Some(_)) = (should_confirm, workspace_windows.first().copied()) {
-            let answer = cx
-                .update(|_, cx| {
+        if let (true, Some(workspace)) = (should_confirm, workspace_windows.first().copied()) {
+            let answer = workspace
+                .update(&mut cx, |_, cx| {
                     cx.prompt(
                         PromptLevel::Info,
                         "Are you sure you want to quit?",
@@ -500,9 +495,7 @@ fn quit(_: &mut Workspace, _: &Quit, cx: &mut gpui::ViewContext<Workspace>) {
                 }
             }
         }
-        cx.update(|_, cx| {
-            cx.quit();
-        })?;
+        cx.update(|cx| cx.quit())?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
@@ -564,36 +557,58 @@ pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
 ) {
-    cx.spawn(move |cx| async move {
-        //  let mut settings_subscription = None;
-        while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
-            if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
-                cx.update(|cx| reload_keymaps(cx, &keymap_content)).ok();
+    BaseKeymap::register(cx);
 
-                // todo!()
-                // let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
-                // drop(settings_subscription);
-                // settings_subscription = Some(cx.update(|cx| {
-                //     cx.observe_global::<SettingsStore, _>(move |cx| {
-                //         let new_base_keymap = *settings::get::<BaseKeymap>(cx);
-                //         if new_base_keymap != old_base_keymap {
-                //             old_base_keymap = new_base_keymap.clone();
-                //             reload_keymaps(cx, &keymap_content);
-                //         }
-                //     })
-                // }));
+    let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
+    let mut old_base_keymap = *BaseKeymap::get_global(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let new_base_keymap = *BaseKeymap::get_global(cx);
+        if new_base_keymap != old_base_keymap {
+            old_base_keymap = new_base_keymap.clone();
+            base_keymap_tx.unbounded_send(()).unwrap();
+        }
+    })
+    .detach();
+
+    load_default_keymap(cx);
+
+    cx.spawn(move |cx| async move {
+        let mut user_keymap = KeymapFile::default();
+        loop {
+            select_biased! {
+                _ = base_keymap_rx.next() => {}
+                user_keymap_content = user_keymap_file_rx.next() => {
+                    if let Some(user_keymap_content) = user_keymap_content {
+                        if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
+                            user_keymap = keymap_content;
+                        } else {
+                            continue
+                        }
+                    }
+                }
             }
+
+            cx.update(|cx| reload_keymaps(cx, &user_keymap)).ok();
         }
     })
     .detach();
 }
 
 fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
-    // todo!()
-    // cx.clear_bindings();
+    cx.clear_key_bindings();
     load_default_keymap(cx);
     keymap_content.clone().add_to_cx(cx).log_err();
     cx.set_menus(app_menus());
+}
+
+pub fn load_default_keymap(cx: &mut AppContext) {
+    for path in ["keymaps/default.json", "keymaps/vim.json"] {
+        KeymapFile::load_asset(path, cx).unwrap();
+    }
+
+    if let Some(asset_path) = BaseKeymap::get_global(cx).asset_path() {
+        KeymapFile::load_asset(asset_path, cx).unwrap();
+    }
 }
 
 fn open_local_settings_file(

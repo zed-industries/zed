@@ -19,7 +19,7 @@ pub struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
-    pub(crate) active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+    pub(crate) active_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
@@ -79,6 +79,28 @@ impl TestPlatform {
         self.prompts.borrow_mut().multiple_choice.push_back(tx);
         rx
     }
+
+    pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
+        let executor = self.foreground_executor().clone();
+        let previous_window = self.active_window.borrow_mut().take();
+        *self.active_window.borrow_mut() = window.clone();
+
+        executor
+            .spawn(async move {
+                if let Some(previous_window) = previous_window {
+                    if let Some(window) = window.as_ref() {
+                        if Arc::ptr_eq(&previous_window.0, &window.0) {
+                            return;
+                        }
+                    }
+                    previous_window.simulate_active_status_change(false);
+                }
+                if let Some(window) = window {
+                    window.simulate_active_status_change(true);
+                }
+            })
+            .detach();
+    }
 }
 
 // todo!("implement out what our tests needed in GPUI 1")
@@ -130,7 +152,10 @@ impl Platform for TestPlatform {
     }
 
     fn active_window(&self) -> Option<crate::AnyWindowHandle> {
-        self.active_window.lock().clone()
+        self.active_window
+            .borrow()
+            .as_ref()
+            .map(|window| window.0.lock().handle)
     }
 
     fn open_window(
@@ -139,13 +164,13 @@ impl Platform for TestPlatform {
         options: WindowOptions,
         _draw: Box<dyn FnMut() -> Result<Scene>>,
     ) -> Box<dyn crate::PlatformWindow> {
-        *self.active_window.lock() = Some(handle);
-        Box::new(TestWindow::new(
+        let window = TestWindow::new(
             options,
             handle,
             self.weak.clone(),
             self.active_display.clone(),
-        ))
+        );
+        Box::new(window)
     }
 
     fn set_display_link_output_callback(

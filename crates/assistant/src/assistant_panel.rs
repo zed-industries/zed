@@ -16,7 +16,7 @@ use ai::{
 use ai::prompts::repository_context::PromptCodeSnippet;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use client::{telemetry::AssistantKind, TelemetrySettings};
+use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     display_map::{
@@ -38,7 +38,7 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
-use search::BufferSearchBar;
+use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::{Settings, SettingsStore};
 use std::{
@@ -1125,8 +1125,6 @@ impl Render for AssistantPanel {
                 .child(Label::new(
                     "Click on the Z button in the status bar to close this panel."
                 ))
-                .border()
-                .border_color(gpui::red())
         } else {
             let header = TabBar::new("assistant_header")
                 .start_child(
@@ -1158,7 +1156,18 @@ impl Render for AssistantPanel {
                     div()
                 });
 
+            let contents = if self.active_editor().is_some() {
+                let mut registrar = DivRegistrar::new(
+                    |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
+                    cx,
+                );
+                BufferSearchBar::register_inner(&mut registrar);
+                registrar.into_div()
+            } else {
+                div()
+            };
             v_stack()
+                .key_context("AssistantPanel")
                 .size_full()
                 .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                     this.new_conversation(cx);
@@ -1177,7 +1186,7 @@ impl Render for AssistantPanel {
                     Some(self.toolbar.clone())
                 })
                 .child(
-                    div()
+                    contents
                         .flex_1()
                         .child(if let Some(editor) = self.active_editor() {
                             editor.clone().into_any_element()
@@ -1277,8 +1286,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
-        Some(Icon::Ai)
+    fn icon(&self, cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Ai).filter(|_| AssistantSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -3529,12 +3538,5 @@ fn report_assistant_event(
         .default_open_ai_model
         .clone();
 
-    let telemetry_settings = TelemetrySettings::get_global(cx).clone();
-
-    telemetry.report_assistant_event(
-        telemetry_settings,
-        conversation_id,
-        assistant_kind,
-        model.full_name(),
-    )
+    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name(), cx)
 }

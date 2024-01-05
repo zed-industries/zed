@@ -16,6 +16,7 @@ float gaussian(float x, float sigma);
 float2 erf(float2 x);
 float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
+float4 over(float4 below, float4 above);
 
 struct QuadVertexOutput {
   float4 position [[position]];
@@ -108,21 +109,11 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     color = input.background_color;
   } else {
     float inset_distance = distance + border_width;
-
-    // Decrease border's opacity as we move inside the background.
-    input.border_color.a *= 1. - saturate(0.5 - inset_distance);
-
-    // Alpha-blend the border and the background.
-    float output_alpha = input.border_color.a +
-                         input.background_color.a * (1. - input.border_color.a);
-    float3 premultiplied_border_rgb =
-        input.border_color.rgb * input.border_color.a;
-    float3 premultiplied_background_rgb =
-        input.background_color.rgb * input.background_color.a;
-    float3 premultiplied_output_rgb =
-        premultiplied_border_rgb +
-        premultiplied_background_rgb * (1. - input.border_color.a);
-    color = float4(premultiplied_output_rgb, output_alpha);
+    // Blend the border on top of the background and then linearly interpolate
+    // between the two as we slide inside the background.
+    float4 blended_border = over(input.background_color, input.border_color);
+    color = mix(blended_border, input.background_color,
+                saturate(0.5 - inset_distance));
   }
 
   return color * float4(1., 1., 1., saturate(0.5 - distance));
@@ -652,4 +643,13 @@ float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
                 clip_bounds.origin.x + clip_bounds.size.width - position.x,
                 position.y - clip_bounds.origin.y,
                 clip_bounds.origin.y + clip_bounds.size.height - position.y);
+}
+
+float4 over(float4 below, float4 above) {
+  float4 result;
+  float alpha = above.a + below.a * (1.0 - above.a);
+  result.rgb =
+      (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
+  result.a = alpha;
+  return result;
 }

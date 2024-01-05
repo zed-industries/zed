@@ -370,6 +370,7 @@ mod tests {
     use gpui::TestAppContext;
     use language::Point;
     use project::Project;
+    use settings::KeymapFile;
     use workspace::{AppState, Workspace};
 
     #[test]
@@ -503,7 +504,20 @@ mod tests {
             workspace::init(app_state.clone(), cx);
             init(cx);
             Project::init_settings(cx);
-            settings::load_default_keymap(cx);
+            KeymapFile::parse(
+                r#"[
+                    {
+                        "bindings": {
+                            "cmd-n": "workspace::NewFile",
+                            "enter": "menu::Confirm",
+                            "cmd-shift-p": "command_palette::Toggle"
+                        }
+                    }
+                ]"#,
+            )
+            .unwrap()
+            .add_to_cx(cx)
+            .unwrap();
             app_state
         })
     }

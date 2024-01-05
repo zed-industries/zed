@@ -1,7 +1,7 @@
 use crate::{
-    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId,
-    WindowAppearance, WindowBounds, WindowOptions,
+    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, InputEvent, KeyDownEvent,
+    Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    Size, TestPlatform, TileId, WindowAppearance, WindowBounds, WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -10,25 +10,24 @@ use std::{
     sync::{self, Arc},
 };
 
-#[derive(Default)]
-pub(crate) struct TestWindowHandlers {
-    pub(crate) active_status_change: Vec<Box<dyn FnMut(bool)>>,
-    pub(crate) input: Vec<Box<dyn FnMut(crate::InputEvent) -> bool>>,
-    pub(crate) moved: Vec<Box<dyn FnMut()>>,
-    pub(crate) resize: Vec<Box<dyn FnMut(Size<Pixels>, f32)>>,
-}
-
-pub struct TestWindow {
+pub struct TestWindowState {
     pub(crate) bounds: WindowBounds,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
-    pub(crate) input_handler: Option<Arc<Mutex<Box<dyn PlatformInputHandler>>>>,
-    pub(crate) handlers: Arc<Mutex<TestWindowHandlers>>,
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+
+    input_callback: Option<Box<dyn FnMut(InputEvent) -> bool>>,
+    active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    moved_callback: Option<Box<dyn FnMut()>>,
+    input_handler: Option<Box<dyn PlatformInputHandler>>,
 }
+
+#[derive(Clone)]
+pub struct TestWindow(pub(crate) Arc<Mutex<TestWindowState>>);
 
 impl TestWindow {
     pub fn new(
@@ -37,27 +36,96 @@ impl TestWindow {
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
     ) -> Self {
-        Self {
+        Self(Arc::new(Mutex::new(TestWindowState {
             bounds: options.bounds,
             display,
             platform,
             handle,
-            input_handler: None,
             sprite_atlas: Arc::new(TestAtlas::new()),
-            handlers: Default::default(),
             title: Default::default(),
             edited: false,
+
+            input_callback: None,
+            active_status_change_callback: None,
+            resize_callback: None,
+            moved_callback: None,
+            input_handler: None,
+        })))
+    }
+
+    pub fn simulate_resize(&mut self, size: Size<Pixels>) {
+        let scale_factor = self.scale_factor();
+        let mut lock = self.0.lock();
+        let Some(mut callback) = lock.resize_callback.take() else {
+            return;
+        };
+        match &mut lock.bounds {
+            WindowBounds::Fullscreen | WindowBounds::Maximized => {
+                lock.bounds = WindowBounds::Fixed(Bounds {
+                    origin: Point::default(),
+                    size: size.map(|pixels| f64::from(pixels).into()),
+                });
+            }
+            WindowBounds::Fixed(bounds) => {
+                bounds.size = size.map(|pixels| f64::from(pixels).into());
+            }
         }
+        drop(lock);
+        callback(size, scale_factor);
+        self.0.lock().resize_callback = Some(callback);
+    }
+
+    pub(crate) fn simulate_active_status_change(&self, active: bool) {
+        let mut lock = self.0.lock();
+        let Some(mut callback) = lock.active_status_change_callback.take() else {
+            return;
+        };
+        drop(lock);
+        callback(active);
+        self.0.lock().active_status_change_callback = Some(callback);
+    }
+
+    pub fn simulate_input(&mut self, event: InputEvent) -> bool {
+        let mut lock = self.0.lock();
+        let Some(mut callback) = lock.input_callback.take() else {
+            return false;
+        };
+        drop(lock);
+        let result = callback(event);
+        self.0.lock().input_callback = Some(callback);
+        result
+    }
+
+    pub fn simulate_keystroke(&mut self, keystroke: Keystroke, is_held: bool) {
+        if self.simulate_input(InputEvent::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held,
+        })) {
+            return;
+        }
+
+        let mut lock = self.0.lock();
+        let Some(mut input_handler) = lock.input_handler.take() else {
+            panic!(
+                "simulate_keystroke {:?} input event was not handled and there was no active input",
+                &keystroke
+            );
+        };
+        drop(lock);
+        let text = keystroke.ime_key.unwrap_or(keystroke.key);
+        input_handler.replace_text_in_range(None, &text);
+
+        self.0.lock().input_handler = Some(input_handler);
     }
 }
 
 impl PlatformWindow for TestWindow {
     fn bounds(&self) -> WindowBounds {
-        self.bounds
+        self.0.lock().bounds
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        let bounds = match self.bounds {
+        let bounds = match self.bounds() {
             WindowBounds::Fixed(bounds) => bounds,
             WindowBounds::Maximized | WindowBounds::Fullscreen => self.display().bounds(),
         };
@@ -77,7 +145,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn display(&self) -> std::rc::Rc<dyn crate::PlatformDisplay> {
-        self.display.clone()
+        self.0.lock().display.clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -93,11 +161,11 @@ impl PlatformWindow for TestWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: Box<dyn crate::PlatformInputHandler>) {
-        self.input_handler = Some(Arc::new(Mutex::new(input_handler)));
+        self.0.lock().input_handler = Some(input_handler);
     }
 
     fn clear_input_handler(&mut self) {
-        self.input_handler = None;
+        self.0.lock().input_handler = None;
     }
 
     fn prompt(
@@ -106,24 +174,29 @@ impl PlatformWindow for TestWindow {
         _msg: &str,
         _answers: &[&str],
     ) -> futures::channel::oneshot::Receiver<usize> {
-        self.platform.upgrade().expect("platform dropped").prompt()
-    }
-
-    fn activate(&self) {
-        *self
+        self.0
+            .lock()
             .platform
             .upgrade()
             .expect("platform dropped")
-            .active_window
-            .lock() = Some(self.handle);
+            .prompt()
+    }
+
+    fn activate(&self) {
+        self.0
+            .lock()
+            .platform
+            .upgrade()
+            .unwrap()
+            .set_active_window(Some(self.clone()))
     }
 
     fn set_title(&mut self, title: &str) {
-        self.title = Some(title.to_owned());
+        self.0.lock().title = Some(title.to_owned());
     }
 
     fn set_edited(&mut self, edited: bool) {
-        self.edited = edited;
+        self.0.lock().edited = edited;
     }
 
     fn show_character_palette(&self) {
@@ -143,15 +216,15 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::InputEvent) -> bool>) {
-        self.handlers.lock().input.push(callback)
+        self.0.lock().input_callback = Some(callback)
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.handlers.lock().active_status_change.push(callback)
+        self.0.lock().active_status_change_callback = Some(callback)
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.handlers.lock().resize.push(callback)
+        self.0.lock().resize_callback = Some(callback)
     }
 
     fn on_fullscreen(&self, _callback: Box<dyn FnMut(bool)>) {
@@ -159,7 +232,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.handlers.lock().moved.push(callback)
+        self.0.lock().moved_callback = Some(callback)
     }
 
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {
@@ -183,7 +256,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
-        self.sprite_atlas.clone()
+        self.0.lock().sprite_atlas.clone()
     }
 
     fn as_test(&mut self) -> Option<&mut TestWindow> {

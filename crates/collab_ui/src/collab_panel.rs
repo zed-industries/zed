@@ -11,15 +11,16 @@ use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
 use client::{Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, serde_json, AnyElement,
     AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, ListOffset, ListState, Model,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce, SharedString,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset,
+    ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    RenderOnce, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -29,10 +30,9 @@ use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::prelude::*;
 use ui::{
-    h_stack, v_stack, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize,
-    Label, ListHeader, ListItem, Tooltip,
+    prelude::*, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize, Label,
+    ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1829,13 +1829,47 @@ impl CollabPanel {
             .size_full()
             .child(list(self.list_state.clone()).full())
             .child(
-                v_stack().p_2().child(
-                    v_stack()
-                        .border_primary(cx)
-                        .border_t()
-                        .child(self.filter_editor.clone()),
-                ),
+                v_stack()
+                    .child(div().mx_2().border_primary(cx).border_t())
+                    .child(
+                        v_stack()
+                            .p_2()
+                            .child(self.render_filter_input(&self.filter_editor, cx)),
+                    ),
             )
+    }
+
+    fn render_filter_input(
+        &self,
+        editor: &View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only(cx) {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        EditorElement::new(
+            editor,
+            EditorStyle {
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
 
     fn render_header(

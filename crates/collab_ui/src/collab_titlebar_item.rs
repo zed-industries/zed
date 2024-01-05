@@ -15,7 +15,7 @@ use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
     h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconElement, Tooltip,
+    IconButton, IconElement, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -111,6 +111,7 @@ impl Render for CollabTitlebarItem {
                                 &room,
                                 project_id,
                                 &current_user,
+                                cx,
                             ))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
@@ -128,6 +129,7 @@ impl Render for CollabTitlebarItem {
                                         &room,
                                         project_id,
                                         &current_user,
+                                        cx,
                                     )?;
 
                                     Some(
@@ -183,6 +185,8 @@ impl Render for CollabTitlebarItem {
                                     if is_shared { "Unshare" } else { "Share" },
                                 )
                                 .style(ButtonStyle::Subtle)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                .selected(is_shared)
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(
                                     move |this, _, cx| {
@@ -218,6 +222,7 @@ impl Render for CollabTitlebarItem {
                                 .style(ButtonStyle::Subtle)
                                 .icon_size(IconSize::Small)
                                 .selected(is_muted)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                                 .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
                         })
@@ -231,6 +236,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
@@ -253,6 +259,7 @@ impl Render for CollabTitlebarItem {
                                     .style(ButtonStyle::Subtle)
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
+                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                     .on_click(move |_, cx| {
                                         crate::toggle_screen_sharing(&Default::default(), cx)
                                     }),
@@ -420,6 +427,7 @@ impl CollabTitlebarItem {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
+        cx: &ViewContext<Self>,
     ) -> Option<FacePile> {
         if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
             return None;
@@ -432,9 +440,9 @@ impl CollabTitlebarItem {
                 Avatar::new(user.avatar_uri.clone())
                     .grayscale(!is_present)
                     .border_color(if is_speaking {
-                        gpui::blue()
+                        cx.theme().status().info_border
                     } else if is_muted {
-                        gpui::red()
+                        cx.theme().status().error_border
                     } else {
                         Hsla::default()
                     }),

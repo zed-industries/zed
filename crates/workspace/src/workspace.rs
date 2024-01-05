@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, Status, TelemetrySettings, TypedEnvelope, UserStore,
+    Client, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -107,6 +107,7 @@ actions!(
         NewCenterTerminal,
         ToggleTerminalFocus,
         NewSearch,
+        DeploySearch,
         Feedback,
         Restart,
         Welcome,
@@ -1095,19 +1096,21 @@ impl Workspace {
     }
 
     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
-        cx.windows().iter().find(|window| {
-            window
-                .update(cx, |_, window| {
-                    if window.is_window_active() {
-                        //This can only get called when the window's project connection has been lost
-                        //so we don't need to prompt the user for anything and instead just close the window
-                        window.remove_window();
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false)
+        cx.defer(|cx| {
+            cx.windows().iter().find(|window| {
+                window
+                    .update(cx, |_, window| {
+                        if window.is_window_active() {
+                            //This can only get called when the window's project connection has been lost
+                            //so we don't need to prompt the user for anything and instead just close the window
+                            window.remove_window();
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            });
         });
     }
 
@@ -1250,10 +1253,9 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        let telemetry_settings = TelemetrySettings::get_global(cx).clone();
         self.client()
             .telemetry()
-            .report_app_event(telemetry_settings, "open project", false);
+            .report_app_event("open project", false, cx);
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -3264,6 +3266,7 @@ impl Workspace {
         let user_store = project.read(cx).user_store();
 
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
@@ -4762,8 +4765,7 @@ mod tests {
         });
 
         // Deactivating the window saves the file.
-        cx.simulate_deactivation();
-        cx.executor().run_until_parked();
+        cx.deactivate_window();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Autosave on focus change.
@@ -4783,14 +4785,13 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.simulate_activation();
+        cx.update(|cx| cx.activate_window());
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
-        cx.simulate_deactivation();
+        cx.deactivate_window();
 
-        cx.executor().run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // Autosave after delay.

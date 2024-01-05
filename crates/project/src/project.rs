@@ -2842,15 +2842,6 @@ impl Project {
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
-        let mut initialization_options = adapter.initialization_options.clone();
-        match (&mut initialization_options, override_options) {
-            (Some(initialization_options), Some(override_options)) => {
-                merge_json_value_into(override_options, initialization_options);
-            }
-            (None, override_options) => initialization_options = override_options,
-            _ => {}
-        }
-
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
@@ -2863,7 +2854,7 @@ impl Project {
                 let result = Self::setup_and_insert_language_server(
                     this.clone(),
                     &worktree_path,
-                    initialization_options,
+                    override_options,
                     pending_server,
                     adapter.clone(),
                     language.clone(),
@@ -2984,7 +2975,7 @@ impl Project {
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
         worktree_path: &Path,
-        initialization_options: Option<serde_json::Value>,
+        override_initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
         language: Arc<Language>,
@@ -2994,7 +2985,7 @@ impl Project {
     ) -> Result<Option<Arc<LanguageServer>>> {
         let language_server = Self::setup_pending_language_server(
             this.clone(),
-            initialization_options,
+            override_initialization_options,
             pending_server,
             worktree_path,
             adapter.clone(),
@@ -3024,7 +3015,7 @@ impl Project {
 
     async fn setup_pending_language_server(
         this: WeakModel<Self>,
-        initialization_options: Option<serde_json::Value>,
+        override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         worktree_path: &Path,
         adapter: Arc<CachedLspAdapter>,
@@ -3190,7 +3181,14 @@ impl Project {
                 }
             })
             .detach();
-
+        let mut initialization_options = adapter.adapter.initialization_options().await;
+        match (&mut initialization_options, override_options) {
+            (Some(initialization_options), Some(override_options)) => {
+                merge_json_value_into(override_options, initialization_options);
+            }
+            (None, override_options) => initialization_options = override_options,
+            _ => {}
+        }
         let language_server = language_server.initialize(initialization_options).await?;
 
         language_server

@@ -23,11 +23,21 @@ pub struct DiagnosticIndicator {
 impl Render for DiagnosticIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_stack().child(
-                IconElement::new(Icon::Check)
-                    .size(IconSize::Small)
-                    .color(Color::Success),
-            ),
+            (0, 0) => h_stack().map(|this| {
+                if !self.in_progress_checks.is_empty() {
+                    this.child(
+                        IconElement::new(Icon::ArrowCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                } else {
+                    this.child(
+                        IconElement::new(Icon::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Default),
+                    )
+                }
+            }),
             (0, warning_count) => h_stack()
                 .gap_1()
                 .child(
@@ -64,6 +74,7 @@ impl Render for DiagnosticIndicator {
             Some(
                 Label::new("Checking…")
                     .size(LabelSize::Small)
+                    .color(Color::Muted)
                     .into_any_element(),
             )
         } else if let Some(diagnostic) = &self.current_diagnostic {

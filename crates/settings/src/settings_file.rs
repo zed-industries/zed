@@ -1,4 +1,4 @@
-use crate::{settings_store::SettingsStore, KeymapFile, Settings};
+use crate::{settings_store::SettingsStore, Settings};
 use anyhow::Result;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
@@ -77,7 +77,6 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
-            eprintln!("settings file changed");
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
                 store
                     .set_user_settings(&user_settings_content, cx)
@@ -120,15 +119,4 @@ pub fn update_settings_file<T: Settings>(
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
-}
-
-pub fn load_default_keymap(cx: &mut AppContext) {
-    for path in ["keymaps/default.json", "keymaps/vim.json"] {
-        KeymapFile::load_asset(path, cx).unwrap();
-    }
-
-    // todo!()
-    // if let Some(asset_path) = settings::get::<BaseKeymap>(cx).asset_path() {
-    //     KeymapFile::load_asset(asset_path, cx).unwrap();
-    // }
 }

@@ -3,11 +3,12 @@ use std::{path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, div, serde_json, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
+    actions, serde_json, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
     FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
     Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use project::Fs;
+use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
@@ -52,7 +53,7 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let terminal_panel = cx.view().clone();
+        let terminal_panel = cx.view().downgrade();
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
@@ -76,14 +77,17 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(false);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                let terminal_panel = terminal_panel.clone();
                 h_stack()
                     .gap_2()
                     .child(
                         IconButton::new("plus", Icon::Plus)
                             .icon_size(IconSize::Small)
-                            .on_click(cx.listener_for(&terminal_panel, |terminal_panel, _, cx| {
-                                terminal_panel.add_terminal(None, cx);
-                            }))
+                            .on_click(move |_, cx| {
+                                terminal_panel
+                                    .update(cx, |panel, cx| panel.add_terminal(None, cx))
+                                    .log_err();
+                            })
                             .tooltip(|cx| Tooltip::text("New Terminal", cx)),
                     )
                     .child({
@@ -101,9 +105,9 @@ impl TerminalPanel {
                     })
                     .into_any_element()
             });
-            // let buffer_search_bar = cx.build_view(search::BufferSearchBar::new);
-            // pane.toolbar()
-            //     .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
+            let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
+            pane.toolbar()
+                .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
             pane
         });
         let subscriptions = vec![
@@ -329,8 +333,20 @@ impl TerminalPanel {
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().size_full().child(self.pane.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut registrar = DivRegistrar::new(
+            |panel, cx| {
+                panel
+                    .pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+            },
+            cx,
+        );
+        BufferSearchBar::register_inner(&mut registrar);
+        registrar.into_div().size_full().child(self.pane.clone())
     }
 }
 
@@ -409,11 +425,6 @@ impl Panel for TerminalPanel {
     fn persistent_name() -> &'static str {
         "TerminalPanel"
     }
-
-    // todo!()
-    // fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-    //     ("Terminal Panel".into(), Some(Box::new(ToggleFocus)))
-    // }
 
     fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
         Some(Icon::Terminal)

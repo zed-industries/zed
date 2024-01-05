@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [lib]
-path = "src/notification_store2.rs"
+path = "src/notification_store.rs"
 doctest = false
 
 [features]

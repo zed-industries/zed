@@ -270,7 +270,7 @@ impl AutoUpdater {
             ReleaseChannel::Nightly => cx
                 .try_read_global::<AppCommitSha, _>(|sha, _| release.version != sha.0)
                 .unwrap_or(true),
-            _ => release.version.parse::<SemanticVersion>()? <= current_version,
+            _ => release.version.parse::<SemanticVersion>()? > current_version,
         };
 
         if !should_download {

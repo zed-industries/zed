@@ -20,7 +20,7 @@ pub fn summercamp() -> UserThemeFamily {
             styles: UserThemeStylesRefinement {
                 colors: ThemeColorsRefinement {
                     border: Some(rgba(0x312d21ff).into()),
-                    border_variant: Some(rgba(0x312d21ff).into()),
+                    border_variant: Some(rgba(0x29251bff).into()),
                     border_focused: Some(rgba(0x193761ff).into()),
                     border_selected: Some(rgba(0x193761ff).into()),
                     border_transparent: Some(rgba(0x00000000).into()),
@@ -59,7 +59,7 @@ pub fn summercamp() -> UserThemeFamily {
                     scrollbar_thumb_background: Some(rgba(0xf8f5de4c).into()),
                     scrollbar_thumb_hover_background: Some(rgba(0x29251bff).into()),
                     scrollbar_thumb_border: Some(rgba(0x29251bff).into()),
-                    scrollbar_track_background: Some(rgba(0x1c1810ff).into()),
+                    scrollbar_track_background: Some(rgba(0x00000000).into()),
                     scrollbar_track_border: Some(rgba(0x221e15ff).into()),
                     editor_foreground: Some(rgba(0xf8f5deff).into()),
                     editor_background: Some(rgba(0x1c1810ff).into()),
