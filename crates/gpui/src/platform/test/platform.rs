@@ -105,9 +105,7 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn activate(&self, _ignoring_other_apps: bool) {
-        unimplemented!()
-    }
+    fn activate(&self, _ignoring_other_apps: bool) {}
 
     fn hide(&self) {
         unimplemented!()

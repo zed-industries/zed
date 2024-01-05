@@ -3,8 +3,8 @@ use call::ActiveCall;
 use collab_ui::notifications::project_shared_notification::ProjectSharedNotification;
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, BackgroundExecutor, Context, TestAppContext, View, VisualContext, VisualTestContext,
-    WindowContext,
+    point, BackgroundExecutor, Context, SharedString, TestAppContext, View, VisualContext,
+    VisualTestContext, WindowContext,
 };
 use live_kit_client::MacOSDisplay;
 use project::project_settings::ProjectSettings;
@@ -517,1130 +517,1051 @@ async fn test_basic_following(
     );
 }
 
-// #[gpui::test]
-// async fn test_following_tab_order(
-//     executor: BackgroundExecutor,
-//     cx_a: &mut TestAppContext,
-//     cx_b: &mut TestAppContext,
-// ) {
-//     let mut server = TestServer::start(executor.clone()).await;
-//     let client_a = server.create_client(cx_a, "user_a").await;
-//     let client_b = server.create_client(cx_b, "user_b").await;
-//     server
-//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-//         .await;
-//     let active_call_a = cx_a.read(ActiveCall::global);
-//     let active_call_b = cx_b.read(ActiveCall::global);
-
-//     cx_a.update(editor::init);
-//     cx_b.update(editor::init);
-
-//     client_a
-//         .fs()
-//         .insert_tree(
-//             "/a",
-//             json!({
-//                 "1.txt": "one",
-//                 "2.txt": "two",
-//                 "3.txt": "three",
-//             }),
-//         )
-//         .await;
-//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-//     active_call_a
-//         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
-//         .await
-//         .unwrap();
-
-//     let project_id = active_call_a
-//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-//         .await
-//         .unwrap();
-//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-//     active_call_b
-//         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
-//         .await
-//         .unwrap();
-
-//     let workspace_a = client_a
-//         .build_workspace(&project_a, cx_a)
-//         .root(cx_a)
-//         .unwrap();
-//     let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
-
-//     let workspace_b = client_b
-//         .build_workspace(&project_b, cx_b)
-//         .root(cx_b)
-//         .unwrap();
-//     let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
-
-//     let client_b_id = project_a.update(cx_a, |project, _| {
-//         project.collaborators().values().next().unwrap().peer_id
-//     });
-
-//     //Open 1, 3 in that order on client A
-//     workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-//     workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.open_path((worktree_id, "3.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     let pane_paths = |pane: &View<workspace::Pane>, cx: &mut TestAppContext| {
-//         pane.update(cx, |pane, cx| {
-//             pane.items()
-//                 .map(|item| {
-//                     item.project_path(cx)
-//                         .unwrap()
-//                         .path
-//                         .to_str()
-//                         .unwrap()
-//                         .to_owned()
-//                 })
-//                 .collect::<Vec<_>>()
-//         })
-//     };
-
-//     //Verify that the tabs opened in the order we expect
-//     assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt"]);
-
-//     //Follow client B as client A
-//     workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.follow(client_b_id, cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-
-//     //Open just 2 on client B
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.open_path((worktree_id, "2.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-//     executor.run_until_parked();
-
-//     // Verify that newly opened followed file is at the end
-//     assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
-
-//     //Open just 1 on client B
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(&pane_paths(&pane_b, cx_b), &["2.txt", "1.txt"]);
-//     executor.run_until_parked();
-
-//     // Verify that following into 1 did not reorder
-//     assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_peers_following_each_other(
-//     executor: BackgroundExecutor,
-//     cx_a: &mut TestAppContext,
-//     cx_b: &mut TestAppContext,
-// ) {
-//     let mut server = TestServer::start(executor.clone()).await;
-//     let client_a = server.create_client(cx_a, "user_a").await;
-//     let client_b = server.create_client(cx_b, "user_b").await;
-//     server
-//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-//         .await;
-//     let active_call_a = cx_a.read(ActiveCall::global);
-//     let active_call_b = cx_b.read(ActiveCall::global);
-
-//     cx_a.update(editor::init);
-//     cx_b.update(editor::init);
-
-//     // Client A shares a project.
-//     client_a
-//         .fs()
-//         .insert_tree(
-//             "/a",
-//             json!({
-//                 "1.txt": "one",
-//                 "2.txt": "two",
-//                 "3.txt": "three",
-//                 "4.txt": "four",
-//             }),
-//         )
-//         .await;
-//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-//     active_call_a
-//         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
-//         .await
-//         .unwrap();
-//     let project_id = active_call_a
-//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-//         .await
-//         .unwrap();
-
-//     // Client B joins the project.
-//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-//     active_call_b
-//         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
-//         .await
-//         .unwrap();
-
-//     // Client A opens a file.
-//     let workspace_a = client_a
-//         .build_workspace(&project_a, cx_a)
-//         .root(cx_a)
-//         .unwrap();
-//     workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap()
-//         .downcast::<Editor>()
-//         .unwrap();
-
-//     // Client B opens a different file.
-//     let workspace_b = client_b
-//         .build_workspace(&project_b, cx_b)
-//         .root(cx_b)
-//         .unwrap();
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.open_path((worktree_id, "2.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap()
-//         .downcast::<Editor>()
-//         .unwrap();
-
-//     // Clients A and B follow each other in split panes
-//     workspace_a.update(cx_a, |workspace, cx| {
-//         workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, cx);
-//     });
-//     workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.follow(client_b.peer_id().unwrap(), cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-//     workspace_b.update(cx_b, |workspace, cx| {
-//         workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, cx);
-//     });
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-
-//     // Clients A and B return focus to the original files they had open
-//     workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(cx));
-//     workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
-//     executor.run_until_parked();
-
-//     // Both clients see the other client's focused file in their right pane.
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![(true, "1.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: false,
-//                 leader: client_b.peer_id(),
-//                 items: vec![(false, "1.txt".into()), (true, "2.txt".into())]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![(true, "2.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: false,
-//                 leader: client_a.peer_id(),
-//                 items: vec![(false, "2.txt".into()), (true, "1.txt".into())]
-//             },
-//         ]
-//     );
-
-//     // Clients A and B each open a new file.
-//     workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.open_path((worktree_id, "3.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.open_path((worktree_id, "4.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-//     executor.run_until_parked();
-
-//     // Both client's see the other client open the new file, but keep their
-//     // focus on their own active pane.
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: false,
-//                 leader: client_b.peer_id(),
-//                 items: vec![
-//                     (false, "1.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (true, "4.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: false,
-//                 leader: client_a.peer_id(),
-//                 items: vec![
-//                     (false, "2.txt".into()),
-//                     (false, "1.txt".into()),
-//                     (true, "3.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-
-//     // Client A focuses their right pane, in which they're following client B.
-//     workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(cx));
-//     executor.run_until_parked();
-
-//     // Client B sees that client A is now looking at the same file as them.
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_b.peer_id(),
-//                 items: vec![
-//                     (false, "1.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (true, "4.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: false,
-//                 leader: client_a.peer_id(),
-//                 items: vec![
-//                     (false, "2.txt".into()),
-//                     (false, "1.txt".into()),
-//                     (false, "3.txt".into()),
-//                     (true, "4.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-
-//     // Client B focuses their right pane, in which they're following client A,
-//     // who is following them.
-//     workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
-//     executor.run_until_parked();
-
-//     // Client A sees that client B is now looking at the same file as them.
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_a.peer_id(),
-//                 items: vec![
-//                     (false, "2.txt".into()),
-//                     (false, "1.txt".into()),
-//                     (false, "3.txt".into()),
-//                     (true, "4.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_b.peer_id(),
-//                 items: vec![
-//                     (false, "1.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (true, "4.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-
-//     // Client B focuses a file that they previously followed A to, breaking
-//     // the follow.
-//     workspace_b.update(cx_b, |workspace, cx| {
-//         workspace.active_pane().update(cx, |pane, cx| {
-//             pane.activate_prev_item(true, cx);
-//         });
-//     });
-//     executor.run_until_parked();
-
-//     // Both clients see that client B is looking at that previous file.
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![
-//                     (false, "2.txt".into()),
-//                     (false, "1.txt".into()),
-//                     (true, "3.txt".into()),
-//                     (false, "4.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_b.peer_id(),
-//                 items: vec![
-//                     (false, "1.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (false, "4.txt".into()),
-//                     (true, "3.txt".into()),
-//                 ]
-//             },
-//         ]
-//     );
-
-//     // Client B closes tabs, some of which were originally opened by client A,
-//     // and some of which were originally opened by client B.
-//     workspace_b.update(cx_b, |workspace, cx| {
-//         workspace.active_pane().update(cx, |pane, cx| {
-//             pane.close_inactive_items(&Default::default(), cx)
-//                 .unwrap()
-//                 .detach();
-//         });
-//     });
-
-//     executor.run_until_parked();
-
-//     // Both clients see that Client B is looking at the previous tab.
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![(true, "3.txt".into()),]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_b.peer_id(),
-//                 items: vec![
-//                     (false, "1.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (false, "4.txt".into()),
-//                     (true, "3.txt".into()),
-//                 ]
-//             },
-//         ]
-//     );
-
-//     // Client B follows client A again.
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-
-//     // Client A cycles through some tabs.
-//     workspace_a.update(cx_a, |workspace, cx| {
-//         workspace.active_pane().update(cx, |pane, cx| {
-//             pane.activate_prev_item(true, cx);
-//         });
-//     });
-//     executor.run_until_parked();
-
-//     // Client B follows client A into those tabs.
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![
-//                     (false, "1.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (true, "4.txt".into()),
-//                     (false, "3.txt".into()),
-//                 ]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_a.peer_id(),
-//                 items: vec![(false, "3.txt".into()), (true, "4.txt".into())]
-//             },
-//         ]
-//     );
-
-//     workspace_a.update(cx_a, |workspace, cx| {
-//         workspace.active_pane().update(cx, |pane, cx| {
-//             pane.activate_prev_item(true, cx);
-//         });
-//     });
-//     executor.run_until_parked();
-
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![
-//                     (false, "1.txt".into()),
-//                     (true, "2.txt".into()),
-//                     (false, "4.txt".into()),
-//                     (false, "3.txt".into()),
-//                 ]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_a.peer_id(),
-//                 items: vec![
-//                     (false, "3.txt".into()),
-//                     (false, "4.txt".into()),
-//                     (true, "2.txt".into())
-//                 ]
-//             },
-//         ]
-//     );
-
-//     workspace_a.update(cx_a, |workspace, cx| {
-//         workspace.active_pane().update(cx, |pane, cx| {
-//             pane.activate_prev_item(true, cx);
-//         });
-//     });
-//     executor.run_until_parked();
-
-//     assert_eq!(
-//         pane_summaries(&workspace_a, cx_a),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: None,
-//                 items: vec![
-//                     (true, "1.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (false, "4.txt".into()),
-//                     (false, "3.txt".into()),
-//                 ]
-//             },
-//         ]
-//     );
-//     assert_eq!(
-//         pane_summaries(&workspace_b, cx_b),
-//         &[
-//             PaneSummary {
-//                 active: false,
-//                 leader: None,
-//                 items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
-//             },
-//             PaneSummary {
-//                 active: true,
-//                 leader: client_a.peer_id(),
-//                 items: vec![
-//                     (false, "3.txt".into()),
-//                     (false, "4.txt".into()),
-//                     (false, "2.txt".into()),
-//                     (true, "1.txt".into()),
-//                 ]
-//             },
-//         ]
-//     );
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_auto_unfollowing(
-//     executor: BackgroundExecutor,
-//     cx_a: &mut TestAppContext,
-//     cx_b: &mut TestAppContext,
-// ) {
-//     // 2 clients connect to a server.
-//     let mut server = TestServer::start(executor.clone()).await;
-//     let client_a = server.create_client(cx_a, "user_a").await;
-//     let client_b = server.create_client(cx_b, "user_b").await;
-//     server
-//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-//         .await;
-//     let active_call_a = cx_a.read(ActiveCall::global);
-//     let active_call_b = cx_b.read(ActiveCall::global);
-
-//     cx_a.update(editor::init);
-//     cx_b.update(editor::init);
-
-//     // Client A shares a project.
-//     client_a
-//         .fs()
-//         .insert_tree(
-//             "/a",
-//             json!({
-//                 "1.txt": "one",
-//                 "2.txt": "two",
-//                 "3.txt": "three",
-//             }),
-//         )
-//         .await;
-//     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-//     active_call_a
-//         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
-//         .await
-//         .unwrap();
-
-//     let project_id = active_call_a
-//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-//         .await
-//         .unwrap();
-//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-//     active_call_b
-//         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
-//         .await
-//         .unwrap();
-
-//     todo!("could be wrong")
-//     let mut cx_a = VisualTestContext::from_window(*window_a, cx_a);
-//     let cx_a = &mut cx_a;
-//     let mut cx_b = VisualTestContext::from_window(*window_b, cx_b);
-//     let cx_b = &mut cx_b;
-
-//     // Client A opens some editors.
-//     let workspace_a = client_a
-//         .build_workspace(&project_a, cx_a)
-//         .root(cx_a)
-//         .unwrap();
-//     let _editor_a1 = workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap()
-//         .downcast::<Editor>()
-//         .unwrap();
-
-//     // Client B starts following client A.
-//     let workspace_b = client_b
-//         .build_workspace(&project_b, cx_b)
-//         .root(cx_b)
-//         .unwrap();
-//     let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
-//     let leader_id = project_b.update(cx_b, |project, _| {
-//         project.collaborators().values().next().unwrap().peer_id
-//     });
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.follow(leader_id, cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         Some(leader_id)
-//     );
-//     let editor_b2 = workspace_b.update(cx_b, |workspace, cx| {
-//         workspace
-//             .active_item(cx)
-//             .unwrap()
-//             .downcast::<Editor>()
-//             .unwrap()
-//     });
-
-//     // When client B moves, it automatically stops following client A.
-//     editor_b2.update(cx_b, |editor, cx| editor.move_right(&editor::MoveRight, cx));
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         None
-//     );
-
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.follow(leader_id, cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         Some(leader_id)
-//     );
-
-//     // When client B edits, it automatically stops following client A.
-//     editor_b2.update(cx_b, |editor, cx| editor.insert("X", cx));
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         None
-//     );
-
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.follow(leader_id, cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         Some(leader_id)
-//     );
-
-//     // When client B scrolls, it automatically stops following client A.
-//     editor_b2.update(cx_b, |editor, cx| {
-//         editor.set_scroll_position(point(0., 3.), cx)
-//     });
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         None
-//     );
-
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.follow(leader_id, cx).unwrap()
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         Some(leader_id)
-//     );
-
-//     // When client B activates a different pane, it continues following client A in the original pane.
-//     workspace_b.update(cx_b, |workspace, cx| {
-//         workspace.split_and_clone(pane_b.clone(), SplitDirection::Right, cx)
-//     });
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         Some(leader_id)
-//     );
-
-//     workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         Some(leader_id)
-//     );
-
-//     // When client B activates a different item in the original pane, it automatically stops following client A.
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.open_path((worktree_id, "2.txt"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-//     assert_eq!(
-//         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
-//         None
-//     );
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_peers_simultaneously_following_each_other(
-//     executor: BackgroundExecutor,
-//     cx_a: &mut TestAppContext,
-//     cx_b: &mut TestAppContext,
-// ) {
-//     let mut server = TestServer::start(executor.clone()).await;
-//     let client_a = server.create_client(cx_a, "user_a").await;
-//     let client_b = server.create_client(cx_b, "user_b").await;
-//     server
-//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-//         .await;
-//     let active_call_a = cx_a.read(ActiveCall::global);
-
-//     cx_a.update(editor::init);
-//     cx_b.update(editor::init);
-
-//     client_a.fs().insert_tree("/a", json!({})).await;
-//     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-//     let workspace_a = client_a
-//         .build_workspace(&project_a, cx_a)
-//         .root(cx_a)
-//         .unwrap();
-//     let project_id = active_call_a
-//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-//         .await
-//         .unwrap();
-
-//     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-//     let workspace_b = client_b
-//         .build_workspace(&project_b, cx_b)
-//         .root(cx_b)
-//         .unwrap();
-
-//     executor.run_until_parked();
-//     let client_a_id = project_b.update(cx_b, |project, _| {
-//         project.collaborators().values().next().unwrap().peer_id
-//     });
-//     let client_b_id = project_a.update(cx_a, |project, _| {
-//         project.collaborators().values().next().unwrap().peer_id
-//     });
-
-//     let a_follow_b = workspace_a.update(cx_a, |workspace, cx| {
-//         workspace.follow(client_b_id, cx).unwrap()
-//     });
-//     let b_follow_a = workspace_b.update(cx_b, |workspace, cx| {
-//         workspace.follow(client_a_id, cx).unwrap()
-//     });
-
-//     futures::try_join!(a_follow_b, b_follow_a).unwrap();
-//     workspace_a.update(cx_a, |workspace, _| {
-//         assert_eq!(
-//             workspace.leader_for_pane(workspace.active_pane()),
-//             Some(client_b_id)
-//         );
-//     });
-//     workspace_b.update(cx_b, |workspace, _| {
-//         assert_eq!(
-//             workspace.leader_for_pane(workspace.active_pane()),
-//             Some(client_a_id)
-//         );
-//     });
-// }
-
-// #[gpui::test(iterations = 10)]
-// async fn test_following_across_workspaces(
-//     executor: BackgroundExecutor,
-//     cx_a: &mut TestAppContext,
-//     cx_b: &mut TestAppContext,
-// ) {
-//     // a and b join a channel/call
-//     // a shares project 1
-//     // b shares project 2
-//     //
-//     // b follows a: causes project 2 to be joined, and b to follow a.
-//     // b opens a different file in project 2, a follows b
-//     // b opens a different file in project 1, a cannot follow b
-//     // b shares the project, a joins the project and follows b
-//     let mut server = TestServer::start(executor.clone()).await;
-//     let client_a = server.create_client(cx_a, "user_a").await;
-//     let client_b = server.create_client(cx_b, "user_b").await;
-//     cx_a.update(editor::init);
-//     cx_b.update(editor::init);
-
-//     client_a
-//         .fs()
-//         .insert_tree(
-//             "/a",
-//             json!({
-//                 "w.rs": "",
-//                 "x.rs": "",
-//             }),
-//         )
-//         .await;
-
-//     client_b
-//         .fs()
-//         .insert_tree(
-//             "/b",
-//             json!({
-//                 "y.rs": "",
-//                 "z.rs": "",
-//             }),
-//         )
-//         .await;
-
-//     server
-//         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-//         .await;
-//     let active_call_a = cx_a.read(ActiveCall::global);
-//     let active_call_b = cx_b.read(ActiveCall::global);
-
-//     let (project_a, worktree_id_a) = client_a.build_local_project("/a", cx_a).await;
-//     let (project_b, worktree_id_b) = client_b.build_local_project("/b", cx_b).await;
-
-//     let workspace_a = client_a
-//         .build_workspace(&project_a, cx_a)
-//         .root(cx_a)
-//         .unwrap();
-//     let workspace_b = client_b
-//         .build_workspace(&project_b, cx_b)
-//         .root(cx_b)
-//         .unwrap();
-
-//     cx_a.update(|cx| collab_ui::init(&client_a.app_state, cx));
-//     cx_b.update(|cx| collab_ui::init(&client_b.app_state, cx));
-
-//     active_call_a
-//         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-//         .await
-//         .unwrap();
-
-//     active_call_a
-//         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
-//         .await
-//         .unwrap();
-//     active_call_b
-//         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
-//         .await
-//         .unwrap();
-
-//     todo!("could be wrong")
-//     let mut cx_a = VisualTestContext::from_window(*window_a, cx_a);
-//     let cx_a = &mut cx_a;
-//     let mut cx_b = VisualTestContext::from_window(*window_b, cx_b);
-//     let cx_b = &mut cx_b;
-
-//     workspace_a
-//         .update(cx_a, |workspace, cx| {
-//             workspace.open_path((worktree_id_a, "w.rs"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     executor.run_until_parked();
-//     assert_eq!(visible_push_notifications(cx_b).len(), 1);
-
-//     workspace_b.update(cx_b, |workspace, cx| {
-//         workspace
-//             .follow(client_a.peer_id().unwrap(), cx)
-//             .unwrap()
-//             .detach()
-//     });
-
-//     executor.run_until_parked();
-//     let workspace_b_project_a = cx_b
-//         .windows()
-//         .iter()
-//         .max_by_key(|window| window.item_id())
-//         .unwrap()
-//         .downcast::<Workspace>()
-//         .unwrap()
-//         .root(cx_b)
-//         .unwrap();
-
-//     // assert that b is following a in project a in w.rs
-//     workspace_b_project_a.update(cx_b, |workspace, cx| {
-//         assert!(workspace.is_being_followed(client_a.peer_id().unwrap()));
-//         assert_eq!(
-//             client_a.peer_id(),
-//             workspace.leader_for_pane(workspace.active_pane())
-//         );
-//         let item = workspace.active_item(cx).unwrap();
-//         assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("w.rs"));
-//     });
-
-//     // TODO: in app code, this would be done by the collab_ui.
-//     active_call_b
-//         .update(cx_b, |call, cx| {
-//             let project = workspace_b_project_a.read(cx).project().clone();
-//             call.set_location(Some(&project), cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     // assert that there are no share notifications open
-//     assert_eq!(visible_push_notifications(cx_b).len(), 0);
-
-//     // b moves to x.rs in a's project, and a follows
-//     workspace_b_project_a
-//         .update(cx_b, |workspace, cx| {
-//             workspace.open_path((worktree_id_a, "x.rs"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     executor.run_until_parked();
-//     workspace_b_project_a.update(cx_b, |workspace, cx| {
-//         let item = workspace.active_item(cx).unwrap();
-//         assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("x.rs"));
-//     });
-
-//     workspace_a.update(cx_a, |workspace, cx| {
-//         workspace
-//             .follow(client_b.peer_id().unwrap(), cx)
-//             .unwrap()
-//             .detach()
-//     });
-
-//     executor.run_until_parked();
-//     workspace_a.update(cx_a, |workspace, cx| {
-//         assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
-//         assert_eq!(
-//             client_b.peer_id(),
-//             workspace.leader_for_pane(workspace.active_pane())
-//         );
-//         let item = workspace.active_pane().read(cx).active_item().unwrap();
-//         assert_eq!(item.tab_description(0, cx).unwrap(), "x.rs".into());
-//     });
-
-//     // b moves to y.rs in b's project, a is still following but can't yet see
-//     workspace_b
-//         .update(cx_b, |workspace, cx| {
-//             workspace.open_path((worktree_id_b, "y.rs"), None, true, cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     // TODO: in app code, this would be done by the collab_ui.
-//     active_call_b
-//         .update(cx_b, |call, cx| {
-//             let project = workspace_b.read(cx).project().clone();
-//             call.set_location(Some(&project), cx)
-//         })
-//         .await
-//         .unwrap();
-
-//     let project_b_id = active_call_b
-//         .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
-//         .await
-//         .unwrap();
-
-//     executor.run_until_parked();
-//     assert_eq!(visible_push_notifications(cx_a).len(), 1);
-//     cx_a.update(|cx| {
-//         workspace::join_remote_project(
-//             project_b_id,
-//             client_b.user_id().unwrap(),
-//             client_a.app_state.clone(),
-//             cx,
-//         )
-//     })
-//     .await
-//     .unwrap();
-
-//     executor.run_until_parked();
-
-//     assert_eq!(visible_push_notifications(cx_a).len(), 0);
-//     let workspace_a_project_b = cx_a
-//         .windows()
-//         .iter()
-//         .max_by_key(|window| window.item_id())
-//         .unwrap()
-//         .downcast::<Workspace>()
-//         .unwrap()
-//         .root(cx_a)
-//         .unwrap();
-
-//     workspace_a_project_b.update(cx_a, |workspace, cx| {
-//         assert_eq!(workspace.project().read(cx).remote_id(), Some(project_b_id));
-//         assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
-//         assert_eq!(
-//             client_b.peer_id(),
-//             workspace.leader_for_pane(workspace.active_pane())
-//         );
-//         let item = workspace.active_item(cx).unwrap();
-//         assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("y.rs"));
-//     });
-// }
+#[gpui::test]
+async fn test_following_tab_order(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
+
+    let client_b_id = project_a.update(cx_a, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+
+    //Open 1, 3 in that order on client A
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "3.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    let pane_paths = |pane: &View<workspace::Pane>, cx: &mut VisualTestContext| {
+        pane.update(cx, |pane, cx| {
+            pane.items()
+                .map(|item| {
+                    item.project_path(cx)
+                        .unwrap()
+                        .path
+                        .to_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+
+    //Verify that the tabs opened in the order we expect
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt"]);
+
+    //Follow client B as client A
+    workspace_a.update(cx_a, |workspace, cx| workspace.follow(client_b_id, cx));
+    executor.run_until_parked();
+
+    //Open just 2 on client B
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    // Verify that newly opened followed file is at the end
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+
+    //Open just 1 on client B
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(&pane_paths(&pane_b, cx_b), &["2.txt", "1.txt"]);
+    executor.run_until_parked();
+
+    // Verify that following into 1 did not reorder
+    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    // Client A shares a project.
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+                "4.txt": "four",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Client B joins the project.
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    // Client A opens a file.
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Client B opens a different file.
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Clients A and B follow each other in split panes
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, cx);
+    });
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.follow(client_b.peer_id().unwrap(), cx)
+    });
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, cx);
+    });
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(client_a.peer_id().unwrap(), cx)
+    });
+    executor.run_until_parked();
+
+    // Clients A and B return focus to the original files they had open
+    workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(cx));
+    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
+    executor.run_until_parked();
+
+    // Both clients see the other client's focused file in their right pane.
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(true, "1.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_b.peer_id(),
+                items: vec![(false, "1.txt".into()), (true, "2.txt".into())]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(true, "2.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_a.peer_id(),
+                items: vec![(false, "2.txt".into()), (true, "1.txt".into())]
+            },
+        ]
+    );
+
+    // Clients A and B each open a new file.
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "3.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "4.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    // Both client's see the other client open the new file, but keep their
+    // focus on their own active pane.
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (true, "3.txt".into())
+                ]
+            },
+        ]
+    );
+
+    // Client A focuses their right pane, in which they're following client B.
+    workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(cx));
+    executor.run_until_parked();
+
+    // Client B sees that client A is now looking at the same file as them.
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (false, "3.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+
+    // Client B focuses their right pane, in which they're following client A,
+    // who is following them.
+    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
+    executor.run_until_parked();
+
+    // Client A sees that client B is now looking at the same file as them.
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (false, "3.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+
+    // Client B focuses a file that they previously followed A to, breaking
+    // the follow.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
+    });
+    executor.run_until_parked();
+
+    // Both clients see that client B is looking at that previous file.
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (true, "3.txt".into()),
+                    (false, "4.txt".into())
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (true, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+
+    // Client B closes tabs, some of which were originally opened by client A,
+    // and some of which were originally opened by client B.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.close_inactive_items(&Default::default(), cx)
+                .unwrap()
+                .detach();
+        });
+    });
+
+    executor.run_until_parked();
+
+    // Both clients see that Client B is looking at the previous tab.
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(true, "3.txt".into()),]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (true, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+
+    // Client B follows client A again.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(client_a.peer_id().unwrap(), cx)
+    });
+    executor.run_until_parked();
+    // Client A cycles through some tabs.
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
+    });
+    executor.run_until_parked();
+
+    // Client B follows client A into those tabs.
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into()),
+                    (false, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![(false, "3.txt".into()), (true, "4.txt".into())]
+            },
+        ]
+    );
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
+    });
+    executor.run_until_parked();
+
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (false, "1.txt".into()),
+                    (true, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (false, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "3.txt".into()),
+                    (false, "4.txt".into()),
+                    (true, "2.txt".into())
+                ]
+            },
+        ]
+    );
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
+    });
+    executor.run_until_parked();
+
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (true, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (false, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "3.txt".into()),
+                    (false, "4.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "1.txt".into()),
+                ]
+            },
+        ]
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    // 2 clients connect to a server.
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    // Client A shares a project.
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let _editor_a1 = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Client B starts following client A.
+    let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
+    let leader_id = project_b.update(cx_b, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, cx));
+    executor.run_until_parked();
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        Some(leader_id)
+    );
+    let editor_b2 = workspace_b.update(cx_b, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+
+    // When client B moves, it automatically stops following client A.
+    editor_b2.update(cx_b, |editor, cx| editor.move_right(&editor::MoveRight, cx));
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        None
+    );
+
+    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, cx));
+    executor.run_until_parked();
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        Some(leader_id)
+    );
+
+    // When client B edits, it automatically stops following client A.
+    editor_b2.update(cx_b, |editor, cx| editor.insert("X", cx));
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        None
+    );
+
+    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, cx));
+    executor.run_until_parked();
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        Some(leader_id)
+    );
+
+    // When client B scrolls, it automatically stops following client A.
+    editor_b2.update(cx_b, |editor, cx| {
+        editor.set_scroll_position(point(0., 3.), cx)
+    });
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        None
+    );
+
+    workspace_b.update(cx_b, |workspace, cx| workspace.follow(leader_id, cx));
+    executor.run_until_parked();
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        Some(leader_id)
+    );
+
+    // When client B activates a different pane, it continues following client A in the original pane.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.split_and_clone(pane_b.clone(), SplitDirection::Right, cx)
+    });
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        Some(leader_id)
+    );
+
+    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        Some(leader_id)
+    );
+
+    // When client B activates a different item in the original pane, it automatically stops following client A.
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "2.txt"), None, true, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+        None
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_peers_simultaneously_following_each_other(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a.fs().insert_tree("/a", json!({})).await;
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    executor.run_until_parked();
+    let client_a_id = project_b.update(cx_b, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+    let client_b_id = project_a.update(cx_a, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+
+    workspace_a.update(cx_a, |workspace, cx| workspace.follow(client_b_id, cx));
+    workspace_b.update(cx_b, |workspace, cx| workspace.follow(client_a_id, cx));
+    executor.run_until_parked();
+
+    workspace_a.update(cx_a, |workspace, _| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_b_id)
+        );
+    });
+    workspace_b.update(cx_b, |workspace, _| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_a_id)
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    // a and b join a channel/call
+    // a shares project 1
+    // b shares project 2
+    //
+    // b follows a: causes project 2 to be joined, and b to follow a.
+    // b opens a different file in project 2, a follows b
+    // b opens a different file in project 1, a cannot follow b
+    // b shares the project, a joins the project and follows b
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "w.rs": "",
+                "x.rs": "",
+            }),
+        )
+        .await;
+
+    client_b
+        .fs()
+        .insert_tree(
+            "/b",
+            json!({
+                "y.rs": "",
+                "z.rs": "",
+            }),
+        )
+        .await;
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    let (project_a, worktree_id_a) = client_a.build_local_project("/a", cx_a).await;
+    let (project_b, worktree_id_b) = client_b.build_local_project("/b", cx_b).await;
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    cx_a.update(|cx| collab_ui::init(&client_a.app_state, cx));
+    cx_b.update(|cx| collab_ui::init(&client_b.app_state, cx));
+
+    active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id_a, "w.rs"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+    assert_eq!(visible_push_notifications(cx_b).len(), 1);
+
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.follow(client_a.peer_id().unwrap(), cx)
+    });
+
+    executor.run_until_parked();
+    let workspace_b_project_a = cx_b
+        .windows()
+        .iter()
+        .max_by_key(|window| window.window_id())
+        .unwrap()
+        .downcast::<Workspace>()
+        .unwrap()
+        .root(cx_b)
+        .unwrap();
+
+    // assert that b is following a in project a in w.rs
+    workspace_b_project_a.update(cx_b, |workspace, cx| {
+        assert!(workspace.is_being_followed(client_a.peer_id().unwrap()));
+        assert_eq!(
+            client_a.peer_id(),
+            workspace.leader_for_pane(workspace.active_pane())
+        );
+        let item = workspace.active_item(cx).unwrap();
+        assert_eq!(
+            item.tab_description(0, cx).unwrap(),
+            SharedString::from("w.rs")
+        );
+    });
+
+    // TODO: in app code, this would be done by the collab_ui.
+    active_call_b
+        .update(cx_b, |call, cx| {
+            let project = workspace_b_project_a.read(cx).project().clone();
+            call.set_location(Some(&project), cx)
+        })
+        .await
+        .unwrap();
+
+    // assert that there are no share notifications open
+    assert_eq!(visible_push_notifications(cx_b).len(), 0);
+
+    // b moves to x.rs in a's project, and a follows
+    workspace_b_project_a
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id_a, "x.rs"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+    workspace_b_project_a.update(cx_b, |workspace, cx| {
+        let item = workspace.active_item(cx).unwrap();
+        assert_eq!(
+            item.tab_description(0, cx).unwrap(),
+            SharedString::from("x.rs")
+        );
+    });
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.follow(client_b.peer_id().unwrap(), cx)
+    });
+
+    executor.run_until_parked();
+    workspace_a.update(cx_a, |workspace, cx| {
+        assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
+        assert_eq!(
+            client_b.peer_id(),
+            workspace.leader_for_pane(workspace.active_pane())
+        );
+        let item = workspace.active_pane().read(cx).active_item().unwrap();
+        assert_eq!(item.tab_description(0, cx).unwrap(), "x.rs");
+    });
+
+    // b moves to y.rs in b's project, a is still following but can't yet see
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id_b, "y.rs"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    // TODO: in app code, this would be done by the collab_ui.
+    active_call_b
+        .update(cx_b, |call, cx| {
+            let project = workspace_b.read(cx).project().clone();
+            call.set_location(Some(&project), cx)
+        })
+        .await
+        .unwrap();
+
+    let project_b_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+    assert_eq!(visible_push_notifications(cx_a).len(), 1);
+    cx_a.update(|cx| {
+        workspace::join_remote_project(
+            project_b_id,
+            client_b.user_id().unwrap(),
+            client_a.app_state.clone(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    executor.run_until_parked();
+
+    assert_eq!(visible_push_notifications(cx_a).len(), 0);
+    let workspace_a_project_b = cx_a
+        .windows()
+        .iter()
+        .max_by_key(|window| window.window_id())
+        .unwrap()
+        .downcast::<Workspace>()
+        .unwrap()
+        .root(cx_a)
+        .unwrap();
+
+    workspace_a_project_b.update(cx_a, |workspace, cx| {
+        assert_eq!(workspace.project().read(cx).remote_id(), Some(project_b_id));
+        assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
+        assert_eq!(
+            client_b.peer_id(),
+            workspace.leader_for_pane(workspace.active_pane())
+        );
+        let item = workspace.active_item(cx).unwrap();
+        assert_eq!(
+            item.tab_description(0, cx).unwrap(),
+            SharedString::from("y.rs")
+        );
+    });
+}
 
 // #[gpui::test]
 // async fn test_following_into_excluded_file(
@@ -1781,30 +1702,28 @@ async fn test_basic_following(
 //     });
 // }
 
-// fn visible_push_notifications(
-//     cx: &mut TestAppContext,
-// ) -> Vec<gpui::View<ProjectSharedNotification>> {
-//     let mut ret = Vec::new();
-//     for window in cx.windows() {
-//         window.update(cx, |window| {
-//             if let Some(handle) = window
-//                 .root_view()
-//                 .clone()
-//                 .downcast::<ProjectSharedNotification>()
-//             {
-//                 ret.push(handle)
-//             }
-//         });
-//     }
-//     ret
-// }
+fn visible_push_notifications(
+    cx: &mut TestAppContext,
+) -> Vec<gpui::View<ProjectSharedNotification>> {
+    let mut ret = Vec::new();
+    for window in cx.windows() {
+        window
+            .update(cx, |window, _| {
+                if let Ok(handle) = window.downcast::<ProjectSharedNotification>() {
+                    ret.push(handle)
+                }
+            })
+            .unwrap();
+    }
+    ret
+}
 
-// #[derive(Debug, PartialEq, Eq)]
-// struct PaneSummary {
-//     active: bool,
-//     leader: Option<PeerId>,
-//     items: Vec<(bool, String)>,
-// }
+#[derive(Debug, PartialEq, Eq)]
+struct PaneSummary {
+    active: bool,
+    leader: Option<PeerId>,
+    items: Vec<(bool, String)>,
+}
 
 fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec<PeerId>)> {
     cx.read(|cx| {
@@ -1830,33 +1749,33 @@ fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec
     })
 }
 
-// fn pane_summaries(workspace: &View<Workspace>, cx: &mut WindowContext<'_>) -> Vec<PaneSummary> {
-//     workspace.update(cx, |workspace, cx| {
-//         let active_pane = workspace.active_pane();
-//         workspace
-//             .panes()
-//             .iter()
-//             .map(|pane| {
-//                 let leader = workspace.leader_for_pane(pane);
-//                 let active = pane == active_pane;
-//                 let pane = pane.read(cx);
-//                 let active_ix = pane.active_item_index();
-//                 PaneSummary {
-//                     active,
-//                     leader,
-//                     items: pane
-//                         .items()
-//                         .enumerate()
-//                         .map(|(ix, item)| {
-//                             (
-//                                 ix == active_ix,
-//                                 item.tab_description(0, cx)
-//                                     .map_or(String::new(), |s| s.to_string()),
-//                             )
-//                         })
-//                         .collect(),
-//                 }
-//             })
-//             .collect()
-//     })
-// }
+fn pane_summaries(workspace: &View<Workspace>, cx: &mut VisualTestContext<'_>) -> Vec<PaneSummary> {
+    workspace.update(cx, |workspace, cx| {
+        let active_pane = workspace.active_pane();
+        workspace
+            .panes()
+            .iter()
+            .map(|pane| {
+                let leader = workspace.leader_for_pane(pane);
+                let active = pane == active_pane;
+                let pane = pane.read(cx);
+                let active_ix = pane.active_item_index();
+                PaneSummary {
+                    active,
+                    leader,
+                    items: pane
+                        .items()
+                        .enumerate()
+                        .map(|(ix, item)| {
+                            (
+                                ix == active_ix,
+                                item.tab_description(0, cx)
+                                    .map_or(String::new(), |s| s.to_string()),
+                            )
+                        })
+                        .collect(),
+                }
+            })
+            .collect()
+    })
+}

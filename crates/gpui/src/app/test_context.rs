@@ -223,6 +223,10 @@ impl TestAppContext {
             .unwrap();
     }
 
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.app.borrow().windows().clone()
+    }
+
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
