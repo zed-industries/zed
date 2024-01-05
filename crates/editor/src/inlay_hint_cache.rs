@@ -1206,7 +1206,8 @@ pub mod tests {
     use gpui::{Context, TestAppContext, WindowHandle};
     use itertools::Itertools;
     use language::{
-        language_settings::AllLanguageSettingsContent, FakeLspAdapter, Language, LanguageConfig,
+        language_settings::AllLanguageSettingsContent, Capability, FakeLspAdapter, Language,
+        LanguageConfig,
     };
     use lsp::FakeLanguageServer;
     use parking_lot::Mutex;
@@ -2459,7 +2460,7 @@ pub mod tests {
             .await
             .unwrap();
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
+            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
@@ -2798,7 +2799,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),

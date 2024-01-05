@@ -11,7 +11,7 @@ use objc::{
 };
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
-use std::{ffi::c_void, sync::Arc, time::Duration};
+use std::{ffi::c_void, ptr::NonNull, sync::Arc, time::Duration};
 
 include!(concat!(env!("OUT_DIR"), "/dispatch_sys.rs"));
 
@@ -47,7 +47,7 @@ impl PlatformDispatcher for MacDispatcher {
         unsafe {
             dispatch_async_f(
                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0),
-                runnable.into_raw() as *mut c_void,
+                runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline),
             );
         }
@@ -57,7 +57,7 @@ impl PlatformDispatcher for MacDispatcher {
         unsafe {
             dispatch_async_f(
                 dispatch_get_main_queue(),
-                runnable.into_raw() as *mut c_void,
+                runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline),
             );
         }
@@ -71,7 +71,7 @@ impl PlatformDispatcher for MacDispatcher {
             dispatch_after_f(
                 when,
                 queue,
-                runnable.into_raw() as *mut c_void,
+                runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline),
             );
         }
@@ -91,6 +91,6 @@ impl PlatformDispatcher for MacDispatcher {
 }
 
 extern "C" fn trampoline(runnable: *mut c_void) {
-    let task = unsafe { Runnable::from_raw(runnable as *mut ()) };
+    let task = unsafe { Runnable::<()>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
     task.run();
 }

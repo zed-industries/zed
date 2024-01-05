@@ -131,7 +131,12 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 participant_index: ActiveValue::set(Some(0)),
-                ..Default::default()
+                role: ActiveValue::set(Some(ChannelRole::Admin)),
+
+                id: ActiveValue::NotSet,
+                location_kind: ActiveValue::NotSet,
+                location_project_id: ActiveValue::NotSet,
+                initial_project_id: ActiveValue::NotSet,
             }
             .insert(&*tx)
             .await?;
@@ -151,6 +156,22 @@ impl Database {
         initial_project_id: Option<ProjectId>,
     ) -> Result<RoomGuard<(proto::Room, proto::IncomingCall)>> {
         self.room_transaction(room_id, |tx| async move {
+            let caller = room_participant::Entity::find()
+                .filter(
+                    room_participant::Column::UserId
+                        .eq(calling_user_id)
+                        .and(room_participant::Column::RoomId.eq(room_id)),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("user is not in the room"))?;
+
+            let called_user_role = match caller.role.unwrap_or(ChannelRole::Member) {
+                ChannelRole::Admin | ChannelRole::Member => ChannelRole::Member,
+                ChannelRole::Guest => ChannelRole::Guest,
+                ChannelRole::Banned => return Err(anyhow!("banned users cannot invite").into()),
+            };
+
             room_participant::ActiveModel {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
@@ -162,7 +183,13 @@ impl Database {
                     calling_connection.owner_id as i32,
                 ))),
                 initial_project_id: ActiveValue::set(initial_project_id),
-                ..Default::default()
+                role: ActiveValue::set(Some(called_user_role)),
+
+                id: ActiveValue::NotSet,
+                answering_connection_id: ActiveValue::NotSet,
+                answering_connection_server_id: ActiveValue::NotSet,
+                location_kind: ActiveValue::NotSet,
+                location_project_id: ActiveValue::NotSet,
             }
             .insert(&*tx)
             .await?;
@@ -384,6 +411,7 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
+        role: ChannelRole,
         tx: &DatabaseTransaction,
     ) -> Result<JoinRoom> {
         let participant_index = self
@@ -404,7 +432,11 @@ impl Database {
                 connection.owner_id as i32,
             ))),
             participant_index: ActiveValue::Set(Some(participant_index)),
-            ..Default::default()
+            role: ActiveValue::set(Some(role)),
+            id: ActiveValue::NotSet,
+            location_kind: ActiveValue::NotSet,
+            location_project_id: ActiveValue::NotSet,
+            initial_project_id: ActiveValue::NotSet,
         }])
         .on_conflict(
             OnConflict::columns([room_participant::Column::UserId])
@@ -413,6 +445,7 @@ impl Database {
                     room_participant::Column::AnsweringConnectionServerId,
                     room_participant::Column::AnsweringConnectionLost,
                     room_participant::Column::ParticipantIndex,
+                    room_participant::Column::Role,
                 ])
                 .to_owned(),
         )
@@ -1134,6 +1167,7 @@ impl Database {
                         projects: Default::default(),
                         location: Some(proto::ParticipantLocation { variant: location }),
                         participant_index: participant_index as u32,
+                        role: db_participant.role.unwrap_or(ChannelRole::Member).into(),
                     },
                 );
             } else {

@@ -1,14 +1,13 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
-    InputEvent, IntoElement, KeyDownEvent, Keystroke, Model, ModelContext, Pixels, Platform,
-    PlatformWindow, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
-    TestWindowHandlers, TextSystem, View, ViewContext, VisualContext, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
+    IntoElement, Keystroke, Model, ModelContext, Pixels, Platform, Render, Result, Size, Task,
+    TestDispatcher, TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
-use std::{future::Future, mem, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -185,42 +184,7 @@ impl TestAppContext {
     }
 
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
-        let (mut handlers, scale_factor) = self
-            .app
-            .borrow_mut()
-            .update_window(window_handle, |_, cx| {
-                let platform_window = cx.window.platform_window.as_test().unwrap();
-                let scale_factor = platform_window.scale_factor();
-                match &mut platform_window.bounds {
-                    WindowBounds::Fullscreen | WindowBounds::Maximized => {
-                        platform_window.bounds = WindowBounds::Fixed(Bounds {
-                            origin: Point::default(),
-                            size: size.map(|pixels| f64::from(pixels).into()),
-                        });
-                    }
-                    WindowBounds::Fixed(bounds) => {
-                        bounds.size = size.map(|pixels| f64::from(pixels).into());
-                    }
-                }
-
-                (
-                    mem::take(&mut platform_window.handlers.lock().resize),
-                    scale_factor,
-                )
-            })
-            .unwrap();
-
-        for handler in &mut handlers {
-            handler(size, scale_factor);
-        }
-
-        self.app
-            .borrow_mut()
-            .update_window(window_handle, |_, cx| {
-                let platform_window = cx.window.platform_window.as_test().unwrap();
-                platform_window.handlers.lock().resize = handlers;
-            })
-            .unwrap();
+        self.test_window(window_handle).simulate_resize(size);
     }
 
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
@@ -317,41 +281,22 @@ impl TestAppContext {
         keystroke: Keystroke,
         is_held: bool,
     ) {
-        let keystroke2 = keystroke.clone();
-        let handled = window
-            .update(self, |_, cx| {
-                cx.dispatch_event(InputEvent::KeyDown(KeyDownEvent { keystroke, is_held }))
-            })
-            .is_ok_and(|handled| handled);
-        if handled {
-            return;
-        }
-
-        let input_handler = self.update_test_window(window, |window| window.input_handler.clone());
-        let Some(input_handler) = input_handler else {
-            panic!(
-                "dispatch_keystroke {:?} failed to dispatch action or input",
-                &keystroke2
-            );
-        };
-        let text = keystroke2.ime_key.unwrap_or(keystroke2.key);
-        input_handler.lock().replace_text_in_range(None, &text);
+        self.test_window(window)
+            .simulate_keystroke(keystroke, is_held)
     }
 
-    pub fn update_test_window<R>(
-        &mut self,
-        window: AnyWindowHandle,
-        f: impl FnOnce(&mut TestWindow) -> R,
-    ) -> R {
-        window
-            .update(self, |_, cx| {
-                f(cx.window
-                    .platform_window
-                    .as_any_mut()
-                    .downcast_mut::<TestWindow>()
-                    .unwrap())
-            })
+    pub fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
+        self.app
+            .borrow_mut()
+            .windows
+            .get_mut(window.id)
             .unwrap()
+            .as_mut()
+            .unwrap()
+            .platform_window
+            .as_test()
+            .unwrap()
+            .clone()
     }
 
     pub fn notifications<T: 'static>(&mut self, entity: &impl Entity<T>) -> impl Stream<Item = ()> {
@@ -567,11 +512,7 @@ impl<'a> VisualTestContext<'a> {
     }
 
     pub fn window_title(&mut self) -> Option<String> {
-        self.cx
-            .update_window(self.window, |_, cx| {
-                cx.window.platform_window.as_test().unwrap().title.clone()
-            })
-            .unwrap()
+        self.cx.test_window(self.window).0.lock().title.clone()
     }
 
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
@@ -582,37 +523,11 @@ impl<'a> VisualTestContext<'a> {
         self.cx.simulate_input(self.window, input)
     }
 
-    pub fn simulate_activation(&mut self) {
-        self.simulate_window_events(&mut |handlers| {
-            handlers
-                .active_status_change
-                .iter_mut()
-                .for_each(|f| f(true));
-        })
-    }
-
-    pub fn simulate_deactivation(&mut self) {
-        self.simulate_window_events(&mut |handlers| {
-            handlers
-                .active_status_change
-                .iter_mut()
-                .for_each(|f| f(false));
-        })
-    }
-
-    fn simulate_window_events(&mut self, f: &mut dyn FnMut(&mut TestWindowHandlers)) {
-        let handlers = self
-            .cx
-            .update_window(self.window, |_, cx| {
-                cx.window
-                    .platform_window
-                    .as_test()
-                    .unwrap()
-                    .handlers
-                    .clone()
-            })
-            .unwrap();
-        f(&mut *handlers.lock());
+    pub fn deactivate_window(&mut self) {
+        if Some(self.window) == self.test_platform.active_window() {
+            self.test_platform.set_active_window(None)
+        }
+        self.background_executor.run_until_parked();
     }
 }
 

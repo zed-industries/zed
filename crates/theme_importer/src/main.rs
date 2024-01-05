@@ -18,6 +18,7 @@ use clap::Parser;
 use convert_case::{Case, Casing};
 use gpui::serde_json;
 use indexmap::IndexMap;
+use indoc::formatdoc;
 use json_comments::StripComments;
 use log::LevelFilter;
 use serde::Deserialize;
@@ -28,7 +29,7 @@ use crate::theme_printer::UserThemeFamilyPrinter;
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
 use crate::zed1::theme::Theme as Zed1Theme;
-use crate::zed1::Zed1ThemeConverter;
+use crate::zed1::{zed1_theme_licenses, Zed1ThemeConverter};
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
@@ -200,7 +201,13 @@ fn main() -> Result<()> {
         "Summercamp",
     ];
 
-    let mut zed1_themes_by_family: HashMap<String, Vec<UserTheme>> = HashMap::from_iter(
+    let zed1_licenses_by_theme: HashMap<String, zed1::Zed1ThemeLicense> = HashMap::from_iter(
+        zed1_theme_licenses()
+            .into_iter()
+            .map(|theme_license| (theme_license.theme.clone(), theme_license)),
+    );
+
+    let mut zed1_themes_by_family: IndexMap<String, Vec<UserTheme>> = IndexMap::from_iter(
         zed1_theme_familes
             .into_iter()
             .map(|family| (family.to_string(), Vec::new())),
@@ -254,12 +261,43 @@ fn main() -> Result<()> {
         themes_for_family.push(theme);
     }
 
+    zed1_themes_by_family.sort_keys();
+
+    let mut licenses = Vec::new();
+
     for (family, themes) in zed1_themes_by_family {
-        let theme_family = UserThemeFamily {
+        let mut theme_family = UserThemeFamily {
             name: family,
             author: "Zed Industries".to_string(),
             themes,
         };
+
+        theme_family
+            .themes
+            .sort_unstable_by_key(|theme| theme.name.clone());
+
+        for theme in &theme_family.themes {
+            let license = zed1_licenses_by_theme
+                .get(&theme.name)
+                .ok_or_else(|| anyhow!("missing license for theme: '{}'", theme.name))?;
+
+            let license_header = match license.license_url.as_ref() {
+                Some(license_url) => {
+                    format!("[{theme_name}]({license_url})", theme_name = theme.name)
+                }
+                None => theme.name.clone(),
+            };
+
+            licenses.push(formatdoc!(
+                "
+                ## {license_header}
+
+                {license_text}
+                ********************************************************************************
+                ",
+                license_text = license.license_text
+            ));
+        }
 
         theme_families.push(theme_family);
     }
@@ -356,6 +394,12 @@ fn main() -> Result<()> {
     );
 
     mod_rs_file.write_all(mod_rs_contents.as_bytes())?;
+
+    log::info!("Writing LICENSES file...");
+
+    let mut licenses_file = File::create(themes_output_path.join(format!("LICENSES")))?;
+
+    licenses_file.write_all(licenses.join("\n").as_bytes())?;
 
     log::info!("Formatting themes...");
 

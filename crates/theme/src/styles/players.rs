@@ -131,6 +131,15 @@ impl PlayerColors {
         *self.0.last().unwrap()
     }
 
+    pub fn read_only(&self) -> PlayerColor {
+        let local = self.local();
+        PlayerColor {
+            cursor: local.cursor.grayscale(),
+            background: local.background.grayscale(),
+            selection: local.selection.grayscale(),
+        }
+    }
+
     pub fn color_for_participant(&self, participant_index: u32) -> PlayerColor {
         let len = self.0.len() - 1;
         self.0[(participant_index as usize % len) + 1]
