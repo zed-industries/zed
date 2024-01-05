@@ -86,10 +86,11 @@ impl CopilotCodeVerification {
             .flex_1()
             .gap_2()
             .items_center()
-            .w_full()
-            .child(Label::new(
-                "Enable Copilot by connecting your existing license",
-            ))
+            .child(Headline::new("Use Github Copilot in Zed.").size(HeadlineSize::Large))
+            .child(
+                Label::new("Using Copilot requres an active subscription on Github.")
+                    .color(Color::Muted),
+            )
             .child(Self::render_device_code(data, cx))
             .child(
                 Label::new("Paste this code into GitHub after clicking the button below.")
@@ -156,11 +157,10 @@ impl Render for CopilotCodeVerification {
         v_stack()
             .id("copilot code verification")
             .elevation_3(cx)
-            .size_full()
+            .w_96()
             .items_center()
             .p_4()
-            .gap_4()
-            .child(Headline::new("Connect Copilot to Zed").size(HeadlineSize::Large))
+            .gap_2()
             .child(
                 svg()
                     .w_32()
