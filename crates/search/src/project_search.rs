@@ -132,9 +132,11 @@ pub struct ProjectSearchBar {
 impl ProjectSearch {
     fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
         let replica_id = project.read(cx).replica_id();
+        let capability = project.read(cx).capability();
+
         Self {
             project,
-            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -1556,7 +1558,7 @@ impl ProjectSearchBar {
     fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if editor.read(cx).read_only() {
+            color: if editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text

@@ -247,14 +247,18 @@ impl Room {
             let response = client.request(proto::CreateRoom {}).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
             let room = cx.new_model(|cx| {
-                Self::new(
+                let mut room = Self::new(
                     room_proto.id,
                     None,
                     response.live_kit_connection_info,
                     client,
                     user_store,
                     cx,
-                )
+                );
+                if let Some(participant) = room_proto.participants.first() {
+                    room.local_participant.role = participant.role()
+                }
+                room
             })?;
 
             let initial_project_id = if let Some(initial_project) = initial_project {
@@ -606,6 +610,16 @@ impl Room {
             .find(|p| p.peer_id == peer_id)
     }
 
+    pub fn role_for_user(&self, user_id: u64) -> Option<proto::ChannelRole> {
+        self.remote_participants
+            .get(&user_id)
+            .map(|participant| participant.role)
+    }
+
+    pub fn local_participant_is_admin(&self) -> bool {
+        self.local_participant.role == proto::ChannelRole::Admin
+    }
+
     pub fn pending_participants(&self) -> &[Arc<User>] {
         &self.pending_participants
     }
@@ -710,7 +724,20 @@ impl Room {
                 this.participant_user_ids.clear();
 
                 if let Some(participant) = local_participant {
+                    let role = participant.role();
                     this.local_participant.projects = participant.projects;
+                    if this.local_participant.role != role {
+                        this.local_participant.role = role;
+
+                        this.joined_projects.retain(|project| {
+                            if let Some(project) = project.upgrade() {
+                                project.update(cx, |project, _| project.set_role(role));
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                    }
                 } else {
                     this.local_participant.projects.clear();
                 }
@@ -766,6 +793,7 @@ impl Room {
                             });
                         }
 
+                        let role = participant.role();
                         let location = ParticipantLocation::from_proto(participant.location)
                             .unwrap_or(ParticipantLocation::External);
                         if let Some(remote_participant) =
@@ -774,8 +802,11 @@ impl Room {
                             remote_participant.peer_id = peer_id;
                             remote_participant.projects = participant.projects;
                             remote_participant.participant_index = participant_index;
-                            if location != remote_participant.location {
+                            if location != remote_participant.location
+                                || role != remote_participant.role
+                            {
                                 remote_participant.location = location;
+                                remote_participant.role = role;
                                 cx.emit(Event::ParticipantLocationChanged {
                                     participant_id: peer_id,
                                 });
@@ -789,6 +820,7 @@ impl Room {
                                     peer_id,
                                     projects: participant.projects,
                                     location,
+                                    role,
                                     muted: true,
                                     speaking: false,
                                     video_tracks: Default::default(),
@@ -1091,15 +1123,24 @@ impl Room {
     ) -> Task<Result<Model<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        let role = self.local_participant.role;
         cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(move |this, mut cx| async move {
-            let project =
-                Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+            let project = Project::remote(
+                id,
+                client,
+                user_store,
+                language_registry,
+                fs,
+                role,
+                cx.clone(),
+            )
+            .await?;
 
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {
                     if let Some(project) = project.upgrade() {
-                        !project.read(cx).is_read_only()
+                        !project.read(cx).is_disconnected()
                     } else {
                         false
                     }
@@ -1222,6 +1263,11 @@ impl Room {
                 LocalTrack::Published { muted, .. } => Some(*muted),
             })
             .unwrap_or(false)
+    }
+
+    pub fn read_only(&self) -> bool {
+        !(self.local_participant().role == proto::ChannelRole::Member
+            || self.local_participant().role == proto::ChannelRole::Admin)
     }
 
     pub fn is_speaking(&self) -> bool {

@@ -44,8 +44,9 @@ pub trait IntoElement: Sized {
     }
 
     /// Convert into an element, then draw in the current window at the given origin.
-    /// The provided available space is provided to the layout engine to determine the size of the root element.
-    /// Once the element is drawn, its associated element staet is yielded to the given callback.
+    /// The available space argument is provided to the layout engine to determine the size of the
+    // root element.  Once the element is drawn, its associated element state is yielded to the
+    // given callback.
     fn draw_and_update_state<T, R>(
         self,
         origin: Point<Pixels>,

@@ -10,6 +10,7 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
+use rpc::proto;
 use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
@@ -175,8 +176,9 @@ impl Render for CollabTitlebarItem {
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
+                        let read_only = room.read_only();
 
-                        this.when(is_local, |this| {
+                        this.when(is_local && !read_only, |this| {
                             this.child(
                                 Button::new(
                                     "toggle_sharing",
@@ -207,21 +209,23 @@ impl Render for CollabTitlebarItem {
                                         .detach_and_log_err(cx);
                                 }),
                         )
-                        .child(
-                            IconButton::new(
-                                "mute-microphone",
-                                if is_muted {
-                                    ui::Icon::MicMute
-                                } else {
-                                    ui::Icon::Mic
-                                },
+                        .when(!read_only, |this| {
+                            this.child(
+                                IconButton::new(
+                                    "mute-microphone",
+                                    if is_muted {
+                                        ui::Icon::MicMute
+                                    } else {
+                                        ui::Icon::Mic
+                                    },
+                                )
+                                .style(ButtonStyle::Subtle)
+                                .icon_size(IconSize::Small)
+                                .selected(is_muted)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                                .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
-                            .style(ButtonStyle::Subtle)
-                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                            .icon_size(IconSize::Small)
-                            .selected(is_muted)
-                            .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
-                        )
+                        })
                         .child(
                             IconButton::new(
                                 "mute-sound",
@@ -236,20 +240,31 @@ impl Render for CollabTitlebarItem {
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
-                                Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
+                                if !read_only {
+                                    Tooltip::with_meta(
+                                        "Deafen Audio",
+                                        None,
+                                        "Mic will be muted",
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::text("Deafen Audio", cx)
+                                }
                             })
-                            .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
+                            .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
                         )
-                        .child(
-                            IconButton::new("screen-share", ui::Icon::Screen)
-                                .style(ButtonStyle::Subtle)
-                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                .icon_size(IconSize::Small)
-                                .selected(is_screen_sharing)
-                                .on_click(move |_, cx| {
-                                    crate::toggle_screen_sharing(&Default::default(), cx)
-                                }),
-                        )
+                        .when(!read_only, |this| {
+                            this.child(
+                                IconButton::new("screen-share", ui::Icon::Screen)
+                                    .style(ButtonStyle::Subtle)
+                                    .icon_size(IconSize::Small)
+                                    .selected(is_screen_sharing)
+                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                    .on_click(move |_, cx| {
+                                        crate::toggle_screen_sharing(&Default::default(), cx)
+                                    }),
+                            )
+                        })
                     })
                     .map(|el| {
                         let status = self.client.status();
@@ -414,6 +429,10 @@ impl CollabTitlebarItem {
         current_user: &Arc<User>,
         cx: &ViewContext<Self>,
     ) -> Option<FacePile> {
+        if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
+            return None;
+        }
+
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
 
         let pile = FacePile::default()
