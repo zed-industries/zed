@@ -38,8 +38,8 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    h_stack, prelude::*, v_stack, Button, Icon, IconButton, IconElement, Label, LabelCommon,
-    LabelSize, Selectable, Tooltip,
+    h_stack, prelude::*, v_stack, Icon, IconButton, IconElement, Label, LabelCommon, LabelSize,
+    Selectable, ToggleButton, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
 use workspace::{
@@ -1676,20 +1676,26 @@ impl Render for ProjectSearchBar {
 
         let mode_column = v_stack().items_start().justify_start().child(
             h_stack()
+                .gap_2()
                 .child(
                     h_stack()
                         .child(
-                            Button::new("project-search-text-button", "Text")
+                            ToggleButton::new("project-search-text-button", "Text")
+                                .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .selected(search.current_mode == SearchMode::Text)
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.activate_search_mode(SearchMode::Text, cx)
                                 }))
                                 .tooltip(|cx| {
                                     Tooltip::for_action("Toggle text search", &ActivateTextMode, cx)
-                                }),
+                                })
+                                .first(),
                         )
                         .child(
-                            Button::new("project-search-regex-button", "Regex")
+                            ToggleButton::new("project-search-regex-button", "Regex")
+                                .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
                                 .selected(search.current_mode == SearchMode::Regex)
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.activate_search_mode(SearchMode::Regex, cx)
@@ -1700,11 +1706,20 @@ impl Render for ProjectSearchBar {
                                         &ActivateRegexMode,
                                         cx,
                                     )
+                                })
+                                .map(|this| {
+                                    if semantic_is_available {
+                                        this.middle()
+                                    } else {
+                                        this.last()
+                                    }
                                 }),
                         )
                         .when(semantic_is_available, |this| {
                             this.child(
-                                Button::new("project-search-semantic-button", "Semantic")
+                                ToggleButton::new("project-search-semantic-button", "Semantic")
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
                                     .selected(search.current_mode == SearchMode::Semantic)
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.activate_search_mode(SearchMode::Semantic, cx)
@@ -1715,7 +1730,8 @@ impl Render for ProjectSearchBar {
                                             &ActivateSemanticMode,
                                             cx,
                                         )
-                                    }),
+                                    })
+                                    .last(),
                             )
                         }),
                 )
@@ -1866,6 +1882,7 @@ impl Render for ProjectSearchBar {
             .child(
                 h_stack()
                     .justify_between()
+                    .gap_2()
                     .child(query_column)
                     .child(mode_column)
                     .child(replace_column)
