@@ -15,8 +15,9 @@ use crate::{
 use anyhow::anyhow;
 use collections::FxHashMap;
 use core::fmt;
+use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::{
     cmp,
     fmt::{Debug, Display, Formatter},
@@ -42,6 +43,7 @@ pub struct TextSystem {
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
+    fallback_font_stack: SmallVec<[Font; 2]>,
 }
 
 impl TextSystem {
@@ -54,6 +56,12 @@ impl TextSystem {
             font_ids_by_font: RwLock::default(),
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
+            fallback_font_stack: smallvec![
+                // TODO: This is currently Zed-specific.
+                // We should allow GPUI users to provide their own fallback font stack.
+                font("Zed Mono"),
+                font("Helvetica")
+            ],
         }
     }
 
@@ -70,6 +78,33 @@ impl TextSystem {
             self.font_ids_by_font.write().insert(font.clone(), font_id);
             Ok(font_id)
         }
+    }
+
+    /// Resolves the specified font, falling back to the default font stack if
+    /// the font fails to load.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the font and none of the fallbacks can be resolved.
+    pub fn resolve_font(&self, font: &Font) -> FontId {
+        if let Ok(font_id) = self.font_id(font) {
+            return font_id;
+        }
+
+        for fallback in &self.fallback_font_stack {
+            if let Ok(font_id) = self.font_id(fallback) {
+                return font_id;
+            }
+        }
+
+        panic!(
+            "failed to resolve font '{}' or any of the fallbacks: {}",
+            font.family,
+            self.fallback_font_stack
+                .iter()
+                .map(|fallback| &fallback.family)
+                .join(", ")
+        );
     }
 
     pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Bounds<Pixels> {
@@ -159,7 +194,7 @@ impl TextSystem {
     ) -> Result<Arc<LineLayout>> {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         for run in runs.iter() {
-            let font_id = self.font_id(&run.font)?;
+            let font_id = self.resolve_font(&run.font);
             if let Some(last_run) = font_runs.last_mut() {
                 if last_run.font_id == font_id {
                     last_run.len += run.len;
@@ -253,7 +288,7 @@ impl TextSystem {
                     last_font = Some(run.font.clone());
                     font_runs.push(FontRun {
                         len: run_len_within_line,
-                        font_id: self.platform_text_system.font_id(&run.font)?,
+                        font_id: self.resolve_font(&run.font),
                     });
                 }
 

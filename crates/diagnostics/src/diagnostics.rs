@@ -151,7 +151,12 @@ impl ProjectDiagnosticsEditor {
         let focus_in_subscription =
             cx.on_focus_in(&focus_handle, |diagnostics, cx| diagnostics.focus_in(cx));
 
-        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
+        let excerpts = cx.new_model(|cx| {
+            MultiBuffer::new(
+                project_handle.read(cx).replica_id(),
+                project_handle.read(cx).capability(),
+            )
+        });
         let editor = cx.new_view(|cx| {
             let mut editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), cx);
@@ -641,8 +646,13 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn tab_content(&self, _detail: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
-            let label = Label::new("No problems");
-            label.into_any_element()
+            Label::new("No problems")
+                .color(if selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                })
+                .into_any_element()
         } else {
             h_stack()
                 .gap_1()
@@ -1567,6 +1577,7 @@ mod tests {
             workspace::init_settings(cx);
             Project::init_settings(cx);
             crate::init(cx);
+            editor::init(cx);
         });
     }
 

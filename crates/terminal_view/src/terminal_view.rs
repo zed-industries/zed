@@ -28,7 +28,7 @@ use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
     register_deserializable_item,
-    searchable::{SearchEvent, SearchOptions, SearchableItem},
+    searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
@@ -57,7 +57,7 @@ pub struct SendText(String);
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SendKeystroke(String);
 
-impl_actions!(terminal_view, [SendText, SendKeystroke]);
+impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
@@ -714,10 +714,9 @@ impl Item for TerminalView {
         false
     }
 
-    // todo!(search)
-    // fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
-    //     Some(Box::new(handle.clone()))
-    // }
+    fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft

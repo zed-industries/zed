@@ -63,6 +63,13 @@ impl Selectable for ToggleButton {
     }
 }
 
+impl SelectableButton for ToggleButton {
+    fn selected_style(mut self, style: ButtonStyle) -> Self {
+        self.base.selected_style = Some(style);
+        self
+    }
+}
+
 impl Disableable for ToggleButton {
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);

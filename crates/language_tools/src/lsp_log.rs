@@ -10,7 +10,7 @@ use language::{LanguageServerId, LanguageServerName};
 use lsp::IoKind;
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
-use ui::{h_stack, popover_menu, Button, Checkbox, Clickable, ContextMenu, Label, Selection};
+use ui::{popover_menu, prelude::*, Button, Checkbox, ContextMenu, Label, Selection};
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
@@ -614,8 +614,14 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content(&self, _: Option<usize>, _: bool, _: &WindowContext<'_>) -> AnyElement {
-        Label::new("LSP Logs").into_any_element()
+    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+        Label::new("LSP Logs")
+            .color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .into_any_element()
     }
 
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -766,9 +772,10 @@ impl Render for LspLogToolbarItemView {
                                 }),
                             );
                         if server_selected && row.logs_selected {
+                            let selected_ix = menu.select_last();
                             debug_assert_eq!(
                                 Some(ix * 3 + 1),
-                                menu.select_last(),
+                                selected_ix,
                                 "Could not scroll to a just added LSP menu item"
                             );
                         }
@@ -816,9 +823,10 @@ impl Render for LspLogToolbarItemView {
                             }),
                         );
                         if server_selected && row.rpc_trace_selected {
+                            let selected_ix = menu.select_last();
                             debug_assert_eq!(
                                 Some(ix * 3 + 2),
-                                menu.select_last(),
+                                selected_ix,
                                 "Could not scroll to a just added LSP menu item"
                             );
                         }

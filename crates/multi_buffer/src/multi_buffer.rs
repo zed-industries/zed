@@ -11,7 +11,7 @@ pub use language::Completion;
 use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
-    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
+    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, Capability, CharKind, Chunk, CursorShape,
     DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
     Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
@@ -55,6 +55,7 @@ pub struct MultiBuffer {
     replica_id: ReplicaId,
     history: History,
     title: Option<String>,
+    capability: Capability,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,13 +226,14 @@ struct ExcerptBytes<'a> {
 }
 
 impl MultiBuffer {
-    pub fn new(replica_id: ReplicaId) -> Self {
+    pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
             next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: false,
+            capability,
             replica_id,
             history: History {
                 next_transaction_id: Default::default(),
@@ -271,6 +273,7 @@ impl MultiBuffer {
             next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: self.singleton,
+            capability: self.capability,
             replica_id: self.replica_id,
             history: self.history.clone(),
             title: self.title.clone(),
@@ -282,8 +285,12 @@ impl MultiBuffer {
         self
     }
 
+    pub fn read_only(&self) -> bool {
+        self.capability == Capability::ReadOnly
+    }
+
     pub fn singleton(buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Self {
-        let mut this = Self::new(buffer.read(cx).replica_id());
+        let mut this = Self::new(buffer.read(cx).replica_id(), buffer.read(cx).capability());
         this.singleton = true;
         this.push_excerpts(
             buffer,
@@ -1657,7 +1664,7 @@ impl MultiBuffer {
         excerpts: [(&str, Vec<Range<Point>>); COUNT],
         cx: &mut gpui::AppContext,
     ) -> Model<Self> {
-        let multi = cx.new_model(|_| Self::new(0));
+        let multi = cx.new_model(|_| Self::new(0, Capability::ReadWrite));
         for (text, ranges) in excerpts {
             let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
             let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
@@ -1678,7 +1685,7 @@ impl MultiBuffer {
 
     pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::AppContext) -> Model<Self> {
         cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
+            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
             let mutation_count = rng.gen_range(1..=5);
             multibuffer.randomly_edit_excerpts(rng, mutation_count, cx);
             multibuffer
@@ -4176,7 +4183,7 @@ mod tests {
             let ops = cx
                 .background_executor()
                 .block(host_buffer.read(cx).serialize_ops(None, cx));
-            let mut buffer = Buffer::from_proto(1, state, None).unwrap();
+            let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
             buffer
                 .apply_ops(
                     ops.into_iter()
@@ -4205,7 +4212,7 @@ mod tests {
             cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(6, 6, 'a')));
         let buffer_2 =
             cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(6, 6, 'g')));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         let events = Arc::new(RwLock::new(Vec::<Event>::new()));
         multibuffer.update(cx, |_, cx| {
@@ -4442,8 +4449,8 @@ mod tests {
         let buffer_2 =
             cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(10, 3, 'm')));
 
-        let leader_multibuffer = cx.new_model(|_| MultiBuffer::new(0));
-        let follower_multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let leader_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let follower_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let follower_edit_event_count = Arc::new(RwLock::new(0));
 
         follower_multibuffer.update(cx, |_, cx| {
@@ -4547,7 +4554,7 @@ mod tests {
     fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
         let buffer =
             cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(20, 3, 'a')));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts_with_context_lines(
                 buffer.clone(),
@@ -4584,7 +4591,7 @@ mod tests {
     async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
         let buffer =
             cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(20, 3, 'a')));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = buffer.read(cx);
             let ranges = vec![
@@ -4619,7 +4626,7 @@ mod tests {
 
     #[gpui::test]
     fn test_empty_multibuffer(cx: &mut AppContext) {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "");
@@ -4652,7 +4659,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
         let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "efghi"));
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
+            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [ExcerptRange {
@@ -4710,7 +4717,7 @@ mod tests {
         let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
         let buffer_2 =
             cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "ABCDEFGHIJKLMNOP"));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
         // Add an excerpt from buffer 1 that spans this new insertion.
@@ -4844,7 +4851,7 @@ mod tests {
             .unwrap_or(10);
 
         let mut buffers: Vec<Model<Buffer>> = Vec::new();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let mut excerpt_ids = Vec::<ExcerptId>::new();
         let mut expected_excerpts = Vec::<(Model<Buffer>, Range<text::Anchor>)>::new();
         let mut anchors = Vec::new();
@@ -5266,7 +5273,7 @@ mod tests {
 
         let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "1234"));
         let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "5678"));
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let group_interval = multibuffer.read(cx).history.group_interval;
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(

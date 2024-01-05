@@ -1,6 +1,6 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::prelude::*;
+use crate::{prelude::*, SelectableButton};
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -51,6 +51,13 @@ impl Disableable for IconButton {
 impl Selectable for IconButton {
     fn selected(mut self, selected: bool) -> Self {
         self.base = self.base.selected(selected);
+        self
+    }
+}
+
+impl SelectableButton for IconButton {
+    fn selected_style(mut self, style: ButtonStyle) -> Self {
+        self.base = self.base.selected_style(style);
         self
     }
 }
@@ -109,12 +116,14 @@ impl RenderOnce for IconButton {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
+        let selected_style = self.base.selected_style;
 
         self.base.child(
             ButtonIcon::new(self.icon)
                 .disabled(is_disabled)
                 .selected(is_selected)
                 .selected_icon(self.selected_icon)
+                .when_some(selected_style, |this, style| this.selected_style(style))
                 .size(self.icon_size)
                 .color(self.icon_color),
         )

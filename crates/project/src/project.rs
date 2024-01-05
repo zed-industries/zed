@@ -39,11 +39,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
+    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -262,6 +262,7 @@ enum ProjectClientState {
     },
     Remote {
         sharing_has_stopped: bool,
+        capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
     },
@@ -702,6 +703,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        role: proto::ChannelRole,
         mut cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
@@ -756,6 +758,7 @@ impl Project {
                 client: client.clone(),
                 client_state: Some(ProjectClientState::Remote {
                     sharing_has_stopped: false,
+                    capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
                 }),
@@ -796,6 +799,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
             };
+            this.set_role(role);
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
             }
@@ -1618,6 +1622,17 @@ impl Project {
         cx.notify();
     }
 
+    pub fn set_role(&mut self, role: proto::ChannelRole) {
+        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
+            *capability = if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin
+            {
+                Capability::ReadWrite
+            } else {
+                Capability::ReadOnly
+            };
+        }
+    }
+
     fn disconnected_from_host_internal(&mut self, cx: &mut AppContext) {
         if let Some(ProjectClientState::Remote {
             sharing_has_stopped,
@@ -1659,7 +1674,7 @@ impl Project {
         cx.emit(Event::Closed);
     }
 
-    pub fn is_read_only(&self) -> bool {
+    pub fn is_disconnected(&self) -> bool {
         match &self.client_state {
             Some(ProjectClientState::Remote {
                 sharing_has_stopped,
@@ -1667,6 +1682,17 @@ impl Project {
             }) => *sharing_has_stopped,
             _ => false,
         }
+    }
+
+    pub fn capability(&self) -> Capability {
+        match &self.client_state {
+            Some(ProjectClientState::Remote { capability, .. }) => *capability,
+            Some(ProjectClientState::Local { .. }) | None => Capability::ReadWrite,
+        }
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.is_disconnected() || self.capability() == Capability::ReadOnly
     }
 
     pub fn is_local(&self) -> bool {
@@ -2816,15 +2842,6 @@ impl Project {
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
-        let mut initialization_options = adapter.initialization_options.clone();
-        match (&mut initialization_options, override_options) {
-            (Some(initialization_options), Some(override_options)) => {
-                merge_json_value_into(override_options, initialization_options);
-            }
-            (None, override_options) => initialization_options = override_options,
-            _ => {}
-        }
-
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
@@ -2837,7 +2854,7 @@ impl Project {
                 let result = Self::setup_and_insert_language_server(
                     this.clone(),
                     &worktree_path,
-                    initialization_options,
+                    override_options,
                     pending_server,
                     adapter.clone(),
                     language.clone(),
@@ -2958,7 +2975,7 @@ impl Project {
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
         worktree_path: &Path,
-        initialization_options: Option<serde_json::Value>,
+        override_initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
         language: Arc<Language>,
@@ -2968,7 +2985,7 @@ impl Project {
     ) -> Result<Option<Arc<LanguageServer>>> {
         let language_server = Self::setup_pending_language_server(
             this.clone(),
-            initialization_options,
+            override_initialization_options,
             pending_server,
             worktree_path,
             adapter.clone(),
@@ -2998,7 +3015,7 @@ impl Project {
 
     async fn setup_pending_language_server(
         this: WeakModel<Self>,
-        initialization_options: Option<serde_json::Value>,
+        override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         worktree_path: &Path,
         adapter: Arc<CachedLspAdapter>,
@@ -3164,7 +3181,14 @@ impl Project {
                 }
             })
             .detach();
-
+        let mut initialization_options = adapter.adapter.initialization_options().await;
+        match (&mut initialization_options, override_options) {
+            (Some(initialization_options), Some(override_options)) => {
+                merge_json_value_into(override_options, initialization_options);
+            }
+            (None, override_options) => initialization_options = override_options,
+            _ => {}
+        }
         let language_server = language_server.initialize(initialization_options).await?;
 
         language_server
@@ -6015,7 +6039,7 @@ impl Project {
             this.upgrade().context("project dropped")?;
             let response = rpc.request(message).await?;
             let this = this.upgrade().context("project dropped")?;
-            if this.update(&mut cx, |this, _| this.is_read_only())? {
+            if this.update(&mut cx, |this, _| this.is_disconnected())? {
                 Err(anyhow!("disconnected before completing request"))
             } else {
                 request
@@ -7194,7 +7218,8 @@ impl Project {
 
                     let buffer_id = state.id;
                     let buffer = cx.new_model(|_| {
-                        Buffer::from_proto(this.replica_id(), state, buffer_file).unwrap()
+                        Buffer::from_proto(this.replica_id(), this.capability(), state, buffer_file)
+                            .unwrap()
                     });
                     this.incomplete_remote_buffers
                         .insert(buffer_id, Some(buffer));
@@ -7942,7 +7967,7 @@ impl Project {
 
                 if let Some(buffer) = buffer {
                     break buffer;
-                } else if this.update(&mut cx, |this, _| this.is_read_only())? {
+                } else if this.update(&mut cx, |this, _| this.is_disconnected())? {
                     return Err(anyhow!("disconnected before buffer {} could be opened", id));
                 }
 

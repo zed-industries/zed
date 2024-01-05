@@ -38,7 +38,7 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
-use search::BufferSearchBar;
+use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::{Settings, SettingsStore};
 use std::{
@@ -1156,7 +1156,18 @@ impl Render for AssistantPanel {
                     div()
                 });
 
+            let contents = if self.active_editor().is_some() {
+                let mut registrar = DivRegistrar::new(
+                    |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
+                    cx,
+                );
+                BufferSearchBar::register_inner(&mut registrar);
+                registrar.into_div()
+            } else {
+                div()
+            };
             v_stack()
+                .key_context("AssistantPanel")
                 .size_full()
                 .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
                     this.new_conversation(cx);
@@ -1175,7 +1186,7 @@ impl Render for AssistantPanel {
                     Some(self.toolbar.clone())
                 })
                 .child(
-                    div()
+                    contents
                         .flex_1()
                         .child(if let Some(editor) = self.active_editor() {
                             editor.clone().into_any_element()
@@ -1275,8 +1286,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
-        Some(Icon::Ai)
+    fn icon(&self, cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Ai).filter(|_| AssistantSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -2816,8 +2827,8 @@ impl InlineAssistant {
 
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
         let is_read_only = !self.codegen.read(cx).idle();
-        self.prompt_editor.update(cx, |editor, _cx| {
-            let was_read_only = editor.read_only();
+        self.prompt_editor.update(cx, |editor, cx| {
+            let was_read_only = editor.read_only(cx);
             if was_read_only != is_read_only {
                 if is_read_only {
                     editor.set_read_only(true);
@@ -3052,7 +3063,7 @@ impl InlineAssistant {
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if self.prompt_editor.read(cx).read_only() {
+            color: if self.prompt_editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text

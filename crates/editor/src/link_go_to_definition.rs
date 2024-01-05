@@ -930,10 +930,7 @@ mod tests {
                 fn do_work() { «test»(); }
             "});
 
-        // Deactivating the window dismisses the highlight
-        cx.update_workspace(|workspace, cx| {
-            workspace.on_window_activation_changed(cx);
-        });
+        cx.cx.cx.deactivate_window();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { test(); }

@@ -246,7 +246,15 @@ impl Member {
                     .size_full()
                     .child(pane.clone())
                     .when_some(leader_border, |this, color| {
-                        this.border_2().border_color(color)
+                        this.child(
+                            div()
+                                .absolute()
+                                .size_full()
+                                .left_0()
+                                .top_0()
+                                .border_2()
+                                .border_color(color),
+                        )
                     })
                     .when_some(leader_status_box, |this, status_box| {
                         this.child(

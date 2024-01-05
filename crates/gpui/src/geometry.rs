@@ -31,39 +31,6 @@ pub trait Along {
     fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
 }
 
-impl sqlez::bindable::StaticColumnCount for Axis {}
-impl sqlez::bindable::Bind for Axis {
-    fn bind(
-        &self,
-        statement: &sqlez::statement::Statement,
-        start_index: i32,
-    ) -> anyhow::Result<i32> {
-        match self {
-            Axis::Horizontal => "Horizontal",
-            Axis::Vertical => "Vertical",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl sqlez::bindable::Column for Axis {
-    fn column(
-        statement: &mut sqlez::statement::Statement,
-        start_index: i32,
-    ) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
-            Ok((
-                match axis_text.as_str() {
-                    "Horizontal" => Axis::Horizontal,
-                    "Vertical" => Axis::Vertical,
-                    _ => anyhow::bail!("Stored serialized item kind is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
-}
-
 /// Describes a location in a 2D cartesian coordinate space.
 ///
 /// It holds two public fields, `x` and `y`, which represent the coordinates in the space.
@@ -2293,18 +2260,6 @@ impl From<GlobalPixels> for f64 {
 impl From<f64> for GlobalPixels {
     fn from(global_pixels: f64) -> Self {
         GlobalPixels(global_pixels as f32)
-    }
-}
-
-impl sqlez::bindable::StaticColumnCount for GlobalPixels {}
-
-impl sqlez::bindable::Bind for GlobalPixels {
-    fn bind(
-        &self,
-        statement: &sqlez::statement::Statement,
-        start_index: i32,
-    ) -> anyhow::Result<i32> {
-        self.0.bind(statement, start_index)
     }
 }
 

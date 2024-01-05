@@ -11,6 +11,7 @@ clap = { version = "4.4", features = ["derive"] }
 convert_case = "0.6.0"
 gpui = { path = "../gpui" }
 indexmap = { version = "1.6.2", features = ["serde"] }
+indoc.workspace = true
 json_comments = "0.2.2"
 log.workspace = true
 palette = { version = "0.7.3", default-features = false, features = ["std"] }

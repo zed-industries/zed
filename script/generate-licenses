@@ -6,6 +6,11 @@ OUTPUT_FILE=$(pwd)/assets/licenses.md
 
 > $OUTPUT_FILE
 
+echo -e "# ###### THEME LICENSES ######\n" >> $OUTPUT_FILE
+
+echo "Generating theme licenses"
+cat crates/theme/src/themes/LICENSES >> $OUTPUT_FILE
+
 echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 
 [[ "$(cargo about --version)" == "cargo-about 0.5.2" ]] || cargo install cargo-about --locked --git https://github.com/zed-industries/cargo-about --branch error-code-on-warn

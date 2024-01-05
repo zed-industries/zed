@@ -2,10 +2,11 @@ use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
     BorrowWindow, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveElementState,
-    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
-    Pixels, PlatformInputHandler, Point, ShapedLine, StatefulInteractiveElement, StyleRefinement,
-    Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
+    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveBounds, InteractiveElement,
+    InteractiveElementState, Interactivity, IntoElement, LayoutId, Model, ModelContext,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, PlatformInputHandler, Point,
+    ShapedLine, StatefulInteractiveElement, StyleRefinement, Styled, TextRun, TextStyle,
+    TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -421,7 +422,7 @@ impl TerminalElement {
             let rem_size = cx.rem_size();
             let font_pixels = text_style.font_size.to_pixels(rem_size);
             let line_height = font_pixels * line_height.to_pixels(rem_size);
-            let font_id = cx.text_system().font_id(&text_style.font()).unwrap();
+            let font_id = cx.text_system().resolve_font(&text_style.font());
 
             // todo!(do we need to keep this unwrap?)
             let cell_width = text_system
@@ -598,33 +599,48 @@ impl TerminalElement {
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
+        let interactive_bounds = InteractiveBounds {
+            bounds: bounds.intersect(&cx.content_mask().bounds),
+            stacking_order: cx.stacking_order().clone(),
+        };
 
         self.interactivity.on_mouse_down(MouseButton::Left, {
             let terminal = terminal.clone();
             let focus = focus.clone();
             move |e, cx| {
                 cx.focus(&focus);
-                //todo!(context menu)
-                // v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
                 terminal.update(cx, |terminal, cx| {
                     terminal.mouse_down(&e, origin);
-
                     cx.notify();
                 })
             }
         });
-        self.interactivity.on_mouse_move({
-            let terminal = terminal.clone();
-            let focus = focus.clone();
-            move |e, cx| {
-                if e.pressed_button.is_some() && focus.is_focused(cx) && !cx.has_active_drag() {
+
+        cx.on_mouse_event({
+            let bounds = bounds.clone();
+            let focus = self.focus.clone();
+            let terminal = self.terminal.clone();
+            move |e: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
+                    return;
+                }
+
+                if e.pressed_button.is_some() && !cx.has_active_drag() {
                     terminal.update(cx, |terminal, cx| {
                         terminal.mouse_drag(e, origin, bounds);
                         cx.notify();
                     })
                 }
+
+                if interactive_bounds.visibly_contains(&e.position, cx) {
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.mouse_move(&e, origin);
+                        cx.notify();
+                    })
+                }
             }
         });
+
         self.interactivity.on_mouse_up(
             MouseButton::Left,
             TerminalElement::generic_button_handler(
@@ -648,19 +664,6 @@ impl TerminalElement {
                         //todo!(context menu)
                         // view.deploy_context_menu(e.position, cx);
                     }
-                }
-            }
-        });
-
-        self.interactivity.on_mouse_move({
-            let terminal = terminal.clone();
-            let focus = focus.clone();
-            move |e, cx| {
-                if focus.is_focused(cx) {
-                    terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_move(&e, origin);
-                        cx.notify();
-                    })
                 }
             }
         });

@@ -138,12 +138,6 @@ impl ChannelView {
             editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
                 channel_buffer.clone(),
             )));
-            editor.set_read_only(
-                !channel_buffer
-                    .read(cx)
-                    .channel(cx)
-                    .is_some_and(|c| c.can_edit_notes()),
-            );
             editor
         });
         let _editor_event_subscription =
@@ -178,8 +172,7 @@ impl ChannelView {
                 cx.notify();
             }),
             ChannelBufferEvent::ChannelChanged => {
-                self.editor.update(cx, |editor, cx| {
-                    editor.set_read_only(!self.channel(cx).is_some_and(|c| c.can_edit_notes()));
+                self.editor.update(cx, |_, cx| {
                     cx.emit(editor::EditorEvent::TitleChanged);
                     cx.notify()
                 });
@@ -254,11 +247,11 @@ impl Item for ChannelView {
     fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
         let label = if let Some(channel) = self.channel(cx) {
             match (
-                channel.can_edit_notes(),
+                self.channel_buffer.read(cx).buffer().read(cx).read_only(),
                 self.channel_buffer.read(cx).is_connected(),
             ) {
-                (true, true) => format!("#{}", channel.name),
-                (false, true) => format!("#{} (read-only)", channel.name),
+                (false, true) => format!("#{}", channel.name),
+                (true, true) => format!("#{} (read-only)", channel.name),
                 (_, false) => format!("#{} (disconnected)", channel.name),
             }
         } else {
