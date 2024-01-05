@@ -775,9 +775,8 @@ mod tests {
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
     use fs::{FakeFs, Fs};
     use gpui::{
-        actions, div, Action, AnyElement, AnyWindowHandle, AppContext, AssetSource, Element,
-        Entity, FocusHandle, InteractiveElement, IntoElement, Render, TestAppContext, View,
-        VisualTestContext, WindowHandle,
+        actions, div, Action, AnyWindowHandle, AppContext, AssetSource, Entity, FocusHandle,
+        InteractiveElement, IntoElement, Render, TestAppContext, VisualTestContext, WindowHandle,
     };
     use language::LanguageRegistry;
     use project::{project_settings::ProjectSettings, Project, ProjectPath};
@@ -790,8 +789,7 @@ mod tests {
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, ActivatePrevItem, NewFile, SaveIntent, SplitDirection,
-        WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, SaveIntent, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -2558,7 +2556,7 @@ mod tests {
     async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
         struct TestView {
             focus_handle: FocusHandle,
-        };
+        }
 
         impl Render for TestView {
             fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
