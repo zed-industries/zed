@@ -1617,7 +1617,6 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        let workspace = window.root(cx);
 
         // Create a new untitled buffer
         cx.dispatch_action(window.into(), NewFile);
