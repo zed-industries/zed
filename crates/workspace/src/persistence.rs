@@ -803,7 +803,7 @@ mod tests {
 
     fn group(axis: Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
         SerializedPaneGroup::Group {
-            axis,
+            axis: SerializedAxis(axis),
             flexes: None,
             children,
         }
