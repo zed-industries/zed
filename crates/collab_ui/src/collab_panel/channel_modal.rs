@@ -162,8 +162,7 @@ impl Render for ChannelModal {
                 v_stack()
                     .px_2()
                     .py_1()
-                    .rounded_t(px(8.))
-                    .bg(cx.theme().colors().element_background)
+                    .gap_2()
                     .child(
                         h_stack()
                             .w_px()
@@ -175,7 +174,9 @@ impl Render for ChannelModal {
                     .child(
                         h_stack()
                             .w_full()
+                            .h(rems(22. / 16.))
                             .justify_between()
+                            .line_height(rems(1.25))
                             .child(
                                 h_stack()
                                     .gap_2()
@@ -190,38 +191,54 @@ impl Render for ChannelModal {
                                         )
                                         .on_click(cx.listener(Self::set_channel_visiblity)),
                                     )
-                                    .child(Label::new("Public")),
+                                    .child(Label::new("Public").size(LabelSize::Small)),
                             )
-                            .children(if visibility == ChannelVisibility::Public {
-                                Some(Button::new("copy-link", "Copy Link").on_click(cx.listener(
-                                    move |this, _, cx| {
-                                        if let Some(channel) =
-                                            this.channel_store.read(cx).channel_for_id(channel_id)
-                                        {
-                                            let item = ClipboardItem::new(channel.link());
-                                            cx.write_to_clipboard(item);
-                                        }
-                                    },
-                                )))
-                            } else {
-                                None
-                            }),
+                            .children(
+                                Some(
+                                    Button::new("copy-link", "Copy Link")
+                                        .label_size(LabelSize::Small)
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            if let Some(channel) = this
+                                                .channel_store
+                                                .read(cx)
+                                                .channel_for_id(channel_id)
+                                            {
+                                                let item = ClipboardItem::new(channel.link());
+                                                cx.write_to_clipboard(item);
+                                            }
+                                        })),
+                                )
+                                .filter(|_| visibility == ChannelVisibility::Public),
+                            ),
                     )
                     .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
+                        h_stack()
                             .child(
-                                Button::new("manage-members", "Manage Members")
-                                    .selected(mode == Mode::ManageMembers)
+                                div()
+                                    .id("manage-members")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .border_b_2()
+                                    .when(mode == Mode::ManageMembers, |this| {
+                                        this.border_color(cx.theme().colors().border)
+                                    })
+                                    .child(Label::new("Manage Members"))
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.set_mode(Mode::ManageMembers, cx);
                                     })),
                             )
                             .child(
-                                Button::new("invite-members", "Invite Members")
-                                    .selected(mode == Mode::InviteMembers)
+                                div()
+                                    .id("invite-members")
+                                    .px_2()
+                                    .py_1()
+                                    .cursor_pointer()
+                                    .border_b_2()
+                                    .when(mode == Mode::InviteMembers, |this| {
+                                        this.border_color(cx.theme().colors().border)
+                                    })
+                                    .child(Label::new("Invite Members"))
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.set_mode(Mode::InviteMembers, cx);
                                     })),
