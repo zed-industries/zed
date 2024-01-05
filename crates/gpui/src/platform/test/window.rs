@@ -1,8 +1,7 @@
 use crate::{
     px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, InputEvent, KeyDownEvent,
-    Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
-    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowBounds,
-    WindowOptions,
+    Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    Size, TestPlatform, TileId, WindowAppearance, WindowBounds, WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
