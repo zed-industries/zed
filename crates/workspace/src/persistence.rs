@@ -6,7 +6,12 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{Axis, WindowBounds};
+use gpui::{point, size, Axis, Bounds, WindowBounds};
+
+use sqlez::{
+    bindable::{Bind, Column, StaticColumnCount},
+    statement::Statement,
+};
 
 use util::{unzip_option, ResultExt};
 use uuid::Uuid;
@@ -19,6 +24,121 @@ use model::{
 };
 
 use self::model::DockStructure;
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
+impl sqlez::bindable::StaticColumnCount for SerializedAxis {}
+impl sqlez::bindable::Bind for SerializedAxis {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        match self.0 {
+            gpui::Axis::Horizontal => "Horizontal",
+            gpui::Axis::Vertical => "Vertical",
+        }
+        .bind(statement, start_index)
+    }
+}
+
+impl sqlez::bindable::Column for SerializedAxis {
+    fn column(
+        statement: &mut sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<(Self, i32)> {
+        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
+            Ok((
+                match axis_text.as_str() {
+                    "Horizontal" => Self(Axis::Horizontal),
+                    "Vertical" => Self(Axis::Vertical),
+                    _ => anyhow::bail!("Stored serialized item kind is incorrect"),
+                },
+                next_index,
+            ))
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SerializedWindowsBounds(pub(crate) WindowBounds);
+
+impl StaticColumnCount for SerializedWindowsBounds {
+    fn column_count() -> usize {
+        5
+    }
+}
+
+impl Bind for SerializedWindowsBounds {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let (region, next_index) = match self.0 {
+            WindowBounds::Fullscreen => {
+                let next_index = statement.bind(&"Fullscreen", start_index)?;
+                (None, next_index)
+            }
+            WindowBounds::Maximized => {
+                let next_index = statement.bind(&"Maximized", start_index)?;
+                (None, next_index)
+            }
+            WindowBounds::Fixed(region) => {
+                let next_index = statement.bind(&"Fixed", start_index)?;
+                (Some(region), next_index)
+            }
+        };
+
+        statement.bind(
+            &region.map(|region| {
+                (
+                    SerializedGlobalPixels(region.origin.x),
+                    SerializedGlobalPixels(region.origin.y),
+                    SerializedGlobalPixels(region.size.width),
+                    SerializedGlobalPixels(region.size.height),
+                )
+            }),
+            next_index,
+        )
+    }
+}
+
+impl Column for SerializedWindowsBounds {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (window_state, next_index) = String::column(statement, start_index)?;
+        let bounds = match window_state.as_str() {
+            "Fullscreen" => SerializedWindowsBounds(WindowBounds::Fullscreen),
+            "Maximized" => SerializedWindowsBounds(WindowBounds::Maximized),
+            "Fixed" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: f64 = x;
+                let y: f64 = y;
+                let width: f64 = width;
+                let height: f64 = height;
+                SerializedWindowsBounds(WindowBounds::Fixed(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                }))
+            }
+            _ => bail!("Window State did not have a valid string"),
+        };
+
+        Ok((bounds, next_index + 4))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct SerializedGlobalPixels(gpui::GlobalPixels);
+impl sqlez::bindable::StaticColumnCount for SerializedGlobalPixels {}
+
+impl sqlez::bindable::Bind for SerializedGlobalPixels {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        let this: f64 = self.0.into();
+        let this: f32 = this as _;
+        this.bind(statement, start_index)
+    }
+}
 
 define_connection! {
     // Current schema shape using pseudo-rust syntax:
@@ -181,7 +301,7 @@ impl WorkspaceDb {
     /// Returns a serialized workspace for the given worktree_roots. If the passed array
     /// is empty, the most recent workspace is returned instead. If no workspace for the
     /// passed roots is stored, returns none.
-    pub fn workspace_for_roots<P: AsRef<Path>>(
+    pub(crate) fn workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
@@ -192,7 +312,7 @@ impl WorkspaceDb {
         let (workspace_id, workspace_location, bounds, display, docks): (
             WorkspaceId,
             WorkspaceLocation,
-            Option<WindowBounds>,
+            Option<SerializedWindowsBounds>,
             Option<Uuid>,
             DockStructure,
         ) = self
@@ -230,7 +350,7 @@ impl WorkspaceDb {
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            bounds,
+            bounds: bounds.map(|bounds| bounds.0),
             display,
             docks,
         })
@@ -238,7 +358,7 @@ impl WorkspaceDb {
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
-    pub async fn save_workspace(&self, workspace: SerializedWorkspace) {
+    pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
@@ -367,7 +487,7 @@ impl WorkspaceDb {
         type GroupKey = (Option<GroupId>, WorkspaceId);
         type GroupOrPane = (
             Option<GroupId>,
-            Option<Axis>,
+            Option<SerializedAxis>,
             Option<PaneId>,
             Option<bool>,
             Option<String>,
@@ -536,7 +656,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub async fn set_window_bounds(workspace_id: WorkspaceId, bounds: WindowBounds, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_bounds(workspace_id: WorkspaceId, bounds: SerializedWindowsBounds, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
