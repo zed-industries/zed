@@ -779,7 +779,7 @@ mod tests {
     use gpui::{
         actions, div, Action, AnyElement, AnyWindowHandle, AppContext, AssetSource, Element,
         Entity, FocusHandle, InteractiveElement, IntoElement, Render, TestAppContext, View,
-        WindowHandle,
+        VisualTestContext, WindowHandle,
     };
     use language::LanguageRegistry;
     use project::{project_settings::ProjectSettings, Project, ProjectPath};
@@ -900,84 +900,116 @@ mod tests {
             .unwrap();
     }
 
-    //     #[gpui::test]
-    //     async fn test_window_edit_state(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
-    //         let app_state = init_test(cx);
-    //         app_state
-    //             .fs
-    //             .as_fake()
-    //             .insert_tree("/root", json!({"a": "hey"}))
-    //             .await;
+    #[gpui::test]
+    async fn test_window_edit_state(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({"a": "hey"}))
+            .await;
 
-    //         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-    //             .await
-    //             .unwrap();
-    //         assert_eq!(cx.windows().len(), 1);
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-    //         // When opening the workspace, the window is not in a edited state.
-    //         let window = cx.windows()[0].downcast::<Workspace>().unwrap();
-    //         let workspace = window.root(cx);
-    //         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-    //         let editor = workspace.read_with(cx, |workspace, cx| {
-    //             workspace
-    //                 .active_item(cx)
-    //                 .unwrap()
-    //                 .downcast::<Editor>()
-    //                 .unwrap()
-    //         });
-    //         assert!(!window.is_edited(cx));
+        // When opening the workspace, the window is not in a edited state.
+        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
 
-    //         // Editing a buffer marks the window as edited.
-    //         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-    //         assert!(window.is_edited(cx));
+        let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
+            cx.update_test_window(window.into(), |window| window.edited())
+        };
+        let pane = window
+            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .unwrap();
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
 
-    //         // Undoing the edit restores the window's edited state.
-    //         editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
-    //         assert!(!window.is_edited(cx));
+        assert!(!window_is_edited(window, cx));
 
-    //         // Redoing the edit marks the window as edited again.
-    //         editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
-    //         assert!(window.is_edited(cx));
+        // Editing a buffer marks the window as edited.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            })
+            .unwrap();
 
-    //         // Closing the item restores the window's edited state.
-    //         let close = pane.update(cx, |pane, cx| {
-    //             drop(editor);
-    //             pane.close_active_item(&Default::default(), cx).unwrap()
-    //         });
-    //         executor.run_until_parked();
+        assert!(window_is_edited(window, cx));
 
-    //         window.simulate_prompt_answer(1, cx);
-    //         close.await.unwrap();
-    //         assert!(!window.is_edited(cx));
+        // Undoing the edit restores the window's edited state.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
+            })
+            .unwrap();
+        assert!(!window_is_edited(window, cx));
 
-    //         // Opening the buffer again doesn't impact the window's edited state.
-    //         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-    //             .await
-    //             .unwrap();
-    //         let editor = workspace.read_with(cx, |workspace, cx| {
-    //             workspace
-    //                 .active_item(cx)
-    //                 .unwrap()
-    //                 .downcast::<Editor>()
-    //                 .unwrap()
-    //         });
-    //         assert!(!window.is_edited(cx));
+        // Redoing the edit marks the window as edited again.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
+            })
+            .unwrap();
+        assert!(window_is_edited(window, cx));
 
-    //         // Editing the buffer marks the window as edited.
-    //         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-    //         assert!(window.is_edited(cx));
+        // Closing the item restores the window's edited state.
+        let close = window
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    drop(editor);
+                    pane.close_active_item(&Default::default(), cx).unwrap()
+                })
+            })
+            .unwrap();
+        executor.run_until_parked();
 
-    //         // Ensure closing the window via the mouse gets preempted due to the
-    //         // buffer having unsaved changes.
-    //         assert!(!window.simulate_close(cx));
-    //         executor.run_until_parked();
-    //         assert_eq!(cx.windows().len(), 1);
+        cx.simulate_prompt_answer(1);
+        close.await.unwrap();
+        assert!(!window_is_edited(window, cx));
 
-    //         // The window is successfully closed after the user dismisses the prompt.
-    //         window.simulate_prompt_answer(1, cx);
-    //         executor.run_until_parked();
-    //         assert_eq!(cx.windows().len(), 0);
-    //     }
+        // Opening the buffer again doesn't impact the window's edited state.
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+            .await
+            .unwrap();
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+        assert!(!window_is_edited(window, cx));
+
+        // Editing the buffer marks the window as edited.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            })
+            .unwrap();
+        assert!(window_is_edited(window, cx));
+
+        // Ensure closing the window via the mouse gets preempted due to the
+        // buffer having unsaved changes.
+        assert!(!VisualTestContext::from_window(window.into(), cx).simulate_close());
+        executor.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        // The window is successfully closed after the user dismisses the prompt.
+        cx.simulate_prompt_answer(1);
+        executor.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 0);
+    }
 
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
@@ -2796,9 +2828,11 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let mut app_state = AppState::test(cx);
+
             let state = Arc::get_mut(&mut app_state).unwrap();
-            //state.initialize_workspace = initialize_workspace;
+
             state.build_window_options = build_window_options;
+            initialize_workspace(app_state.clone(), cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init((), cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);

@@ -27,6 +27,7 @@ pub struct TestWindow {
     pub(crate) handlers: Arc<Mutex<TestWindowHandlers>>,
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    pub(crate) should_close_handler: Mutex<Option<Box<dyn FnMut() -> bool>>>,
 }
 
 impl TestWindow {
@@ -44,7 +45,11 @@ impl TestWindow {
             handlers: Default::default(),
             title: Default::default(),
             edited: false,
+            should_close_handler: Default::default(),
         }
+    }
+    pub fn edited(&self) -> bool {
+        self.edited
     }
 }
 
@@ -154,8 +159,8 @@ impl PlatformWindow for TestWindow {
         self.handlers.lock().moved.push(callback)
     }
 
-    fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {
-        unimplemented!()
+    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
+        *self.should_close_handler.lock() = Some(callback);
     }
 
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {
