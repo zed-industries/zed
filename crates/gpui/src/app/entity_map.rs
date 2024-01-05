@@ -1,6 +1,8 @@
 use crate::{private::Sealed, AppContext, Context, Entity, ModelContext};
 use anyhow::{anyhow, Result};
+use collections::HashMap;
 use derive_more::{Deref, DerefMut};
+use lazy_static::lazy_static;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
@@ -38,6 +40,8 @@ pub(crate) struct EntityMap {
 struct EntityRefCounts {
     counts: SlotMap<EntityId, AtomicUsize>,
     dropped_entity_ids: Vec<EntityId>,
+    #[cfg(any(test, feature = "test-support"))]
+    leak_detector: LeakDetector,
 }
 
 impl EntityMap {
@@ -47,6 +51,11 @@ impl EntityMap {
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
+                #[cfg(any(test, feature = "test-support"))]
+                leak_detector: LeakDetector {
+                    next_handle_id: 0,
+                    entity_handles: HashMap::default(),
+                },
             })),
         }
     }
@@ -156,6 +165,8 @@ pub struct AnyModel {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
     entity_map: Weak<RwLock<EntityRefCounts>>,
+    #[cfg(any(test, feature = "test-support"))]
+    handle_id: HandleId,
 }
 
 impl AnyModel {
@@ -163,7 +174,14 @@ impl AnyModel {
         Self {
             entity_id: id,
             entity_type,
-            entity_map,
+            entity_map: entity_map.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id: entity_map
+                .upgrade()
+                .unwrap()
+                .write()
+                .leak_detector
+                .handle_created(id),
         }
     }
 
@@ -207,11 +225,20 @@ impl Clone for AnyModel {
             assert_ne!(prev_count, 0, "Detected over-release of a model.");
         }
 
-        Self {
+        let this = Self {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
-        }
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id: self
+                .entity_map
+                .upgrade()
+                .unwrap()
+                .write()
+                .leak_detector
+                .handle_created(self.entity_id),
+        };
+        this
     }
 }
 
@@ -230,6 +257,14 @@ impl Drop for AnyModel {
                 let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
                 entity_map.dropped_entity_ids.push(self.entity_id);
             }
+        }
+
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(entity_map) = self.entity_map.upgrade() {
+            entity_map
+                .write()
+                .leak_detector
+                .handle_dropped(self.entity_id, self.handle_id)
         }
     }
 }
@@ -423,12 +458,42 @@ impl AnyWeakModel {
             return None;
         }
         ref_count.fetch_add(1, SeqCst);
+        drop(ref_counts);
 
         Some(AnyModel {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_ref_counts.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id: self
+                .entity_ref_counts
+                .upgrade()
+                .unwrap()
+                .write()
+                .leak_detector
+                .handle_created(self.entity_id),
         })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn assert_dropped(&self) {
+        self.entity_ref_counts
+            .upgrade()
+            .unwrap()
+            .write()
+            .leak_detector
+            .assert_dropped(self.entity_id);
+
+        if self
+            .entity_ref_counts
+            .upgrade()
+            .and_then(|ref_counts| Some(ref_counts.read().counts.get(self.entity_id)?.load(SeqCst)))
+            .is_some()
+        {
+            panic!(
+                "entity was recently dropped but resources are retained until the end of the effect cycle."
+            )
+        }
     }
 }
 
@@ -531,6 +596,59 @@ impl<T> Eq for WeakModel<T> {}
 impl<T> PartialEq<Model<T>> for WeakModel<T> {
     fn eq(&self, other: &Model<T>) -> bool {
         self.entity_id() == other.any_model.entity_id()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+lazy_static! {
+    static ref LEAK_BACKTRACE: bool =
+        std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+pub struct HandleId {
+    id: u64, // id of the handle itself, not the pointed at object
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct LeakDetector {
+    next_handle_id: u64,
+    entity_handles: HashMap<EntityId, HashMap<HandleId, Option<backtrace::Backtrace>>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LeakDetector {
+    #[track_caller]
+    pub fn handle_created(&mut self, entity_id: EntityId) -> HandleId {
+        let id = util::post_inc(&mut self.next_handle_id);
+        let handle_id = HandleId { id };
+        let handles = self.entity_handles.entry(entity_id).or_default();
+        handles.insert(
+            handle_id,
+            LEAK_BACKTRACE.then(|| backtrace::Backtrace::new_unresolved()),
+        );
+        handle_id
+    }
+
+    pub fn handle_dropped(&mut self, entity_id: EntityId, handle_id: HandleId) {
+        let handles = self.entity_handles.entry(entity_id).or_default();
+        handles.remove(&handle_id);
+    }
+
+    pub fn assert_dropped(&mut self, entity_id: EntityId) {
+        let handles = self.entity_handles.entry(entity_id).or_default();
+        if !handles.is_empty() {
+            for (_, backtrace) in handles {
+                if let Some(mut backtrace) = backtrace.take() {
+                    backtrace.resolve();
+                    eprintln!("Leaked handle: {:#?}", backtrace);
+                } else {
+                    eprintln!("Leaked handle: export LEAK_BACKTRACE to find allocation site");
+                }
+            }
+            panic!();
+        }
     }
 }
 
