@@ -8,7 +8,7 @@ set -e
 cd crates/collab
 
 # Export contents of .env.toml
-eval "$(cargo run --quiet --bin dotenv2)"
+eval "$(cargo run --quiet --bin dotenv)"
 
 # Run sqlx command
 sqlx $@
