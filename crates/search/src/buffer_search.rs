@@ -223,6 +223,7 @@ impl Render for BufferSearchBar {
                     .gap_2()
                     .border_1()
                     .border_color(editor_border)
+                    .min_w(rems(384. / 16.))
                     .rounded_lg()
                     .child(IconElement::new(Icon::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx))
