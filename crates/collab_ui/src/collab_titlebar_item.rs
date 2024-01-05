@@ -14,7 +14,7 @@ use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
     h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconElement, Tooltip,
+    IconButton, IconElement, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -183,6 +183,8 @@ impl Render for CollabTitlebarItem {
                                     if is_shared { "Unshare" } else { "Share" },
                                 )
                                 .style(ButtonStyle::Subtle)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                .selected(is_shared)
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(
                                     move |this, _, cx| {
@@ -215,6 +217,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                             .icon_size(IconSize::Small)
                             .selected(is_muted)
                             .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
@@ -229,6 +232,7 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
@@ -239,6 +243,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             IconButton::new("screen-share", ui::Icon::Screen)
                                 .style(ButtonStyle::Subtle)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                 .icon_size(IconSize::Small)
                                 .selected(is_screen_sharing)
                                 .on_click(move |_, cx| {

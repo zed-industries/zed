@@ -92,6 +92,13 @@ impl Selectable for Button {
     }
 }
 
+impl SelectableButton for Button {
+    fn selected_style(mut self, style: ButtonStyle) -> Self {
+        self.base = self.base.selected_style(style);
+        self
+    }
+}
+
 impl Disableable for Button {
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
