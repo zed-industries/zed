@@ -1439,20 +1439,16 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         .unwrap()
         .clone();
 
-    let mut cx_b_project_a = VisualTestContext::from_window(window_b_project_a, cx_b);
+    let mut cx_b2 = VisualTestContext::from_window(window_b_project_a.clone(), cx_b);
 
-    let workspace_b_project_a = cx_b
-        .windows()
-        .iter()
-        .max_by_key(|window| window.window_id())
-        .unwrap()
+    let workspace_b_project_a = window_b_project_a
         .downcast::<Workspace>()
         .unwrap()
         .root(cx_b)
         .unwrap();
 
     // assert that b is following a in project a in w.rs
-    workspace_b_project_a.update(&mut cx_b_project_a, |workspace, cx| {
+    workspace_b_project_a.update(&mut cx_b2, |workspace, cx| {
         assert!(workspace.is_being_followed(client_a.peer_id().unwrap()));
         assert_eq!(
             client_a.peer_id(),
@@ -1467,7 +1463,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
     // TODO: in app code, this would be done by the collab_ui.
     active_call_b
-        .update(&mut cx_b_project_a, |call, cx| {
+        .update(&mut cx_b2, |call, cx| {
             let project = workspace_b_project_a.read(cx).project().clone();
             call.set_location(Some(&project), cx)
         })
@@ -1479,14 +1475,14 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
     // b moves to x.rs in a's project, and a follows
     workspace_b_project_a
-        .update(cx_b, |workspace, cx| {
+        .update(&mut cx_b2, |workspace, cx| {
             workspace.open_path((worktree_id_a, "x.rs"), None, true, cx)
         })
         .await
         .unwrap();
 
     executor.run_until_parked();
-    workspace_b_project_a.update(cx_b, |workspace, cx| {
+    workspace_b_project_a.update(&mut cx_b2, |workspace, cx| {
         let item = workspace.active_item(cx).unwrap();
         assert_eq!(
             item.tab_description(0, cx).unwrap(),
@@ -1547,17 +1543,20 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     executor.run_until_parked();
 
     assert_eq!(visible_push_notifications(cx_a).len(), 0);
-    let workspace_a_project_b = cx_a
+    let window_a_project_b = cx_a
         .windows()
         .iter()
         .max_by_key(|window| window.window_id())
         .unwrap()
+        .clone();
+    let cx_a2 = &mut VisualTestContext::from_window(window_a_project_b.clone(), cx_a);
+    let workspace_a_project_b = window_a_project_b
         .downcast::<Workspace>()
         .unwrap()
         .root(cx_a)
         .unwrap();
 
-    workspace_a_project_b.update(cx_a, |workspace, cx| {
+    workspace_a_project_b.update(cx_a2, |workspace, cx| {
         assert_eq!(workspace.project().read(cx).remote_id(), Some(project_b_id));
         assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
         assert_eq!(
