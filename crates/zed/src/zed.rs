@@ -2690,46 +2690,45 @@ mod tests {
         assert_key_bindings_for(window.into(), cx, vec![("[", &ActivatePrevItem)], line!());
     }
 
-    //     #[gpui::test]
-    //     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
-    //         cx.platform()
-    //             .fonts()
-    //             .add_fonts(&[
-    //                 Assets
-    //                     .load("fonts/zed-sans/zed-sans-extended.ttf")
-    //                     .unwrap()
-    //                     .to_vec()
-    //                     .into(),
-    //                 Assets
-    //                     .load("fonts/zed-mono/zed-mono-extended.ttf")
-    //                     .unwrap()
-    //                     .to_vec()
-    //                     .into(),
-    //                 Assets
-    //                     .load("fonts/plex/IBMPlexSans-Regular.ttf")
-    //                     .unwrap()
-    //                     .to_vec()
-    //                     .into(),
-    //             ])
-    //             .unwrap();
-    //         let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
-    //         let mut settings = SettingsStore::default();
-    //         settings
-    //             .set_default_settings(&settings::default_settings(), cx)
-    //             .unwrap();
-    //         cx.set_global(settings);
-    //         theme::init(Assets, cx);
+    #[gpui::test]
+    fn test_bundled_settings_and_themes(cx: &mut AppContext) {
+        cx.text_system()
+            .add_fonts(&[
+                Assets
+                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/plex/IBMPlexSans-Regular.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+            ])
+            .unwrap();
+        let themes = ThemeRegistry::default();
+        let mut settings = SettingsStore::default();
+        settings
+            .set_default_settings(&settings::default_settings(), cx)
+            .unwrap();
+        cx.set_global(settings);
+        theme::init(theme::LoadThemes::JustBase, cx);
 
-    //         let mut has_default_theme = false;
-    //         for theme_name in themes.list(false).map(|meta| meta.name) {
-    //             let theme = themes.get(&theme_name).unwrap();
-    //             assert_eq!(theme.meta.name, theme_name);
-    //             if theme.meta.name == settings::get::<ThemeSettings>(cx).theme.meta.name {
-    //                 has_default_theme = true;
-    //             }
-    //         }
-    //         assert!(has_default_theme);
-    //     }
+        let mut has_default_theme = false;
+        for theme_name in themes.list(false).map(|meta| meta.name) {
+            let theme = themes.get(&theme_name).unwrap();
+            assert_eq!(theme.name, theme_name);
+            if theme.name == ThemeSettings::get(None, cx).active_theme.name {
+                has_default_theme = true;
+            }
+        }
+        assert!(has_default_theme);
+    }
 
     #[gpui::test]
     fn test_bundled_languages(cx: &mut AppContext) {
