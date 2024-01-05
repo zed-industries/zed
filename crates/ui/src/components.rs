@@ -16,7 +16,6 @@ mod stack;
 mod tab;
 mod tab_bar;
 mod tooltip;
-mod typography;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -39,7 +38,6 @@ pub use stack::*;
 pub use tab::*;
 pub use tab_bar::*;
 pub use tooltip::*;
-pub use typography::*;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
