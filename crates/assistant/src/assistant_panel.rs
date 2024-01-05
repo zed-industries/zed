@@ -1286,8 +1286,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
-        Some(Icon::Ai)
+    fn icon(&self, cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Ai).filter(|_| AssistantSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
