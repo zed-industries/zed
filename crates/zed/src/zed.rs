@@ -1028,119 +1028,127 @@ mod tests {
             .unwrap();
     }
 
-    //     #[gpui::test]
-    //     async fn test_open_entry(cx: &mut TestAppContext) {
-    //         let app_state = init_test(cx);
-    //         app_state
-    //             .fs
-    //             .as_fake()
-    //             .insert_tree(
-    //                 "/root",
-    //                 json!({
-    //                     "a": {
-    //                         "file1": "contents 1",
-    //                         "file2": "contents 2",
-    //                         "file3": "contents 3",
-    //                     },
-    //                 }),
-    //             )
-    //             .await;
+    #[gpui::test]
+    async fn test_open_entry(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "contents 1",
+                        "file2": "contents 2",
+                        "file3": "contents 3",
+                    },
+                }),
+            )
+            .await;
 
-    //         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-    //         let workspace = window.root(cx);
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
 
-    //         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-    //         let file1 = entries[0].clone();
-    //         let file2 = entries[1].clone();
-    //         let file3 = entries[2].clone();
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let file1 = entries[0].clone();
+        let file2 = entries[1].clone();
+        let file3 = entries[2].clone();
 
-    //         // Open the first entry
-    //         let entry_1 = workspace
-    //             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-    //             .await
-    //             .unwrap();
-    //         cx.read(|cx| {
-    //             let pane = workspace.read(cx).active_pane().read(cx);
-    //             assert_eq!(
-    //                 pane.active_item().unwrap().project_path(cx),
-    //                 Some(file1.clone())
-    //             );
-    //             assert_eq!(pane.items_len(), 1);
-    //         });
+        // Open the first entry
+        let entry_1 = window
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file1.clone())
+            );
+            assert_eq!(pane.items_len(), 1);
+        });
 
-    //         // Open the second entry
-    //         workspace
-    //             .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
-    //             .await
-    //             .unwrap();
-    //         cx.read(|cx| {
-    //             let pane = workspace.read(cx).active_pane().read(cx);
-    //             assert_eq!(
-    //                 pane.active_item().unwrap().project_path(cx),
-    //                 Some(file2.clone())
-    //             );
-    //             assert_eq!(pane.items_len(), 2);
-    //         });
+        // Open the second entry
+        window
+            .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file2.clone())
+            );
+            assert_eq!(pane.items_len(), 2);
+        });
 
-    //         // Open the first entry again. The existing pane item is activated.
-    //         let entry_1b = workspace
-    //             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-    //             .await
-    //             .unwrap();
-    //         assert_eq!(entry_1.id(), entry_1b.id());
+        // Open the first entry again. The existing pane item is activated.
+        let entry_1b = window
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(entry_1.item_id(), entry_1b.item_id());
 
-    //         cx.read(|cx| {
-    //             let pane = workspace.read(cx).active_pane().read(cx);
-    //             assert_eq!(
-    //                 pane.active_item().unwrap().project_path(cx),
-    //                 Some(file1.clone())
-    //             );
-    //             assert_eq!(pane.items_len(), 2);
-    //         });
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file1.clone())
+            );
+            assert_eq!(pane.items_len(), 2);
+        });
 
-    //         // Split the pane with the first entry, then open the second entry again.
-    //         workspace
-    //             .update(cx, |w, cx| {
-    //                 w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, cx);
-    //                 w.open_path(file2.clone(), None, true, cx)
-    //             })
-    //             .await
-    //             .unwrap();
+        // Split the pane with the first entry, then open the second entry again.
+        window
+            .update(cx, |w, cx| {
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, cx);
+                w.open_path(file2.clone(), None, true, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
 
-    //         workspace.read_with(cx, |w, cx| {
-    //             assert_eq!(
-    //                 w.active_pane()
-    //                     .read(cx)
-    //                     .active_item()
-    //                     .unwrap()
-    //                     .project_path(cx),
-    //                 Some(file2.clone())
-    //             );
-    //         });
+        window
+            .read_with(cx, |w, cx| {
+                assert_eq!(
+                    w.active_pane()
+                        .read(cx)
+                        .active_item()
+                        .unwrap()
+                        .project_path(cx),
+                    Some(file2.clone())
+                );
+            })
+            .unwrap();
 
-    //         // Open the third entry twice concurrently. Only one pane item is added.
-    //         let (t1, t2) = workspace.update(cx, |w, cx| {
-    //             (
-    //                 w.open_path(file3.clone(), None, true, cx),
-    //                 w.open_path(file3.clone(), None, true, cx),
-    //             )
-    //         });
-    //         t1.await.unwrap();
-    //         t2.await.unwrap();
-    //         cx.read(|cx| {
-    //             let pane = workspace.read(cx).active_pane().read(cx);
-    //             assert_eq!(
-    //                 pane.active_item().unwrap().project_path(cx),
-    //                 Some(file3.clone())
-    //             );
-    //             let pane_entries = pane
-    //                 .items()
-    //                 .map(|i| i.project_path(cx).unwrap())
-    //                 .collect::<Vec<_>>();
-    //             assert_eq!(pane_entries, &[file1, file2, file3]);
-    //         });
-    //     }
+        // Open the third entry twice concurrently. Only one pane item is added.
+        let (t1, t2) = window
+            .update(cx, |w, cx| {
+                (
+                    w.open_path(file3.clone(), None, true, cx),
+                    w.open_path(file3.clone(), None, true, cx),
+                )
+            })
+            .unwrap();
+        t1.await.unwrap();
+        t2.await.unwrap();
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file3.clone())
+            );
+            let pane_entries = pane
+                .items()
+                .map(|i| i.project_path(cx).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(pane_entries, &[file1, file2, file3]);
+        });
+    }
 
     //     #[gpui::test]
     //     async fn test_open_paths(cx: &mut TestAppContext) {
