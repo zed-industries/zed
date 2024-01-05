@@ -184,6 +184,16 @@ impl Render for CollabTitlebarItem {
                                     "toggle_sharing",
                                     if is_shared { "Unshare" } else { "Share" },
                                 )
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if is_shared {
+                                            "Stop sharing project with call participants"
+                                        } else {
+                                            "Share project with call participants"
+                                        },
+                                        cx,
+                                    )
+                                })
                                 .style(ButtonStyle::Subtle)
                                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                 .selected(is_shared)
@@ -202,6 +212,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             IconButton::new("leave-call", ui::Icon::Exit)
                                 .style(ButtonStyle::Subtle)
+                                .tooltip(|cx| Tooltip::text("Leave call", cx))
                                 .icon_size(IconSize::Small)
                                 .on_click(move |_, cx| {
                                     ActiveCall::global(cx)
@@ -219,6 +230,16 @@ impl Render for CollabTitlebarItem {
                                         ui::Icon::Mic
                                     },
                                 )
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if is_muted {
+                                            "Unmute microphone"
+                                        } else {
+                                            "Mute microphone"
+                                        },
+                                        cx,
+                                    )
+                                })
                                 .style(ButtonStyle::Subtle)
                                 .icon_size(IconSize::Small)
                                 .selected(is_muted)
@@ -260,6 +281,16 @@ impl Render for CollabTitlebarItem {
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
                                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            if is_screen_sharing {
+                                                "Stop Sharing Screen"
+                                            } else {
+                                                "Share Screen"
+                                            },
+                                            cx,
+                                        )
+                                    })
                                     .on_click(move |_, cx| {
                                         crate::toggle_screen_sharing(&Default::default(), cx)
                                     }),
