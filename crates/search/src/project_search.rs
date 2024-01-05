@@ -286,7 +286,6 @@ impl Render for ProjectSearchView {
                 .size_full()
                 .track_focus(&self.focus_handle)
                 .child(self.results_editor.clone())
-                .into_any()
         } else {
             let model = self.model.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
@@ -363,6 +362,7 @@ impl Render for ProjectSearchView {
                 .flex_1()
                 .size_full()
                 .justify_center()
+                .bg(cx.theme().colors().editor_background)
                 .track_focus(&self.focus_handle)
                 .child(
                     h_stack()
@@ -372,7 +372,6 @@ impl Render for ProjectSearchView {
                         .child(v_stack().child(major_text).children(minor_text))
                         .child(h_stack().flex_1()),
                 )
-                .into_any()
         }
     }
 }
