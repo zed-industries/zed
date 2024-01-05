@@ -326,8 +326,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     editor_b.update(&mut cx_b, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
         editor.handle_input(".", cx);
-        editor_b.focus_handle(cx).focus(cx);
     });
+    cx_b.focus_view(&editor_b);
 
     // Receive a completion request as the host's language server.
     // Return some completions from the host's language server.
