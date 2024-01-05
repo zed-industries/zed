@@ -1180,209 +1180,210 @@ mod tests {
         });
     }
 
-    //     #[gpui::test]
-    //     async fn test_open_paths(cx: &mut TestAppContext) {
-    //         let app_state = init_test(cx);
+    #[gpui::test]
+    async fn test_open_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
 
-    //         app_state
-    //             .fs
-    //             .as_fake()
-    //             .insert_tree(
-    //                 "/",
-    //                 json!({
-    //                     "dir1": {
-    //                         "a.txt": ""
-    //                     },
-    //                     "dir2": {
-    //                         "b.txt": ""
-    //                     },
-    //                     "dir3": {
-    //                         "c.txt": ""
-    //                     },
-    //                     "d.txt": ""
-    //                 }),
-    //             )
-    //             .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/",
+                json!({
+                    "dir1": {
+                        "a.txt": ""
+                    },
+                    "dir2": {
+                        "b.txt": ""
+                    },
+                    "dir3": {
+                        "c.txt": ""
+                    },
+                    "d.txt": ""
+                }),
+            )
+            .await;
 
-    //         cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
-    //             .await
-    //             .unwrap();
-    //         assert_eq!(cx.windows().len(), 1);
-    //         let workspace = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let workspace = window.root(cx).unwrap();
 
-    //         #[track_caller]
-    //         fn assert_project_panel_selection(
-    //             workspace: &Workspace,
-    //             expected_worktree_path: &Path,
-    //             expected_entry_path: &Path,
-    //             cx: &AppContext,
-    //         ) {
-    //             let project_panel = [
-    //                 workspace.left_dock().read(cx).panel::<ProjectPanel>(),
-    //                 workspace.right_dock().read(cx).panel::<ProjectPanel>(),
-    //                 workspace.bottom_dock().read(cx).panel::<ProjectPanel>(),
-    //             ]
-    //             .into_iter()
-    //             .find_map(std::convert::identity)
-    //             .expect("found no project panels")
-    //             .read(cx);
-    //             let (selected_worktree, selected_entry) = project_panel
-    //                 .selected_entry(cx)
-    //                 .expect("project panel should have a selected entry");
-    //             assert_eq!(
-    //                 selected_worktree.abs_path().as_ref(),
-    //                 expected_worktree_path,
-    //                 "Unexpected project panel selected worktree path"
-    //             );
-    //             assert_eq!(
-    //                 selected_entry.path.as_ref(),
-    //                 expected_entry_path,
-    //                 "Unexpected project panel selected entry path"
-    //             );
-    //         }
+        #[track_caller]
+        fn assert_project_panel_selection(
+            workspace: &Workspace,
+            expected_worktree_path: &Path,
+            expected_entry_path: &Path,
+            cx: &AppContext,
+        ) {
+            let project_panel = [
+                workspace.left_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.right_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.bottom_dock().read(cx).panel::<ProjectPanel>(),
+            ]
+            .into_iter()
+            .find_map(std::convert::identity)
+            .expect("found no project panels")
+            .read(cx);
+            let (selected_worktree, selected_entry) = project_panel
+                .selected_entry(cx)
+                .expect("project panel should have a selected entry");
+            assert_eq!(
+                selected_worktree.abs_path().as_ref(),
+                expected_worktree_path,
+                "Unexpected project panel selected worktree path"
+            );
+            assert_eq!(
+                selected_entry.path.as_ref(),
+                expected_entry_path,
+                "Unexpected project panel selected entry path"
+            );
+        }
 
-    //         // Open a file within an existing worktree.
-    //         workspace
-    //             .update(cx, |view, cx| {
-    //                 view.open_paths(vec!["/dir1/a.txt".into()], true, cx)
-    //             })
-    //             .await;
-    //         cx.read(|cx| {
-    //             let workspace = workspace.read(cx);
-    //             assert_project_panel_selection(workspace, Path::new("/dir1"), Path::new("a.txt"), cx);
-    //             assert_eq!(
-    //                 workspace
-    //                     .active_pane()
-    //                     .read(cx)
-    //                     .active_item()
-    //                     .unwrap()
-    //                     .as_any()
-    //                     .downcast_ref::<Editor>()
-    //                     .unwrap()
-    //                     .read(cx)
-    //                     .title(cx),
-    //                 "a.txt"
-    //             );
-    //         });
+        // Open a file within an existing worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec!["/dir1/a.txt".into()], true, cx)
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir1"), Path::new("a.txt"), cx);
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "a.txt"
+            );
+        });
 
-    //         // Open a file outside of any existing worktree.
-    //         workspace
-    //             .update(cx, |view, cx| {
-    //                 view.open_paths(vec!["/dir2/b.txt".into()], true, cx)
-    //             })
-    //             .await;
-    //         cx.read(|cx| {
-    //             let workspace = workspace.read(cx);
-    //             assert_project_panel_selection(workspace, Path::new("/dir2/b.txt"), Path::new(""), cx);
-    //             let worktree_roots = workspace
-    //                 .worktrees(cx)
-    //                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-    //                 .collect::<HashSet<_>>();
-    //             assert_eq!(
-    //                 worktree_roots,
-    //                 vec!["/dir1", "/dir2/b.txt"]
-    //                     .into_iter()
-    //                     .map(Path::new)
-    //                     .collect(),
-    //             );
-    //             assert_eq!(
-    //                 workspace
-    //                     .active_pane()
-    //                     .read(cx)
-    //                     .active_item()
-    //                     .unwrap()
-    //                     .as_any()
-    //                     .downcast_ref::<Editor>()
-    //                     .unwrap()
-    //                     .read(cx)
-    //                     .title(cx),
-    //                 "b.txt"
-    //             );
-    //         });
+        // Open a file outside of any existing worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec!["/dir2/b.txt".into()], true, cx)
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir2/b.txt"), Path::new(""), cx);
+            let worktree_roots = workspace
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "b.txt"
+            );
+        });
 
-    //         // Ensure opening a directory and one of its children only adds one worktree.
-    //         workspace
-    //             .update(cx, |view, cx| {
-    //                 view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], true, cx)
-    //             })
-    //             .await;
-    //         cx.read(|cx| {
-    //             let workspace = workspace.read(cx);
-    //             assert_project_panel_selection(workspace, Path::new("/dir3"), Path::new("c.txt"), cx);
-    //             let worktree_roots = workspace
-    //                 .worktrees(cx)
-    //                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-    //                 .collect::<HashSet<_>>();
-    //             assert_eq!(
-    //                 worktree_roots,
-    //                 vec!["/dir1", "/dir2/b.txt", "/dir3"]
-    //                     .into_iter()
-    //                     .map(Path::new)
-    //                     .collect(),
-    //             );
-    //             assert_eq!(
-    //                 workspace
-    //                     .active_pane()
-    //                     .read(cx)
-    //                     .active_item()
-    //                     .unwrap()
-    //                     .as_any()
-    //                     .downcast_ref::<Editor>()
-    //                     .unwrap()
-    //                     .read(cx)
-    //                     .title(cx),
-    //                 "c.txt"
-    //             );
-    //         });
+        // Ensure opening a directory and one of its children only adds one worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], true, cx)
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir3"), Path::new("c.txt"), cx);
+            let worktree_roots = workspace
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "c.txt"
+            );
+        });
 
-    //         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
-    //         workspace
-    //             .update(cx, |view, cx| {
-    //                 view.open_paths(vec!["/d.txt".into()], false, cx)
-    //             })
-    //             .await;
-    //         cx.read(|cx| {
-    //             let workspace = workspace.read(cx);
-    //             assert_project_panel_selection(workspace, Path::new("/d.txt"), Path::new(""), cx);
-    //             let worktree_roots = workspace
-    //                 .worktrees(cx)
-    //                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-    //                 .collect::<HashSet<_>>();
-    //             assert_eq!(
-    //                 worktree_roots,
-    //                 vec!["/dir1", "/dir2/b.txt", "/dir3", "/d.txt"]
-    //                     .into_iter()
-    //                     .map(Path::new)
-    //                     .collect(),
-    //             );
+        // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec!["/d.txt".into()], false, cx)
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/d.txt"), Path::new(""), cx);
+            let worktree_roots = workspace
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3", "/d.txt"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
 
-    //             let visible_worktree_roots = workspace
-    //                 .visible_worktrees(cx)
-    //                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-    //                 .collect::<HashSet<_>>();
-    //             assert_eq!(
-    //                 visible_worktree_roots,
-    //                 vec!["/dir1", "/dir2/b.txt", "/dir3"]
-    //                     .into_iter()
-    //                     .map(Path::new)
-    //                     .collect(),
-    //             );
+            let visible_worktree_roots = workspace
+                .visible_worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                visible_worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
 
-    //             assert_eq!(
-    //                 workspace
-    //                     .active_pane()
-    //                     .read(cx)
-    //                     .active_item()
-    //                     .unwrap()
-    //                     .as_any()
-    //                     .downcast_ref::<Editor>()
-    //                     .unwrap()
-    //                     .read(cx)
-    //                     .title(cx),
-    //                 "d.txt"
-    //             );
-    //         });
-    //     }
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "d.txt"
+            );
+        });
+    }
 
     #[gpui::test]
     async fn test_opening_excluded_paths(cx: &mut TestAppContext) {
