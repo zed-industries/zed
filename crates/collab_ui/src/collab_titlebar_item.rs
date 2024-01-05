@@ -528,8 +528,7 @@ impl CollabTitlebarItem {
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")
-                    .bg(gpui::red()) // todo!() @nate
-                    .child(IconElement::new(Icon::Disconnected))
+                    .child(IconElement::new(Icon::Disconnected).size(IconSize::Small))
                     .tooltip(|cx| Tooltip::text("Disconnected", cx))
                     .into_any_element(),
             ),
@@ -546,9 +545,9 @@ impl CollabTitlebarItem {
                 };
 
                 Some(
-                    div()
-                        .bg(gpui::red()) // todo!() @nate
-                        .child(Button::new("connection-status", label).on_click(|_, cx| {
+                    Button::new("connection-status", label)
+                        .label_size(LabelSize::Small)
+                        .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
                                     workspace::restart(&Default::default(), cx);
@@ -556,7 +555,7 @@ impl CollabTitlebarItem {
                                 }
                             }
                             auto_update::check(&Default::default(), cx);
-                        }))
+                        })
                         .into_any_element(),
                 )
             }
@@ -566,16 +565,18 @@ impl CollabTitlebarItem {
 
     pub fn render_sign_in_button(&mut self, _: &mut ViewContext<Self>) -> Button {
         let client = self.client.clone();
-        Button::new("sign_in", "Sign in").on_click(move |_, cx| {
-            let client = client.clone();
-            cx.spawn(move |mut cx| async move {
-                client
-                    .authenticate_and_connect(true, &cx)
-                    .await
-                    .notify_async_err(&mut cx);
+        Button::new("sign_in", "Sign in")
+            .label_size(LabelSize::Small)
+            .on_click(move |_, cx| {
+                let client = client.clone();
+                cx.spawn(move |mut cx| async move {
+                    client
+                        .authenticate_and_connect(true, &cx)
+                        .await
+                        .notify_async_err(&mut cx);
+                })
+                .detach();
             })
-            .detach();
-        })
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
