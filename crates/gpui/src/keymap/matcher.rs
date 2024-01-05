@@ -1,6 +1,5 @@
 use crate::{Action, KeyContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::Mutex;
-use smallvec::SmallVec;
 use std::sync::Arc;
 
 pub struct KeystrokeMatcher {
@@ -51,10 +50,14 @@ impl KeystrokeMatcher {
         let mut pending_key = None;
         let mut found_actions = Vec::new();
 
-        for binding in keymap.bindings().iter().rev() {
+        for binding in keymap.bindings().rev() {
+            if !keymap.binding_enabled(binding, context_stack) {
+                continue;
+            }
+
             for candidate in keystroke.match_candidates() {
                 self.pending_keystrokes.push(candidate.clone());
-                match binding.match_keystrokes(&self.pending_keystrokes, context_stack) {
+                match binding.match_keystrokes(&self.pending_keystrokes) {
                     KeyMatch::Some(mut actions) => {
                         found_actions.append(&mut actions);
                     }
@@ -81,19 +84,6 @@ impl KeystrokeMatcher {
         } else {
             KeyMatch::Pending
         }
-    }
-
-    pub fn keystrokes_for_action(
-        &self,
-        action: &dyn Action,
-        contexts: &[KeyContext],
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        self.keymap
-            .lock()
-            .bindings()
-            .iter()
-            .rev()
-            .find_map(|binding| binding.keystrokes_for_action(action, contexts))
     }
 }
 
