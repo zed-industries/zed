@@ -1652,86 +1652,94 @@ mod tests {
     //         });
     //     }
 
-    //     #[gpui::test]
-    //     async fn test_pane_actions(cx: &mut TestAppContext) {
-    //         let app_state = init_test(cx);
-    //         app_state
-    //             .fs
-    //             .as_fake()
-    //             .insert_tree(
-    //                 "/root",
-    //                 json!({
-    //                     "a": {
-    //                         "file1": "contents 1",
-    //                         "file2": "contents 2",
-    //                         "file3": "contents 3",
-    //                     },
-    //                 }),
-    //             )
-    //             .await;
+    #[gpui::test]
+    async fn test_pane_actions(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "contents 1",
+                        "file2": "contents 2",
+                        "file3": "contents 3",
+                    },
+                }),
+            )
+            .await;
 
-    //         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-    //         let workspace = window.root(cx);
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
 
-    //         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-    //         let file1 = entries[0].clone();
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let file1 = entries[0].clone();
 
-    //         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
 
-    //         workspace
-    //             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-    //             .await
-    //             .unwrap();
+        window
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
 
-    //         let (editor_1, buffer) = pane_1.update(cx, |pane_1, cx| {
-    //             let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
-    //             assert_eq!(editor.project_path(cx), Some(file1.clone()));
-    //             let buffer = editor.update(cx, |editor, cx| {
-    //                 editor.insert("dirt", cx);
-    //                 editor.buffer().downgrade()
-    //             });
-    //             (editor.downgrade(), buffer)
-    //         });
+        let (editor_1, buffer) = window
+            .update(cx, |_, cx| {
+                pane_1.update(cx, |pane_1, cx| {
+                    let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
+                    assert_eq!(editor.project_path(cx), Some(file1.clone()));
+                    let buffer = editor.update(cx, |editor, cx| {
+                        editor.insert("dirt", cx);
+                        editor.buffer().downgrade()
+                    });
+                    (editor.downgrade(), buffer)
+                })
+            })
+            .unwrap();
 
-    //         cx.dispatch_action(window.into(), pane::SplitRight);
-    //         let editor_2 = cx.update(|cx| {
-    //             let pane_2 = workspace.read(cx).active_pane().clone();
-    //             assert_ne!(pane_1, pane_2);
+        cx.dispatch_action(window.into(), pane::SplitRight);
+        let editor_2 = cx.update(|cx| {
+            let pane_2 = workspace.read(cx).active_pane().clone();
+            assert_ne!(pane_1, pane_2);
 
-    //             let pane2_item = pane_2.read(cx).active_item().unwrap();
-    //             assert_eq!(pane2_item.project_path(cx), Some(file1.clone()));
+            let pane2_item = pane_2.read(cx).active_item().unwrap();
+            assert_eq!(pane2_item.project_path(cx), Some(file1.clone()));
 
-    //             pane2_item.downcast::<Editor>().unwrap().downgrade()
-    //         });
-    //         cx.dispatch_action(
-    //             window.into(),
-    //             workspace::CloseActiveItem { save_intent: None },
-    //         );
+            pane2_item.downcast::<Editor>().unwrap().downgrade()
+        });
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem { save_intent: None },
+        );
 
-    //         cx.foreground().run_until_parked();
-    //         workspace.read_with(cx, |workspace, _| {
-    //             assert_eq!(workspace.panes().len(), 1);
-    //             assert_eq!(workspace.active_pane(), &pane_1);
-    //         });
+        cx.background_executor.run_until_parked();
+        window
+            .read_with(cx, |workspace, _| {
+                assert_eq!(workspace.panes().len(), 1);
+                assert_eq!(workspace.active_pane(), &pane_1);
+            })
+            .unwrap();
 
-    //         cx.dispatch_action(
-    //             window.into(),
-    //             workspace::CloseActiveItem { save_intent: None },
-    //         );
-    //         cx.foreground().run_until_parked();
-    //         window.simulate_prompt_answer(1, cx);
-    //         cx.foreground().run_until_parked();
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem { save_intent: None },
+        );
+        cx.background_executor.run_until_parked();
+        cx.simulate_prompt_answer(1);
+        cx.background_executor.run_until_parked();
 
-    //         workspace.read_with(cx, |workspace, cx| {
-    //             assert_eq!(workspace.panes().len(), 1);
-    //             assert!(workspace.active_item(cx).is_none());
-    //         });
-
-    //         cx.assert_dropped(editor_1);
-    //         cx.assert_dropped(editor_2);
-    //         cx.assert_dropped(buffer);
-    //     }
+        window
+            .read_with(cx, |workspace, cx| {
+                assert_eq!(workspace.panes().len(), 1);
+                assert!(workspace.active_item(cx).is_none());
+            })
+            .unwrap();
+        editor_1.assert_dropped();
+        editor_2.assert_dropped();
+        buffer.assert_dropped();
+    }
 
     #[gpui::test]
     async fn test_navigation(cx: &mut TestAppContext) {
