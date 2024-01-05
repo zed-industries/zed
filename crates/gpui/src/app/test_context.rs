@@ -519,16 +519,11 @@ impl<'a> VisualTestContext<'a> {
         self.cx.simulate_input(self.window, input)
     }
 
-    pub fn simulate_activation(&mut self) {
-        self.cx
-            .test_window(self.window)
-            .simulate_active_status_change(true)
-    }
-
-    pub fn simulate_deactivation(&mut self) {
-        self.cx
-            .test_window(self.window)
-            .simulate_active_status_change(false)
+    pub fn deactivate_window(&mut self) {
+        if Some(self.window) == self.test_platform.active_window() {
+            self.test_platform.set_active_window(None)
+        }
+        self.background_executor.run_until_parked();
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
     px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, InputEvent, KeyDownEvent,
-    Keystroke, Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
+    Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
     PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowBounds,
     WindowOptions,
 };
@@ -76,7 +76,7 @@ impl TestWindow {
         self.0.lock().resize_callback = Some(callback);
     }
 
-    pub fn simulate_active_status_change(&self, active: bool) {
+    pub(crate) fn simulate_active_status_change(&self, active: bool) {
         let mut lock = self.0.lock();
         let Some(mut callback) = lock.active_status_change_callback.take() else {
             return;
@@ -184,33 +184,12 @@ impl PlatformWindow for TestWindow {
     }
 
     fn activate(&self) {
-        let this = self.clone();
-        let executor = self
-            .0
+        self.0
             .lock()
             .platform
             .upgrade()
             .unwrap()
-            .foreground_executor()
-            .clone();
-
-        executor
-            .spawn(async move {
-                let state = this.0.lock();
-                let platform = state.platform.upgrade().unwrap();
-                let previous_window = platform.active_window.borrow_mut().replace(this.clone());
-                drop(state);
-                drop(platform);
-                if let Some(previous_window) = previous_window {
-                    if Arc::ptr_eq(&previous_window.0, &this.0) {
-                        return;
-                    }
-                    previous_window.simulate_active_status_change(false);
-                }
-
-                this.simulate_active_status_change(true);
-            })
-            .detach();
+            .set_active_window(Some(self.clone()))
     }
 
     fn set_title(&mut self, title: &str) {

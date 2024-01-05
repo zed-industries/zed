@@ -79,6 +79,28 @@ impl TestPlatform {
         self.prompts.borrow_mut().multiple_choice.push_back(tx);
         rx
     }
+
+    pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
+        let executor = self.foreground_executor().clone();
+        let previous_window = self.active_window.borrow_mut().take();
+        *self.active_window.borrow_mut() = window.clone();
+
+        executor
+            .spawn(async move {
+                if let Some(previous_window) = previous_window {
+                    if let Some(window) = window.as_ref() {
+                        if Arc::ptr_eq(&previous_window.0, &window.0) {
+                            return;
+                        }
+                    }
+                    previous_window.simulate_active_status_change(false);
+                }
+                if let Some(window) = window {
+                    window.simulate_active_status_change(true);
+                }
+            })
+            .detach();
+    }
 }
 
 // todo!("implement out what our tests needed in GPUI 1")
