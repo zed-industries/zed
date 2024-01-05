@@ -169,7 +169,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.clone(),
             );
             let (
-                (project_panel, was_deserialized),
+                project_panel,
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
@@ -193,16 +193,15 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
 
-                if !was_deserialized
-                    && workspace
-                        .project()
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .any(|tree| {
-                            tree.read(cx)
-                                .root_entry()
-                                .map_or(false, |entry| entry.is_dir())
-                        })
+                if workspace
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .any(|tree| {
+                        tree.read(cx)
+                            .root_entry()
+                            .map_or(false, |entry| entry.is_dir())
+                    })
                 {
                     workspace.toggle_dock(position, cx);
                 }
