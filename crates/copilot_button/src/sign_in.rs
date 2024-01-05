@@ -1,16 +1,13 @@
 use copilot::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    div, size, svg, AppContext, Bounds, ClipboardItem, DismissEvent, Element, EventEmitter,
-    FocusHandle, FocusableView, GlobalPixels, InteractiveElement, IntoElement, Model,
-    ParentElement, Point, Render, Styled, Subscription, ViewContext, VisualContext, WindowBounds,
-    WindowHandle, WindowKind, WindowOptions,
+    div, svg, AppContext, ClipboardItem, DismissEvent, Element, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, Styled,
+    Subscription, ViewContext,
 };
 use ui::{prelude::*, Button, Icon, Label};
 use workspace::ModalView;
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
-
-pub fn init(cx: &mut AppContext) {}
 
 pub struct CopilotCodeVerification {
     status: Status,
@@ -20,7 +17,7 @@ pub struct CopilotCodeVerification {
 }
 
 impl FocusableView for CopilotCodeVerification {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -111,13 +108,16 @@ impl CopilotCodeVerification {
                     .style(ButtonStyle::Filled),
             )
     }
-    fn render_enabled_modal() -> impl Element {
+    fn render_enabled_modal(cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
             .child(Label::new("Copilot Enabled!"))
             .child(Label::new(
                 "You can update your settings or sign out from the Copilot menu in the status bar.",
             ))
-            .child(Button::new("copilot-enabled-done-button", "Done").on_click(|_, cx| {}))
+            .child(
+                Button::new("copilot-enabled-done-button", "Done")
+                    .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+            )
     }
 
     fn render_unauthorized_modal() -> impl Element {
@@ -148,7 +148,7 @@ impl Render for CopilotCodeVerification {
             }
             Status::Authorized => {
                 self.connect_clicked = false;
-                Self::render_enabled_modal().into_any_element()
+                Self::render_enabled_modal(cx).into_any_element()
             }
             _ => div().into_any_element(),
         };
