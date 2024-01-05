@@ -1,91 +1,49 @@
 use copilot::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    div, size, svg, AppContext, Bounds, ClipboardItem, Element, GlobalPixels, InteractiveElement,
-    IntoElement, ParentElement, Point, Render, Styled, ViewContext, VisualContext, WindowBounds,
+    div, size, svg, AppContext, Bounds, ClipboardItem, DismissEvent, Element, EventEmitter,
+    FocusHandle, FocusableView, GlobalPixels, InteractiveElement, IntoElement, Model,
+    ParentElement, Point, Render, Styled, Subscription, ViewContext, VisualContext, WindowBounds,
     WindowHandle, WindowKind, WindowOptions,
 };
 use ui::{prelude::*, Button, Icon, Label};
+use workspace::ModalView;
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
-pub fn init(cx: &mut AppContext) {
-    if let Some(copilot) = Copilot::global(cx) {
-        let mut verification_window: Option<WindowHandle<CopilotCodeVerification>> = None;
-        cx.observe(&copilot, move |copilot, cx| {
-            let status = copilot.read(cx).status();
-
-            match &status {
-                crate::Status::SigningIn { prompt } => {
-                    if let Some(window) = verification_window.as_mut() {
-                        let updated = window
-                            .update(cx, |verification, cx| {
-                                verification.set_status(status.clone(), cx);
-                                cx.activate_window();
-                            })
-                            .is_ok();
-                        if !updated {
-                            verification_window = Some(create_copilot_auth_window(cx, &status));
-                        }
-                    } else if let Some(_prompt) = prompt {
-                        verification_window = Some(create_copilot_auth_window(cx, &status));
-                    }
-                }
-                Status::Authorized | Status::Unauthorized => {
-                    if let Some(window) = verification_window.as_ref() {
-                        window
-                            .update(cx, |verification, cx| {
-                                verification.set_status(status, cx);
-                                cx.activate(true);
-                                cx.activate_window();
-                            })
-                            .ok();
-                    }
-                }
-                _ => {
-                    if let Some(code_verification) = verification_window.take() {
-                        code_verification
-                            .update(cx, |_, cx| cx.remove_window())
-                            .ok();
-                    }
-                }
-            }
-        })
-        .detach();
-    }
-}
-
-fn create_copilot_auth_window(
-    cx: &mut AppContext,
-    status: &Status,
-) -> WindowHandle<CopilotCodeVerification> {
-    let window_size = size(GlobalPixels::from(400.), GlobalPixels::from(480.));
-    let window_options = WindowOptions {
-        bounds: WindowBounds::Fixed(Bounds::new(Point::default(), window_size)),
-        titlebar: None,
-        center: true,
-        focus: true,
-        show: true,
-        kind: WindowKind::PopUp,
-        is_movable: true,
-        display_id: None,
-    };
-    let window = cx.open_window(window_options, |cx| {
-        cx.new_view(|_| CopilotCodeVerification::new(status.clone()))
-    });
-    window
-}
+pub fn init(cx: &mut AppContext) {}
 
 pub struct CopilotCodeVerification {
     status: Status,
     connect_clicked: bool,
+    focus_handle: FocusHandle,
+    _subscription: Subscription,
 }
 
-//impl ModalView for CopilotCodeVerification {}
+impl FocusableView for CopilotCodeVerification {
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for CopilotCodeVerification {}
+impl ModalView for CopilotCodeVerification {}
+
 impl CopilotCodeVerification {
-    pub fn new(status: Status) -> Self {
+    pub(crate) fn new(copilot: &Model<Copilot>, cx: &mut ViewContext<Self>) -> Self {
+        let status = copilot.read(cx).status();
         Self {
             status,
             connect_clicked: false,
+            focus_handle: cx.focus_handle(),
+            _subscription: cx.observe(copilot, |this, copilot, cx| {
+                let status = copilot.read(cx).status();
+                match status {
+                    Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
+                        this.set_status(status, cx)
+                    }
+                    _ => cx.emit(DismissEvent),
+                }
+            }),
         }
     }
 
@@ -159,10 +117,7 @@ impl CopilotCodeVerification {
             .child(Label::new(
                 "You can update your settings or sign out from the Copilot menu in the status bar.",
             ))
-            .child(
-                Button::new("copilot-enabled-done-button", "Done")
-                    .on_click(|_, cx| cx.remove_window()),
-            )
+            .child(Button::new("copilot-enabled-done-button", "Done").on_click(|_, cx| {}))
     }
 
     fn render_unauthorized_modal() -> impl Element {
@@ -175,10 +130,8 @@ impl CopilotCodeVerification {
                     .color(Color::Warning),
             )
             .child(
-                Button::new("copilot-subscribe-button", "Subscibe on Github").on_click(|_, cx| {
-                    cx.remove_window();
-                    cx.open_url(COPILOT_SIGN_UP_URL)
-                }),
+                Button::new("copilot-subscribe-button", "Subscibe on Github")
+                    .on_click(|_, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
     }
 }

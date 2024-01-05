@@ -13,6 +13,7 @@ use language::{
     File, Language,
 };
 use settings::{update_settings_file, Settings, SettingsStore};
+use sign_in::CopilotCodeVerification;
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
 use workspace::{
@@ -26,10 +27,6 @@ use zed_actions::OpenBrowser;
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const COPILOT_STARTING_TOAST_ID: usize = 1337;
 const COPILOT_ERROR_TOAST_ID: usize = 1338;
-
-pub fn init(cx: &mut AppContext) {
-    sign_in::init(cx);
-}
 
 pub struct CopilotButton {
     editor_subscription: Option<(Subscription, usize)>,
@@ -337,7 +334,9 @@ fn initiate_sign_in(cx: &mut WindowContext) {
         return;
     };
     let status = copilot.read(cx).status();
-
+    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+        return;
+    };
     match status {
         Status::Starting { task } => {
             let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
@@ -376,9 +375,10 @@ fn initiate_sign_in(cx: &mut WindowContext) {
             .detach();
         }
         _ => {
-            copilot
-                .update(cx, |copilot, cx| copilot.sign_in(cx))
-                .detach_and_log_err(cx);
+            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
+            workspace.update(cx, |this, cx| {
+                this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
+            });
         }
     }
 }
