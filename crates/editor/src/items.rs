@@ -103,7 +103,8 @@ impl FollowableItem for Editor {
                         if state.singleton && buffers.len() == 1 {
                             multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                         } else {
-                            multibuffer = MultiBuffer::new(replica_id);
+                            multibuffer =
+                                MultiBuffer::new(replica_id, project.read(cx).capability());
                             let mut excerpts = state.excerpts.into_iter().peekable();
                             while let Some(excerpt) = excerpts.peek() {
                                 let buffer_id = excerpt.buffer_id;

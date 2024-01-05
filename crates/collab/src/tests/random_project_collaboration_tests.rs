@@ -1149,7 +1149,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             Some((project, cx))
                         });
 
-                        if !guest_project.is_read_only() {
+                        if !guest_project.is_disconnected() {
                             if let Some((host_project, host_cx)) = host_project {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
@@ -1236,7 +1236,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             let buffers = client.buffers().clone();
             for (guest_project, guest_buffers) in &buffers {
                 let project_id = if guest_project.read_with(client_cx, |project, _| {
-                    project.is_local() || project.is_read_only()
+                    project.is_local() || project.is_disconnected()
                 }) {
                     continue;
                 } else {

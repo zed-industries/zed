@@ -62,6 +62,7 @@ impl<'a> VideoGrant<'a> {
         Self {
             room: Some(Cow::Borrowed(room)),
             room_join: Some(true),
+            can_publish: Some(false),
             can_subscribe: Some(true),
             ..Default::default()
         }

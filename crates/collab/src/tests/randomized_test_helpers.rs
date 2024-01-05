@@ -518,7 +518,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                 for project in client.remote_projects().iter() {
                     project.read_with(&client_cx, |project, _| {
                         assert!(
-                            project.is_read_only(),
+                            project.is_disconnected(),
                             "project {:?} should be read only",
                             project.remote_id()
                         )

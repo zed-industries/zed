@@ -92,10 +92,7 @@ resolver = "2"
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
-# TODO: Switch back to the published version of `ctor` once:
-#       1. A new version of `ctor` is published with this change: https://github.com/mmastrac/rust-ctor/pull/295
-#       2. We've confirmed it's fine to update to the latest version of `ctor` (we're currently on v0.1.20).
-ctor = { git = "https://github.com/zed-industries/rust-ctor", rev = "7f824cf6a7943885a649b579f33f9ac53f0d1db6" }
+ctor = "0.2.6"
 derive_more = { version = "0.99.17" }
 env_logger = { version = "0.9" }
 futures = { version = "0.3" }
@@ -158,7 +155,7 @@ tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-rack
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930"}
 tree-sitter-lua = "0.0.14"
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
-tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "a0b80b2e21e5e39571252dc799e19eb89f1fc912"}
+tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "26bbaecda0039df4067861ab38ea8ea169f7f5aa"}
 tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42"}
 tree-sitter-uiua = {git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"}
 

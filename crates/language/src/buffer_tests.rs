@@ -1926,7 +1926,7 @@ fn test_serialization(cx: &mut gpui::AppContext) {
         .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new_model(|cx| {
-        let mut buffer = Buffer::from_proto(1, state, None).unwrap();
+        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
         buffer
             .apply_ops(
                 ops.into_iter()
@@ -1967,7 +1967,8 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             let ops = cx
                 .background_executor()
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
-            let mut buffer = Buffer::from_proto(i as ReplicaId, state, None).unwrap();
+            let mut buffer =
+                Buffer::from_proto(i as ReplicaId, Capability::ReadWrite, state, None).unwrap();
             buffer
                 .apply_ops(
                     ops.into_iter()
@@ -2083,8 +2084,13 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     replica_id
                 );
                 new_buffer = Some(cx.new_model(|cx| {
-                    let mut new_buffer =
-                        Buffer::from_proto(new_replica_id, old_buffer_state, None).unwrap();
+                    let mut new_buffer = Buffer::from_proto(
+                        new_replica_id,
+                        Capability::ReadWrite,
+                        old_buffer_state,
+                        None,
+                    )
+                    .unwrap();
                     new_buffer
                         .apply_ops(
                             old_buffer_ops

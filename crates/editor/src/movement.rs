@@ -461,6 +461,7 @@ mod tests {
         Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
     };
     use gpui::{font, Context as _};
+    use language::Capability;
     use project::Project;
     use settings::SettingsStore;
     use util::post_inc;
@@ -766,7 +767,7 @@ mod tests {
             let buffer =
                 cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abc\ndefg\nhijkl\nmn"));
             let multibuffer = cx.new_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(0);
+                let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
                     [

@@ -42,9 +42,9 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::DB;
+use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, SerializedWorkspace, WorkspaceLocation},
+    model::{ItemId, WorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -70,8 +70,9 @@ use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
 
-use crate::persistence::model::{
-    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+use crate::persistence::{
+    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+    SerializedAxis,
 };
 
 lazy_static! {
@@ -625,7 +626,11 @@ impl Workspace {
 
                     if let Some(display_uuid) = display.uuid().log_err() {
                         cx.background_executor()
-                            .spawn(DB.set_window_bounds(workspace_id, bounds, display_uuid))
+                            .spawn(DB.set_window_bounds(
+                                workspace_id,
+                                SerializedWindowsBounds(bounds),
+                                display_uuid,
+                            ))
                             .detach_and_log_err(cx);
                     }
                 }
@@ -1187,7 +1192,7 @@ impl Workspace {
         mut save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        if self.project.read(cx).is_read_only() {
+        if self.project.read(cx).is_disconnected() {
             return Task::ready(Ok(true));
         }
         let dirty_items = self
@@ -2510,7 +2515,7 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
-        let is_edited = !self.project.read(cx).is_read_only()
+        let is_edited = !self.project.read(cx).is_disconnected()
             && self
                 .items(cx)
                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
@@ -2989,7 +2994,7 @@ impl Workspace {
                     flexes,
                     bounding_boxes: _,
                 }) => SerializedPaneGroup::Group {
-                    axis: *axis,
+                    axis: SerializedAxis(*axis),
                     children: members
                         .iter()
                         .map(|member| build_serialized_pane_group(member, cx))
@@ -3266,6 +3271,7 @@ impl Workspace {
         let user_store = project.read(cx).user_store();
 
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
@@ -3634,7 +3640,7 @@ impl Render for Workspace {
                     })),
             )
             .child(self.status_bar.clone())
-            .children(if self.project.read(cx).is_read_only() {
+            .children(if self.project.read(cx).is_disconnected() {
                 Some(DisconnectedOverlay)
             } else {
                 None
@@ -4764,8 +4770,7 @@ mod tests {
         });
 
         // Deactivating the window saves the file.
-        cx.simulate_deactivation();
-        cx.executor().run_until_parked();
+        cx.deactivate_window();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Autosave on focus change.
@@ -4785,14 +4790,13 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.simulate_activation();
+        cx.update(|cx| cx.activate_window());
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
-        cx.simulate_deactivation();
+        cx.deactivate_window();
 
-        cx.executor().run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // Autosave after delay.
