@@ -607,8 +607,12 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<ui::Icon> {
-        Some(ui::Icon::MessageBubbles)
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+        if !is_channels_feature_enabled(cx) {
+            return None;
+        }
+
+        Some(ui::Icon::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
