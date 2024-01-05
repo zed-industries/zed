@@ -33,11 +33,11 @@ use util::{
 };
 use uuid::Uuid;
 use welcome::BaseKeymap;
-use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
 };
+use workspace::{dock::Panel, Pane};
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
 
 actions!(
@@ -169,7 +169,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.clone(),
             );
             let (
-                project_panel,
+                (project_panel, was_deserialized),
                 terminal_panel,
                 assistant_panel,
                 channels_panel,
@@ -185,6 +185,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
+                let position = project_panel.read(cx).position(cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
@@ -192,19 +193,19 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
 
-                // if !was_deserialized
-                //     && workspace
-                //         .project()
-                //         .read(cx)
-                //         .visible_worktrees(cx)
-                //         .any(|tree| {
-                //             tree.read(cx)
-                //                 .root_entry()
-                //                 .map_or(false, |entry| entry.is_dir())
-                //         })
-                // {
-                //     workspace.toggle_dock(project_panel_position, cx);
-                // }
+                if !was_deserialized
+                    && workspace
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .any(|tree| {
+                            tree.read(cx)
+                                .root_entry()
+                                .map_or(false, |entry| entry.is_dir())
+                        })
+                {
+                    workspace.toggle_dock(position, cx);
+                }
                 cx.focus_self();
             })
         })
@@ -840,6 +841,7 @@ mod tests {
         let workspace_1 = cx
             .read(|cx| cx.windows()[0].downcast::<Workspace>())
             .unwrap();
+        dbg!(workspace_1.window_id());
         workspace_1
             .update(cx, |workspace, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);

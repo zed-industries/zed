@@ -165,6 +165,8 @@ struct DraggedProjectEntryView {
     width: Pixels,
 }
 
+type WasDeserialized = bool;
+
 impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
@@ -316,7 +318,7 @@ impl ProjectPanel {
     pub async fn load(
         workspace: WeakView<Workspace>,
         mut cx: AsyncWindowContext,
-    ) -> Result<View<Self>> {
+    ) -> Result<(View<Self>, WasDeserialized)> {
         let serialized_panel = cx
             .background_executor()
             .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
@@ -331,13 +333,14 @@ impl ProjectPanel {
 
         workspace.update(&mut cx, |workspace, cx| {
             let panel = ProjectPanel::new(workspace, cx);
+            let was_deserialized = serialized_panel.is_some();
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
                     cx.notify();
                 });
             }
-            panel
+            (panel, was_deserialized)
         })
     }
 
