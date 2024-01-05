@@ -515,34 +515,28 @@ impl DiagnosticPopover {
         };
 
         struct DiagnosticColors {
-            pub text: Hsla,
             pub background: Hsla,
             pub border: Hsla,
         }
 
         let diagnostic_colors = match self.local_diagnostic.diagnostic.severity {
             DiagnosticSeverity::ERROR => DiagnosticColors {
-                text: style.status.error,
                 background: style.status.error_background,
                 border: style.status.error_border,
             },
             DiagnosticSeverity::WARNING => DiagnosticColors {
-                text: style.status.warning,
                 background: style.status.warning_background,
                 border: style.status.warning_border,
             },
             DiagnosticSeverity::INFORMATION => DiagnosticColors {
-                text: style.status.info,
                 background: style.status.info_background,
                 border: style.status.info_border,
             },
             DiagnosticSeverity::HINT => DiagnosticColors {
-                text: style.status.hint,
                 background: style.status.hint_background,
                 border: style.status.hint_border,
             },
             _ => DiagnosticColors {
-                text: style.status.ignored,
                 background: style.status.ignored_background,
                 border: style.status.ignored_border,
             },
@@ -554,7 +548,7 @@ impl DiagnosticPopover {
             .px_2()
             .py_1()
             .bg(diagnostic_colors.background)
-            .text_color(diagnostic_colors.text)
+            .text_color(style.text.color)
             .border_1()
             .border_color(diagnostic_colors.border)
             .rounded_md()
