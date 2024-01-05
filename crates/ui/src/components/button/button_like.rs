@@ -4,6 +4,10 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+pub trait SelectableButton: Selectable {
+    fn selected_style(self, style: ButtonStyle) -> Self;
+}
+
 pub trait ButtonCommon: Clickable + Disableable {
     /// A unique element ID to identify the button.
     fn id(&self) -> &ElementId;
@@ -41,7 +45,6 @@ pub enum TintColor {
     #[default]
     Accent,
     Negative,
-    Positive,
     Warning,
 }
 
@@ -54,13 +57,38 @@ impl TintColor {
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
-            // TODO: Finish tint colors.
-            _ => ButtonLikeStyles {
-                background: gpui::red(),
-                border_color: gpui::red(),
-                label_color: gpui::red(),
-                icon_color: gpui::red(),
+            TintColor::Negative => ButtonLikeStyles {
+                background: cx.theme().status().error_background,
+                border_color: cx.theme().status().error_border,
+                label_color: cx.theme().colors().text,
+                icon_color: cx.theme().colors().text,
             },
+            TintColor::Warning => ButtonLikeStyles {
+                background: cx.theme().status().warning_background,
+                border_color: cx.theme().status().warning_border,
+                label_color: cx.theme().colors().text,
+                icon_color: cx.theme().colors().text,
+            },
+        }
+    }
+}
+
+impl From<TintColor> for Color {
+    fn from(tint: TintColor) -> Self {
+        match tint {
+            TintColor::Accent => Color::Accent,
+            TintColor::Negative => Color::Error,
+            TintColor::Warning => Color::Warning,
+        }
+    }
+}
+
+// Used to go from ButtonStyle -> Color through tint colors.
+impl From<ButtonStyle> for Color {
+    fn from(style: ButtonStyle) -> Self {
+        match style {
+            ButtonStyle::Tinted(tint) => tint.into(),
+            _ => Color::Default,
         }
     }
 }
@@ -266,6 +294,7 @@ pub struct ButtonLike {
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
     pub(super) selected: bool,
+    pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
@@ -282,6 +311,7 @@ impl ButtonLike {
             style: ButtonStyle::default(),
             disabled: false,
             selected: false,
+            selected_style: None,
             width: None,
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::All),
@@ -307,6 +337,13 @@ impl Disableable for ButtonLike {
 impl Selectable for ButtonLike {
     fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+}
+
+impl SelectableButton for ButtonLike {
+    fn selected_style(mut self, style: ButtonStyle) -> Self {
+        self.selected_style = Some(style);
         self
     }
 }
@@ -366,6 +403,11 @@ impl ParentElement for ButtonLike {
 
 impl RenderOnce for ButtonLike {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let style = self
+            .selected_style
+            .filter(|_| self.selected)
+            .unwrap_or(self.style);
+
         self.base
             .h_flex()
             .id(self.id.clone())
@@ -384,12 +426,12 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::Default | ButtonSize::Compact => this.px_1(),
                 ButtonSize::None => this,
             })
-            .bg(self.style.enabled(cx).background)
+            .bg(style.enabled(cx).background)
             .when(self.disabled, |this| this.cursor_not_allowed())
             .when(!self.disabled, |this| {
                 this.cursor_pointer()
-                    .hover(|hover| hover.bg(self.style.hovered(cx).background))
-                    .active(|active| active.bg(self.style.active(cx).background))
+                    .hover(|hover| hover.bg(style.hovered(cx).background))
+                    .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
