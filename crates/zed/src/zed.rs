@@ -790,7 +790,8 @@ mod tests {
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, SaveIntent, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, ActivatePrevItem, NewFile, SaveIntent, SplitDirection,
+        WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -2553,140 +2554,141 @@ mod tests {
         );
     }
 
-    // #[gpui::test]
-    // async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
-    //     struct TestView {
-    //         focus_handle: FocusHandle,
-    //     };
+    #[gpui::test]
+    async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
+        struct TestView {
+            focus_handle: FocusHandle,
+        };
 
-    //     impl Render for TestView {
-    //         fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-    //             dbg!("render");
-    //             div()
-    //                 .id("test")
-    //                 .on_action(|_: &A, _| {})
-    //                 .on_action(|_: &B, _| {})
-    //         }
-    //     }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+                div()
+                    .id("test")
+                    .on_action(|_: &A, _| {})
+                    .on_action(|_: &B, _| {})
+                    .on_action(|_: &ActivatePreviousPane, _| {})
+                    .on_action(|_: &ActivatePrevItem, _| {})
+            }
+        }
 
-    //     impl FocusableView for TestView {
-    //         fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-    //             self.focus_handle.clone()
-    //         }
-    //     }
-    //     let executor = cx.background_executor.clone();
-    //     let fs = FakeFs::new(executor.clone());
+        impl FocusableView for TestView {
+            fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+        let executor = cx.background_executor.clone();
+        let fs = FakeFs::new(executor.clone());
 
-    //     actions!(test, [A, B]);
-    //     // From the Atom keymap
-    //     actions!(workspace, [ActivatePreviousPane]);
-    //     // From the JetBrains keymap
-    //     actions!(pane, [ActivatePrevItem]);
+        actions!(test, [A, B]);
+        // From the Atom keymap
+        actions!(workspace, [ActivatePreviousPane]);
+        // From the JetBrains keymap
+        actions!(pane, [ActivatePrevItem]);
 
-    //     fs.save(
-    //         "/settings.json".as_ref(),
-    //         &r#"
-    //             {
-    //                 "base_keymap": "Atom"
-    //             }
-    //             "#
-    //         .into(),
-    //         Default::default(),
-    //     )
-    //     .await
-    //     .unwrap();
-    //     fs.save(
-    //         "/keymap.json".as_ref(),
-    //         &r#"
-    //             [
-    //                 {
-    //                     "bindings": {
-    //                         "backspace": "test::A"
-    //                     }
-    //                 }
-    //             ]
-    //             "#
-    //         .into(),
-    //         Default::default(),
-    //     )
-    //     .await
-    //     .unwrap();
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+                {
+                    "base_keymap": "Atom"
+                }
+                "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+                [
+                    {
+                        "bindings": {
+                            "backspace": "test::A"
+                        }
+                    }
+                ]
+                "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
 
-    //     cx.update(|cx| {
-    //         let settings = SettingsStore::test(cx);
-    //         cx.set_global(settings);
-    //         theme::init(theme::LoadThemes::JustBase, cx);
-    //         welcome::init(cx);
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            welcome::init(cx);
 
-    //         let settings_rx =
-    //             watch_config_file(&executor, fs.clone(), PathBuf::from("/settings.json"));
-    //         let keymap_rx = watch_config_file(&executor, fs.clone(), PathBuf::from("/keymap.json"));
+            let settings_rx =
+                watch_config_file(&executor, fs.clone(), PathBuf::from("/settings.json"));
+            let keymap_rx = watch_config_file(&executor, fs.clone(), PathBuf::from("/keymap.json"));
 
-    //         handle_keymap_file_changes(keymap_rx, cx);
-    //         handle_settings_file_changes(settings_rx, cx);
-    //     });
+            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(settings_rx, cx);
+        });
 
-    //     cx.background_executor.run_until_parked();
+        cx.background_executor.run_until_parked();
 
-    //     let window = cx.add_window(|cx| TestView {
-    //         focus_handle: cx.focus_handle(),
-    //     });
-    //     cx.update(|cx| window.update(cx, |_, cx| cx.focus_self()));
-    //     cx.background_executor.run_until_parked();
-    //     // Test loading the keymap base at all
-    //     assert_key_bindings_for(
-    //         window.into(),
-    //         cx,
-    //         vec![("backspace", &A), ("k", &ActivatePreviousPane)],
-    //         line!(),
-    //     );
+        let window = cx.add_window(|cx| TestView {
+            focus_handle: cx.focus_handle(),
+        });
+        cx.update(|cx| window.update(cx, |_, cx| cx.focus_self()))
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        // Test loading the keymap base at all
+        assert_key_bindings_for(
+            window.into(),
+            cx,
+            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
 
-    //     // Test disabling the key binding for the base keymap
-    //     fs.save(
-    //         "/keymap.json".as_ref(),
-    //         &r#"
-    //             [
-    //                 {
-    //                     "bindings": {
-    //                         "backspace": null
-    //                     }
-    //                 }
-    //             ]
-    //             "#
-    //         .into(),
-    //         Default::default(),
-    //     )
-    //     .await
-    //     .unwrap();
+        // Test disabling the key binding for the base keymap
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+                [
+                    {
+                        "bindings": {
+                            "backspace": null
+                        }
+                    }
+                ]
+                "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
 
-    //     cx.background_executor.run_until_parked();
+        cx.background_executor.run_until_parked();
 
-    //     assert_key_bindings_for(
-    //         window.into(),
-    //         cx,
-    //         vec![("k", &ActivatePreviousPane)],
-    //         line!(),
-    //     );
+        assert_key_bindings_for(
+            window.into(),
+            cx,
+            vec![("k", &ActivatePreviousPane)],
+            line!(),
+        );
 
-    //     // Test modifying the base, while retaining the users keymap
-    //     fs.save(
-    //         "/settings.json".as_ref(),
-    //         &r#"
-    //             {
-    //                 "base_keymap": "JetBrains"
-    //             }
-    //             "#
-    //         .into(),
-    //         Default::default(),
-    //     )
-    //     .await
-    //     .unwrap();
+        // Test modifying the base, while retaining the users keymap
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+                {
+                    "base_keymap": "JetBrains"
+                }
+                "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
 
-    //     cx.background_executor.run_until_parked();
+        cx.background_executor.run_until_parked();
 
-    //     assert_key_bindings_for(window.into(), cx, vec![("[", &ActivatePrevItem)], line!());
-
-    // }
+        assert_key_bindings_for(window.into(), cx, vec![("[", &ActivatePrevItem)], line!());
+    }
 
     //     #[gpui::test]
     //     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
