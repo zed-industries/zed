@@ -269,6 +269,7 @@ message Participant {
     repeated ParticipantProject projects = 3;
     ParticipantLocation location = 4;
     uint32 participant_index = 5;
+    ChannelRole role = 6;
 }
 
 message PendingParticipant {

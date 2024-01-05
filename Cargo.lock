@@ -576,8 +576,9 @@ dependencies = [
 
 [[package]]
 name = "async-task"
-version = "4.0.3"
-source = "git+https://github.com/zed-industries/async-task?rev=341b57d6de98cdfd7b418567b8de2022ca993a6e#341b57d6de98cdfd7b418567b8de2022ca993a6e"
+version = "4.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbb36e985947064623dbd357f727af08ffd077f93d696782f3c56365fa2e2799"
 
 [[package]]
 name = "async-tls"
@@ -1440,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1925,11 +1926,12 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.1.20"
-source = "git+https://github.com/zed-industries/rust-ctor?rev=7f824cf6a7943885a649b579f33f9ac53f0d1db6#7f824cf6a7943885a649b579f33f9ac53f0d1db6"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d2b3721e861707777e3195b0158f950ae6dc4a27e4d02ff9f67e3eb3de199e"
 dependencies = [
  "quote",
- "syn 1.0.109",
+ "syn 2.0.37",
 ]
 
 [[package]]
@@ -3064,7 +3066,6 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
- "sqlez",
  "sum_tree",
  "taffy",
  "thiserror",
@@ -6845,7 +6846,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smallvec",
- "sqlez",
  "toml 0.5.11",
  "tree-sitter",
  "tree-sitter-json 0.19.0",
@@ -7837,6 +7837,7 @@ dependencies = [
  "convert_case 0.6.0",
  "gpui",
  "indexmap 1.9.3",
+ "indoc",
  "json_comments",
  "log",
  "palette",
@@ -8488,7 +8489,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-nu"
 version = "0.0.1"
-source = "git+https://github.com/nushell/tree-sitter-nu?rev=a0b80b2e21e5e39571252dc799e19eb89f1fc912#a0b80b2e21e5e39571252dc799e19eb89f1fc912"
+source = "git+https://github.com/nushell/tree-sitter-nu?rev=26bbaecda0039df4067861ab38ea8ea169f7f5aa#26bbaecda0039df4067861ab38ea8ea169f7f5aa"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -9438,6 +9439,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "sqlez",
  "terminal",
  "theme",
  "ui",

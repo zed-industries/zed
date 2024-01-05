@@ -1,4 +1,4 @@
-use crate::db::{ProjectId, RoomId, RoomParticipantId, ServerId, UserId};
+use crate::db::{ChannelRole, ProjectId, RoomId, RoomParticipantId, ServerId, UserId};
 use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
 
@@ -19,6 +19,7 @@ pub struct Model {
     pub calling_connection_id: i32,
     pub calling_connection_server_id: Option<ServerId>,
     pub participant_index: Option<i32>,
+    pub role: Option<ChannelRole>,
 }
 
 impl Model {

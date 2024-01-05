@@ -339,6 +339,15 @@ impl Hsla {
         }
     }
 
+    pub fn grayscale(&self) -> Self {
+        Hsla {
+            h: self.h,
+            s: 0.,
+            l: self.l,
+            a: self.a,
+        }
+    }
+
     /// Fade out the color by a given factor. This factor should be between 0.0 and 1.0.
     /// Where 0.0 will leave the color unchanged, and 1.0 will completely fade out the color.
     pub fn fade_out(&mut self, factor: f32) {

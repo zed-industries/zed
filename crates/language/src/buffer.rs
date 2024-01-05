@@ -57,6 +57,12 @@ lazy_static! {
     pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
 }
 
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum Capability {
+    ReadWrite,
+    ReadOnly,
+}
+
 pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<String>,
@@ -90,6 +96,7 @@ pub struct Buffer {
     completion_triggers: Vec<String>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
+    capability: Capability,
 }
 
 pub struct BufferSnapshot {
@@ -405,19 +412,27 @@ impl Buffer {
             TextBuffer::new(replica_id, id, base_text.into()),
             None,
             None,
+            Capability::ReadWrite,
         )
     }
 
-    pub fn remote(remote_id: u64, replica_id: ReplicaId, base_text: String) -> Self {
+    pub fn remote(
+        remote_id: u64,
+        replica_id: ReplicaId,
+        capability: Capability,
+        base_text: String,
+    ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, remote_id, base_text),
             None,
             None,
+            capability,
         )
     }
 
     pub fn from_proto(
         replica_id: ReplicaId,
+        capability: Capability,
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
@@ -426,6 +441,7 @@ impl Buffer {
             buffer,
             message.diff_base.map(|text| text.into_boxed_str().into()),
             file,
+            capability,
         );
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending)
@@ -504,10 +520,19 @@ impl Buffer {
         self
     }
 
+    pub fn capability(&self) -> Capability {
+        self.capability
+    }
+
+    pub fn read_only(&self) -> bool {
+        self.capability == Capability::ReadOnly
+    }
+
     pub fn build(
         buffer: TextBuffer,
         diff_base: Option<String>,
         file: Option<Arc<dyn File>>,
+        capability: Capability,
     ) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
@@ -526,6 +551,7 @@ impl Buffer {
             diff_base,
             git_diff: git::diff::BufferDiff::new(),
             file,
+            capability,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
             parse_count: 0,

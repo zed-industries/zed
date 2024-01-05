@@ -93,6 +93,7 @@ mod tests {
     use crate::editor_tests::init_test;
     use crate::Point;
     use gpui::{Context, TestAppContext};
+    use language::Capability::ReadWrite;
     use multi_buffer::{ExcerptRange, MultiBuffer};
     use project::{FakeFs, Project};
     use unindent::Unindent;
@@ -183,7 +184,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
+            let mut multibuffer = MultiBuffer::new(0, ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [

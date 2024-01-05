@@ -19,6 +19,7 @@ use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
+use rpc::proto::ChannelRole;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -1380,7 +1381,7 @@ async fn test_unshare_project(
         .unwrap();
     executor.run_until_parked();
 
-    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+    assert!(project_b.read_with(cx_b, |project, _| project.is_disconnected()));
 
     // Client C opens the project.
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
@@ -1393,7 +1394,7 @@ async fn test_unshare_project(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
-    assert!(project_c.read_with(cx_c, |project, _| project.is_read_only()));
+    assert!(project_c.read_with(cx_c, |project, _| project.is_disconnected()));
 
     // Client C can open the project again after client A re-shares.
     let project_id = active_call_a
@@ -1419,7 +1420,7 @@ async fn test_unshare_project(
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
 
     project_c2.read_with(cx_c, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
         assert!(project.collaborators().is_empty());
     });
 }
@@ -1551,7 +1552,7 @@ async fn test_project_reconnect(
     });
 
     project_b1.read_with(cx_b, |project, _| {
-        assert!(!project.is_read_only());
+        assert!(!project.is_disconnected());
         assert_eq!(project.collaborators().len(), 1);
     });
 
@@ -1653,7 +1654,7 @@ async fn test_project_reconnect(
     });
 
     project_b1.read_with(cx_b, |project, cx| {
-        assert!(!project.is_read_only());
+        assert!(!project.is_disconnected());
         assert_eq!(
             project
                 .worktree_for_id(worktree1_id, cx)
@@ -1687,9 +1688,9 @@ async fn test_project_reconnect(
         );
     });
 
-    project_b2.read_with(cx_b, |project, _| assert!(project.is_read_only()));
+    project_b2.read_with(cx_b, |project, _| assert!(project.is_disconnected()));
 
-    project_b3.read_with(cx_b, |project, _| assert!(!project.is_read_only()));
+    project_b3.read_with(cx_b, |project, _| assert!(!project.is_disconnected()));
 
     buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WaZ"));
 
@@ -1746,7 +1747,7 @@ async fn test_project_reconnect(
     executor.run_until_parked();
 
     project_b1.read_with(cx_b, |project, cx| {
-        assert!(!project.is_read_only());
+        assert!(!project.is_disconnected());
         assert_eq!(
             project
                 .worktree_for_id(worktree1_id, cx)
@@ -1780,7 +1781,7 @@ async fn test_project_reconnect(
         );
     });
 
-    project_b3.read_with(cx_b, |project, _| assert!(project.is_read_only()));
+    project_b3.read_with(cx_b, |project, _| assert!(project.is_disconnected()));
 
     buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WXaYZ"));
 
@@ -3535,7 +3536,7 @@ async fn test_leaving_project(
     });
 
     project_b2.read_with(cx_b, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
     });
 
     project_c.read_with(cx_c, |project, _| {
@@ -3550,6 +3551,7 @@ async fn test_leaving_project(
             client_b.user_store().clone(),
             client_b.language_registry().clone(),
             FakeFs::new(cx.background_executor().clone()),
+            ChannelRole::Member,
             cx,
         )
     })
@@ -3568,11 +3570,11 @@ async fn test_leaving_project(
     });
 
     project_b2.read_with(cx_b, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
     });
 
     project_c.read_with(cx_c, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
     });
 }
 

@@ -57,7 +57,7 @@ pub struct SendText(String);
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct SendKeystroke(String);
 
-impl_actions!(terminal_view, [SendText, SendKeystroke]);
+impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
