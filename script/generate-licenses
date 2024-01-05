@@ -9,10 +9,7 @@ OUTPUT_FILE=$(pwd)/assets/licenses.md
 echo -e "# ###### THEME LICENSES ######\n" >> $OUTPUT_FILE
 
 echo "Generating theme licenses"
-cd styles
-npm --silent ci
-npm run --silent build-licenses >> $OUTPUT_FILE
-cd ..
+cat crates/theme/src/themes/LICENSES >> $OUTPUT_FILE
 
 echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 

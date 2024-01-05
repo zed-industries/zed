@@ -7837,6 +7837,7 @@ dependencies = [
  "convert_case 0.6.0",
  "gpui",
  "indexmap 1.9.3",
+ "indoc",
  "json_comments",
  "log",
  "palette",
