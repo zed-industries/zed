@@ -888,6 +888,14 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
+                follower::Entity::delete_many()
+                    .filter(
+                        Condition::all()
+                            .add(follower::Column::FollowerConnectionId.eq(connection.id as i32)),
+                    )
+                    .exec(&*tx)
+                    .await?;
+
                 // Unshare projects.
                 project::Entity::delete_many()
                     .filter(

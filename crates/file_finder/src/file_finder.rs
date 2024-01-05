@@ -1843,7 +1843,7 @@ mod tests {
         expected_matches: usize,
         expected_editor_title: &str,
         workspace: &View<Workspace>,
-        cx: &mut gpui::VisualTestContext<'_>,
+        cx: &mut gpui::VisualTestContext,
     ) -> Vec<FoundPath> {
         let picker = open_file_picker(&workspace, cx);
         cx.simulate_input(input);

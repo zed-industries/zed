@@ -217,7 +217,6 @@ impl TerminalPanel {
             pane::Event::Remove => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
-            pane::Event::Focus => cx.emit(PanelEvent::Focus),
 
             pane::Event::AddItem { item } => {
                 if let Some(workspace) = self.workspace.upgrade() {

@@ -2457,11 +2457,11 @@ impl Workspace {
         Some(leader_id)
     }
 
-    //     pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
-    //         self.follower_states
-    //             .values()
-    //             .any(|state| state.leader_id == peer_id)
-    //     }
+    pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
+        self.follower_states
+            .values()
+            .any(|state| state.leader_id == peer_id)
+    }
 
     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
         let active_entry = self.active_project_path(cx);
