@@ -1091,13 +1091,10 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
+
     fn init_test(
         cx: &mut TestAppContext,
-    ) -> (
-        View<Editor>,
-        View<BufferSearchBar>,
-        &mut VisualTestContext<'_>,
-    ) {
+    ) -> (View<Editor>, View<BufferSearchBar>, &mut VisualTestContext) {
         init_globals(cx);
         let buffer = cx.new_model(|cx| {
             Buffer::new(

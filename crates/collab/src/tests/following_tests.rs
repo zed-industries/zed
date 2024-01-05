@@ -4,7 +4,7 @@ use collab_ui::notifications::project_shared_notification::ProjectSharedNotifica
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
     point, BackgroundExecutor, Context, SharedString, TestAppContext, View, VisualContext,
-    VisualTestContext, WindowContext,
+    VisualTestContext,
 };
 use language::Capability;
 use live_kit_client::MacOSDisplay;
@@ -12,7 +12,6 @@ use project::project_settings::ProjectSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
-use std::borrow::Cow;
 use workspace::{
     dock::{test::TestPanel, DockPosition},
     item::{test::TestItem, ItemHandle as _},
@@ -1433,6 +1432,15 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     });
 
     executor.run_until_parked();
+    let window_b_project_a = cx_b
+        .windows()
+        .iter()
+        .max_by_key(|window| window.window_id())
+        .unwrap()
+        .clone();
+
+    let mut cx_b_project_a = VisualTestContext::from_window(window_b_project_a, cx_b);
+
     let workspace_b_project_a = cx_b
         .windows()
         .iter()
@@ -1444,7 +1452,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         .unwrap();
 
     // assert that b is following a in project a in w.rs
-    workspace_b_project_a.update(cx_b, |workspace, cx| {
+    workspace_b_project_a.update(&mut cx_b_project_a, |workspace, cx| {
         assert!(workspace.is_being_followed(client_a.peer_id().unwrap()));
         assert_eq!(
             client_a.peer_id(),
@@ -1459,7 +1467,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
     // TODO: in app code, this would be done by the collab_ui.
     active_call_b
-        .update(cx_b, |call, cx| {
+        .update(&mut cx_b_project_a, |call, cx| {
             let project = workspace_b_project_a.read(cx).project().clone();
             call.set_location(Some(&project), cx)
         })
@@ -1738,7 +1746,7 @@ fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec
     })
 }
 
-fn pane_summaries(workspace: &View<Workspace>, cx: &mut VisualTestContext<'_>) -> Vec<PaneSummary> {
+fn pane_summaries(workspace: &View<Workspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
     workspace.update(cx, |workspace, cx| {
         let active_pane = workspace.active_pane();
         workspace

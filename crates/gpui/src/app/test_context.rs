@@ -483,21 +483,24 @@ impl<V> View<V> {
 }
 
 use derive_more::{Deref, DerefMut};
-#[derive(Deref, DerefMut)]
-pub struct VisualTestContext<'a> {
+#[derive(Deref, DerefMut, Clone)]
+pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
-    cx: &'a mut TestAppContext,
+    cx: TestAppContext,
     window: AnyWindowHandle,
 }
 
-impl<'a> VisualTestContext<'a> {
+impl<'a> VisualTestContext {
     pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
 
-    pub fn from_window(window: AnyWindowHandle, cx: &'a mut TestAppContext) -> Self {
-        Self { cx, window }
+    pub fn from_window(window: AnyWindowHandle, cx: &TestAppContext) -> Self {
+        Self {
+            cx: cx.clone(),
+            window,
+        }
     }
 
     pub fn run_until_parked(&self) {
@@ -531,7 +534,7 @@ impl<'a> VisualTestContext<'a> {
     }
 }
 
-impl<'a> Context for VisualTestContext<'a> {
+impl Context for VisualTestContext {
     type Result<T> = <TestAppContext as Context>::Result<T>;
 
     fn new_model<T: 'static>(
@@ -582,7 +585,7 @@ impl<'a> Context for VisualTestContext<'a> {
     }
 }
 
-impl<'a> VisualContext for VisualTestContext<'a> {
+impl VisualContext for VisualTestContext {
     fn new_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
@@ -591,7 +594,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         V: 'static + Render,
     {
         self.window
-            .update(self.cx, |_, cx| cx.new_view(build_view))
+            .update(&mut self.cx, |_, cx| cx.new_view(build_view))
             .unwrap()
     }
 
@@ -601,7 +604,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
         self.window
-            .update(self.cx, |_, cx| cx.update_view(view, update))
+            .update(&mut self.cx, |_, cx| cx.update_view(view, update))
             .unwrap()
     }
 
@@ -613,13 +616,13 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         V: 'static + Render,
     {
         self.window
-            .update(self.cx, |_, cx| cx.replace_root_view(build_view))
+            .update(&mut self.cx, |_, cx| cx.replace_root_view(build_view))
             .unwrap()
     }
 
     fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
         self.window
-            .update(self.cx, |_, cx| {
+            .update(&mut self.cx, |_, cx| {
                 view.read(cx).focus_handle(cx).clone().focus(cx)
             })
             .unwrap()
@@ -630,7 +633,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         V: crate::ManagedView,
     {
         self.window
-            .update(self.cx, |_, cx| {
+            .update(&mut self.cx, |_, cx| {
                 view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
             })
             .unwrap()

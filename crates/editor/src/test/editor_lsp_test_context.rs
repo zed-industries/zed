@@ -21,19 +21,19 @@ use workspace::{AppState, Workspace, WorkspaceHandle};
 
 use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
-pub struct EditorLspTestContext<'a> {
-    pub cx: EditorTestContext<'a>,
+pub struct EditorLspTestContext {
+    pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
     pub workspace: View<Workspace>,
     pub buffer_lsp_url: lsp::Url,
 }
 
-impl<'a> EditorLspTestContext<'a> {
+impl EditorLspTestContext {
     pub async fn new(
         mut language: Language,
         capabilities: lsp::ServerCapabilities,
-        cx: &'a mut gpui::TestAppContext,
-    ) -> EditorLspTestContext<'a> {
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
@@ -110,8 +110,8 @@ impl<'a> EditorLspTestContext<'a> {
 
     pub async fn new_rust(
         capabilities: lsp::ServerCapabilities,
-        cx: &'a mut gpui::TestAppContext,
-    ) -> EditorLspTestContext<'a> {
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -152,8 +152,8 @@ impl<'a> EditorLspTestContext<'a> {
 
     pub async fn new_typescript(
         capabilities: lsp::ServerCapabilities,
-        cx: &'a mut gpui::TestAppContext,
-    ) -> EditorLspTestContext<'a> {
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let mut word_characters: HashSet<char> = Default::default();
         word_characters.insert('$');
         word_characters.insert('#');
@@ -283,15 +283,15 @@ impl<'a> EditorLspTestContext<'a> {
     }
 }
 
-impl<'a> Deref for EditorLspTestContext<'a> {
-    type Target = EditorTestContext<'a>;
+impl Deref for EditorLspTestContext {
+    type Target = EditorTestContext;
 
     fn deref(&self) -> &Self::Target {
         &self.cx
     }
 }
 
-impl<'a> DerefMut for EditorLspTestContext<'a> {
+impl DerefMut for EditorLspTestContext {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }
