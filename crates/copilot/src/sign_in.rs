@@ -1,11 +1,10 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    div, size, AppContext, Bounds, ClipboardItem, Element, GlobalPixels, InteractiveElement,
+    div, size, svg, AppContext, Bounds, ClipboardItem, Element, GlobalPixels, InteractiveElement,
     IntoElement, ParentElement, Point, Render, Styled, ViewContext, VisualContext, WindowBounds,
     WindowHandle, WindowKind, WindowOptions,
 };
-use theme::ActiveTheme;
-use ui::{prelude::*, Button, Icon, IconElement, Label};
+use ui::{prelude::*, Button, Icon, Label};
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
@@ -59,7 +58,7 @@ fn create_copilot_auth_window(
     cx: &mut AppContext,
     status: &Status,
 ) -> WindowHandle<CopilotCodeVerification> {
-    let window_size = size(GlobalPixels::from(280.), GlobalPixels::from(280.));
+    let window_size = size(GlobalPixels::from(400.), GlobalPixels::from(480.));
     let window_options = WindowOptions {
         bounds: WindowBounds::Fixed(Bounds::new(Point::default(), window_size)),
         titlebar: None,
@@ -129,8 +128,8 @@ impl CopilotCodeVerification {
         };
         v_stack()
             .flex_1()
+            .gap_2()
             .items_center()
-            .justify_between()
             .w_full()
             .child(Label::new(
                 "Enable Copilot by connecting your existing license",
@@ -141,13 +140,16 @@ impl CopilotCodeVerification {
                     .size(ui::LabelSize::Small),
             )
             .child(
-                Button::new("connect-button", connect_button_label).on_click({
-                    let verification_uri = data.verification_uri.clone();
-                    cx.listener(move |this, _, cx| {
-                        cx.open_url(&verification_uri);
-                        this.connect_clicked = true;
+                Button::new("connect-button", connect_button_label)
+                    .on_click({
+                        let verification_uri = data.verification_uri.clone();
+                        cx.listener(move |this, _, cx| {
+                            cx.open_url(&verification_uri);
+                            this.connect_clicked = true;
+                        })
                     })
-                }),
+                    .full_width()
+                    .style(ButtonStyle::Filled),
             )
     }
     fn render_enabled_modal() -> impl Element {
@@ -196,16 +198,23 @@ impl Render for CopilotCodeVerification {
             }
             _ => div().into_any_element(),
         };
-        div()
+
+        v_stack()
             .id("copilot code verification")
-            .flex()
-            .flex_col()
+            .elevation_3(cx)
             .size_full()
             .items_center()
-            .p_10()
-            .bg(cx.theme().colors().element_background)
-            .child(ui::Label::new("Connect Copilot to Zed"))
-            .child(IconElement::new(Icon::ZedXCopilot))
+            .p_4()
+            .gap_4()
+            .child(Headline::new("Connect Copilot to Zed").size(HeadlineSize::Large))
+            .child(
+                svg()
+                    .w_32()
+                    .h_16()
+                    .flex_none()
+                    .path(Icon::ZedXCopilot.path())
+                    .text_color(cx.theme().colors().icon),
+            )
             .child(prompt)
     }
 }
