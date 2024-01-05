@@ -114,9 +114,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        //     cx.emit(workspace2::Event::PaneAdded(
-        //         workspace.active_pane().clone(),
-        //     ));
+        // cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
 
         //     let collab_titlebar_item =
         //         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
@@ -2832,7 +2830,6 @@ mod tests {
             let state = Arc::get_mut(&mut app_state).unwrap();
 
             state.build_window_options = build_window_options;
-            initialize_workspace(app_state.clone(), cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init((), cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
@@ -2847,6 +2844,7 @@ mod tests {
             project_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(cx);
+            initialize_workspace(app_state.clone(), cx);
             app_state
         })
     }
