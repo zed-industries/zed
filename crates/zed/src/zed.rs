@@ -1510,104 +1510,139 @@ mod tests {
     //         });
     //     }
 
-    //     #[gpui::test]
-    //     async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
-    //         let app_state = init_test(cx);
-    //         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+    #[gpui::test]
+    async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
-    //         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-    //         project.update(cx, |project, _| project.languages().add(rust_lang()));
-    //         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-    //         let workspace = window.root(cx);
-    //         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let worktree = cx.update(|cx| window.read(cx).unwrap().worktrees(cx).next().unwrap());
 
-    //         // Create a new untitled buffer
-    //         cx.dispatch_action(window.into(), NewFile);
-    //         let editor = workspace.read_with(cx, |workspace, cx| {
-    //             workspace
-    //                 .active_item(cx)
-    //                 .unwrap()
-    //                 .downcast::<Editor>()
-    //                 .unwrap()
-    //         });
+        // Create a new untitled buffer
+        cx.dispatch_action(window.into(), NewFile);
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
 
-    //         editor.update(cx, |editor, cx| {
-    //             assert!(!editor.is_dirty(cx));
-    //             assert_eq!(editor.title(cx), "untitled");
-    //             assert!(Arc::ptr_eq(
-    //                 &editor.language_at(0, cx).unwrap(),
-    //                 &languages::PLAIN_TEXT
-    //             ));
-    //             editor.handle_input("hi", cx);
-    //             assert!(editor.is_dirty(cx));
-    //         });
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(editor.title(cx), "untitled");
+                    assert!(Arc::ptr_eq(
+                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &languages::PLAIN_TEXT
+                    ));
+                    editor.handle_input("hi", cx);
+                    assert!(editor.is_dirty(cx));
+                });
+            })
+            .unwrap();
 
-    //         // Save the buffer. This prompts for a filename.
-    //         let save_task = workspace.update(cx, |workspace, cx| {
-    //             workspace.save_active_item(SaveIntent::Save, cx)
-    //         });
-    //         cx.foreground().run_until_parked();
-    //         cx.simulate_new_path_selection(|parent_dir| {
-    //             assert_eq!(parent_dir, Path::new("/root"));
-    //             Some(parent_dir.join("the-new-name.rs"))
-    //         });
-    //         cx.read(|cx| {
-    //             assert!(editor.is_dirty(cx));
-    //             assert_eq!(editor.read(cx).title(cx), "untitled");
-    //         });
+        // Save the buffer. This prompts for a filename.
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        cx.simulate_new_path_selection(|parent_dir| {
+            assert_eq!(parent_dir, Path::new("/root"));
+            Some(parent_dir.join("the-new-name.rs"))
+        });
+        cx.read(|cx| {
+            assert!(editor.is_dirty(cx));
+            assert_eq!(editor.read(cx).title(cx), "untitled");
+        });
 
-    //         // When the save completes, the buffer's title is updated and the language is assigned based
-    //         // on the path.
-    //         save_task.await.unwrap();
-    //         editor.read_with(cx, |editor, cx| {
-    //             assert!(!editor.is_dirty(cx));
-    //             assert_eq!(editor.title(cx), "the-new-name.rs");
-    //             assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust");
-    //         });
+        // When the save completes, the buffer's title is updated and the language is assigned based
+        // on the path.
+        save_task.await.unwrap();
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(editor.title(cx), "the-new-name.rs");
+                    assert_eq!(
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(0, cx)
+                            .unwrap()
+                            .name()
+                            .as_ref(),
+                        "Rust"
+                    );
+                });
+            })
+            .unwrap();
 
-    //         // Edit the file and save it again. This time, there is no filename prompt.
-    //         editor.update(cx, |editor, cx| {
-    //             editor.handle_input(" there", cx);
-    //             assert!(editor.is_dirty(cx));
-    //         });
-    //         let save_task = workspace.update(cx, |workspace, cx| {
-    //             workspace.save_active_item(SaveIntent::Save, cx)
-    //         });
-    //         save_task.await.unwrap();
-    //         assert!(!cx.did_prompt_for_new_path());
-    //         editor.read_with(cx, |editor, cx| {
-    //             assert!(!editor.is_dirty(cx));
-    //             assert_eq!(editor.title(cx), "the-new-name.rs")
-    //         });
+        // Edit the file and save it again. This time, there is no filename prompt.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.handle_input(" there", cx);
+                    assert!(editor.is_dirty(cx));
+                });
+            })
+            .unwrap();
 
-    //         // Open the same newly-created file in another pane item. The new editor should reuse
-    //         // the same buffer.
-    //         cx.dispatch_action(window.into(), NewFile);
-    //         workspace
-    //             .update(cx, |workspace, cx| {
-    //                 workspace.split_and_clone(
-    //                     workspace.active_pane().clone(),
-    //                     SplitDirection::Right,
-    //                     cx,
-    //                 );
-    //                 workspace.open_path((worktree.read(cx).id(), "the-new-name.rs"), None, true, cx)
-    //             })
-    //             .await
-    //             .unwrap();
-    //         let editor2 = workspace.update(cx, |workspace, cx| {
-    //             workspace
-    //                 .active_item(cx)
-    //                 .unwrap()
-    //                 .downcast::<Editor>()
-    //                 .unwrap()
-    //         });
-    //         cx.read(|cx| {
-    //             assert_eq!(
-    //                 editor2.read(cx).buffer().read(cx).as_singleton().unwrap(),
-    //                 editor.read(cx).buffer().read(cx).as_singleton().unwrap()
-    //             );
-    //         })
-    //     }
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        save_task.await.unwrap();
+        // todo!() po
+        //assert!(!cx.did_prompt_for_new_path());
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(editor.title(cx), "the-new-name.rs")
+                });
+            })
+            .unwrap();
+
+        // Open the same newly-created file in another pane item. The new editor should reuse
+        // the same buffer.
+        cx.dispatch_action(window.into(), NewFile);
+        window
+            .update(cx, |workspace, cx| {
+                workspace.split_and_clone(
+                    workspace.active_pane().clone(),
+                    SplitDirection::Right,
+                    cx,
+                );
+                workspace.open_path((worktree.read(cx).id(), "the-new-name.rs"), None, true, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let editor2 = window
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+        cx.read(|cx| {
+            assert_eq!(
+                editor2.read(cx).buffer().read(cx).as_singleton().unwrap(),
+                editor.read(cx).buffer().read(cx).as_singleton().unwrap()
+            );
+        })
+    }
 
     #[gpui::test]
     async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
