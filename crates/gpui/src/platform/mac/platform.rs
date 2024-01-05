@@ -260,8 +260,8 @@ impl MacPlatform {
                 os_action,
             } => {
                 let keystrokes = keymap
-                    .bindings_for_action(action.type_id())
-                    .find(|binding| binding.action().partial_eq(action.as_ref()))
+                    .bindings_for_action(action.as_ref())
+                    .next()
                     .map(|binding| binding.keystrokes());
 
                 let selector = match os_action {
