@@ -1128,7 +1128,12 @@ impl Pane {
             if self.items.len() == 1 && should_activate {
                 self.focus_handle.focus(cx);
             } else {
-                self.activate_item(index_to_activate, should_activate, should_activate, cx);
+                self.activate_item(
+                    dbg!(index_to_activate),
+                    dbg!(should_activate),
+                    should_activate,
+                    cx,
+                );
             }
         }
 
