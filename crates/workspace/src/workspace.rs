@@ -42,9 +42,9 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::DB;
+use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, SerializedWorkspace, WorkspaceLocation},
+    model::{ItemId, WorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -70,8 +70,9 @@ use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
 
-use crate::persistence::model::{
-    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+use crate::persistence::{
+    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+    SerializedAxis,
 };
 
 lazy_static! {
@@ -625,7 +626,11 @@ impl Workspace {
 
                     if let Some(display_uuid) = display.uuid().log_err() {
                         cx.background_executor()
-                            .spawn(DB.set_window_bounds(workspace_id, bounds, display_uuid))
+                            .spawn(DB.set_window_bounds(
+                                workspace_id,
+                                SerializedWindowsBounds(bounds),
+                                display_uuid,
+                            ))
                             .detach_and_log_err(cx);
                     }
                 }
@@ -2989,7 +2994,7 @@ impl Workspace {
                     flexes,
                     bounding_boxes: _,
                 }) => SerializedPaneGroup::Group {
-                    axis: *axis,
+                    axis: SerializedAxis(*axis),
                     children: members
                         .iter()
                         .map(|member| build_serialized_pane_group(member, cx))
