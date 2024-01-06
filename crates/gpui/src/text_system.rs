@@ -33,7 +33,7 @@ pub struct FontId(pub usize);
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
 
-pub const SUBPIXEL_VARIANTS: u8 = 4;
+pub(crate) const SUBPIXEL_VARIANTS: u8 = 4;
 
 pub struct TextSystem {
     line_layout_cache: Arc<LineLayoutCache>,

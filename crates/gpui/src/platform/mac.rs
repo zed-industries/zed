@@ -106,11 +106,6 @@ impl From<NSSize> for Size<Pixels> {
     }
 }
 
-pub trait NSRectExt {
-    fn size(&self) -> Size<Pixels>;
-    fn intersects(&self, other: Self) -> bool;
-}
-
 impl From<NSRect> for Size<Pixels> {
     fn from(rect: NSRect) -> Self {
         let NSSize { width, height } = rect.size;
@@ -124,16 +119,3 @@ impl From<NSRect> for Size<GlobalPixels> {
         size(width.into(), height.into())
     }
 }
-
-// impl NSRectExt for NSRect {
-//     fn intersects(&self, other: Self) -> bool {
-//         self.size.width > 0.
-//             && self.size.height > 0.
-//             && other.size.width > 0.
-//             && other.size.height > 0.
-//             && self.origin.x <= other.origin.x + other.size.width
-//             && self.origin.x + self.size.width >= other.origin.x
-//             && self.origin.y <= other.origin.y + other.size.height
-//             && self.origin.y + self.size.height >= other.origin.y
-//     }
-// }
