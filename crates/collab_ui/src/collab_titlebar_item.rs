@@ -210,15 +210,19 @@ impl Render for CollabTitlebarItem {
                             )
                         })
                         .child(
-                            IconButton::new("leave-call", ui::Icon::Exit)
-                                .style(ButtonStyle::Subtle)
-                                .tooltip(|cx| Tooltip::text("Leave call", cx))
-                                .icon_size(IconSize::Small)
-                                .on_click(move |_, cx| {
-                                    ActiveCall::global(cx)
-                                        .update(cx, |call, cx| call.hang_up(cx))
-                                        .detach_and_log_err(cx);
-                                }),
+                            div()
+                                .child(
+                                    IconButton::new("leave-call", ui::Icon::Exit)
+                                        .style(ButtonStyle::Subtle)
+                                        .tooltip(|cx| Tooltip::text("Leave call", cx))
+                                        .icon_size(IconSize::Small)
+                                        .on_click(move |_, cx| {
+                                            ActiveCall::global(cx)
+                                                .update(cx, |call, cx| call.hang_up(cx))
+                                                .detach_and_log_err(cx);
+                                        }),
+                                )
+                                .pr_2(),
                         )
                         .when(!read_only, |this| {
                             this.child(
@@ -296,6 +300,7 @@ impl Render for CollabTitlebarItem {
                                     }),
                             )
                         })
+                        .child(div().pr_2())
                     })
                     .map(|el| {
                         let status = self.client.status();
