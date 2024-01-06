@@ -3,7 +3,7 @@ use crate::{
     ItemNavHistory, WorkspaceId,
 };
 use anyhow::Result;
-use call::participant::{Frame, RemoteVideoTrack};
+use call::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{

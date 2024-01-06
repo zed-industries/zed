@@ -18,6 +18,7 @@ use room::Event;
 use settings::Settings;
 use std::sync::Arc;
 
+pub use live_kit_client::{Frame, RemoteAudioTrack, RemoteVideoTrack};
 pub use participant::ParticipantLocation;
 pub use room::Room;
 

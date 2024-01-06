@@ -2,8 +2,6 @@ use anyhow::{anyhow, Result};
 use client::ParticipantIndex;
 use client::{proto, User};
 use gpui::WeakModel;
-pub use live_kit_client::Frame;
-pub use live_kit_client::{RemoteAudioTrack, RemoteVideoTrack};
 use project::Project;
 use std::sync::Arc;
 
