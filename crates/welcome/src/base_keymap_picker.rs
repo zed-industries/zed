@@ -38,13 +38,12 @@ pub fn toggle(
 }
 
 pub struct BaseKeymapSelector {
-    focus_handle: gpui::FocusHandle,
     picker: View<Picker<BaseKeymapSelectorDelegate>>,
 }
 
 impl FocusableView for BaseKeymapSelector {
-    fn focus_handle(&self, _cx: &AppContext) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 
@@ -57,17 +56,13 @@ impl BaseKeymapSelector {
         cx: &mut ViewContext<BaseKeymapSelector>,
     ) -> Self {
         let picker = cx.new_view(|cx| Picker::new(delegate, cx));
-        let focus_handle = cx.focus_handle();
-        Self {
-            focus_handle,
-            picker,
-        }
+        Self { picker }
     }
 }
 
 impl Render for BaseKeymapSelector {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.picker.clone()
+        v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -193,7 +188,13 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .ok();
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>) {}
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>) {
+        self.view
+            .update(cx, |_, cx| {
+                cx.emit(DismissEvent);
+            })
+            .log_err();
+    }
 
     fn render_match(
         &self,
