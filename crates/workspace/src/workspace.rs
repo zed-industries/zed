@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, Status, TypedEnvelope, UserStore,
+    Client, ParticipantLocation, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -2398,9 +2398,9 @@ impl Workspace {
         let project = self.project.read(cx);
 
         let other_project_id = match remote_participant.location {
-            call::ParticipantLocation::External => None,
-            call::ParticipantLocation::UnsharedProject => None,
-            call::ParticipantLocation::SharedProject { project_id } => {
+            ParticipantLocation::External => None,
+            ParticipantLocation::UnsharedProject => None,
+            ParticipantLocation::SharedProject { project_id } => {
                 if Some(project_id) == project.remote_id() {
                     None
                 } else {
@@ -2789,15 +2789,15 @@ impl Workspace {
         let leader_in_this_app;
         let leader_in_this_project;
         match participant.location {
-            call::ParticipantLocation::SharedProject { project_id } => {
+            ParticipantLocation::SharedProject { project_id } => {
                 leader_in_this_app = true;
                 leader_in_this_project = Some(project_id) == self.project.read(cx).remote_id();
             }
-            call::ParticipantLocation::UnsharedProject => {
+            ParticipantLocation::UnsharedProject => {
                 leader_in_this_app = true;
                 leader_in_this_project = false;
             }
-            call::ParticipantLocation::External => {
+            ParticipantLocation::External => {
                 leader_in_this_app = false;
                 leader_in_this_project = false;
             }

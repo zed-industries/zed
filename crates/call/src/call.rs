@@ -1,5 +1,4 @@
 pub mod call_settings;
-pub mod participant;
 pub mod room;
 
 use anyhow::{anyhow, Result};
@@ -19,7 +18,6 @@ use settings::Settings;
 use std::sync::Arc;
 
 pub use live_kit_client::{Frame, RemoteAudioTrack, RemoteVideoTrack};
-pub use participant::ParticipantLocation;
 pub use room::Room;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {

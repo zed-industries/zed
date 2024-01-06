@@ -29,6 +29,25 @@ pub struct Collaborator {
     pub user_id: UserId,
 }
 
+#[derive(Clone, Debug)]
+pub struct Participant {
+    pub user: Arc<User>,
+    pub peer_id: proto::PeerId,
+    pub role: proto::ChannelRole,
+    pub projects: Vec<proto::ParticipantProject>,
+    pub location: ParticipantLocation,
+    pub participant_index: ParticipantIndex,
+    pub muted: bool,
+    pub speaking: bool,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ParticipantLocation {
+    SharedProject { project_id: u64 },
+    UnsharedProject,
+    External,
+}
+
 impl PartialOrd for User {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -690,5 +709,22 @@ impl Collaborator {
             replica_id: message.replica_id as ReplicaId,
             user_id: message.user_id as UserId,
         })
+    }
+}
+
+impl ParticipantLocation {
+    pub fn from_proto(location: Option<proto::ParticipantLocation>) -> Result<Self> {
+        match location.and_then(|l| l.variant) {
+            Some(proto::participant_location::Variant::SharedProject(project)) => {
+                Ok(Self::SharedProject {
+                    project_id: project.id,
+                })
+            }
+            Some(proto::participant_location::Variant::UnsharedProject(_)) => {
+                Ok(Self::UnsharedProject)
+            }
+            Some(proto::participant_location::Variant::External(_)) => Ok(Self::External),
+            None => Err(anyhow!("participant location was not provided")),
+        }
     }
 }

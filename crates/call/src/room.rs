@@ -1,12 +1,9 @@
-use crate::{
-    call_settings::CallSettings,
-    participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
-};
+use crate::call_settings::CallSettings;
 use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
 use client::{
     proto::{self, PeerId},
-    Client, ParticipantIndex, TypedEnvelope, User, UserStore,
+    Client, Participant, ParticipantIndex, ParticipantLocation, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -63,7 +60,7 @@ pub struct Room {
     shared_projects: HashSet<WeakModel<Project>>,
     joined_projects: HashSet<WeakModel<Project>>,
     local_participant: LocalParticipant,
-    remote_participants: BTreeMap<u64, RemoteParticipant>,
+    remote_participants: BTreeMap<u64, Participant>,
     remote_audio_tracks: BTreeMap<u64, HashMap<String, Arc<RemoteAudioTrack>>>,
     remote_video_tracks: BTreeMap<u64, HashMap<String, Arc<RemoteVideoTrack>>>,
     pending_participants: Vec<Arc<User>>,
@@ -79,6 +76,13 @@ pub struct Room {
     room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
+}
+
+#[derive(Clone, Default)]
+pub struct LocalParticipant {
+    pub projects: Vec<proto::ParticipantProject>,
+    pub active_project: Option<WeakModel<Project>>,
+    pub role: proto::ChannelRole,
 }
 
 impl EventEmitter<Event> for Room {}
@@ -604,11 +608,11 @@ impl Room {
         &self.local_participant
     }
 
-    pub fn remote_participants(&self) -> &BTreeMap<u64, RemoteParticipant> {
+    pub fn remote_participants(&self) -> &BTreeMap<u64, Participant> {
         &self.remote_participants
     }
 
-    pub fn remote_participant_for_peer_id(&self, peer_id: PeerId) -> Option<&RemoteParticipant> {
+    pub fn remote_participant_for_peer_id(&self, peer_id: PeerId) -> Option<&Participant> {
         self.remote_participants
             .values()
             .find(|p| p.peer_id == peer_id)
@@ -824,7 +828,7 @@ impl Room {
                         } else {
                             this.remote_participants.insert(
                                 participant.user_id,
-                                RemoteParticipant {
+                                Participant {
                                     user: user.clone(),
                                     participant_index,
                                     peer_id,

@@ -2,8 +2,8 @@ use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{channel_id, room_participants, RoomParticipants, TestClient, TestServer},
 };
-use call::{room, ActiveCall, ParticipantLocation, Room};
-use client::{User, RECEIVE_TIMEOUT};
+use call::{room, ActiveCall, Room};
+use client::{ParticipantLocation, User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;

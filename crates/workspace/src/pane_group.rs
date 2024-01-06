@@ -1,6 +1,7 @@
 use crate::{pane_group::element::pane_axis, AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, Result};
-use call::{ActiveCall, ParticipantLocation};
+use call::ActiveCall;
+use client::ParticipantLocation;
 use collections::HashMap;
 use gpui::{
     point, size, AnyWeakView, Axis, Bounds, Entity as _, IntoElement, Model, Pixels, Point, View,

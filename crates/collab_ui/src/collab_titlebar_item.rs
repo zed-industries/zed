@@ -1,7 +1,7 @@
 use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
-use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
+use call::{ActiveCall, Room};
+use client::{proto::PeerId, Client, ParticipantIndex, ParticipantLocation, User, UserStore};
 use gpui::{
     actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
