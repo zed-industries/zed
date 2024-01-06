@@ -693,9 +693,9 @@ impl TerminalElement {
                     .join("");
                 new_text.push(' ');
                 terminal.update(cx, |terminal, _| {
-                    // todo!() long paths are not displayed properly albeit the text is there
                     terminal.paste(&new_text);
                 });
+                cx.stop_propagation();
             }
         });
 

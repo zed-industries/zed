@@ -65,11 +65,8 @@ impl TerminalPanel {
                             return item.downcast::<TerminalView>().is_some();
                         }
                     }
-                    if a.downcast_ref::<ExternalPaths>().is_some() {
-                        return true;
-                    }
 
-                    false
+                    a.downcast_ref::<ExternalPaths>().is_some()
                 })),
                 cx,
             );

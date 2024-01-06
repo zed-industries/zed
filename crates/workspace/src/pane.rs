@@ -8,9 +8,10 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
-    AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, FocusHandle,
-    FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, ExternalPaths,
+    FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels, Point,
+    PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -1555,6 +1556,10 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_project_entry_drop(entry_id, cx)
             }))
+            .on_drop(cx.listener(move |this, paths, cx| {
+                this.drag_split_direction = None;
+                this.handle_external_paths_drop(paths, cx)
+            }))
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
@@ -1721,6 +1726,10 @@ impl Pane {
                     .on_drop(cx.listener(move |this, entry_id: &ProjectEntryId, cx| {
                         this.drag_split_direction = None;
                         this.handle_project_entry_drop(entry_id, cx)
+                    }))
+                    .on_drop(cx.listener(move |this, paths, cx| {
+                        this.drag_split_direction = None;
+                        this.handle_external_paths_drop(paths, cx)
                     })),
             )
     }
@@ -1855,6 +1864,35 @@ impl Pane {
             .log_err();
     }
 
+    fn handle_external_paths_drop(
+        &mut self,
+        paths: &ExternalPaths,
+        cx: &mut ViewContext<'_, Pane>,
+    ) {
+        // let mut to_pane = cx.view().clone();
+        // let split_direction = self.drag_split_direction;
+        // let project_entry_id = *project_entry_id;
+        // self.workspace
+        //     .update(cx, |_, cx| {
+        //         cx.defer(move |workspace, cx| {
+        //             if let Some(path) = workspace
+        //                 .project()
+        //                 .read(cx)
+        //                 .path_for_entry(project_entry_id, cx)
+        //             {
+        //                 if let Some(split_direction) = split_direction {
+        //                     to_pane = workspace.split_pane(to_pane, split_direction, cx);
+        //                 }
+        //                 workspace
+        //                     .open_path(path, Some(to_pane.downgrade()), true, cx)
+        //                     .detach_and_log_err(cx);
+        //             }
+        //         });
+        //     })
+        //     .log_err();
+        dbg!("@@@@@@@@@@@@@@", paths);
+    }
+
     pub fn display_nav_history_buttons(&mut self, display: bool) {
         self.display_nav_history_buttons = display;
     }
@@ -1956,6 +1994,7 @@ impl Render for Pane {
                     .group("")
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<ProjectEntryId>(cx.listener(Self::handle_drag_move))
+                    .on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     .map(|div| {
                         if let Some(item) = self.active_item() {
                             div.v_flex()
@@ -1985,6 +2024,7 @@ impl Render for Pane {
                             ))
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<ProjectEntryId>("", |style| style.visible())
+                            .group_drag_over::<ExternalPaths>("", |style| style.visible())
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
                                 this.can_drop(move |a, cx| p(a, cx))
                             })
@@ -1993,6 +2033,9 @@ impl Render for Pane {
                             }))
                             .on_drop(cx.listener(move |this, entry_id, cx| {
                                 this.handle_project_entry_drop(entry_id, cx)
+                            }))
+                            .on_drop(cx.listener(move |this, paths, cx| {
+                                this.handle_external_paths_drop(paths, cx)
                             }))
                             .map(|div| match self.drag_split_direction {
                                 None => div.top_0().left_0().right_0().bottom_0(),

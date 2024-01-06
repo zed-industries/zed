@@ -1462,12 +1462,12 @@ impl<'a> WindowContext<'a> {
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
             InputEvent::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, files } => {
+                FileDropEvent::Entered { position, paths } => {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
-                            value: Box::new(files.clone()),
-                            view: self.new_view(|_| files).into(),
+                            value: Box::new(paths.clone()),
+                            view: self.new_view(|_| paths).into(),
                             cursor_offset: position,
                         });
                     }

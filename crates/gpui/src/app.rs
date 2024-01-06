@@ -1099,12 +1099,6 @@ impl AppContext {
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
     }
-
-    pub fn active_drag<T: 'static>(&self) -> Option<&T> {
-        self.active_drag
-            .as_ref()
-            .and_then(|drag| drag.value.downcast_ref())
-    }
 }
 
 impl Context for AppContext {

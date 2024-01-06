@@ -27,11 +27,11 @@ use futures::{
 use gpui::{
     actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyModel, AnyView,
     AnyWeakView, AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, BorrowWindow,
-    Bounds, Context, Div, DragMoveEvent, Element, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
-    ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    Bounds, Context, Div, DragMoveEvent, Element, Entity, EntityId, EventEmitter, ExternalPaths,
+    FocusHandle, FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext,
+    LayoutId, ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point,
+    PromptLevel, Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -544,7 +544,11 @@ impl Workspace {
                 weak_handle.clone(),
                 project.clone(),
                 pane_history_timestamp.clone(),
-                None,
+                Some(Arc::new(|a, _| {
+                    a.downcast_ref::<ExternalPaths>().is_some()
+                        || a.downcast_ref::<DraggedTab>().is_some()
+                        || a.downcast_ref::<ProjectEntryId>().is_some()
+                })),
                 cx,
             )
         });
