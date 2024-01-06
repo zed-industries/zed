@@ -13,9 +13,14 @@ use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{ffi::c_void, ptr::NonNull, sync::Arc, time::Duration};
 
-include!(concat!(env!("OUT_DIR"), "/dispatch_sys.rs"));
+/// All items in the generated file are marked as pub, so we're gonna wrap it in a separate mod to prevent
+/// these pub items from leaking into public API.
+pub(crate) mod dispatch_sys {
+    include!(concat!(env!("OUT_DIR"), "/dispatch_sys.rs"));
+}
 
-pub fn dispatch_get_main_queue() -> dispatch_queue_t {
+use dispatch_sys::*;
+pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
     unsafe { &_dispatch_main_q as *const _ as dispatch_queue_t }
 }
 

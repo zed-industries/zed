@@ -51,7 +51,7 @@ impl MacDisplay {
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
-    pub fn CGDisplayCreateUUIDFromDisplayID(display: CGDirectDisplayID) -> CFUUIDRef;
+    fn CGDisplayCreateUUIDFromDisplayID(display: CGDirectDisplayID) -> CFUUIDRef;
 }
 
 /// Convert the given rectangle from CoreGraphics' native coordinate space to GPUI's coordinate space.

@@ -37,7 +37,7 @@ pub use keystroke::*;
 pub use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
-pub use time::UtcOffset;
+use time::UtcOffset;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
