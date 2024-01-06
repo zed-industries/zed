@@ -66,12 +66,16 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        div().track_focus(&self.focus).size_full().children(
-            self.frame
-                .as_ref()
-                .map(|frame| img(frame.image()).size_full()),
-        )
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .bg(cx.theme().colors().editor_background)
+            .track_focus(&self.focus)
+            .size_full()
+            .children(
+                self.frame
+                    .as_ref()
+                    .map(|frame| img(frame.image()).size_full()),
+            )
     }
 }
 
