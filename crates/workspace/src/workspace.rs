@@ -1322,6 +1322,7 @@ impl Workspace {
         &mut self,
         mut abs_paths: Vec<PathBuf>,
         visible: bool,
+        pane: Option<WeakView<Pane>>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
         log::info!("open paths {abs_paths:?}");
@@ -1351,12 +1352,13 @@ impl Workspace {
                 let this = this.clone();
                 let abs_path = abs_path.clone();
                 let fs = fs.clone();
+                let pane = pane.clone();
                 let task = cx.spawn(move |mut cx| async move {
                     let (worktree, project_path) = project_path?;
                     if fs.is_file(&abs_path).await {
                         Some(
                             this.update(&mut cx, |this, cx| {
-                                this.open_path(project_path, None, true, cx)
+                                this.open_path(project_path, pane, true, cx)
                             })
                             .log_err()?
                             .await,
@@ -1402,7 +1404,7 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
-                    .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))?
+                    .update(&mut cx, |this, cx| this.open_paths(paths, true, None, cx))?
                     .await;
                 for result in results.into_iter().flatten() {
                     result.log_err();
@@ -1788,7 +1790,7 @@ impl Workspace {
         cx.spawn(|workspace, mut cx| async move {
             let open_paths_task_result = workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![abs_path.clone()], visible, cx)
+                    workspace.open_paths(vec![abs_path.clone()], visible, None, cx)
                 })
                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
                 .await;
@@ -4087,7 +4089,7 @@ pub fn open_paths(
                 existing.clone(),
                 existing
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(abs_paths, true, cx)
+                        workspace.open_paths(abs_paths, true, None, cx)
                     })?
                     .await,
             ))
@@ -4135,7 +4137,7 @@ pub fn create_and_open_local_file(
         let mut items = workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.with_local_workspace(cx, |workspace, cx| {
-                    workspace.open_paths(vec![path.to_path_buf()], false, cx)
+                    workspace.open_paths(vec![path.to_path_buf()], false, None, cx)
                 })
             })?
             .await?

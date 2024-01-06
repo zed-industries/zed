@@ -1869,28 +1869,21 @@ impl Pane {
         paths: &ExternalPaths,
         cx: &mut ViewContext<'_, Pane>,
     ) {
-        // let mut to_pane = cx.view().clone();
-        // let split_direction = self.drag_split_direction;
-        // let project_entry_id = *project_entry_id;
-        // self.workspace
-        //     .update(cx, |_, cx| {
-        //         cx.defer(move |workspace, cx| {
-        //             if let Some(path) = workspace
-        //                 .project()
-        //                 .read(cx)
-        //                 .path_for_entry(project_entry_id, cx)
-        //             {
-        //                 if let Some(split_direction) = split_direction {
-        //                     to_pane = workspace.split_pane(to_pane, split_direction, cx);
-        //                 }
-        //                 workspace
-        //                     .open_path(path, Some(to_pane.downgrade()), true, cx)
-        //                     .detach_and_log_err(cx);
-        //             }
-        //         });
-        //     })
-        //     .log_err();
-        dbg!("@@@@@@@@@@@@@@", paths);
+        let mut to_pane = cx.view().clone();
+        let split_direction = self.drag_split_direction;
+        let paths = paths.paths().to_vec();
+        self.workspace
+            .update(cx, |_, cx| {
+                cx.defer(move |workspace, cx| {
+                    if let Some(split_direction) = split_direction {
+                        to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                    }
+                    workspace
+                        .open_paths(paths, true, Some(to_pane.downgrade()), cx)
+                        .detach();
+                });
+            })
+            .log_err();
     }
 
     pub fn display_nav_history_buttons(&mut self, display: bool) {

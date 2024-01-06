@@ -197,7 +197,7 @@ impl TerminalView {
                         cx.spawn(|_, mut cx| async move {
                             let opened_items = task_workspace
                                 .update(&mut cx, |workspace, cx| {
-                                    workspace.open_paths(vec![path.path_like], is_dir, cx)
+                                    workspace.open_paths(vec![path.path_like], is_dir, None, cx)
                                 })
                                 .context("workspace update")?
                                 .await;
