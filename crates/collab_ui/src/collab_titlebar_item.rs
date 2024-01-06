@@ -41,6 +41,7 @@ pub fn init(cx: &mut AppContext) {
         workspace.set_titlebar_item(titlebar_item.into(), cx)
     })
     .detach();
+    // todo!()
     // cx.add_action(CollabTitlebarItem::share_project);
     // cx.add_action(CollabTitlebarItem::unshare_project);
     // cx.add_action(CollabTitlebarItem::toggle_user_menu);
@@ -320,11 +321,19 @@ impl Render for CollabTitlebarItem {
 fn render_color_ribbon(participant_index: ParticipantIndex, colors: &PlayerColors) -> gpui::Canvas {
     let color = colors.color_for_participant(participant_index.0).cursor;
     canvas(move |bounds, cx| {
-        let mut path = Path::new(bounds.lower_left());
         let height = bounds.size.height;
-        path.curve_to(bounds.origin + point(height, px(0.)), bounds.origin);
-        path.line_to(bounds.upper_right() - point(height, px(0.)));
-        path.curve_to(bounds.lower_right(), bounds.upper_right());
+        let horizontal_offset = height;
+        let vertical_offset = px(height.0 / 2.0);
+        let mut path = Path::new(bounds.lower_left());
+        path.curve_to(
+            bounds.origin + point(horizontal_offset, vertical_offset),
+            bounds.origin + point(px(0.0), vertical_offset),
+        );
+        path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+        path.curve_to(
+            bounds.lower_right(),
+            bounds.upper_right() + point(px(0.0), vertical_offset),
+        );
         path.line_to(bounds.lower_left());
         cx.paint_path(path, color);
     })
