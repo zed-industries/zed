@@ -14,7 +14,7 @@ use ui::{prelude::*, Checkbox};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
-    item::{Item, ItemEvent, ItemHandle},
+    item::{Item, ItemEvent},
     open_new, AppState, Welcome, Workspace, WorkspaceId,
 };
 
@@ -252,48 +252,20 @@ impl Render for WelcomePage {
 
 impl WelcomePage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
-        let this = cx.new_view(|cx| WelcomePage {
-            focus_handle: cx.focus_handle(),
-            workspace: workspace.weak_handle(),
-            telemetry: workspace.client().telemetry().clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        });
+        let this = cx.new_view(|cx| {
+            cx.on_release(|this: &mut Self, _, _| {
+                this.telemetry.report_app_event("close welcome page", false);
+            })
+            .detach();
 
-        this.on_release(
-            cx,
-            Box::new(|cx| {
-                this.update(cx, |this, _| {
-                    this.telemetry.report_app_event("close welcome page", false);
-                })
-            }),
-        )
-        .detach();
-
-        // this.subscribe_to_item_events(
-        //     cx,
-        //     Box::new(|event: ItemEvent, cx| {
-        //         // if event == ItemEvent::CloseItem {
-        //         dbg!(event);
-        //         // welcome.update(cx, |welcome, _| {
-        //         //     welcome
-        //         //         .telemetry
-        //         //         .report_app_event("close welcome page", false);
-        //         // })
-        //         // }
-        //     }),
-        // )
-        // .detach();
-
-        cx.subscribe(&this, |_, welcome, event, cx| {
-            if *event == ItemEvent::CloseItem {
-                welcome.update(cx, |welcome, _| {
-                    welcome
-                        .telemetry
-                        .report_app_event("close welcome page", false);
-                })
+            WelcomePage {
+                focus_handle: cx.focus_handle(),
+                workspace: workspace.weak_handle(),
+                telemetry: workspace.client().telemetry().clone(),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
             }
-        })
-        .detach();
+        });
 
         this
     }

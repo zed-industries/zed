@@ -866,7 +866,6 @@ impl Item for Editor {
     }
 
     fn to_item_events(event: &EditorEvent, mut f: impl FnMut(ItemEvent)) {
-        dbg!(event);
         match event {
             EditorEvent::Closed => f(ItemEvent::CloseItem),
 
