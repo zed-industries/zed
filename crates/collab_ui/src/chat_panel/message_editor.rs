@@ -271,11 +271,12 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) -> Arc<LanguageRegistry> {
         cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+
             let http = FakeHttpClient::with_404_response();
             let client = Client::new(http.clone(), cx);
             let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init(cx);
