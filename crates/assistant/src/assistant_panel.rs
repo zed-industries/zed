@@ -2325,12 +2325,16 @@ impl ConversationEditor {
                                     }
                                 });
 
-                            h_stack()
+                            div()
+                                .h_flex()
                                 .id(("message_header", message_id.0))
                                 .h_11()
+                                .relative()
                                 .gap_1()
-                                .p_1()
-                                .child(sender)
+                                // Sender is a button with a padding of 1, but only has a background on hover,
+                                // so we shift it left by the same amount to align the text with the content
+                                // in the un-hovered state.
+                                .child(div().child(sender).relative().neg_left_1())
                                 // TODO: Only show this if the message if the message has been sent
                                 .child(
                                     Label::new(
@@ -2538,7 +2542,7 @@ impl Render for ConversationEditor {
             .child(
                 div()
                     .size_full()
-                    .pl_2()
+                    .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
