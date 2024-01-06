@@ -505,8 +505,7 @@ impl FileFinderDelegate {
             || path_match.path_prefix.to_string(),
             |file_name| file_name.to_string_lossy().to_string(),
         );
-        let file_name_start = path_match.path_prefix.chars().count() + path_string.chars().count()
-            - file_name.chars().count();
+        let file_name_start = path_match.path_prefix.len() + path_string.len() - file_name.len();
         let file_name_positions = path_positions
             .iter()
             .filter_map(|pos| {
@@ -817,6 +816,44 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_complex_path(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "其他": {
+                        "S数据表格": {
+                            "task.xlsx": "some content",
+                        },
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+
+        let (picker, workspace, cx) = build_find_picker(project, cx);
+
+        cx.simulate_input("t");
+        picker.update(cx, |picker, _| {
+            assert_eq!(picker.delegate.matches.len(), 1);
+            assert_eq!(
+                collect_search_results(picker),
+                vec![PathBuf::from("其他/S数据表格/task.xlsx")],
+            )
+        });
+        cx.dispatch_action(SelectNext);
+        cx.dispatch_action(Confirm);
+        cx.read(|cx| {
+            let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+            assert_eq!(active_editor.read(cx).title(cx), "task.xlsx");
+        });
     }
 
     #[gpui::test]
