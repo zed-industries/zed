@@ -334,16 +334,3 @@ impl Item for WelcomePage {
         f(*event)
     }
 }
-
-// TODO
-//    - [X] get theme value
-//        - [X] In selector
-//        - [X] In main
-//    - [ ] get value of keymap selector
-//         - [X] In selector
-//         - [X] In main
-//    - [ ] get all button clicks
-//    - [ ] get value of usage data enabled
-//    - [ ] get value of crash reports enabled
-//    - [ ] get welcome screen close
-//    - [ ] test all events

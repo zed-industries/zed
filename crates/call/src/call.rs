@@ -310,7 +310,7 @@ impl ActiveCall {
         })
     }
 
-    pub fn decline_incoming(&mut self, _cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn decline_incoming(&mut self, _: &mut ModelContext<Self>) -> Result<()> {
         let call = self
             .incoming_call
             .0

@@ -213,7 +213,7 @@ impl Telemetry {
         drop(state);
 
         let this = self.clone();
-        cx.spawn(|_cx| async move {
+        cx.spawn(|_| async move {
             // Avoiding calling `System::new_all()`, as there have been crashes related to it
             let refresh_kind = RefreshKind::new()
                 .with_memory() // For memory usage
