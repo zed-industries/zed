@@ -1260,7 +1260,7 @@ impl Workspace {
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         self.client()
             .telemetry()
-            .report_app_event("open project", false, cx);
+            .report_app_event("open project", false);
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,

@@ -310,14 +310,14 @@ impl ActiveCall {
         })
     }
 
-    pub fn decline_incoming(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn decline_incoming(&mut self, _cx: &mut ModelContext<Self>) -> Result<()> {
         let call = self
             .incoming_call
             .0
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
-        report_call_event_for_room("decline incoming", call.room_id, None, &self.client, cx);
+        report_call_event_for_room("decline incoming", call.room_id, None, &self.client);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -467,7 +467,7 @@ impl ActiveCall {
     pub fn report_call_event(&self, operation: &'static str, cx: &mut AppContext) {
         if let Some(room) = self.room() {
             let room = room.read(cx);
-            report_call_event_for_room(operation, room.id(), room.channel_id(), &self.client, cx);
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &self.client);
         }
     }
 }
@@ -477,11 +477,10 @@ pub fn report_call_event_for_room(
     room_id: u64,
     channel_id: Option<u64>,
     client: &Arc<Client>,
-    cx: &mut AppContext,
 ) {
     let telemetry = client.telemetry();
 
-    telemetry.report_call_event(operation, Some(room_id), channel_id, cx)
+    telemetry.report_call_event(operation, Some(room_id), channel_id)
 }
 
 pub fn report_call_event_for_channel(
@@ -494,12 +493,7 @@ pub fn report_call_event_for_channel(
 
     let telemetry = client.telemetry();
 
-    telemetry.report_call_event(
-        operation,
-        room.map(|r| r.read(cx).id()),
-        Some(channel_id),
-        cx,
-    )
+    telemetry.report_call_event(operation, room.map(|r| r.read(cx).id()), Some(channel_id))
 }
 
 #[cfg(test)]

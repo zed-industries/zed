@@ -1,7 +1,7 @@
 mod base_keymap_picker;
 mod base_keymap_setting;
 
-use client::TelemetrySettings;
+use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
@@ -14,7 +14,7 @@ use ui::{prelude::*, Checkbox};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, ItemHandle},
     open_new, AppState, Welcome, Workspace, WorkspaceId,
 };
 
@@ -27,7 +27,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &Welcome, cx| {
-            let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
+            let welcome_page = WelcomePage::new(workspace, cx);
             workspace.add_item(Box::new(welcome_page), cx)
         });
     })
@@ -39,7 +39,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn show_welcome_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
-        let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
+        let welcome_page = WelcomePage::new(workspace, cx);
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
         cx.focus_view(&welcome_page);
         cx.notify();
@@ -54,174 +54,248 @@ pub fn show_welcome_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
 pub struct WelcomePage {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
+    telemetry: Arc<Telemetry>,
     _settings_subscription: Subscription,
 }
 
 impl Render for WelcomePage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        h_stack()
-            .full()
-            .bg(cx.theme().colors().editor_background)
-            .track_focus(&self.focus_handle)
-            .child(
-                v_stack()
-                    .w_96()
-                    .gap_4()
-                    .mx_auto()
-                    .child(
-                        svg()
-                            .path("icons/logo_96.svg")
-                            .text_color(gpui::white())
-                            .w(px(96.))
-                            .h(px(96.))
-                            .mx_auto(),
-                    )
-                    .child(
-                        h_stack()
-                            .justify_center()
-                            .child(Label::new("Code at the speed of thought")),
-                    )
-                    .child(
-                        v_stack()
-                            .gap_2()
-                            .child(
-                                Button::new("choose-theme", "Choose a theme")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.workspace
-                                            .update(cx, |workspace, cx| {
-                                                theme_selector::toggle(
-                                                    workspace,
-                                                    &Default::default(),
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    })),
-                            )
-                            .child(
-                                Button::new("choose-keymap", "Choose a keymap")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.workspace
-                                            .update(cx, |workspace, cx| {
-                                                base_keymap_picker::toggle(
-                                                    workspace,
-                                                    &Default::default(),
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    })),
-                            )
-                            .child(
-                                Button::new("install-cli", "Install the CLI")
-                                    .full_width()
-                                    .on_click(cx.listener(|_, _, cx| {
-                                        cx.app_mut()
-                                            .spawn(|cx| async move {
-                                                install_cli::install_cli(&cx).await
-                                            })
-                                            .detach_and_log_err(cx);
-                                    })),
-                            ),
-                    )
-                    .child(
-                        v_stack()
-                            .p_3()
-                            .gap_2()
-                            .bg(cx.theme().colors().elevated_surface_background)
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .rounded_md()
-                            .child(
-                                h_stack()
-                                    .gap_2()
-                                    .child(
-                                        Checkbox::new(
-                                            "enable-vim",
-                                            if VimModeSetting::get_global(cx).0 {
-                                                ui::Selection::Selected
-                                            } else {
-                                                ui::Selection::Unselected
-                                            },
+        h_stack().full().track_focus(&self.focus_handle).child(
+            v_stack()
+                .w_96()
+                .gap_4()
+                .mx_auto()
+                .child(
+                    svg()
+                        .path("icons/logo_96.svg")
+                        .text_color(gpui::white())
+                        .w(px(96.))
+                        .h(px(96.))
+                        .mx_auto(),
+                )
+                .child(
+                    h_stack()
+                        .justify_center()
+                        .child(Label::new("Code at the speed of thought")),
+                )
+                .child(
+                    v_stack()
+                        .gap_2()
+                        .child(
+                            Button::new("choose-theme", "Choose a theme")
+                                .full_width()
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.telemetry
+                                        .report_app_event("welcome page button: theme", false);
+                                    this.workspace
+                                        .update(cx, |workspace, cx| {
+                                            theme_selector::toggle(
+                                                workspace,
+                                                &Default::default(),
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                })),
+                        )
+                        .child(
+                            Button::new("choose-keymap", "Choose a keymap")
+                                .full_width()
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.telemetry
+                                        .report_app_event("welcome page button: keymap", false);
+                                    this.workspace
+                                        .update(cx, |workspace, cx| {
+                                            base_keymap_picker::toggle(
+                                                workspace,
+                                                &Default::default(),
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                })),
+                        )
+                        .child(
+                            Button::new("install-cli", "Install the CLI")
+                                .full_width()
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.telemetry.report_app_event(
+                                        "welcome page button: install cli",
+                                        false,
+                                    );
+                                    cx.app_mut()
+                                        .spawn(
+                                            |cx| async move { install_cli::install_cli(&cx).await },
                                         )
-                                        .on_click(
-                                            cx.listener(move |this, selection, cx| {
-                                                this.update_settings::<VimModeSetting>(
-                                                    selection,
-                                                    cx,
-                                                    |setting, value| *setting = Some(value),
-                                                );
-                                            }),
-                                        ),
+                                        .detach_and_log_err(cx);
+                                })),
+                        ),
+                )
+                .child(
+                    v_stack()
+                        .p_3()
+                        .gap_2()
+                        .bg(cx.theme().colors().elevated_surface_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_md()
+                        .child(
+                            h_stack()
+                                .gap_2()
+                                .child(
+                                    Checkbox::new(
+                                        "enable-vim",
+                                        if VimModeSetting::get_global(cx).0 {
+                                            ui::Selection::Selected
+                                        } else {
+                                            ui::Selection::Unselected
+                                        },
                                     )
-                                    .child(Label::new("Enable vim mode")),
-                            )
-                            .child(
-                                h_stack()
-                                    .gap_2()
-                                    .child(
-                                        Checkbox::new(
-                                            "enable-telemetry",
-                                            if TelemetrySettings::get_global(cx).metrics {
-                                                ui::Selection::Selected
-                                            } else {
-                                                ui::Selection::Unselected
-                                            },
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, selection, cx| {
-                                                this.update_settings::<TelemetrySettings>(
-                                                    selection,
-                                                    cx,
-                                                    |settings, value| {
-                                                        settings.metrics = Some(value)
-                                                    },
-                                                );
-                                            }),
-                                        ),
+                                    .on_click(cx.listener(
+                                        move |this, selection, cx| {
+                                            this.telemetry.report_app_event(
+                                                "welcome page button: vim",
+                                                false,
+                                            );
+                                            this.update_settings::<VimModeSetting>(
+                                                selection,
+                                                cx,
+                                                |setting, value| *setting = Some(value),
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(Label::new("Enable vim mode")),
+                        )
+                        .child(
+                            h_stack()
+                                .gap_2()
+                                .child(
+                                    Checkbox::new(
+                                        "enable-telemetry",
+                                        if TelemetrySettings::get_global(cx).metrics {
+                                            ui::Selection::Selected
+                                        } else {
+                                            ui::Selection::Unselected
+                                        },
                                     )
-                                    .child(Label::new("Send anonymous usage data")),
-                            )
-                            .child(
-                                h_stack()
-                                    .gap_2()
-                                    .child(
-                                        Checkbox::new(
-                                            "enable-crash",
-                                            if TelemetrySettings::get_global(cx).diagnostics {
-                                                ui::Selection::Selected
-                                            } else {
-                                                ui::Selection::Unselected
-                                            },
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, selection, cx| {
-                                                this.update_settings::<TelemetrySettings>(
-                                                    selection,
-                                                    cx,
-                                                    |settings, value| {
-                                                        settings.diagnostics = Some(value)
-                                                    },
-                                                );
-                                            }),
-                                        ),
+                                    .on_click(cx.listener(
+                                        move |this, selection, cx| {
+                                            this.telemetry.report_app_event(
+                                                "welcome page button: user telemetry",
+                                                false,
+                                            );
+                                            this.update_settings::<TelemetrySettings>(
+                                                selection,
+                                                cx,
+                                                {
+                                                    let telemetry = this.telemetry.clone();
+
+                                                    move |settings, value| {
+                                                        settings.metrics = Some(value);
+
+                                                        telemetry.report_setting_event(
+                                                            "user telemetry",
+                                                            value.to_string(),
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(Label::new("Send anonymous usage data")),
+                        )
+                        .child(
+                            h_stack()
+                                .gap_2()
+                                .child(
+                                    Checkbox::new(
+                                        "enable-crash",
+                                        if TelemetrySettings::get_global(cx).diagnostics {
+                                            ui::Selection::Selected
+                                        } else {
+                                            ui::Selection::Unselected
+                                        },
                                     )
-                                    .child(Label::new("Send crash reports")),
-                            ),
-                    ),
-            )
+                                    .on_click(cx.listener(
+                                        move |this, selection, cx| {
+                                            this.telemetry.report_app_event(
+                                                "welcome page button: crash diagnostics",
+                                                false,
+                                            );
+                                            this.update_settings::<TelemetrySettings>(
+                                                selection,
+                                                cx,
+                                                {
+                                                    let telemetry = this.telemetry.clone();
+
+                                                    move |settings, value| {
+                                                        settings.diagnostics = Some(value);
+
+                                                        telemetry.report_setting_event(
+                                                            "crash diagnostics",
+                                                            value.to_string(),
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        },
+                                    )),
+                                )
+                                .child(Label::new("Send crash reports")),
+                        ),
+                ),
+        )
     }
 }
 
 impl WelcomePage {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        WelcomePage {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+        let this = cx.new_view(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: workspace.weak_handle(),
+            telemetry: workspace.client().telemetry().clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        }
+        });
+
+        this.on_release(
+            cx,
+            Box::new(|cx| {
+                this.update(cx, |this, _| {
+                    this.telemetry.report_app_event("close welcome page", false);
+                })
+            }),
+        )
+        .detach();
+
+        // this.subscribe_to_item_events(
+        //     cx,
+        //     Box::new(|event: ItemEvent, cx| {
+        //         // if event == ItemEvent::CloseItem {
+        //         dbg!(event);
+        //         // welcome.update(cx, |welcome, _| {
+        //         //     welcome
+        //         //         .telemetry
+        //         //         .report_app_event("close welcome page", false);
+        //         // })
+        //         // }
+        //     }),
+        // )
+        // .detach();
+
+        cx.subscribe(&this, |_, welcome, event, cx| {
+            if *event == ItemEvent::CloseItem {
+                welcome.update(cx, |welcome, _| {
+                    welcome
+                        .telemetry
+                        .report_app_event("close welcome page", false);
+                })
+            }
+        })
+        .detach();
+
+        this
     }
 
     fn update_settings<T: Settings>(
@@ -279,6 +353,7 @@ impl Item for WelcomePage {
         Some(cx.new_view(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
+            telemetry: self.telemetry.clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         }))
     }
@@ -287,3 +362,16 @@ impl Item for WelcomePage {
         f(*event)
     }
 }
+
+// TODO
+//    - [X] get theme value
+//        - [X] In selector
+//        - [X] In main
+//    - [ ] get value of keymap selector
+//         - [X] In selector
+//         - [X] In main
+//    - [ ] get all button clicks
+//    - [ ] get value of usage data enabled
+//    - [ ] get value of crash reports enabled
+//    - [ ] get welcome screen close
+//    - [ ] test all events

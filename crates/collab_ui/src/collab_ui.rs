@@ -58,7 +58,6 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
                     room.id(),
                     room.channel_id(),
                     &client,
-                    cx,
                 );
                 Task::ready(room.unshare_screen(cx))
             } else {
@@ -67,7 +66,6 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
                     room.id(),
                     room.channel_id(),
                     &client,
-                    cx,
                 );
                 room.share_screen(cx)
             }
@@ -86,7 +84,7 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
             } else {
                 "disable microphone"
             };
-            report_call_event_for_room(operation, room.id(), room.channel_id(), &client, cx);
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &client);
 
             room.toggle_mute(cx)
         })

@@ -501,8 +501,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                cx.update(|cx| self.telemetry.set_authenticated_user_info(None, false, cx))
-                    .log_err();
+                self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
             }
             _ => {}

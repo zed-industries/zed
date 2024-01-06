@@ -164,7 +164,6 @@ impl UserStore {
                                         client.telemetry.set_authenticated_user_info(
                                             Some(info.metrics_id.clone()),
                                             info.staff,
-                                            cx,
                                         )
                                     }
                                 })?;
