@@ -29,7 +29,7 @@ use editor::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
-    canvas, div, point, relative, rems, rgba, uniform_list, Action, AnyElement, AppContext,
+    canvas, div, point, relative, rems, uniform_list, Action, AnyElement, AppContext,
     AsyncWindowContext, AvailableSpace, ClipboardItem, Context, EventEmitter, FocusHandle,
     FocusableView, FontStyle, FontWeight, HighlightStyle, InteractiveElement, IntoElement, Model,
     ModelContext, ParentElement, Pixels, PromptLevel, Render, SharedString,
