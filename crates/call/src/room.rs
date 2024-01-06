@@ -16,8 +16,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use live_kit_client::{
-    LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrackUpdate,
-    RemoteVideoTrackUpdate,
+    LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrack,
+    RemoteAudioTrackUpdate, RemoteVideoTrack, RemoteVideoTrackUpdate,
 };
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
@@ -64,6 +64,8 @@ pub struct Room {
     joined_projects: HashSet<WeakModel<Project>>,
     local_participant: LocalParticipant,
     remote_participants: BTreeMap<u64, RemoteParticipant>,
+    remote_audio_tracks: BTreeMap<u64, HashMap<String, Arc<RemoteAudioTrack>>>,
+    remote_video_tracks: BTreeMap<u64, HashMap<String, Arc<RemoteVideoTrack>>>,
     pending_participants: Vec<Arc<User>>,
     participant_user_ids: HashSet<u64>,
     pending_call_count: usize,
@@ -227,6 +229,8 @@ impl Room {
             ],
             leave_when_empty: false,
             pending_room_update: None,
+            remote_audio_tracks: Default::default(),
+            remote_video_tracks: Default::default(),
             client,
             user_store,
             follows_by_leader_id_project_id: Default::default(),
@@ -610,6 +614,12 @@ impl Room {
             .find(|p| p.peer_id == peer_id)
     }
 
+    pub fn video_track_for_participant(&self, user_id: u64) -> Option<Arc<RemoteVideoTrack>> {
+        self.remote_video_tracks
+            .get(&user_id)
+            .and_then(|tracks| tracks.values().next().cloned())
+    }
+
     pub fn role_for_user(&self, user_id: u64) -> Option<proto::ChannelRole> {
         self.remote_participants
             .get(&user_id)
@@ -823,8 +833,6 @@ impl Room {
                                     role,
                                     muted: true,
                                     speaking: false,
-                                    video_tracks: Default::default(),
-                                    audio_tracks: Default::default(),
                                 },
                             );
 
@@ -875,6 +883,10 @@ impl Room {
                             false
                         }
                     });
+                    this.remote_audio_tracks
+                        .retain(|user_id, _| this.participant_user_ids.contains(user_id));
+                    this.remote_video_tracks
+                        .retain(|user_id, _| this.participant_user_ids.contains(user_id));
                 }
 
                 if let Some(pending_participants) = pending_participants.log_err() {
@@ -953,9 +965,12 @@ impl Room {
                 let track_id = track.sid().to_string();
                 let participant = self
                     .remote_participants
-                    .get_mut(&user_id)
+                    .get(&user_id)
                     .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
-                participant.video_tracks.insert(track_id.clone(), track);
+                self.remote_video_tracks
+                    .entry(user_id)
+                    .or_default()
+                    .insert(track_id, track);
                 cx.emit(Event::RemoteVideoTracksChanged {
                     participant_id: participant.peer_id,
                 });
@@ -967,9 +982,11 @@ impl Room {
                 let user_id = publisher_id.parse()?;
                 let participant = self
                     .remote_participants
-                    .get_mut(&user_id)
+                    .get(&user_id)
                     .ok_or_else(|| anyhow!("unsubscribed from track by unknown participant"))?;
-                participant.video_tracks.remove(&track_id);
+                if let Some(tracks) = self.remote_video_tracks.get_mut(&user_id) {
+                    tracks.remove(&track_id);
+                }
                 cx.emit(Event::RemoteVideoTracksChanged {
                     participant_id: participant.peer_id,
                 });
@@ -1012,11 +1029,13 @@ impl Room {
             }
             RemoteAudioTrackUpdate::MuteChanged { track_id, muted } => {
                 let mut found = false;
-                for participant in &mut self.remote_participants.values_mut() {
-                    for track in participant.audio_tracks.values() {
-                        if track.sid() == track_id {
-                            found = true;
-                            break;
+                for (user_id, participant) in self.remote_participants.iter_mut() {
+                    if let Some(tracks) = &self.remote_audio_tracks.get(user_id) {
+                        for track in tracks.values() {
+                            if track.sid() == track_id {
+                                found = true;
+                                break;
+                            }
                         }
                     }
                     if found {
@@ -1034,7 +1053,10 @@ impl Room {
                     .remote_participants
                     .get_mut(&user_id)
                     .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
-                participant.audio_tracks.insert(track_id.clone(), track);
+                self.remote_audio_tracks
+                    .entry(user_id)
+                    .or_default()
+                    .insert(track_id, track);
                 participant.muted = publication.is_muted();
 
                 cx.emit(Event::RemoteAudioTracksChanged {
@@ -1050,7 +1072,9 @@ impl Room {
                     .remote_participants
                     .get_mut(&user_id)
                     .ok_or_else(|| anyhow!("unsubscribed from track by unknown participant"))?;
-                participant.audio_tracks.remove(&track_id);
+                if let Some(tracks) = self.remote_audio_tracks.get_mut(&user_id) {
+                    tracks.remove(&track_id);
+                }
                 cx.emit(Event::RemoteAudioTracksChanged {
                     participant_id: participant.peer_id,
                 });

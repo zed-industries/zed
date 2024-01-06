@@ -248,12 +248,9 @@ async fn test_basic_calls(
         assert_eq!(participant_id, client_a.peer_id().unwrap());
 
         room_b.read_with(cx_b, |room, _| {
-            assert_eq!(
-                room.remote_participants()[&client_a.user_id().unwrap()]
-                    .video_tracks
-                    .len(),
-                1
-            );
+            assert!(room
+                .video_track_for_participant(client_a.user_id().unwrap())
+                .is_some());
         });
     } else {
         panic!("unexpected event")
@@ -266,12 +263,9 @@ async fn test_basic_calls(
         assert_eq!(participant_id, client_a.peer_id().unwrap());
 
         room_c.read_with(cx_c, |room, _| {
-            assert_eq!(
-                room.remote_participants()[&client_a.user_id().unwrap()]
-                    .video_tracks
-                    .len(),
-                1
-            );
+            assert!(room
+                .video_track_for_participant(client_a.user_id().unwrap())
+                .is_some());
         });
     } else {
         panic!("unexpected event")
@@ -5710,15 +5704,9 @@ async fn test_join_call_after_screen_was_shared(
     );
 
     // Ensure User B sees User A's screenshare.
-
     room_b.read_with(cx_b, |room, _| {
-        assert_eq!(
-            room.remote_participants()
-                .get(&client_a.user_id().unwrap())
-                .unwrap()
-                .video_tracks
-                .len(),
-            1
-        );
+        assert!(room
+            .video_track_for_participant(client_a.user_id().unwrap())
+            .is_some());
     });
 }

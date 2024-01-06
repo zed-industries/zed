@@ -466,6 +466,9 @@ impl CollabPanel {
                 for mat in matches {
                     let user_id = mat.candidate_id as u64;
                     let participant = &room.remote_participants()[&user_id];
+                    let has_shared_screen = room
+                        .video_track_for_participant(participant.user.id)
+                        .is_some();
                     self.entries.push(ListEntry::CallParticipant {
                         user: participant.user.clone(),
                         peer_id: Some(participant.peer_id),
@@ -477,11 +480,10 @@ impl CollabPanel {
                             project_id: project.id,
                             worktree_root_names: project.worktree_root_names.clone(),
                             host_user_id: participant.user.id,
-                            is_last: projects.peek().is_none()
-                                && participant.video_tracks.is_empty(),
+                            is_last: projects.peek().is_none() && !has_shared_screen,
                         });
                     }
-                    if !participant.video_tracks.is_empty() {
+                    if has_shared_screen {
                         self.entries.push(ListEntry::ParticipantScreen {
                             peer_id: Some(participant.peer_id),
                             is_last: true,

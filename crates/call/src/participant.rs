@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use client::ParticipantIndex;
 use client::{proto, User};
-use collections::HashMap;
 use gpui::WeakModel;
 pub use live_kit_client::Frame;
 pub use live_kit_client::{RemoteAudioTrack, RemoteVideoTrack};
@@ -49,6 +48,4 @@ pub struct RemoteParticipant {
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
-    pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
-    pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
 }
