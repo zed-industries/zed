@@ -86,7 +86,7 @@ impl Render for WelcomePage {
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.telemetry
-                                        .report_app_event("welcome page button: theme");
+                                        .report_app_event("welcome page: change theme");
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             theme_selector::toggle(
@@ -103,7 +103,7 @@ impl Render for WelcomePage {
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.telemetry
-                                        .report_app_event("welcome page button: keymap");
+                                        .report_app_event("welcome page: change keymap");
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             base_keymap_picker::toggle(
@@ -119,8 +119,7 @@ impl Render for WelcomePage {
                             Button::new("install-cli", "Install the CLI")
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
-                                    this.telemetry
-                                        .report_app_event("welcome page button: install cli");
+                                    this.telemetry.report_app_event("welcome page: install cli");
                                     cx.app_mut()
                                         .spawn(
                                             |cx| async move { install_cli::install_cli(&cx).await },
@@ -152,7 +151,7 @@ impl Render for WelcomePage {
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
                                             this.telemetry
-                                                .report_app_event("welcome page button: vim");
+                                                .report_app_event("welcome page: toggle vim");
                                             this.update_settings::<VimModeSetting>(
                                                 selection,
                                                 cx,
@@ -178,7 +177,7 @@ impl Render for WelcomePage {
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
                                             this.telemetry.report_app_event(
-                                                "welcome page button: user telemetry",
+                                                "welcome page: toggle metric telemetry",
                                             );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
@@ -216,7 +215,7 @@ impl Render for WelcomePage {
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
                                             this.telemetry.report_app_event(
-                                                "welcome page button: crash diagnostics",
+                                                "welcome page: toggle diagnostic telemetry",
                                             );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
@@ -248,7 +247,7 @@ impl WelcomePage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let this = cx.new_view(|cx| {
             cx.on_release(|this: &mut Self, _, _| {
-                this.telemetry.report_app_event("close welcome page");
+                this.telemetry.report_app_event("welcome page: close");
             })
             .detach();
 
