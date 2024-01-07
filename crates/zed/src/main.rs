@@ -179,7 +179,7 @@ fn main() {
             Some(false) => "first open",
             _ => "open",
         });
-        telemetry.flush_clickhouse_events();
+        telemetry.flush_events();
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),

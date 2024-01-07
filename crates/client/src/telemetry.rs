@@ -28,22 +28,21 @@ struct TelemetryState {
     release_channel: Option<&'static str>,
     app_metadata: AppMetadata,
     architecture: &'static str,
-    clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
-    flush_clickhouse_events_task: Option<Task<()>>,
+    events_queue: Vec<EventWrapper>,
+    flush_events_task: Option<Task<()>>,
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
     first_event_datetime: Option<DateTime<Utc>>,
 }
 
-const CLICKHOUSE_EVENTS_URL_PATH: &'static str = "/api/events";
+const EVENTS_URL_PATH: &'static str = "/api/events";
 
 lazy_static! {
-    static ref CLICKHOUSE_EVENTS_URL: String =
-        format!("{}{}", *ZED_SERVER_URL, CLICKHOUSE_EVENTS_URL_PATH);
+    static ref EVENTS_URL: String = format!("{}{}", *ZED_SERVER_URL, EVENTS_URL_PATH);
 }
 
 #[derive(Serialize, Debug)]
-struct ClickhouseEventRequestBody {
+struct EventRequestBody {
     token: &'static str,
     installation_id: Option<Arc<str>>,
     session_id: Option<Arc<str>>,
@@ -53,14 +52,14 @@ struct ClickhouseEventRequestBody {
     os_version: Option<String>,
     architecture: &'static str,
     release_channel: Option<&'static str>,
-    events: Vec<ClickhouseEventWrapper>,
+    events: Vec<EventWrapper>,
 }
 
 #[derive(Serialize, Debug)]
-struct ClickhouseEventWrapper {
+struct EventWrapper {
     signed_in: bool,
     #[serde(flatten)]
-    event: ClickhouseEvent,
+    event: Event,
 }
 
 #[derive(Serialize, Debug)]
@@ -72,7 +71,7 @@ pub enum AssistantKind {
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type")]
-pub enum ClickhouseEvent {
+pub enum Event {
     Editor {
         operation: &'static str,
         file_extension: Option<String>,
@@ -150,8 +149,8 @@ impl Telemetry {
             installation_id: None,
             metrics_id: None,
             session_id: None,
-            clickhouse_events_queue: Default::default(),
-            flush_clickhouse_events_task: Default::default(),
+            events_queue: Default::default(),
+            flush_events_task: Default::default(),
             log_file: None,
             is_staff: None,
             first_event_datetime: None,
@@ -194,7 +193,7 @@ impl Telemetry {
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
         self.report_app_event("close");
-        self.flush_clickhouse_events();
+        self.flush_events();
         Task::ready(())
     }
 
@@ -275,7 +274,7 @@ impl Telemetry {
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
     ) {
-        let event = ClickhouseEvent::Editor {
+        let event = Event::Editor {
             file_extension,
             vim_mode,
             operation,
@@ -284,7 +283,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     pub fn report_copilot_event(
@@ -293,14 +292,14 @@ impl Telemetry {
         suggestion_accepted: bool,
         file_extension: Option<String>,
     ) {
-        let event = ClickhouseEvent::Copilot {
+        let event = Event::Copilot {
             suggestion_id,
             suggestion_accepted,
             file_extension,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     pub fn report_assistant_event(
@@ -309,14 +308,14 @@ impl Telemetry {
         kind: AssistantKind,
         model: &'static str,
     ) {
-        let event = ClickhouseEvent::Assistant {
+        let event = Event::Assistant {
             conversation_id,
             kind,
             model,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     pub fn report_call_event(
@@ -325,24 +324,24 @@ impl Telemetry {
         room_id: Option<u64>,
         channel_id: Option<u64>,
     ) {
-        let event = ClickhouseEvent::Call {
+        let event = Event::Call {
             operation,
             room_id,
             channel_id,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     pub fn report_cpu_event(self: &Arc<Self>, usage_as_percentage: f32, core_count: u32) {
-        let event = ClickhouseEvent::Cpu {
+        let event = Event::Cpu {
             usage_as_percentage,
             core_count,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     pub fn report_memory_event(
@@ -350,32 +349,32 @@ impl Telemetry {
         memory_in_bytes: u64,
         virtual_memory_in_bytes: u64,
     ) {
-        let event = ClickhouseEvent::Memory {
+        let event = Event::Memory {
             memory_in_bytes,
             virtual_memory_in_bytes,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     pub fn report_app_event(self: &Arc<Self>, operation: &'static str) {
-        let event = ClickhouseEvent::App {
+        let event = Event::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     pub fn report_setting_event(self: &Arc<Self>, setting: &'static str, value: String) {
-        let event = ClickhouseEvent::Setting {
+        let event = Event::Setting {
             setting,
             value,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event)
+        self.report_event(event)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {
@@ -392,7 +391,7 @@ impl Telemetry {
         }
     }
 
-    fn report_clickhouse_event(self: &Arc<Self>, event: ClickhouseEvent) {
+    fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
         if !state.settings.metrics {
@@ -400,20 +399,18 @@ impl Telemetry {
         }
 
         let signed_in = state.metrics_id.is_some();
-        state
-            .clickhouse_events_queue
-            .push(ClickhouseEventWrapper { signed_in, event });
+        state.events_queue.push(EventWrapper { signed_in, event });
 
         if state.installation_id.is_some() {
-            if state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
+            if state.events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
-                self.flush_clickhouse_events();
+                self.flush_events();
             } else {
                 let this = self.clone();
                 let executor = self.executor.clone();
-                state.flush_clickhouse_events_task = Some(self.executor.spawn(async move {
+                state.flush_events_task = Some(self.executor.spawn(async move {
                     executor.timer(DEBOUNCE_INTERVAL).await;
-                    this.flush_clickhouse_events();
+                    this.flush_events();
                 }));
             }
         }
@@ -431,11 +428,11 @@ impl Telemetry {
         self.state.lock().is_staff
     }
 
-    pub fn flush_clickhouse_events(self: &Arc<Self>) {
+    pub fn flush_events(self: &Arc<Self>) {
         let mut state = self.state.lock();
         state.first_event_datetime = None;
-        let mut events = mem::take(&mut state.clickhouse_events_queue);
-        state.flush_clickhouse_events_task.take();
+        let mut events = mem::take(&mut state.events_queue);
+        state.flush_events_task.take();
         drop(state);
 
         let this = self.clone();
@@ -456,7 +453,7 @@ impl Telemetry {
 
                     {
                         let state = this.state.lock();
-                        let request_body = ClickhouseEventRequestBody {
+                        let request_body = EventRequestBody {
                             token: ZED_SECRET_CLIENT_TOKEN,
                             installation_id: state.installation_id.clone(),
                             session_id: state.session_id.clone(),
@@ -480,7 +477,7 @@ impl Telemetry {
                     }
 
                     this.http_client
-                        .post_json(CLICKHOUSE_EVENTS_URL.as_str(), json_bytes.into())
+                        .post_json(EVENTS_URL.as_str(), json_bytes.into())
                         .await?;
                     anyhow::Ok(())
                 }

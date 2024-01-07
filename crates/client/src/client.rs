@@ -45,7 +45,7 @@ use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
-pub use telemetry::ClickhouseEvent;
+pub use telemetry::Event;
 pub use user::*;
 
 lazy_static! {
