@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use gpui::{Hsla, Rgba};
 use theme::{
     color_alpha, Appearance, PlayerColor, PlayerColors, StatusColorsRefinement,

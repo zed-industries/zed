@@ -9,11 +9,7 @@ use crate::{
 };
 
 use futures::StreamExt;
-use gpui::{
-    div,
-    serde_json::{self, json},
-    TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
-};
+use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
@@ -24,6 +20,7 @@ use language::{
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
+use serde_json::{self, json};
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
