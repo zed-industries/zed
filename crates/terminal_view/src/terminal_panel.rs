@@ -99,7 +99,12 @@ impl TerminalPanel {
             let workspace = workspace.weak_handle();
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
                 if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                    if let Some(item) = tab.pane.read(cx).item_for_index(tab.ix) {
+                    let item = if &tab.pane == cx.view() {
+                        pane.item_for_index(tab.ix)
+                    } else {
+                        tab.pane.read(cx).item_for_index(tab.ix)
+                    };
+                    if let Some(item) = item {
                         if item.downcast::<TerminalView>().is_some() {
                             return ControlFlow::Continue(());
                         } else if let Some(project_path) = item.project_path(cx) {
