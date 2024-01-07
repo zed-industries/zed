@@ -20,6 +20,7 @@ use settings::Settings;
 use std::{
     any::Any,
     cmp, fmt, mem,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -183,6 +184,8 @@ pub struct Pane {
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
+    custom_drop_handle:
+        Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
     _subscriptions: Vec<Subscription>,
@@ -375,6 +378,7 @@ impl Pane {
             workspace,
             project,
             can_drop_predicate,
+            custom_drop_handle: None,
             can_split: true,
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 h_stack()
@@ -501,13 +505,6 @@ impl Pane {
         self.active_item_index
     }
 
-    //     pub fn on_can_drop<F>(&mut self, can_drop: F)
-    //     where
-    //         F: 'static + Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool,
-    //     {
-    //         self.can_drop = Rc::new(can_drop);
-    //     }
-
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
         self.can_split = can_split;
         cx.notify();
@@ -525,6 +522,14 @@ impl Pane {
         F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement,
     {
         self.render_tab_bar_buttons = Rc::new(render);
+        cx.notify();
+    }
+
+    pub fn set_custom_drop_handle<F>(&mut self, cx: &mut ViewContext<Self>, handle: F)
+    where
+        F: 'static + Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>,
+    {
+        self.custom_drop_handle = Some(Arc::new(handle));
         cx.notify();
     }
 
@@ -1818,8 +1823,13 @@ impl Pane {
         &mut self,
         dragged_tab: &DraggedTab,
         ix: usize,
-        cx: &mut ViewContext<'_, Pane>,
+        cx: &mut ViewContext<'_, Self>,
     ) {
+        if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
+            if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, cx) {
+                return;
+            }
+        }
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item_id;
@@ -1839,8 +1849,13 @@ impl Pane {
     fn handle_project_entry_drop(
         &mut self,
         project_entry_id: &ProjectEntryId,
-        cx: &mut ViewContext<'_, Pane>,
+        cx: &mut ViewContext<'_, Self>,
     ) {
+        if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
+            if let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, cx) {
+                return;
+            }
+        }
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
         let project_entry_id = *project_entry_id;
@@ -1867,8 +1882,13 @@ impl Pane {
     fn handle_external_paths_drop(
         &mut self,
         paths: &ExternalPaths,
-        cx: &mut ViewContext<'_, Pane>,
+        cx: &mut ViewContext<'_, Self>,
     ) {
+        if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
+            if let ControlFlow::Break(()) = custom_drop_handle(self, paths, cx) {
+                return;
+            }
+        }
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();

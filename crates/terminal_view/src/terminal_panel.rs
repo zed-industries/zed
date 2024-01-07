@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
@@ -7,7 +7,8 @@ use gpui::{
     FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
     Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
-use project::Fs;
+use itertools::Itertools;
+use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -19,7 +20,7 @@ use workspace::{
     item::Item,
     pane,
     ui::Icon,
-    Pane, Workspace,
+    DraggedTab, Pane, Workspace,
 };
 
 use anyhow::Result;
@@ -59,15 +60,7 @@ impl TerminalPanel {
                 workspace.weak_handle(),
                 workspace.project().clone(),
                 Default::default(),
-                Some(Arc::new(|a, cx| {
-                    if let Some(tab) = a.downcast_ref::<workspace::pane::DraggedTab>() {
-                        if let Some(item) = tab.pane.read(cx).item_for_index(tab.ix) {
-                            return item.downcast::<TerminalView>().is_some();
-                        }
-                    }
-
-                    a.downcast_ref::<ExternalPaths>().is_some()
-                })),
+                None,
                 cx,
             );
             pane.set_can_split(false, cx);
@@ -101,6 +94,47 @@ impl TerminalPanel {
                             })
                     })
                     .into_any_element()
+            });
+
+            let workspace = workspace.weak_handle();
+            pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
+                if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
+                    if let Some(item) = tab.pane.read(cx).item_for_index(tab.ix) {
+                        if item.downcast::<TerminalView>().is_some() {
+                            return ControlFlow::Continue(());
+                        } else if let Some(project_path) = item.project_path(cx) {
+                            if let Some(entry_path) = workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace
+                                        .project()
+                                        .read(cx)
+                                        .absolute_path(&project_path, cx)
+                                })
+                                .log_err()
+                                .flatten()
+                            {
+                                add_paths_to_terminal(pane, &[entry_path], cx);
+                            }
+                        }
+                    }
+                } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
+                    if let Some(entry_path) = workspace
+                        .update(cx, |workspace, cx| {
+                            let project = workspace.project().read(cx);
+                            project
+                                .path_for_entry(entry_id, cx)
+                                .and_then(|project_path| project.absolute_path(&project_path, cx))
+                        })
+                        .log_err()
+                        .flatten()
+                    {
+                        add_paths_to_terminal(pane, &[entry_path], cx);
+                    }
+                } else if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                    add_paths_to_terminal(pane, paths.paths(), cx);
+                }
+
+                ControlFlow::Break(())
             });
             let buffer_search_bar = cx.new_view(search::BufferSearchBar::new);
             pane.toolbar()
@@ -323,6 +357,22 @@ impl TerminalPanel {
             }
             .log_err(),
         );
+    }
+}
+
+fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], cx: &mut ViewContext<'_, Pane>) {
+    if let Some(terminal_view) = pane
+        .active_item()
+        .and_then(|item| item.downcast::<TerminalView>())
+    {
+        cx.focus_view(&terminal_view);
+        let mut new_text = paths.iter().map(|path| format!(" {path:?}")).join("");
+        new_text.push(' ');
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.terminal().update(cx, |terminal, _| {
+                terminal.paste(&new_text);
+            });
+        });
     }
 }
 
