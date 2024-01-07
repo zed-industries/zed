@@ -665,7 +665,7 @@ impl Item for TerminalView {
     type Event = ItemEvent;
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        Some(self.terminal().read(cx).title().into())
+        Some(self.terminal().read(cx).title(false).into())
     }
 
     fn tab_content(
@@ -674,8 +674,7 @@ impl Item for TerminalView {
         selected: bool,
         cx: &WindowContext,
     ) -> AnyElement {
-        let title = self.terminal().read(cx).title();
-
+        let title = self.terminal().read(cx).title(true);
         h_stack()
             .gap_2()
             .child(IconElement::new(Icon::Terminal))
