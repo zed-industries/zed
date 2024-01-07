@@ -189,7 +189,7 @@ impl Render for WelcomePage {
                                                         settings.metrics = Some(value);
 
                                                         telemetry.report_setting_event(
-                                                            "user telemetry",
+                                                            "metric telemetry",
                                                             value.to_string(),
                                                         );
                                                     }
@@ -227,7 +227,7 @@ impl Render for WelcomePage {
                                                         settings.diagnostics = Some(value);
 
                                                         telemetry.report_setting_event(
-                                                            "crash diagnostics",
+                                                            "diagnostic telemetry",
                                                             value.to_string(),
                                                         );
                                                     }
