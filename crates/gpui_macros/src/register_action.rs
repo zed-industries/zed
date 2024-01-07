@@ -36,8 +36,8 @@ pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
 
     quote! {
         #[doc(hidden)]
-        #[gpui::linkme::distributed_slice(gpui::__GPUI_ACTIONS)]
-        #[linkme(crate = gpui::linkme)]
+        #[gpui::private::linkme::distributed_slice(gpui::__GPUI_ACTIONS)]
+        #[linkme(crate = gpui::private::linkme)]
         static #static_slice_name: gpui::MacroActionBuilder = #action_builder_fn_name;
 
         /// This is an auto generated function, do not use.

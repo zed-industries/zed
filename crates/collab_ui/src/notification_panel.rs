@@ -6,11 +6,11 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, list, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    CursorStyle, DismissEvent, Element, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListAlignment, ListScrollEvent, ListState, Model,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    actions, div, img, list, px, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
+    DismissEvent, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ListAlignment, ListScrollEvent, ListState, Model, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;

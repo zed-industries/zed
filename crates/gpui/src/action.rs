@@ -29,7 +29,7 @@ use std::any::{Any, TypeId};
 /// macro, which only generates the code needed to register your action before `main`.
 ///
 /// ```
-/// #[derive(gpui::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone)]
+/// #[derive(gpui::private::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone)]
 /// pub struct Paste {
 ///     pub content: SharedString,
 /// }
@@ -158,12 +158,12 @@ impl ActionRegistry {
 macro_rules! actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
         $(
-            #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::serde_derive::Deserialize)]
-            #[serde(crate = "gpui::serde")]
+            #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::private::serde_derive::Deserialize)]
+            #[serde(crate = "gpui::private::serde")]
             pub struct $name;
 
             gpui::__impl_action!($namespace, $name,
-                fn build(_: gpui::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                     Ok(Box::new(Self))
                 }
             );
@@ -179,8 +179,8 @@ macro_rules! impl_actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
         $(
             gpui::__impl_action!($namespace, $name,
-                fn build(value: gpui::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                    Ok(std::boxed::Box::new(gpui::serde_json::from_value::<Self>(value)?))
+                fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
                 }
             );
 

@@ -15,12 +15,12 @@ use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, fill, list, overlay, point, prelude::*, px, serde_json, AnyElement,
-    AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset,
-    ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    RenderOnce, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
-    VisualContext, WeakView, WhiteSpace,
+    actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
+    AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset, ListState,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
+    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
+    WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};

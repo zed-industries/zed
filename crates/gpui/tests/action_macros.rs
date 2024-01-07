@@ -11,7 +11,7 @@ fn test_action_macros() {
 
     impl_actions!(test, [AnotherTestAction]);
 
-    #[derive(PartialEq, Clone, gpui::serde_derive::Deserialize)]
+    #[derive(PartialEq, Clone, gpui::private::serde_derive::Deserialize)]
     struct RegisterableAction {}
 
     register_action!(RegisterableAction);

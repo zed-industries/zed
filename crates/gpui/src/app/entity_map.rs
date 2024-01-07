@@ -1,4 +1,4 @@
-use crate::{private::Sealed, AppContext, Context, Entity, ModelContext};
+use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};

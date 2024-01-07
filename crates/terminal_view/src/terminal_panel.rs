@@ -3,9 +3,9 @@ use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, serde_json, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
+    FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};

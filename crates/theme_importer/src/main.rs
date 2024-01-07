@@ -16,7 +16,6 @@ use any_ascii::any_ascii;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use convert_case::{Case, Casing};
-use gpui::serde_json;
 use indexmap::IndexMap;
 use indoc::formatdoc;
 use json_comments::StripComments;

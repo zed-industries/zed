@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
+use gpui::AppContext;
 use gpui::BackgroundExecutor;
-use gpui::{serde_json, AppContext};
 use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
@@ -11,6 +11,7 @@ use parking_lot::{Mutex, RwLock};
 use parse_duration::parse;
 use postage::watch;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::env;
 use std::ops::Add;
 use std::sync::Arc;
