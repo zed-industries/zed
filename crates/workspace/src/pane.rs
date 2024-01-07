@@ -2,7 +2,7 @@ use crate::{
     item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    NewCenterTerminal, NewFile, NewSearch, SplitDirection, ToggleZoom, Workspace,
+    NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -1899,7 +1899,12 @@ impl Pane {
                         to_pane = workspace.split_pane(to_pane, split_direction, cx);
                     }
                     workspace
-                        .open_paths(paths, true, Some(to_pane.downgrade()), cx)
+                        .open_paths(
+                            paths,
+                            OpenVisible::OnlyDirectories,
+                            Some(to_pane.downgrade()),
+                            cx,
+                        )
                         .detach();
                 });
             })

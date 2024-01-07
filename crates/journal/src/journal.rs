@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::{AppState, Workspace};
+use workspace::{AppState, OpenVisible, Workspace};
 
 actions!(journal, [NewJournalEntry]);
 
@@ -100,7 +100,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
 
         let opened = workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.open_paths(vec![entry_path], true, None, cx)
+                workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
             })?
             .await;
 

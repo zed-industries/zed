@@ -29,7 +29,8 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, OpenVisible, Pane, ToolbarItemLocation, Workspace,
+    WorkspaceId,
 };
 
 use anyhow::Context;
@@ -192,12 +193,18 @@ impl TerminalView {
                     }
                     let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
                     if let Some(path) = potential_abs_paths.into_iter().next() {
+                        // TODO kb wrong lib call
                         let is_dir = path.path_like.is_dir();
                         let task_workspace = workspace.clone();
                         cx.spawn(|_, mut cx| async move {
                             let opened_items = task_workspace
                                 .update(&mut cx, |workspace, cx| {
-                                    workspace.open_paths(vec![path.path_like], is_dir, None, cx)
+                                    workspace.open_paths(
+                                        vec![path.path_like],
+                                        OpenVisible::OnlyDirectories,
+                                        None,
+                                        cx,
+                                    )
                                 })
                                 .context("workspace update")?
                                 .await;

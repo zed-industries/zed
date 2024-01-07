@@ -431,6 +431,13 @@ pub enum Event {
     WorkspaceCreated(WeakView<Workspace>),
 }
 
+pub enum OpenVisible {
+    All,
+    None,
+    OnlyFiles,
+    OnlyDirectories,
+}
+
 pub struct Workspace {
     weak_self: WeakView<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
@@ -1317,7 +1324,7 @@ impl Workspace {
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
-        visible: bool,
+        visible: OpenVisible,
         pane: Option<WeakView<Pane>>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
@@ -1329,19 +1336,43 @@ impl Workspace {
         abs_paths.sort_unstable();
         cx.spawn(move |this, mut cx| async move {
             let mut tasks = Vec::with_capacity(abs_paths.len());
+
             for abs_path in &abs_paths {
-                let project_path = match this
-                    .update(&mut cx, |this, cx| {
-                        Workspace::project_path_for_path(
-                            this.project.clone(),
-                            abs_path,
-                            visible,
-                            cx,
-                        )
-                    })
-                    .log_err()
-                {
-                    Some(project_path) => project_path.await.log_err(),
+                let visible = match visible {
+                    OpenVisible::All => Some(true),
+                    OpenVisible::None => Some(false),
+                    OpenVisible::OnlyFiles => match fs.metadata(abs_path).await.log_err() {
+                        Some(Some(metadata)) => Some(!metadata.is_dir),
+                        Some(None) => {
+                            log::error!("No metadata for file {abs_path:?}");
+                            None
+                        }
+                        None => None,
+                    },
+                    OpenVisible::OnlyDirectories => match fs.metadata(abs_path).await.log_err() {
+                        Some(Some(metadata)) => Some(metadata.is_dir),
+                        Some(None) => {
+                            log::error!("No metadata for file {abs_path:?}");
+                            None
+                        }
+                        None => None,
+                    },
+                };
+                let project_path = match visible {
+                    Some(visible) => match this
+                        .update(&mut cx, |this, cx| {
+                            Workspace::project_path_for_path(
+                                this.project.clone(),
+                                abs_path,
+                                visible,
+                                cx,
+                            )
+                        })
+                        .log_err()
+                    {
+                        Some(project_path) => project_path.await.log_err(),
+                        None => None,
+                    },
                     None => None,
                 };
 
@@ -1400,7 +1431,9 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
-                    .update(&mut cx, |this, cx| this.open_paths(paths, true, None, cx))?
+                    .update(&mut cx, |this, cx| {
+                        this.open_paths(paths, OpenVisible::All, None, cx)
+                    })?
                     .await;
                 for result in results.into_iter().flatten() {
                     result.log_err();
@@ -1786,7 +1819,16 @@ impl Workspace {
         cx.spawn(|workspace, mut cx| async move {
             let open_paths_task_result = workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![abs_path.clone()], visible, None, cx)
+                    workspace.open_paths(
+                        vec![abs_path.clone()],
+                        if visible {
+                            OpenVisible::All
+                        } else {
+                            OpenVisible::None
+                        },
+                        None,
+                        cx,
+                    )
                 })
                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
                 .await;
@@ -4085,7 +4127,7 @@ pub fn open_paths(
                 existing.clone(),
                 existing
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(abs_paths, true, None, cx)
+                        workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
                     })?
                     .await,
             ))
@@ -4133,7 +4175,7 @@ pub fn create_and_open_local_file(
         let mut items = workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.with_local_workspace(cx, |workspace, cx| {
-                    workspace.open_paths(vec![path.to_path_buf()], false, None, cx)
+                    workspace.open_paths(vec![path.to_path_buf()], OpenVisible::None, None, cx)
                 })
             })?
             .await?
