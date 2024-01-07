@@ -193,10 +193,18 @@ impl TerminalView {
                     }
                     let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
                     if let Some(path) = potential_abs_paths.into_iter().next() {
-                        // TODO kb wrong lib call
-                        let is_dir = path.path_like.is_dir();
                         let task_workspace = workspace.clone();
                         cx.spawn(|_, mut cx| async move {
+                            let fs = task_workspace.update(&mut cx, |workspace, cx| {
+                                workspace.project().read(cx).fs().clone()
+                            })?;
+                            let is_dir = fs
+                                .metadata(&path.path_like)
+                                .await?
+                                .with_context(|| {
+                                    format!("Missing metadata for file {:?}", path.path_like)
+                                })?
+                                .is_dir;
                             let opened_items = task_workspace
                                 .update(&mut cx, |workspace, cx| {
                                     workspace.open_paths(
