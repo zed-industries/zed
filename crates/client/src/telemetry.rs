@@ -193,7 +193,8 @@ impl Telemetry {
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
-        self.report_app_event("close", true);
+        self.report_app_event("close");
+        self.flush_clickhouse_events();
         Task::ready(())
     }
 
@@ -283,7 +284,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, false)
+        self.report_clickhouse_event(event)
     }
 
     pub fn report_copilot_event(
@@ -299,7 +300,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, false)
+        self.report_clickhouse_event(event)
     }
 
     pub fn report_assistant_event(
@@ -315,7 +316,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, false)
+        self.report_clickhouse_event(event)
     }
 
     pub fn report_call_event(
@@ -331,7 +332,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, false)
+        self.report_clickhouse_event(event)
     }
 
     pub fn report_cpu_event(self: &Arc<Self>, usage_as_percentage: f32, core_count: u32) {
@@ -341,7 +342,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, false)
+        self.report_clickhouse_event(event)
     }
 
     pub fn report_memory_event(
@@ -355,16 +356,16 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, false)
+        self.report_clickhouse_event(event)
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: &'static str, immediate_flush: bool) {
+    pub fn report_app_event(self: &Arc<Self>, operation: &'static str) {
         let event = ClickhouseEvent::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, immediate_flush)
+        self.report_clickhouse_event(event)
     }
 
     pub fn report_setting_event(self: &Arc<Self>, setting: &'static str, value: String) {
@@ -374,7 +375,7 @@ impl Telemetry {
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
         };
 
-        self.report_clickhouse_event(event, false)
+        self.report_clickhouse_event(event)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {
@@ -391,7 +392,7 @@ impl Telemetry {
         }
     }
 
-    fn report_clickhouse_event(self: &Arc<Self>, event: ClickhouseEvent, immediate_flush: bool) {
+    fn report_clickhouse_event(self: &Arc<Self>, event: ClickhouseEvent) {
         let mut state = self.state.lock();
 
         if !state.settings.metrics {
@@ -404,7 +405,7 @@ impl Telemetry {
             .push(ClickhouseEventWrapper { signed_in, event });
 
         if state.installation_id.is_some() {
-            if immediate_flush || state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
+            if state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
                 self.flush_clickhouse_events();
             } else {
@@ -430,7 +431,7 @@ impl Telemetry {
         self.state.lock().is_staff
     }
 
-    fn flush_clickhouse_events(self: &Arc<Self>) {
+    pub fn flush_clickhouse_events(self: &Arc<Self>) {
         let mut state = self.state.lock();
         state.first_event_datetime = None;
         let mut events = mem::take(&mut state.clickhouse_events_queue);

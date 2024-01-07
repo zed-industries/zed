@@ -175,13 +175,11 @@ fn main() {
         telemetry.start(installation_id, session_id, cx);
         telemetry.report_setting_event("theme", cx.theme().name.to_string());
         telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
-        telemetry.report_app_event(
-            match existing_installation_id_found {
-                Some(false) => "first open",
-                _ => "open",
-            },
-            true,
-        );
+        telemetry.report_app_event(match existing_installation_id_found {
+            Some(false) => "first open",
+            _ => "open",
+        });
+        telemetry.flush_clickhouse_events();
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),

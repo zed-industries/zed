@@ -86,7 +86,7 @@ impl Render for WelcomePage {
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.telemetry
-                                        .report_app_event("welcome page button: theme", false);
+                                        .report_app_event("welcome page button: theme");
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             theme_selector::toggle(
@@ -103,7 +103,7 @@ impl Render for WelcomePage {
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.telemetry
-                                        .report_app_event("welcome page button: keymap", false);
+                                        .report_app_event("welcome page button: keymap");
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             base_keymap_picker::toggle(
@@ -119,10 +119,8 @@ impl Render for WelcomePage {
                             Button::new("install-cli", "Install the CLI")
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
-                                    this.telemetry.report_app_event(
-                                        "welcome page button: install cli",
-                                        false,
-                                    );
+                                    this.telemetry
+                                        .report_app_event("welcome page button: install cli");
                                     cx.app_mut()
                                         .spawn(
                                             |cx| async move { install_cli::install_cli(&cx).await },
@@ -153,10 +151,8 @@ impl Render for WelcomePage {
                                     )
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
-                                            this.telemetry.report_app_event(
-                                                "welcome page button: vim",
-                                                false,
-                                            );
+                                            this.telemetry
+                                                .report_app_event("welcome page button: vim");
                                             this.update_settings::<VimModeSetting>(
                                                 selection,
                                                 cx,
@@ -183,7 +179,6 @@ impl Render for WelcomePage {
                                         move |this, selection, cx| {
                                             this.telemetry.report_app_event(
                                                 "welcome page button: user telemetry",
-                                                false,
                                             );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
@@ -222,7 +217,6 @@ impl Render for WelcomePage {
                                         move |this, selection, cx| {
                                             this.telemetry.report_app_event(
                                                 "welcome page button: crash diagnostics",
-                                                false,
                                             );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
@@ -254,7 +248,7 @@ impl WelcomePage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let this = cx.new_view(|cx| {
             cx.on_release(|this: &mut Self, _, _| {
-                this.telemetry.report_app_event("close welcome page", false);
+                this.telemetry.report_app_event("close welcome page");
             })
             .detach();
 
