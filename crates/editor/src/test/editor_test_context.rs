@@ -39,7 +39,7 @@ impl EditorTestContext {
         // fs.insert_file("/file", "".to_owned()).await;
         fs.insert_tree(
             "/root",
-            gpui::serde_json::json!({
+            serde_json::json!({
                 "file": "",
             }),
         )

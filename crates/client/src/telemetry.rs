@@ -1,10 +1,11 @@
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use chrono::{DateTime, Utc};
 use futures::Future;
-use gpui::{serde_json, AppContext, AppMetadata, BackgroundExecutor, Task};
+use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
+use serde_json;
 use settings::{Settings, SettingsStore};
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{

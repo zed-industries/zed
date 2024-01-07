@@ -6,10 +6,10 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use gpui::serde_json::{self, Value};
 use pathfinder_color::ColorU;
 use serde::de::{self, DeserializeOwned, Unexpected};
 use serde::{Deserialize, Deserializer};
+use serde_json::{self, Value};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]

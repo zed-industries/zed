@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use gpui::{serde_json, Hsla, Rgba};
+use gpui::{Hsla, Rgba};
 use theme::{
     color_alpha, Appearance, PlayerColor, PlayerColors, StatusColorsRefinement,
     ThemeColorsRefinement, UserFontStyle, UserFontWeight, UserHighlightStyle, UserSyntaxTheme,

@@ -15,8 +15,8 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
-    actions, serde_json, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model,
-    SemanticVersion, Task, WeakModel,
+    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model, SemanticVersion, Task,
+    WeakModel,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -25,6 +25,7 @@ use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use settings::Settings;
 use std::{
     any::TypeId,

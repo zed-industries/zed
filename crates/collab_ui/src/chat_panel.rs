@@ -7,9 +7,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState,
-    Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, list, prelude::*, px, AnyElement, AppContext, AsyncWindowContext, ClickEvent,
+    ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState, Model, Render,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;

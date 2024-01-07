@@ -7,8 +7,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, red, rems, serde_json, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    Model, PromptLevel, Render, Task, View, ViewContext,
+    div, red, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    PromptLevel, Render, Task, View, ViewContext,
 };
 use isahc::Request;
 use language::Buffer;
