@@ -3542,5 +3542,5 @@ fn report_assistant_event(
         .default_open_ai_model
         .clone();
 
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name(), cx)
+    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name())
 }

@@ -8874,7 +8874,7 @@ impl Editor {
 
         let telemetry = project.read(cx).client().telemetry().clone();
 
-        telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension, cx)
+        telemetry.report_copilot_event(suggestion_id, suggestion_accepted, file_extension)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -8926,7 +8926,6 @@ impl Editor {
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
-            cx,
         )
     }
 

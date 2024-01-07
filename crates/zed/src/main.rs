@@ -45,7 +45,7 @@ use util::{
     paths, ResultExt,
 };
 use uuid::Uuid;
-use welcome::{show_welcome_view, FIRST_OPEN};
+use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
@@ -171,17 +171,15 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start(installation_id, session_id, cx);
-        client
-            .telemetry()
-            .report_setting_event("theme", cx.theme().name.to_string(), cx);
-        let event_operation = match existing_installation_id_found {
+        let telemetry = client.telemetry();
+        telemetry.start(installation_id, session_id, cx);
+        telemetry.report_setting_event("theme", cx.theme().name.to_string());
+        telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
+        telemetry.report_app_event(match existing_installation_id_found {
             Some(false) => "first open",
             _ => "open",
-        };
-        client
-            .telemetry()
-            .report_app_event(event_operation, true, cx);
+        });
+        telemetry.flush_events();
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
