@@ -42,9 +42,9 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::DB;
+use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, SerializedWorkspace, WorkspaceLocation},
+    model::{ItemId, WorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -70,8 +70,9 @@ use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
 
-use crate::persistence::model::{
-    DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup,
+use crate::persistence::{
+    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+    SerializedAxis,
 };
 
 lazy_static! {
@@ -430,6 +431,13 @@ pub enum Event {
     WorkspaceCreated(WeakView<Workspace>),
 }
 
+pub enum OpenVisible {
+    All,
+    None,
+    OnlyFiles,
+    OnlyDirectories,
+}
+
 pub struct Workspace {
     weak_self: WeakView<Self>,
     workspace_actions: Vec<Box<dyn Fn(Div, &mut ViewContext<Self>) -> Div>>,
@@ -625,7 +633,11 @@ impl Workspace {
 
                     if let Some(display_uuid) = display.uuid().log_err() {
                         cx.background_executor()
-                            .spawn(DB.set_window_bounds(workspace_id, bounds, display_uuid))
+                            .spawn(DB.set_window_bounds(
+                                workspace_id,
+                                SerializedWindowsBounds(bounds),
+                                display_uuid,
+                            ))
                             .detach_and_log_err(cx);
                     }
                 }
@@ -1187,7 +1199,7 @@ impl Workspace {
         mut save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        if self.project.read(cx).is_read_only() {
+        if self.project.read(cx).is_disconnected() {
             return Task::ready(Ok(true));
         }
         let dirty_items = self
@@ -1253,9 +1265,7 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        self.client()
-            .telemetry()
-            .report_app_event("open project", false, cx);
+        self.client().telemetry().report_app_event("open project");
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -1312,7 +1322,8 @@ impl Workspace {
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
-        visible: bool,
+        visible: OpenVisible,
+        pane: Option<WeakView<Pane>>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
         log::info!("open paths {abs_paths:?}");
@@ -1323,31 +1334,56 @@ impl Workspace {
         abs_paths.sort_unstable();
         cx.spawn(move |this, mut cx| async move {
             let mut tasks = Vec::with_capacity(abs_paths.len());
+
             for abs_path in &abs_paths {
-                let project_path = match this
-                    .update(&mut cx, |this, cx| {
-                        Workspace::project_path_for_path(
-                            this.project.clone(),
-                            abs_path,
-                            visible,
-                            cx,
-                        )
-                    })
-                    .log_err()
-                {
-                    Some(project_path) => project_path.await.log_err(),
+                let visible = match visible {
+                    OpenVisible::All => Some(true),
+                    OpenVisible::None => Some(false),
+                    OpenVisible::OnlyFiles => match fs.metadata(abs_path).await.log_err() {
+                        Some(Some(metadata)) => Some(!metadata.is_dir),
+                        Some(None) => {
+                            log::error!("No metadata for file {abs_path:?}");
+                            None
+                        }
+                        None => None,
+                    },
+                    OpenVisible::OnlyDirectories => match fs.metadata(abs_path).await.log_err() {
+                        Some(Some(metadata)) => Some(metadata.is_dir),
+                        Some(None) => {
+                            log::error!("No metadata for file {abs_path:?}");
+                            None
+                        }
+                        None => None,
+                    },
+                };
+                let project_path = match visible {
+                    Some(visible) => match this
+                        .update(&mut cx, |this, cx| {
+                            Workspace::project_path_for_path(
+                                this.project.clone(),
+                                abs_path,
+                                visible,
+                                cx,
+                            )
+                        })
+                        .log_err()
+                    {
+                        Some(project_path) => project_path.await.log_err(),
+                        None => None,
+                    },
                     None => None,
                 };
 
                 let this = this.clone();
                 let abs_path = abs_path.clone();
                 let fs = fs.clone();
+                let pane = pane.clone();
                 let task = cx.spawn(move |mut cx| async move {
                     let (worktree, project_path) = project_path?;
                     if fs.is_file(&abs_path).await {
                         Some(
                             this.update(&mut cx, |this, cx| {
-                                this.open_path(project_path, None, true, cx)
+                                this.open_path(project_path, pane, true, cx)
                             })
                             .log_err()?
                             .await,
@@ -1393,7 +1429,9 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
-                    .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))?
+                    .update(&mut cx, |this, cx| {
+                        this.open_paths(paths, OpenVisible::All, None, cx)
+                    })?
                     .await;
                 for result in results.into_iter().flatten() {
                     result.log_err();
@@ -1779,7 +1817,16 @@ impl Workspace {
         cx.spawn(|workspace, mut cx| async move {
             let open_paths_task_result = workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![abs_path.clone()], visible, cx)
+                    workspace.open_paths(
+                        vec![abs_path.clone()],
+                        if visible {
+                            OpenVisible::All
+                        } else {
+                            OpenVisible::None
+                        },
+                        None,
+                        cx,
+                    )
                 })
                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
                 .await;
@@ -2452,11 +2499,11 @@ impl Workspace {
         Some(leader_id)
     }
 
-    //     pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
-    //         self.follower_states
-    //             .values()
-    //             .any(|state| state.leader_id == peer_id)
-    //     }
+    pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
+        self.follower_states
+            .values()
+            .any(|state| state.leader_id == peer_id)
+    }
 
     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
         let active_entry = self.active_project_path(cx);
@@ -2510,7 +2557,7 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
-        let is_edited = !self.project.read(cx).is_read_only()
+        let is_edited = !self.project.read(cx).is_disconnected()
             && self
                 .items(cx)
                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
@@ -2989,7 +3036,7 @@ impl Workspace {
                     flexes,
                     bounding_boxes: _,
                 }) => SerializedPaneGroup::Group {
-                    axis: *axis,
+                    axis: SerializedAxis(*axis),
                     children: members
                         .iter()
                         .map(|member| build_serialized_pane_group(member, cx))
@@ -3266,6 +3313,7 @@ impl Workspace {
         let user_store = project.read(cx).user_store();
 
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
@@ -3634,7 +3682,7 @@ impl Render for Workspace {
                     })),
             )
             .child(self.status_bar.clone())
-            .children(if self.project.read(cx).is_read_only() {
+            .children(if self.project.read(cx).is_disconnected() {
                 Some(DisconnectedOverlay)
             } else {
                 None
@@ -4077,7 +4125,7 @@ pub fn open_paths(
                 existing.clone(),
                 existing
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(abs_paths, true, cx)
+                        workspace.open_paths(abs_paths, OpenVisible::All, None, cx)
                     })?
                     .await,
             ))
@@ -4125,7 +4173,7 @@ pub fn create_and_open_local_file(
         let mut items = workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.with_local_workspace(cx, |workspace, cx| {
-                    workspace.open_paths(vec![path.to_path_buf()], false, cx)
+                    workspace.open_paths(vec![path.to_path_buf()], OpenVisible::None, None, cx)
                 })
             })?
             .await?
@@ -4764,8 +4812,7 @@ mod tests {
         });
 
         // Deactivating the window saves the file.
-        cx.simulate_deactivation();
-        cx.executor().run_until_parked();
+        cx.deactivate_window();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Autosave on focus change.
@@ -4785,14 +4832,13 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
-        cx.simulate_activation();
+        cx.update(|cx| cx.activate_window());
         item.update(cx, |item, cx| {
             cx.focus_self();
             item.is_dirty = true;
         });
-        cx.simulate_deactivation();
+        cx.deactivate_window();
 
-        cx.executor().run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // Autosave after delay.

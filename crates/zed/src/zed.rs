@@ -789,7 +789,8 @@ mod tests {
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, SaveIntent, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
+        WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -917,7 +918,7 @@ mod tests {
         let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
 
         let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
-            cx.update_test_window(window.into(), |window| window.edited())
+            cx.test_window(window.into()).edited()
         };
         let pane = window
             .read_with(cx, |workspace, _| workspace.active_pane().clone())
@@ -1245,7 +1246,7 @@ mod tests {
         // Open a file within an existing worktree.
         window
             .update(cx, |view, cx| {
-                view.open_paths(vec!["/dir1/a.txt".into()], true, cx)
+                view.open_paths(vec!["/dir1/a.txt".into()], OpenVisible::All, None, cx)
             })
             .unwrap()
             .await;
@@ -1269,7 +1270,7 @@ mod tests {
         // Open a file outside of any existing worktree.
         window
             .update(cx, |view, cx| {
-                view.open_paths(vec!["/dir2/b.txt".into()], true, cx)
+                view.open_paths(vec!["/dir2/b.txt".into()], OpenVisible::All, None, cx)
             })
             .unwrap()
             .await;
@@ -1304,7 +1305,12 @@ mod tests {
         // Ensure opening a directory and one of its children only adds one worktree.
         window
             .update(cx, |view, cx| {
-                view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], true, cx)
+                view.open_paths(
+                    vec!["/dir3".into(), "/dir3/c.txt".into()],
+                    OpenVisible::All,
+                    None,
+                    cx,
+                )
             })
             .unwrap()
             .await;
@@ -1339,7 +1345,7 @@ mod tests {
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
         window
             .update(cx, |view, cx| {
-                view.open_paths(vec!["/d.txt".into()], false, cx)
+                view.open_paths(vec!["/d.txt".into()], OpenVisible::None, None, cx)
             })
             .unwrap()
             .await;
@@ -1517,7 +1523,12 @@ mod tests {
         // Open a file within an existing worktree.
         window
             .update(cx, |view, cx| {
-                view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
+                view.open_paths(
+                    vec![PathBuf::from("/root/a.txt")],
+                    OpenVisible::All,
+                    None,
+                    cx,
+                )
             })
             .unwrap()
             .await;

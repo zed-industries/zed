@@ -29,7 +29,8 @@ use workspace::{
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    CloseActiveItem, NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, OpenVisible, Pane, ToolbarItemLocation, Workspace,
+    WorkspaceId,
 };
 
 use anyhow::Context;
@@ -192,12 +193,26 @@ impl TerminalView {
                     }
                     let potential_abs_paths = possible_open_targets(&workspace, maybe_path, cx);
                     if let Some(path) = potential_abs_paths.into_iter().next() {
-                        let is_dir = path.path_like.is_dir();
                         let task_workspace = workspace.clone();
                         cx.spawn(|_, mut cx| async move {
+                            let fs = task_workspace.update(&mut cx, |workspace, cx| {
+                                workspace.project().read(cx).fs().clone()
+                            })?;
+                            let is_dir = fs
+                                .metadata(&path.path_like)
+                                .await?
+                                .with_context(|| {
+                                    format!("Missing metadata for file {:?}", path.path_like)
+                                })?
+                                .is_dir;
                             let opened_items = task_workspace
                                 .update(&mut cx, |workspace, cx| {
-                                    workspace.open_paths(vec![path.path_like], is_dir, cx)
+                                    workspace.open_paths(
+                                        vec![path.path_like],
+                                        OpenVisible::OnlyDirectories,
+                                        None,
+                                        cx,
+                                    )
                                 })
                                 .context("workspace update")?
                                 .await;
@@ -665,7 +680,7 @@ impl Item for TerminalView {
     type Event = ItemEvent;
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        Some(self.terminal().read(cx).title().into())
+        Some(self.terminal().read(cx).title(false).into())
     }
 
     fn tab_content(
@@ -674,8 +689,7 @@ impl Item for TerminalView {
         selected: bool,
         cx: &WindowContext,
     ) -> AnyElement {
-        let title = self.terminal().read(cx).title();
-
+        let title = self.terminal().read(cx).title(true);
         h_stack()
             .gap_2()
             .child(IconElement::new(Icon::Terminal))

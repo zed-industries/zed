@@ -26,20 +26,20 @@ use util::{
 
 use super::build_editor_with_project;
 
-pub struct EditorTestContext<'a> {
-    pub cx: gpui::VisualTestContext<'a>,
+pub struct EditorTestContext {
+    pub cx: gpui::VisualTestContext,
     pub window: AnyWindowHandle,
     pub editor: View<Editor>,
     pub assertion_cx: AssertionContextManager,
 }
 
-impl<'a> EditorTestContext<'a> {
-    pub async fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
+impl EditorTestContext {
+    pub async fn new(cx: &mut gpui::TestAppContext) -> EditorTestContext {
         let fs = FakeFs::new(cx.executor());
         // fs.insert_file("/file", "".to_owned()).await;
         fs.insert_tree(
             "/root",
-            gpui::serde_json::json!({
+            serde_json::json!({
                 "file": "",
             }),
         )
@@ -342,7 +342,7 @@ impl<'a> EditorTestContext<'a> {
     }
 }
 
-impl<'a> Deref for EditorTestContext<'a> {
+impl Deref for EditorTestContext {
     type Target = gpui::TestAppContext;
 
     fn deref(&self) -> &Self::Target {
@@ -350,7 +350,7 @@ impl<'a> Deref for EditorTestContext<'a> {
     }
 }
 
-impl<'a> DerefMut for EditorTestContext<'a> {
+impl DerefMut for EditorTestContext {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }

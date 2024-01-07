@@ -56,9 +56,6 @@ use time::UtcOffset;
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
 
-#[allow(non_upper_case_globals)]
-pub const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
-
 const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
@@ -260,8 +257,8 @@ impl MacPlatform {
                 os_action,
             } => {
                 let keystrokes = keymap
-                    .bindings_for_action(action.type_id())
-                    .find(|binding| binding.action().partial_eq(action.as_ref()))
+                    .bindings_for_action(action.as_ref())
+                    .next()
                     .map(|binding| binding.keystrokes());
 
                 let selector = match os_action {
@@ -404,7 +401,7 @@ impl Platform for MacPlatform {
         // this, we make quitting the application asynchronous so that we aren't holding borrows to
         // the app state on the stack when we actually terminate the app.
 
-        use super::dispatcher::{dispatch_async_f, dispatch_get_main_queue};
+        use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
 
         unsafe {
             dispatch_async_f(dispatch_get_main_queue(), ptr::null_mut(), Some(quit));

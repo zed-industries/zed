@@ -32,7 +32,8 @@ use language::{
         deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
         serialize_version,
     },
-    Buffer, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint, Unclipped,
+    Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint,
+    Unclipped,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -682,7 +683,14 @@ impl LocalWorktree {
                 .background_executor()
                 .spawn(async move { text::Buffer::new(0, id, contents) })
                 .await;
-            cx.new_model(|_| Buffer::build(text_buffer, diff_base, Some(Arc::new(file))))
+            cx.new_model(|_| {
+                Buffer::build(
+                    text_buffer,
+                    diff_base,
+                    Some(Arc::new(file)),
+                    Capability::ReadWrite,
+                )
+            })
         })
     }
 

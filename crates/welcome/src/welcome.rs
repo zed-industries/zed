@@ -1,7 +1,7 @@
 mod base_keymap_picker;
 mod base_keymap_setting;
 
-use client::TelemetrySettings;
+use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     svg, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
@@ -27,7 +27,7 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &Welcome, cx| {
-            let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
+            let welcome_page = WelcomePage::new(workspace, cx);
             workspace.add_item(Box::new(welcome_page), cx)
         });
     })
@@ -39,7 +39,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn show_welcome_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
-        let welcome_page = cx.new_view(|cx| WelcomePage::new(workspace, cx));
+        let welcome_page = WelcomePage::new(workspace, cx);
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
         cx.focus_view(&welcome_page);
         cx.notify();
@@ -54,6 +54,7 @@ pub fn show_welcome_view(app_state: &Arc<AppState>, cx: &mut AppContext) {
 pub struct WelcomePage {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
+    telemetry: Arc<Telemetry>,
     _settings_subscription: Subscription,
 }
 
@@ -84,6 +85,8 @@ impl Render for WelcomePage {
                             Button::new("choose-theme", "Choose a theme")
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
+                                    this.telemetry
+                                        .report_app_event("welcome page: change theme");
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             theme_selector::toggle(
@@ -99,6 +102,8 @@ impl Render for WelcomePage {
                             Button::new("choose-keymap", "Choose a keymap")
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
+                                    this.telemetry
+                                        .report_app_event("welcome page: change keymap");
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             base_keymap_picker::toggle(
@@ -113,7 +118,8 @@ impl Render for WelcomePage {
                         .child(
                             Button::new("install-cli", "Install the CLI")
                                 .full_width()
-                                .on_click(cx.listener(|_, _, cx| {
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.telemetry.report_app_event("welcome page: install cli");
                                     cx.app_mut()
                                         .spawn(
                                             |cx| async move { install_cli::install_cli(&cx).await },
@@ -144,6 +150,8 @@ impl Render for WelcomePage {
                                     )
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
+                                            this.telemetry
+                                                .report_app_event("welcome page: toggle vim");
                                             this.update_settings::<VimModeSetting>(
                                                 selection,
                                                 cx,
@@ -168,10 +176,24 @@ impl Render for WelcomePage {
                                     )
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
+                                            this.telemetry.report_app_event(
+                                                "welcome page: toggle metric telemetry",
+                                            );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
                                                 cx,
-                                                |settings, value| settings.metrics = Some(value),
+                                                {
+                                                    let telemetry = this.telemetry.clone();
+
+                                                    move |settings, value| {
+                                                        settings.metrics = Some(value);
+
+                                                        telemetry.report_setting_event(
+                                                            "metric telemetry",
+                                                            value.to_string(),
+                                                        );
+                                                    }
+                                                },
                                             );
                                         },
                                     )),
@@ -192,11 +214,23 @@ impl Render for WelcomePage {
                                     )
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
+                                            this.telemetry.report_app_event(
+                                                "welcome page: toggle diagnostic telemetry",
+                                            );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
                                                 cx,
-                                                |settings, value| {
-                                                    settings.diagnostics = Some(value)
+                                                {
+                                                    let telemetry = this.telemetry.clone();
+
+                                                    move |settings, value| {
+                                                        settings.diagnostics = Some(value);
+
+                                                        telemetry.report_setting_event(
+                                                            "diagnostic telemetry",
+                                                            value.to_string(),
+                                                        );
+                                                    }
                                                 },
                                             );
                                         },
@@ -210,12 +244,23 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        WelcomePage {
-            focus_handle: cx.focus_handle(),
-            workspace: workspace.weak_handle(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        }
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+        let this = cx.new_view(|cx| {
+            cx.on_release(|this: &mut Self, _, _| {
+                this.telemetry.report_app_event("welcome page: close");
+            })
+            .detach();
+
+            WelcomePage {
+                focus_handle: cx.focus_handle(),
+                workspace: workspace.weak_handle(),
+                telemetry: workspace.client().telemetry().clone(),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            }
+        });
+
+        this
     }
 
     fn update_settings<T: Settings>(
@@ -273,6 +318,7 @@ impl Item for WelcomePage {
         Some(cx.new_view(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
+            telemetry: self.telemetry.clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         }))
     }

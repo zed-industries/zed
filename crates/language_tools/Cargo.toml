@@ -24,6 +24,7 @@ futures.workspace = true
 serde.workspace = true
 anyhow.workspace = true
 tree-sitter.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

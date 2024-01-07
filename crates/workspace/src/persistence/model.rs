@@ -1,3 +1,4 @@
+use super::SerializedAxis;
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -5,7 +6,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Axis, Model, Task, View, WeakView, WindowBounds};
+use gpui::{AsyncWindowContext, Model, Task, View, WeakView, WindowBounds};
 use project::Project;
 use std::{
     path::{Path, PathBuf},
@@ -54,13 +55,13 @@ impl Column for WorkspaceLocation {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct SerializedWorkspace {
-    pub id: WorkspaceId,
-    pub location: WorkspaceLocation,
-    pub center_group: SerializedPaneGroup,
-    pub bounds: Option<WindowBounds>,
-    pub display: Option<Uuid>,
-    pub docks: DockStructure,
+pub(crate) struct SerializedWorkspace {
+    pub(crate) id: WorkspaceId,
+    pub(crate) location: WorkspaceLocation,
+    pub(crate) center_group: SerializedPaneGroup,
+    pub(crate) bounds: Option<WindowBounds>,
+    pub(crate) display: Option<Uuid>,
+    pub(crate) docks: DockStructure,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -126,9 +127,9 @@ impl Bind for DockData {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum SerializedPaneGroup {
+pub(crate) enum SerializedPaneGroup {
     Group {
-        axis: Axis,
+        axis: SerializedAxis,
         flexes: Option<Vec<f32>>,
         children: Vec<SerializedPaneGroup>,
     },
@@ -183,7 +184,7 @@ impl SerializedPaneGroup {
                 }
 
                 Some((
-                    Member::Axis(PaneAxis::load(axis, members, flexes)),
+                    Member::Axis(PaneAxis::load(axis.0, members, flexes)),
                     current_active_pane,
                     items,
                 ))

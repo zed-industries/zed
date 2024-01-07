@@ -1,5 +1,5 @@
 use crate::{
-    private::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
+    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
     Bounds, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
     LayoutId, Model, Pixels, Point, Render, Size, ViewContext, VisualContext, WeakModel,
     WindowContext,

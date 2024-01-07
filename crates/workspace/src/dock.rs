@@ -19,7 +19,6 @@ pub enum PanelEvent {
     ZoomOut,
     Activate,
     Close,
-    Focus,
 }
 
 pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
@@ -216,6 +215,28 @@ impl Dock {
             }
         });
 
+        cx.on_focus_in(&focus_handle, {
+            let dock = dock.downgrade();
+            move |workspace, cx| {
+                let Some(dock) = dock.upgrade() else {
+                    return;
+                };
+                let Some(panel) = dock.read(cx).active_panel() else {
+                    return;
+                };
+                if panel.is_zoomed(cx) {
+                    workspace.zoomed = Some(panel.to_any().downgrade().into());
+                    workspace.zoomed_position = Some(position);
+                } else {
+                    workspace.zoomed = None;
+                    workspace.zoomed_position = None;
+                }
+                workspace.dismiss_zoomed_items_to_reveal(Some(position), cx);
+                workspace.update_active_view_for_followers(cx)
+            }
+        })
+        .detach();
+
         cx.observe(&dock, move |workspace, dock, cx| {
             if dock.read(cx).is_open() {
                 if let Some(panel) = dock.read(cx).active_panel() {
@@ -394,7 +415,6 @@ impl Dock {
                         this.set_open(false, cx);
                     }
                 }
-                PanelEvent::Focus => {}
             }),
         ];
 
@@ -561,6 +581,7 @@ impl Render for Dock {
             }
 
             div()
+                .track_focus(&self.focus_handle)
                 .flex()
                 .bg(cx.theme().colors().panel_background)
                 .border_color(cx.theme().colors().border)
@@ -584,7 +605,7 @@ impl Render for Dock {
                 )
                 .child(handle)
         } else {
-            div()
+            div().track_focus(&self.focus_handle)
         }
     }
 }
@@ -651,9 +672,13 @@ impl Render for PanelButtons {
                                         && panel.position_is_valid(position, cx)
                                     {
                                         let panel = panel.clone();
-                                        menu = menu.entry(position.to_label(), None, move |cx| {
-                                            panel.set_position(position, cx);
-                                        })
+                                        menu = menu.entry(
+                                            format!("Dock {}", position.to_label()),
+                                            None,
+                                            move |cx| {
+                                                panel.set_position(position, cx);
+                                            },
+                                        )
                                     }
                                 }
                                 menu
@@ -720,7 +745,7 @@ pub mod test {
 
     impl Render for TestPanel {
         fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-            div()
+            div().id("test").track_focus(&self.focus_handle)
         }
     }
 

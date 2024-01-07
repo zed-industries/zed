@@ -182,7 +182,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         let theme_name = cx.theme().name.clone();
 
         self.telemetry
-            .report_setting_event("theme", theme_name.to_string(), cx);
+            .report_setting_event("theme", theme_name.to_string());
 
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings| {
             settings.theme = Some(theme_name.to_string());

@@ -1910,7 +1910,13 @@ impl EditorElement {
                     layouts.push(layout);
                 }
 
-                selections.push((style.local_player, layouts));
+                let player = if editor.read_only(cx) {
+                    cx.theme().players().read_only()
+                } else {
+                    style.local_player
+                };
+
+                selections.push((player, layouts));
             }
 
             if let Some(collaboration_hub) = &editor.collaboration_hub {

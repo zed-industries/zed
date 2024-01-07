@@ -94,7 +94,7 @@ unsafe extern "C" fn trampoline(
 
 mod sys {
     //! Derived from display-link crate under the fololwing license:
-    //! https://github.com/BrainiumLLC/display-link/blob/master/LICENSE-MIT
+    //! <https://github.com/BrainiumLLC/display-link/blob/master/LICENSE-MIT>
     //! Apple docs: [CVDisplayLink](https://developer.apple.com/documentation/corevideo/cvdisplaylinkoutputcallback?language=objc)
     #![allow(dead_code, non_upper_case_globals)]
 

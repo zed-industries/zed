@@ -70,7 +70,7 @@ impl BufferSearchBar {
     fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if editor.read(cx).read_only() {
+            color: if editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text
@@ -223,6 +223,7 @@ impl Render for BufferSearchBar {
                     .gap_2()
                     .border_1()
                     .border_color(editor_border)
+                    .min_w(rems(384. / 16.))
                     .rounded_lg()
                     .child(IconElement::new(Icon::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx))
@@ -1090,13 +1091,10 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
+
     fn init_test(
         cx: &mut TestAppContext,
-    ) -> (
-        View<Editor>,
-        View<BufferSearchBar>,
-        &mut VisualTestContext<'_>,
-    ) {
+    ) -> (View<Editor>, View<BufferSearchBar>, &mut VisualTestContext) {
         init_globals(cx);
         let buffer = cx.new_model(|cx| {
             Buffer::new(

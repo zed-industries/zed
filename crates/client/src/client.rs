@@ -15,8 +15,8 @@ use futures::{
     TryFutureExt as _, TryStreamExt,
 };
 use gpui::{
-    actions, serde_json, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model,
-    SemanticVersion, Task, WeakModel,
+    actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model, SemanticVersion, Task,
+    WeakModel,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -25,6 +25,7 @@ use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use settings::Settings;
 use std::{
     any::TypeId,
@@ -45,7 +46,7 @@ use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
-pub use telemetry::ClickhouseEvent;
+pub use telemetry::Event;
 pub use user::*;
 
 lazy_static! {
@@ -501,8 +502,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                cx.update(|cx| self.telemetry.set_authenticated_user_info(None, false, cx))
-                    .log_err();
+                self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
             }
             _ => {}
@@ -1405,11 +1405,13 @@ mod tests {
 
     use gpui::{BackgroundExecutor, Context, TestAppContext};
     use parking_lot::Mutex;
+    use settings::SettingsStore;
     use std::future;
     use util::http::FakeHttpClient;
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {
+        init_test(cx);
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
@@ -1444,6 +1446,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        init_test(cx);
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let mut status = client.status();
@@ -1515,6 +1518,7 @@ mod tests {
         cx: &mut TestAppContext,
         executor: BackgroundExecutor,
     ) {
+        init_test(cx);
         let auth_count = Arc::new(Mutex::new(0));
         let dropped_auth_count = Arc::new(Mutex::new(0));
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
@@ -1563,6 +1567,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
+        init_test(cx);
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
@@ -1616,6 +1621,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
+        init_test(cx);
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
@@ -1644,6 +1650,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
+        init_test(cx);
         let user_id = 5;
         let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
@@ -1671,5 +1678,12 @@ mod tests {
     struct TestModel {
         id: usize,
         subscription: Option<Subscription>,
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
     }
 }

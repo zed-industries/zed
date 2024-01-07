@@ -15,12 +15,12 @@ use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, canvas, div, fill, list, overlay, point, prelude::*, px, serde_json, AnyElement,
-    AppContext, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset,
-    ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    RenderOnce, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
-    VisualContext, WeakView, WhiteSpace,
+    actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
+    AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset, ListState,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
+    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
+    WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -150,6 +150,10 @@ enum ListEntry {
     ParticipantScreen {
         peer_id: Option<PeerId>,
         is_last: bool,
+    },
+    GuestCount {
+        count: usize,
+        has_visible_participants: bool,
     },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
@@ -380,10 +384,14 @@ impl CollabPanel {
 
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
+                let mut guest_count_ix = 0;
+                let mut guest_count = if room.read_only() { 1 } else { 0 };
+                let mut non_guest_count = if room.read_only() { 0 } else { 1 };
 
                 if let Some(channel_id) = room.channel_id() {
                     self.entries.push(ListEntry::ChannelNotes { channel_id });
-                    self.entries.push(ListEntry::ChannelChat { channel_id })
+                    self.entries.push(ListEntry::ChannelChat { channel_id });
+                    guest_count_ix = self.entries.len();
                 }
 
                 // Populate the active user.
@@ -402,7 +410,7 @@ impl CollabPanel {
                         &Default::default(),
                         executor.clone(),
                     ));
-                    if !matches.is_empty() {
+                    if !matches.is_empty() && !room.read_only() {
                         let user_id = user.id;
                         self.entries.push(ListEntry::CallParticipant {
                             user,
@@ -430,13 +438,23 @@ impl CollabPanel {
                 // Populate remote participants.
                 self.match_candidates.clear();
                 self.match_candidates
-                    .extend(room.remote_participants().iter().map(|(_, participant)| {
-                        StringMatchCandidate {
-                            id: participant.user.id as usize,
-                            string: participant.user.github_login.clone(),
-                            char_bag: participant.user.github_login.chars().collect(),
-                        }
-                    }));
+                    .extend(
+                        room.remote_participants()
+                            .iter()
+                            .filter_map(|(_, participant)| {
+                                if participant.role == proto::ChannelRole::Guest {
+                                    guest_count += 1;
+                                    return None;
+                                } else {
+                                    non_guest_count += 1;
+                                }
+                                Some(StringMatchCandidate {
+                                    id: participant.user.id as usize,
+                                    string: participant.user.github_login.clone(),
+                                    char_bag: participant.user.github_login.chars().collect(),
+                                })
+                            }),
+                    );
                 let matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
@@ -469,6 +487,15 @@ impl CollabPanel {
                             is_last: true,
                         });
                     }
+                }
+                if guest_count > 0 {
+                    self.entries.insert(
+                        guest_count_ix,
+                        ListEntry::GuestCount {
+                            count: guest_count,
+                            has_visible_participants: non_guest_count > 0,
+                        },
+                    );
                 }
 
                 // Populate pending participants.
@@ -959,6 +986,41 @@ impl CollabPanel {
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
     }
 
+    fn render_guest_count(
+        &self,
+        count: usize,
+        has_visible_participants: bool,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let manageable_channel_id = ActiveCall::global(cx).read(cx).room().and_then(|room| {
+            let room = room.read(cx);
+            if room.local_participant_is_admin() {
+                room.channel_id()
+            } else {
+                None
+            }
+        });
+
+        ListItem::new("guest_count")
+            .selected(is_selected)
+            .start_slot(
+                h_stack()
+                    .gap_1()
+                    .child(render_tree_branch(!has_visible_participants, cx))
+                    .child(""),
+            )
+            .child(Label::new(if count == 1 {
+                format!("{} guest", count)
+            } else {
+                format!("{} guests", count)
+            }))
+            .when_some(manageable_channel_id, |el, channel_id| {
+                el.tooltip(move |cx| Tooltip::text("Manage Members", cx))
+                    .on_click(cx.listener(move |this, _, cx| this.manage_members(channel_id, cx)))
+            })
+    }
+
     fn has_subchannels(&self, ix: usize) -> bool {
         self.entries.get(ix).map_or(false, |entry| {
             if let ListEntry::Channel { has_children, .. } = entry {
@@ -1178,6 +1240,18 @@ impl CollabPanel {
                             workspace.update(cx, |workspace, cx| {
                                 workspace.open_shared_screen(*peer_id, cx)
                             });
+                        }
+                    }
+                    ListEntry::GuestCount { .. } => {
+                        let Some(room) = ActiveCall::global(cx).read(cx).room() else {
+                            return;
+                        };
+                        let room = room.read(cx);
+                        let Some(channel_id) = room.channel_id() else {
+                            return;
+                        };
+                        if room.local_participant_is_admin() {
+                            self.manage_members(channel_id, cx)
                         }
                     }
                     ListEntry::Channel { channel, .. } => {
@@ -1735,6 +1809,12 @@ impl CollabPanel {
             ListEntry::ParticipantScreen { peer_id, is_last } => self
                 .render_participant_screen(*peer_id, *is_last, is_selected, cx)
                 .into_any_element(),
+            ListEntry::GuestCount {
+                count,
+                has_visible_participants,
+            } => self
+                .render_guest_count(*count, *has_visible_participants, is_selected, cx)
+                .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
                 .render_channel_notes(*channel_id, is_selected, cx)
                 .into_any_element(),
@@ -1766,7 +1846,7 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if editor.read(cx).read_only() {
+            color: if editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text
@@ -2535,6 +2615,11 @@ impl PartialEq for ListEntry {
             }
             ListEntry::ContactPlaceholder => {
                 if let ListEntry::ContactPlaceholder = other {
+                    return true;
+                }
+            }
+            ListEntry::GuestCount { .. } => {
+                if let ListEntry::GuestCount { .. } = other {
                     return true;
                 }
             }

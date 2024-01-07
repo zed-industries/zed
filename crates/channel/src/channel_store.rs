@@ -11,6 +11,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SharedString, Task,
     WeakModel,
 };
+use language::Capability;
 use rpc::{
     proto::{self, ChannelVisibility},
     TypedEnvelope,
@@ -74,8 +75,12 @@ impl Channel {
         slug.trim_matches(|c| c == '-').to_string()
     }
 
-    pub fn can_edit_notes(&self) -> bool {
-        self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin
+    pub fn channel_buffer_capability(&self) -> Capability {
+        if self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin {
+            Capability::ReadWrite
+        } else {
+            Capability::ReadOnly
+        }
     }
 }
 

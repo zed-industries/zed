@@ -1286,8 +1286,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
-        Some(Icon::Ai)
+    fn icon(&self, cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Ai).filter(|_| AssistantSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -2325,12 +2325,16 @@ impl ConversationEditor {
                                     }
                                 });
 
-                            h_stack()
+                            div()
+                                .h_flex()
                                 .id(("message_header", message_id.0))
                                 .h_11()
+                                .relative()
                                 .gap_1()
-                                .p_1()
-                                .child(sender)
+                                // Sender is a button with a padding of 1, but only has a background on hover,
+                                // so we shift it left by the same amount to align the text with the content
+                                // in the un-hovered state.
+                                .child(div().child(sender).relative().neg_left_1())
                                 // TODO: Only show this if the message if the message has been sent
                                 .child(
                                     Label::new(
@@ -2538,7 +2542,7 @@ impl Render for ConversationEditor {
             .child(
                 div()
                     .size_full()
-                    .pl_2()
+                    .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
@@ -2827,8 +2831,8 @@ impl InlineAssistant {
 
     fn handle_codegen_changed(&mut self, _: Model<Codegen>, cx: &mut ViewContext<Self>) {
         let is_read_only = !self.codegen.read(cx).idle();
-        self.prompt_editor.update(cx, |editor, _cx| {
-            let was_read_only = editor.read_only();
+        self.prompt_editor.update(cx, |editor, cx| {
+            let was_read_only = editor.read_only(cx);
             if was_read_only != is_read_only {
                 if is_read_only {
                     editor.set_read_only(true);
@@ -3063,7 +3067,7 @@ impl InlineAssistant {
     fn render_prompt_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if self.prompt_editor.read(cx).read_only() {
+            color: if self.prompt_editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text
@@ -3538,5 +3542,5 @@ fn report_assistant_event(
         .default_open_ai_model
         .clone();
 
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name(), cx)
+    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name())
 }

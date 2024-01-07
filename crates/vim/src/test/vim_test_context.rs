@@ -10,11 +10,11 @@ use search::BufferSearchBar;
 
 use crate::{state::Operator, *};
 
-pub struct VimTestContext<'a> {
-    cx: EditorLspTestContext<'a>,
+pub struct VimTestContext {
+    cx: EditorLspTestContext,
 }
 
-impl<'a> VimTestContext<'a> {
+impl VimTestContext {
     pub fn init(cx: &mut gpui::TestAppContext) {
         if cx.has_global::<Vim>() {
             dbg!("OOPS");
@@ -29,13 +29,13 @@ impl<'a> VimTestContext<'a> {
         });
     }
 
-    pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
+    pub async fn new(cx: &mut gpui::TestAppContext, enabled: bool) -> VimTestContext {
         Self::init(cx);
         let lsp = EditorLspTestContext::new_rust(Default::default(), cx).await;
         Self::new_with_lsp(lsp, enabled)
     }
 
-    pub async fn new_typescript(cx: &'a mut gpui::TestAppContext) -> VimTestContext<'a> {
+    pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> VimTestContext {
         Self::init(cx);
         Self::new_with_lsp(
             EditorLspTestContext::new_typescript(Default::default(), cx).await,
@@ -43,7 +43,7 @@ impl<'a> VimTestContext<'a> {
         )
     }
 
-    pub fn new_with_lsp(mut cx: EditorLspTestContext<'a>, enabled: bool) -> VimTestContext<'a> {
+    pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
         cx.update(|cx| {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
@@ -162,15 +162,15 @@ impl<'a> VimTestContext<'a> {
     }
 }
 
-impl<'a> Deref for VimTestContext<'a> {
-    type Target = EditorTestContext<'a>;
+impl Deref for VimTestContext {
+    type Target = EditorTestContext;
 
     fn deref(&self) -> &Self::Target {
         &self.cx
     }
 }
 
-impl<'a> DerefMut for VimTestContext<'a> {
+impl DerefMut for VimTestContext {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }

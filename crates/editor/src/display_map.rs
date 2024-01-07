@@ -240,7 +240,7 @@ impl DisplayMap {
     }
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
         let mut cleared = self.text_highlights.remove(&Some(type_id)).is_some();
-        cleared |= self.inlay_highlights.remove(&type_id).is_none();
+        cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
 

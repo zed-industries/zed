@@ -7,9 +7,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, serde_json, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState,
-    Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, list, prelude::*, px, AnyElement, AppContext, AsyncWindowContext, ClickEvent,
+    ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState, Model, Render,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -607,8 +607,12 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<ui::Icon> {
-        Some(ui::Icon::MessageBubbles)
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+        if !is_channels_feature_enabled(cx) {
+            return None;
+        }
+
+        Some(ui::Icon::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

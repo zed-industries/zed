@@ -7,8 +7,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, red, rems, serde_json, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    Model, PromptLevel, Render, Task, View, ViewContext,
+    div, red, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    PromptLevel, Render, Task, View, ViewContext,
 };
 use isahc::Request;
 use language::Buffer;
@@ -17,7 +17,7 @@ use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, Toast, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
 
@@ -125,6 +125,20 @@ impl FeedbackModal {
                 .language_for_name("Markdown");
 
             let project = workspace.project().clone();
+            let is_local_project = project.read(cx).is_local();
+
+            if !is_local_project {
+                const TOAST_ID: usize = 0xdeadbeef;
+
+                workspace.show_toast(
+                    Toast::new(
+                        TOAST_ID,
+                        "You can only submit feedback in your own project.",
+                    ),
+                    cx,
+                );
+                return;
+            }
 
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();

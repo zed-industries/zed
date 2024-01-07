@@ -188,15 +188,13 @@ impl DispatchTree {
         action: &dyn Action,
         context_stack: &Vec<KeyContext>,
     ) -> Vec<KeyBinding> {
-        self.keymap
-            .lock()
-            .bindings_for_action(action.type_id())
-            .filter(|candidate| {
-                if !candidate.action.partial_eq(action) {
-                    return false;
-                }
+        let keymap = self.keymap.lock();
+        keymap
+            .bindings_for_action(action)
+            .filter(|binding| {
                 for i in 1..context_stack.len() {
-                    if candidate.matches_context(&context_stack[0..=i]) {
+                    let context = &context_stack[0..i];
+                    if keymap.binding_enabled(binding, context) {
                         return true;
                     }
                 }

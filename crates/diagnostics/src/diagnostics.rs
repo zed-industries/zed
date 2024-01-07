@@ -151,7 +151,12 @@ impl ProjectDiagnosticsEditor {
         let focus_in_subscription =
             cx.on_focus_in(&focus_handle, |diagnostics, cx| diagnostics.focus_in(cx));
 
-        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
+        let excerpts = cx.new_model(|cx| {
+            MultiBuffer::new(
+                project_handle.read(cx).replica_id(),
+                project_handle.read(cx).capability(),
+            )
+        });
         let editor = cx.new_view(|cx| {
             let mut editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), cx);
@@ -1572,6 +1577,7 @@ mod tests {
             workspace::init_settings(cx);
             Project::init_settings(cx);
             crate::init(cx);
+            editor::init(cx);
         });
     }
 

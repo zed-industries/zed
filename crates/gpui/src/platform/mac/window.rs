@@ -1673,10 +1673,7 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     if send_new_event(&window_state, {
         let position = drag_event_position(&window_state, dragging_info);
         let paths = external_paths_from_event(dragging_info);
-        InputEvent::FileDrop(FileDropEvent::Entered {
-            position,
-            files: paths,
-        })
+        InputEvent::FileDrop(FileDropEvent::Entered { position, paths })
     }) {
         NSDragOperationCopy
     } else {

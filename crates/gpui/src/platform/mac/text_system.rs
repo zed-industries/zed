@@ -500,9 +500,9 @@ impl<'a> StringIndexConverter<'a> {
 }
 
 #[repr(C)]
-pub struct __CFTypesetter(c_void);
+pub(crate) struct __CFTypesetter(c_void);
 
-pub type CTTypesetterRef = *const __CFTypesetter;
+type CTTypesetterRef = *const __CFTypesetter;
 
 #[link(name = "CoreText", kind = "framework")]
 extern "C" {

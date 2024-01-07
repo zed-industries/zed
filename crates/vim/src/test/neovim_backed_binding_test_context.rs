@@ -4,30 +4,27 @@ use crate::state::Mode;
 
 use super::{ExemptionFeatures, NeovimBackedTestContext, SUPPORTED_FEATURES};
 
-pub struct NeovimBackedBindingTestContext<'a, const COUNT: usize> {
-    cx: NeovimBackedTestContext<'a>,
+pub struct NeovimBackedBindingTestContext<const COUNT: usize> {
+    cx: NeovimBackedTestContext,
     keystrokes_under_test: [&'static str; COUNT],
 }
 
-impl<'a, const COUNT: usize> NeovimBackedBindingTestContext<'a, COUNT> {
-    pub fn new(
-        keystrokes_under_test: [&'static str; COUNT],
-        cx: NeovimBackedTestContext<'a>,
-    ) -> Self {
+impl<const COUNT: usize> NeovimBackedBindingTestContext<COUNT> {
+    pub fn new(keystrokes_under_test: [&'static str; COUNT], cx: NeovimBackedTestContext) -> Self {
         Self {
             cx,
             keystrokes_under_test,
         }
     }
 
-    pub fn consume(self) -> NeovimBackedTestContext<'a> {
+    pub fn consume(self) -> NeovimBackedTestContext {
         self.cx
     }
 
     pub fn binding<const NEW_COUNT: usize>(
         self,
         keystrokes: [&'static str; NEW_COUNT],
-    ) -> NeovimBackedBindingTestContext<'a, NEW_COUNT> {
+    ) -> NeovimBackedBindingTestContext<NEW_COUNT> {
         self.consume().binding(keystrokes)
     }
 
@@ -80,15 +77,15 @@ impl<'a, const COUNT: usize> NeovimBackedBindingTestContext<'a, COUNT> {
     }
 }
 
-impl<'a, const COUNT: usize> Deref for NeovimBackedBindingTestContext<'a, COUNT> {
-    type Target = NeovimBackedTestContext<'a>;
+impl<const COUNT: usize> Deref for NeovimBackedBindingTestContext<COUNT> {
+    type Target = NeovimBackedTestContext;
 
     fn deref(&self) -> &Self::Target {
         &self.cx
     }
 }
 
-impl<'a, const COUNT: usize> DerefMut for NeovimBackedBindingTestContext<'a, COUNT> {
+impl<const COUNT: usize> DerefMut for NeovimBackedBindingTestContext<COUNT> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }

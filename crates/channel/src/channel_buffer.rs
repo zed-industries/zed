@@ -62,7 +62,12 @@ impl ChannelBuffer {
             .collect::<Result<Vec<_>, _>>()?;
 
         let buffer = cx.new_model(|_| {
-            language::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
+            language::Buffer::remote(
+                response.buffer_id,
+                response.replica_id as u16,
+                channel.channel_buffer_capability(),
+                base_text,
+            )
         })?;
         buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))??;
 

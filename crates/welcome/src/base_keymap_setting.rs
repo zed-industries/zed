@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -10,6 +12,18 @@ pub enum BaseKeymap {
     SublimeText,
     Atom,
     TextMate,
+}
+
+impl Display for BaseKeymap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BaseKeymap::VSCode => write!(f, "VSCode"),
+            BaseKeymap::JetBrains => write!(f, "JetBrains"),
+            BaseKeymap::SublimeText => write!(f, "Sublime Text"),
+            BaseKeymap::Atom => write!(f, "Atom"),
+            BaseKeymap::TextMate => write!(f, "TextMate"),
+        }
+    }
 }
 
 impl BaseKeymap {

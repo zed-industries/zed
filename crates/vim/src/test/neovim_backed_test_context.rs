@@ -47,8 +47,8 @@ impl ExemptionFeatures {
     }
 }
 
-pub struct NeovimBackedTestContext<'a> {
-    cx: VimTestContext<'a>,
+pub struct NeovimBackedTestContext {
+    cx: VimTestContext,
     // Lookup for exempted assertions. Keyed by the insertion text, and with a value indicating which
     // bindings are exempted. If None, all bindings are ignored for that insertion text.
     exemptions: HashMap<String, Option<HashSet<String>>>,
@@ -60,8 +60,8 @@ pub struct NeovimBackedTestContext<'a> {
     is_dirty: bool,
 }
 
-impl<'a> NeovimBackedTestContext<'a> {
-    pub async fn new(cx: &'a mut gpui::TestAppContext) -> NeovimBackedTestContext<'a> {
+impl NeovimBackedTestContext {
+    pub async fn new(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
         // rust stores the name of the test on the current thread.
         // We use this to automatically name a file that will store
         // the neovim connection's requests/responses so that we can
@@ -393,20 +393,20 @@ impl<'a> NeovimBackedTestContext<'a> {
     pub fn binding<const COUNT: usize>(
         self,
         keystrokes: [&'static str; COUNT],
-    ) -> NeovimBackedBindingTestContext<'a, COUNT> {
+    ) -> NeovimBackedBindingTestContext<COUNT> {
         NeovimBackedBindingTestContext::new(keystrokes, self)
     }
 }
 
-impl<'a> Deref for NeovimBackedTestContext<'a> {
-    type Target = VimTestContext<'a>;
+impl Deref for NeovimBackedTestContext {
+    type Target = VimTestContext;
 
     fn deref(&self) -> &Self::Target {
         &self.cx
     }
 }
 
-impl<'a> DerefMut for NeovimBackedTestContext<'a> {
+impl DerefMut for NeovimBackedTestContext {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }
@@ -415,7 +415,7 @@ impl<'a> DerefMut for NeovimBackedTestContext<'a> {
 // a common mistake in tests is to call set_shared_state when
 // you mean asswert_shared_state. This notices that and lets
 // you know.
-impl<'a> Drop for NeovimBackedTestContext<'a> {
+impl Drop for NeovimBackedTestContext {
     fn drop(&mut self) {
         if self.is_dirty {
             panic!("Test context was dropped after set_shared_state before assert_shared_state")
@@ -425,9 +425,8 @@ impl<'a> Drop for NeovimBackedTestContext<'a> {
 
 #[cfg(test)]
 mod test {
-    use gpui::TestAppContext;
-
     use crate::test::NeovimBackedTestContext;
+    use gpui::TestAppContext;
 
     #[gpui::test]
     async fn neovim_backed_test_context_works(cx: &mut TestAppContext) {

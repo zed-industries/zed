@@ -6,19 +6,17 @@ mod mac;
 mod test;
 
 use crate::{
-    point, size, Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId,
-    FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, Keymap,
-    LineLayout, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
-    Scene, SharedString, Size, TaskLabel,
+    Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, Keymap, LineLayout, Pixels,
+    Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene, SharedString,
+    Size, TaskLabel,
 };
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use parking::Unparker;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
-use sqlez::bindable::{Bind, Column, StaticColumnCount};
-use sqlez::statement::Statement;
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
@@ -39,7 +37,7 @@ pub use keystroke::*;
 pub use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
-pub use time::UtcOffset;
+use time::UtcOffset;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
@@ -394,67 +392,6 @@ pub enum WindowBounds {
     #[default]
     Maximized,
     Fixed(Bounds<GlobalPixels>),
-}
-
-impl StaticColumnCount for WindowBounds {
-    fn column_count() -> usize {
-        5
-    }
-}
-
-impl Bind for WindowBounds {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let (region, next_index) = match self {
-            WindowBounds::Fullscreen => {
-                let next_index = statement.bind(&"Fullscreen", start_index)?;
-                (None, next_index)
-            }
-            WindowBounds::Maximized => {
-                let next_index = statement.bind(&"Maximized", start_index)?;
-                (None, next_index)
-            }
-            WindowBounds::Fixed(region) => {
-                let next_index = statement.bind(&"Fixed", start_index)?;
-                (Some(*region), next_index)
-            }
-        };
-
-        statement.bind(
-            &region.map(|region| {
-                (
-                    region.origin.x,
-                    region.origin.y,
-                    region.size.width,
-                    region.size.height,
-                )
-            }),
-            next_index,
-        )
-    }
-}
-
-impl Column for WindowBounds {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (window_state, next_index) = String::column(statement, start_index)?;
-        let bounds = match window_state.as_str() {
-            "Fullscreen" => WindowBounds::Fullscreen,
-            "Maximized" => WindowBounds::Maximized,
-            "Fixed" => {
-                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
-                let x: f64 = x;
-                let y: f64 = y;
-                let width: f64 = width;
-                let height: f64 = height;
-                WindowBounds::Fixed(Bounds {
-                    origin: point(x.into(), y.into()),
-                    size: size(width.into(), height.into()),
-                })
-            }
-            _ => bail!("Window State did not have a valid string"),
-        };
-
-        Ok((bounds, next_index + 4))
-    }
 }
 
 #[derive(Copy, Clone, Debug)]

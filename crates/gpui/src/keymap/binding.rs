@@ -1,4 +1,4 @@
-use crate::{Action, KeyBindingContextPredicate, KeyContext, KeyMatch, Keystroke};
+use crate::{Action, KeyBindingContextPredicate, KeyMatch, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
@@ -42,21 +42,8 @@ impl KeyBinding {
         })
     }
 
-    pub fn matches_context(&self, contexts: &[KeyContext]) -> bool {
-        self.context_predicate
-            .as_ref()
-            .map(|predicate| predicate.eval(contexts))
-            .unwrap_or(true)
-    }
-
-    pub fn match_keystrokes(
-        &self,
-        pending_keystrokes: &[Keystroke],
-        contexts: &[KeyContext],
-    ) -> KeyMatch {
-        if self.keystrokes.as_ref().starts_with(pending_keystrokes)
-            && self.matches_context(contexts)
-        {
+    pub fn match_keystrokes(&self, pending_keystrokes: &[Keystroke]) -> KeyMatch {
+        if self.keystrokes.as_ref().starts_with(pending_keystrokes) {
             // If the binding is completed, push it onto the matches list
             if self.keystrokes.as_ref().len() == pending_keystrokes.len() {
                 KeyMatch::Some(vec![self.action.boxed_clone()])
@@ -68,23 +55,21 @@ impl KeyBinding {
         }
     }
 
-    pub fn keystrokes_for_action(
-        &self,
-        action: &dyn Action,
-        contexts: &[KeyContext],
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        if self.action.partial_eq(action) && self.matches_context(contexts) {
-            Some(self.keystrokes.clone())
-        } else {
-            None
-        }
-    }
-
     pub fn keystrokes(&self) -> &[Keystroke] {
         self.keystrokes.as_slice()
     }
 
     pub fn action(&self) -> &dyn Action {
         self.action.as_ref()
+    }
+}
+
+impl std::fmt::Debug for KeyBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyBinding")
+            .field("keystrokes", &self.keystrokes)
+            .field("context_predicate", &self.context_predicate)
+            .field("action", &self.action.name())
+            .finish()
     }
 }

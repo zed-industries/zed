@@ -10,11 +10,12 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
+use rpc::proto;
 use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
     h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconElement, Tooltip,
+    IconButton, IconElement, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -40,6 +41,7 @@ pub fn init(cx: &mut AppContext) {
         workspace.set_titlebar_item(titlebar_item.into(), cx)
     })
     .detach();
+    // todo!()
     // cx.add_action(CollabTitlebarItem::share_project);
     // cx.add_action(CollabTitlebarItem::unshare_project);
     // cx.add_action(CollabTitlebarItem::toggle_user_menu);
@@ -91,7 +93,7 @@ impl Render for CollabTitlebarItem {
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
-                    .children(self.render_project_branch(cx))
+                    .child(div().pr_1().children(self.render_project_branch(cx)))
                     .when_some(
                         current_user.clone().zip(client.peer_id()).zip(room.clone()),
                         |this, ((current_user, peer_id), room)| {
@@ -175,14 +177,27 @@ impl Render for CollabTitlebarItem {
                         let is_muted = room.is_muted(cx);
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
+                        let read_only = room.read_only();
 
-                        this.when(is_local, |this| {
+                        this.when(is_local && !read_only, |this| {
                             this.child(
                                 Button::new(
                                     "toggle_sharing",
                                     if is_shared { "Unshare" } else { "Share" },
                                 )
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if is_shared {
+                                            "Stop sharing project with call participants"
+                                        } else {
+                                            "Share project with call participants"
+                                        },
+                                        cx,
+                                    )
+                                })
                                 .style(ButtonStyle::Subtle)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                .selected(is_shared)
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(
                                     move |this, _, cx| {
@@ -196,29 +211,47 @@ impl Render for CollabTitlebarItem {
                             )
                         })
                         .child(
-                            IconButton::new("leave-call", ui::Icon::Exit)
+                            div()
+                                .child(
+                                    IconButton::new("leave-call", ui::Icon::Exit)
+                                        .style(ButtonStyle::Subtle)
+                                        .tooltip(|cx| Tooltip::text("Leave call", cx))
+                                        .icon_size(IconSize::Small)
+                                        .on_click(move |_, cx| {
+                                            ActiveCall::global(cx)
+                                                .update(cx, |call, cx| call.hang_up(cx))
+                                                .detach_and_log_err(cx);
+                                        }),
+                                )
+                                .pr_2(),
+                        )
+                        .when(!read_only, |this| {
+                            this.child(
+                                IconButton::new(
+                                    "mute-microphone",
+                                    if is_muted {
+                                        ui::Icon::MicMute
+                                    } else {
+                                        ui::Icon::Mic
+                                    },
+                                )
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if is_muted {
+                                            "Unmute microphone"
+                                        } else {
+                                            "Mute microphone"
+                                        },
+                                        cx,
+                                    )
+                                })
                                 .style(ButtonStyle::Subtle)
                                 .icon_size(IconSize::Small)
-                                .on_click(move |_, cx| {
-                                    ActiveCall::global(cx)
-                                        .update(cx, |call, cx| call.hang_up(cx))
-                                        .detach_and_log_err(cx);
-                                }),
-                        )
-                        .child(
-                            IconButton::new(
-                                "mute-microphone",
-                                if is_muted {
-                                    ui::Icon::MicMute
-                                } else {
-                                    ui::Icon::Mic
-                                },
+                                .selected(is_muted)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                                .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
                             )
-                            .style(ButtonStyle::Subtle)
-                            .icon_size(IconSize::Small)
-                            .selected(is_muted)
-                            .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
-                        )
+                        })
                         .child(
                             IconButton::new(
                                 "mute-sound",
@@ -229,22 +262,46 @@ impl Render for CollabTitlebarItem {
                                 },
                             )
                             .style(ButtonStyle::Subtle)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Negative))
                             .icon_size(IconSize::Small)
                             .selected(is_deafened)
                             .tooltip(move |cx| {
-                                Tooltip::with_meta("Deafen Audio", None, "Mic will be muted", cx)
+                                if !read_only {
+                                    Tooltip::with_meta(
+                                        "Deafen Audio",
+                                        None,
+                                        "Mic will be muted",
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::text("Deafen Audio", cx)
+                                }
                             })
-                            .on_click(move |_, cx| crate::toggle_mute(&Default::default(), cx)),
+                            .on_click(move |_, cx| crate::toggle_deafen(&Default::default(), cx)),
                         )
-                        .child(
-                            IconButton::new("screen-share", ui::Icon::Screen)
-                                .style(ButtonStyle::Subtle)
-                                .icon_size(IconSize::Small)
-                                .selected(is_screen_sharing)
-                                .on_click(move |_, cx| {
-                                    crate::toggle_screen_sharing(&Default::default(), cx)
-                                }),
-                        )
+                        .when(!read_only, |this| {
+                            this.child(
+                                IconButton::new("screen-share", ui::Icon::Screen)
+                                    .style(ButtonStyle::Subtle)
+                                    .icon_size(IconSize::Small)
+                                    .selected(is_screen_sharing)
+                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            if is_screen_sharing {
+                                                "Stop Sharing Screen"
+                                            } else {
+                                                "Share Screen"
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(move |_, cx| {
+                                        crate::toggle_screen_sharing(&Default::default(), cx)
+                                    }),
+                            )
+                        })
+                        .child(div().pr_2())
                     })
                     .map(|el| {
                         let status = self.client.status();
@@ -264,11 +321,19 @@ impl Render for CollabTitlebarItem {
 fn render_color_ribbon(participant_index: ParticipantIndex, colors: &PlayerColors) -> gpui::Canvas {
     let color = colors.color_for_participant(participant_index.0).cursor;
     canvas(move |bounds, cx| {
-        let mut path = Path::new(bounds.lower_left());
         let height = bounds.size.height;
-        path.curve_to(bounds.origin + point(height, px(0.)), bounds.origin);
-        path.line_to(bounds.upper_right() - point(height, px(0.)));
-        path.curve_to(bounds.lower_right(), bounds.upper_right());
+        let horizontal_offset = height;
+        let vertical_offset = px(height.0 / 2.0);
+        let mut path = Path::new(bounds.lower_left());
+        path.curve_to(
+            bounds.origin + point(horizontal_offset, vertical_offset),
+            bounds.origin + point(px(0.0), vertical_offset),
+        );
+        path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+        path.curve_to(
+            bounds.lower_right(),
+            bounds.upper_right() + point(px(0.0), vertical_offset),
+        );
         path.line_to(bounds.lower_left());
         cx.paint_path(path, color);
     })
@@ -409,6 +474,10 @@ impl CollabTitlebarItem {
         current_user: &Arc<User>,
         cx: &ViewContext<Self>,
     ) -> Option<FacePile> {
+        if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
+            return None;
+        }
+
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
 
         let pile = FacePile::default()
@@ -504,8 +573,7 @@ impl CollabTitlebarItem {
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")
-                    .bg(gpui::red()) // todo!() @nate
-                    .child(IconElement::new(Icon::Disconnected))
+                    .child(IconElement::new(Icon::Disconnected).size(IconSize::Small))
                     .tooltip(|cx| Tooltip::text("Disconnected", cx))
                     .into_any_element(),
             ),
@@ -522,9 +590,9 @@ impl CollabTitlebarItem {
                 };
 
                 Some(
-                    div()
-                        .bg(gpui::red()) // todo!() @nate
-                        .child(Button::new("connection-status", label).on_click(|_, cx| {
+                    Button::new("connection-status", label)
+                        .label_size(LabelSize::Small)
+                        .on_click(|_, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
                                 if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
                                     workspace::restart(&Default::default(), cx);
@@ -532,7 +600,7 @@ impl CollabTitlebarItem {
                                 }
                             }
                             auto_update::check(&Default::default(), cx);
-                        }))
+                        })
                         .into_any_element(),
                 )
             }
@@ -542,16 +610,18 @@ impl CollabTitlebarItem {
 
     pub fn render_sign_in_button(&mut self, _: &mut ViewContext<Self>) -> Button {
         let client = self.client.clone();
-        Button::new("sign_in", "Sign in").on_click(move |_, cx| {
-            let client = client.clone();
-            cx.spawn(move |mut cx| async move {
-                client
-                    .authenticate_and_connect(true, &cx)
-                    .await
-                    .notify_async_err(&mut cx);
+        Button::new("sign_in", "Sign in")
+            .label_size(LabelSize::Small)
+            .on_click(move |_, cx| {
+                let client = client.clone();
+                cx.spawn(move |mut cx| async move {
+                    client
+                        .authenticate_and_connect(true, &cx)
+                        .await
+                        .notify_async_err(&mut cx);
+                })
+                .detach();
             })
-            .detach();
-        })
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {

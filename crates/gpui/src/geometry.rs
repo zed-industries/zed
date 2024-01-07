@@ -31,39 +31,6 @@ pub trait Along {
     fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
 }
 
-impl sqlez::bindable::StaticColumnCount for Axis {}
-impl sqlez::bindable::Bind for Axis {
-    fn bind(
-        &self,
-        statement: &sqlez::statement::Statement,
-        start_index: i32,
-    ) -> anyhow::Result<i32> {
-        match self {
-            Axis::Horizontal => "Horizontal",
-            Axis::Vertical => "Vertical",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl sqlez::bindable::Column for Axis {
-    fn column(
-        statement: &mut sqlez::statement::Statement,
-        start_index: i32,
-    ) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(axis_text, next_index)| {
-            Ok((
-                match axis_text.as_str() {
-                    "Horizontal" => Axis::Horizontal,
-                    "Vertical" => Axis::Vertical,
-                    _ => anyhow::bail!("Stored serialized item kind is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
-}
-
 /// Describes a location in a 2D cartesian coordinate space.
 ///
 /// It holds two public fields, `x` and `y`, which represent the coordinates in the space.
@@ -1615,7 +1582,6 @@ impl From<f32> for Edges<Pixels> {
 /// Represents the corners of a box in a 2D space, such as border radius.
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
-/// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(Debug)]
 #[repr(C)]
@@ -2296,19 +2262,7 @@ impl From<f64> for GlobalPixels {
     }
 }
 
-impl sqlez::bindable::StaticColumnCount for GlobalPixels {}
-
-impl sqlez::bindable::Bind for GlobalPixels {
-    fn bind(
-        &self,
-        statement: &sqlez::statement::Statement,
-        start_index: i32,
-    ) -> anyhow::Result<i32> {
-        self.0.bind(statement, start_index)
-    }
-}
-
-/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [WindowContext::set_rem_size].
+/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`WindowContext::set_rem_size`][set_rem_size].
 ///
 /// Rems are used for defining lengths that are scalable and consistent across different UI elements.
 /// The value of `1rem` is typically equal to the font-size of the root element (often the `<html>` element in browsers),
@@ -2316,6 +2270,8 @@ impl sqlez::bindable::Bind for GlobalPixels {
 /// purpose, allowing for scalable and accessible design that can adjust to different display settings or user preferences.
 ///
 /// For example, if the root element's font-size is `16px`, then `1rem` equals `16px`. A length of `2rems` would then be `32px`.
+///
+/// [set_rem_size]: crate::WindowContext::set_rem_size
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg)]
 pub struct Rems(pub f32);
 

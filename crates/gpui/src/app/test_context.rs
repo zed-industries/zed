@@ -1,14 +1,13 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
-    InputEvent, IntoElement, KeyDownEvent, Keystroke, Model, ModelContext, Pixels, Platform,
-    PlatformWindow, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
-    TestWindowHandlers, TextSystem, View, ViewContext, VisualContext, WindowBounds, WindowContext,
-    WindowHandle, WindowOptions,
+    BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
+    IntoElement, Keystroke, Model, ModelContext, Pixels, Platform, Render, Result, Size, Task,
+    TestDispatcher, TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
-use std::{future::Future, mem, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -185,42 +184,11 @@ impl TestAppContext {
     }
 
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
-        let (mut handlers, scale_factor) = self
-            .app
-            .borrow_mut()
-            .update_window(window_handle, |_, cx| {
-                let platform_window = cx.window.platform_window.as_test().unwrap();
-                let scale_factor = platform_window.scale_factor();
-                match &mut platform_window.bounds {
-                    WindowBounds::Fullscreen | WindowBounds::Maximized => {
-                        platform_window.bounds = WindowBounds::Fixed(Bounds {
-                            origin: Point::default(),
-                            size: size.map(|pixels| f64::from(pixels).into()),
-                        });
-                    }
-                    WindowBounds::Fixed(bounds) => {
-                        bounds.size = size.map(|pixels| f64::from(pixels).into());
-                    }
-                }
+        self.test_window(window_handle).simulate_resize(size);
+    }
 
-                (
-                    mem::take(&mut platform_window.handlers.lock().resize),
-                    scale_factor,
-                )
-            })
-            .unwrap();
-
-        for handler in &mut handlers {
-            handler(size, scale_factor);
-        }
-
-        self.app
-            .borrow_mut()
-            .update_window(window_handle, |_, cx| {
-                let platform_window = cx.window.platform_window.as_test().unwrap();
-                platform_window.handlers.lock().resize = handlers;
-            })
-            .unwrap();
+    pub fn windows(&self) -> Vec<AnyWindowHandle> {
+        self.app.borrow().windows().clone()
     }
 
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
@@ -313,41 +281,22 @@ impl TestAppContext {
         keystroke: Keystroke,
         is_held: bool,
     ) {
-        let keystroke2 = keystroke.clone();
-        let handled = window
-            .update(self, |_, cx| {
-                cx.dispatch_event(InputEvent::KeyDown(KeyDownEvent { keystroke, is_held }))
-            })
-            .is_ok_and(|handled| handled);
-        if handled {
-            return;
-        }
-
-        let input_handler = self.update_test_window(window, |window| window.input_handler.clone());
-        let Some(input_handler) = input_handler else {
-            panic!(
-                "dispatch_keystroke {:?} failed to dispatch action or input",
-                &keystroke2
-            );
-        };
-        let text = keystroke2.ime_key.unwrap_or(keystroke2.key);
-        input_handler.lock().replace_text_in_range(None, &text);
+        self.test_window(window)
+            .simulate_keystroke(keystroke, is_held)
     }
 
-    pub fn update_test_window<R>(
-        &mut self,
-        window: AnyWindowHandle,
-        f: impl FnOnce(&mut TestWindow) -> R,
-    ) -> R {
-        window
-            .update(self, |_, cx| {
-                f(cx.window
-                    .platform_window
-                    .as_any_mut()
-                    .downcast_mut::<TestWindow>()
-                    .unwrap())
-            })
+    pub fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
+        self.app
+            .borrow_mut()
+            .windows
+            .get_mut(window.id)
             .unwrap()
+            .as_mut()
+            .unwrap()
+            .platform_window
+            .as_test()
+            .unwrap()
+            .clone()
     }
 
     pub fn notifications<T: 'static>(&mut self, entity: &impl Entity<T>) -> impl Stream<Item = ()> {
@@ -534,21 +483,24 @@ impl<V> View<V> {
 }
 
 use derive_more::{Deref, DerefMut};
-#[derive(Deref, DerefMut)]
-pub struct VisualTestContext<'a> {
+#[derive(Deref, DerefMut, Clone)]
+pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
-    cx: &'a mut TestAppContext,
+    cx: TestAppContext,
     window: AnyWindowHandle,
 }
 
-impl<'a> VisualTestContext<'a> {
+impl<'a> VisualTestContext {
     pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
 
-    pub fn from_window(window: AnyWindowHandle, cx: &'a mut TestAppContext) -> Self {
-        Self { cx, window }
+    pub fn from_window(window: AnyWindowHandle, cx: &TestAppContext) -> Self {
+        Self {
+            cx: cx.clone(),
+            window,
+        }
     }
 
     pub fn run_until_parked(&self) {
@@ -563,11 +515,7 @@ impl<'a> VisualTestContext<'a> {
     }
 
     pub fn window_title(&mut self) -> Option<String> {
-        self.cx
-            .update_window(self.window, |_, cx| {
-                cx.window.platform_window.as_test().unwrap().title.clone()
-            })
-            .unwrap()
+        self.cx.test_window(self.window).0.lock().title.clone()
     }
 
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
@@ -578,37 +526,11 @@ impl<'a> VisualTestContext<'a> {
         self.cx.simulate_input(self.window, input)
     }
 
-    pub fn simulate_activation(&mut self) {
-        self.simulate_window_events(&mut |handlers| {
-            handlers
-                .active_status_change
-                .iter_mut()
-                .for_each(|f| f(true));
-        })
-    }
-
-    pub fn simulate_deactivation(&mut self) {
-        self.simulate_window_events(&mut |handlers| {
-            handlers
-                .active_status_change
-                .iter_mut()
-                .for_each(|f| f(false));
-        })
-    }
-
-    fn simulate_window_events(&mut self, f: &mut dyn FnMut(&mut TestWindowHandlers)) {
-        let handlers = self
-            .cx
-            .update_window(self.window, |_, cx| {
-                cx.window
-                    .platform_window
-                    .as_test()
-                    .unwrap()
-                    .handlers
-                    .clone()
-            })
-            .unwrap();
-        f(&mut *handlers.lock());
+    pub fn deactivate_window(&mut self) {
+        if Some(self.window) == self.test_platform.active_window() {
+            self.test_platform.set_active_window(None)
+        }
+        self.background_executor.run_until_parked();
     }
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
@@ -619,8 +541,9 @@ impl<'a> VisualTestContext<'a> {
                     .platform_window
                     .as_test()
                     .unwrap()
-                    .should_close_handler
+                    .0
                     .lock()
+                    .should_close_handler
                     .take()
             })
             .unwrap();
@@ -638,7 +561,7 @@ impl<'a> VisualTestContext<'a> {
     }
 }
 
-impl<'a> Context for VisualTestContext<'a> {
+impl Context for VisualTestContext {
     type Result<T> = <TestAppContext as Context>::Result<T>;
 
     fn new_model<T: 'static>(
@@ -689,7 +612,7 @@ impl<'a> Context for VisualTestContext<'a> {
     }
 }
 
-impl<'a> VisualContext for VisualTestContext<'a> {
+impl VisualContext for VisualTestContext {
     fn new_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
@@ -698,7 +621,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         V: 'static + Render,
     {
         self.window
-            .update(self.cx, |_, cx| cx.new_view(build_view))
+            .update(&mut self.cx, |_, cx| cx.new_view(build_view))
             .unwrap()
     }
 
@@ -708,7 +631,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
     ) -> Self::Result<R> {
         self.window
-            .update(self.cx, |_, cx| cx.update_view(view, update))
+            .update(&mut self.cx, |_, cx| cx.update_view(view, update))
             .unwrap()
     }
 
@@ -720,13 +643,13 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         V: 'static + Render,
     {
         self.window
-            .update(self.cx, |_, cx| cx.replace_root_view(build_view))
+            .update(&mut self.cx, |_, cx| cx.replace_root_view(build_view))
             .unwrap()
     }
 
     fn focus_view<V: crate::FocusableView>(&mut self, view: &View<V>) -> Self::Result<()> {
         self.window
-            .update(self.cx, |_, cx| {
+            .update(&mut self.cx, |_, cx| {
                 view.read(cx).focus_handle(cx).clone().focus(cx)
             })
             .unwrap()
@@ -737,7 +660,7 @@ impl<'a> VisualContext for VisualTestContext<'a> {
         V: crate::ManagedView,
     {
         self.window
-            .update(self.cx, |_, cx| {
+            .update(&mut self.cx, |_, cx| {
                 view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
             })
             .unwrap()

@@ -561,6 +561,12 @@ impl From<Hsla> for Fill {
     }
 }
 
+impl From<Rgba> for Fill {
+    fn from(color: Rgba) -> Self {
+        Self::Color(color.into())
+    }
+}
+
 impl From<TextStyle> for HighlightStyle {
     fn from(other: TextStyle) -> Self {
         Self::from(&other)

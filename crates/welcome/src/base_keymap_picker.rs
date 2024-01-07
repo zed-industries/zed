@@ -1,4 +1,5 @@
 use super::base_keymap_setting::BaseKeymap;
+use client::telemetry::Telemetry;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusableView, Render, Task, View,
@@ -27,22 +28,22 @@ pub fn toggle(
     cx: &mut ViewContext<Workspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
+    let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
         BaseKeymapSelector::new(
-            BaseKeymapSelectorDelegate::new(cx.view().downgrade(), fs, cx),
+            BaseKeymapSelectorDelegate::new(cx.view().downgrade(), fs, telemetry, cx),
             cx,
         )
     });
 }
 
 pub struct BaseKeymapSelector {
-    focus_handle: gpui::FocusHandle,
     picker: View<Picker<BaseKeymapSelectorDelegate>>,
 }
 
 impl FocusableView for BaseKeymapSelector {
-    fn focus_handle(&self, _cx: &AppContext) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 
@@ -55,17 +56,13 @@ impl BaseKeymapSelector {
         cx: &mut ViewContext<BaseKeymapSelector>,
     ) -> Self {
         let picker = cx.new_view(|cx| Picker::new(delegate, cx));
-        let focus_handle = cx.focus_handle();
-        Self {
-            focus_handle,
-            picker,
-        }
+        Self { picker }
     }
 }
 
 impl Render for BaseKeymapSelector {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.picker.clone()
+        v_stack().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -73,6 +70,7 @@ pub struct BaseKeymapSelectorDelegate {
     view: WeakView<BaseKeymapSelector>,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
 }
 
@@ -80,6 +78,7 @@ impl BaseKeymapSelectorDelegate {
     fn new(
         weak_view: WeakView<BaseKeymapSelector>,
         fs: Arc<dyn Fs>,
+        telemetry: Arc<Telemetry>,
         cx: &mut ViewContext<BaseKeymapSelector>,
     ) -> Self {
         let base = BaseKeymap::get(None, cx);
@@ -91,6 +90,7 @@ impl BaseKeymapSelectorDelegate {
             view: weak_view,
             matches: Vec::new(),
             selected_index,
+            telemetry,
             fs,
         }
     }
@@ -172,6 +172,10 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>) {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
+
+            self.telemetry
+                .report_setting_event("keymap", base_keymap.to_string());
+
             update_settings_file::<BaseKeymap>(self.fs.clone(), cx, move |setting| {
                 *setting = Some(base_keymap)
             });
@@ -184,7 +188,13 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .ok();
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>) {}
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<BaseKeymapSelectorDelegate>>) {
+        self.view
+            .update(cx, |_, cx| {
+                cx.emit(DismissEvent);
+            })
+            .log_err();
+    }
 
     fn render_match(
         &self,

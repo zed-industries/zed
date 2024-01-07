@@ -43,7 +43,7 @@ use util::{
     ResultExt,
 };
 
-/// Temporary(?) wrapper around RefCell<AppContext> to help us debug any double borrows.
+/// Temporary(?) wrapper around [`RefCell<AppContext>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
 pub struct AppCell {
     app: RefCell<AppContext>,
@@ -964,7 +964,7 @@ impl AppContext {
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to
     /// event handlers with a lower z-index (mouse) or higher in the tree (keyboard). This is
-    /// the opposite of [propagate]. It's also possible to cancel a call to [propagate] by
+    /// the opposite of [`Self::propagate`]. It's also possible to cancel a call to [`Self::propagate`] by
     /// calling this method before effects are flushed.
     pub fn stop_propagation(&mut self) {
         self.propagate_event = false;
@@ -972,7 +972,7 @@ impl AppContext {
 
     /// Action handlers stop propagation by default during the bubble phase of action dispatch
     /// dispatching to action handlers higher in the element tree. This is the opposite of
-    /// [stop_propagation]. It's also possible to cancel a call to [stop_propagate] by calling
+    /// [`Self::stop_propagation`]. It's also possible to cancel a call to [`Self::stop_propagation`] by calling
     /// this method before effects are flushed.
     pub fn propagate(&mut self) {
         self.propagate_event = true;
@@ -1098,12 +1098,6 @@ impl AppContext {
 
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
-    }
-
-    pub fn active_drag<T: 'static>(&self) -> Option<&T> {
-        self.active_drag
-            .as_ref()
-            .and_then(|drag| drag.value.downcast_ref())
     }
 }
 

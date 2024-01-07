@@ -4,9 +4,10 @@ use crate::lsp_log::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{serde_json::json, Context, TestAppContext, VisualTestContext};
+use gpui::{Context, TestAppContext, VisualTestContext};
 use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageServerName};
 use project::{FakeFs, Project};
+use serde_json::json;
 use settings::SettingsStore;
 
 #[gpui::test]

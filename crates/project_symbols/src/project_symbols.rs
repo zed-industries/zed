@@ -260,9 +260,10 @@ impl PickerDelegate for ProjectSymbolsDelegate {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui::{serde_json::json, TestAppContext, VisualContext};
+    use gpui::{TestAppContext, VisualContext};
     use language::{FakeLspAdapter, Language, LanguageConfig};
     use project::FakeFs;
+    use serde_json::json;
     use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
 
@@ -395,6 +396,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
+            editor::init(cx);
         });
     }
 

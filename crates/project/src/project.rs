@@ -39,11 +39,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability,
+    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -262,6 +262,7 @@ enum ProjectClientState {
     },
     Remote {
         sharing_has_stopped: bool,
+        capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
     },
@@ -702,6 +703,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        role: proto::ChannelRole,
         mut cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
@@ -756,6 +758,7 @@ impl Project {
                 client: client.clone(),
                 client_state: Some(ProjectClientState::Remote {
                     sharing_has_stopped: false,
+                    capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
                 }),
@@ -796,6 +799,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
             };
+            this.set_role(role);
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
             }
@@ -1618,6 +1622,17 @@ impl Project {
         cx.notify();
     }
 
+    pub fn set_role(&mut self, role: proto::ChannelRole) {
+        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
+            *capability = if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin
+            {
+                Capability::ReadWrite
+            } else {
+                Capability::ReadOnly
+            };
+        }
+    }
+
     fn disconnected_from_host_internal(&mut self, cx: &mut AppContext) {
         if let Some(ProjectClientState::Remote {
             sharing_has_stopped,
@@ -1659,7 +1674,7 @@ impl Project {
         cx.emit(Event::Closed);
     }
 
-    pub fn is_read_only(&self) -> bool {
+    pub fn is_disconnected(&self) -> bool {
         match &self.client_state {
             Some(ProjectClientState::Remote {
                 sharing_has_stopped,
@@ -1667,6 +1682,17 @@ impl Project {
             }) => *sharing_has_stopped,
             _ => false,
         }
+    }
+
+    pub fn capability(&self) -> Capability {
+        match &self.client_state {
+            Some(ProjectClientState::Remote { capability, .. }) => *capability,
+            Some(ProjectClientState::Local { .. }) | None => Capability::ReadWrite,
+        }
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.is_disconnected() || self.capability() == Capability::ReadOnly
     }
 
     pub fn is_local(&self) -> bool {
@@ -6013,7 +6039,7 @@ impl Project {
             this.upgrade().context("project dropped")?;
             let response = rpc.request(message).await?;
             let this = this.upgrade().context("project dropped")?;
-            if this.update(&mut cx, |this, _| this.is_read_only())? {
+            if this.update(&mut cx, |this, _| this.is_disconnected())? {
                 Err(anyhow!("disconnected before completing request"))
             } else {
                 request
@@ -7192,7 +7218,8 @@ impl Project {
 
                     let buffer_id = state.id;
                     let buffer = cx.new_model(|_| {
-                        Buffer::from_proto(this.replica_id(), state, buffer_file).unwrap()
+                        Buffer::from_proto(this.replica_id(), this.capability(), state, buffer_file)
+                            .unwrap()
                     });
                     this.incomplete_remote_buffers
                         .insert(buffer_id, Some(buffer));
@@ -7940,7 +7967,7 @@ impl Project {
 
                 if let Some(buffer) = buffer {
                     break buffer;
-                } else if this.update(&mut cx, |this, _| this.is_read_only())? {
+                } else if this.update(&mut cx, |this, _| this.is_disconnected())? {
                     return Err(anyhow!("disconnected before buffer {} could be opened", id));
                 }
 

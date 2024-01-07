@@ -9,20 +9,18 @@ use crate::{
 };
 
 use futures::StreamExt;
-use gpui::{
-    div,
-    serde_json::{self, json},
-    TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
-};
+use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
-    BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry,
-    Override, Point,
+    BracketPairConfig,
+    Capability::ReadWrite,
+    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry, Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
+use serde_json::{self, json};
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
@@ -2355,7 +2353,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
             .with_language(rust_language, cx)
     });
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
             toml_buffer.clone(),
             [ExcerptRange {
@@ -6019,7 +6017,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
 
     let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(3, 4, 'a')));
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
             buffer.clone(),
             [
@@ -6103,7 +6101,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
     });
     let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), initial_text));
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(buffer, excerpt_ranges, cx);
         multibuffer
     });
@@ -6162,7 +6160,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(3, 4, 'a')));
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         excerpt1_id = multibuffer
             .push_excerpts(
                 buffer.clone(),
@@ -6247,7 +6245,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(3, 4, 'a')));
     let mut excerpt1_id = None;
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         excerpt1_id = multibuffer
             .push_excerpts(
                 buffer.clone(),
@@ -6636,7 +6634,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let leader = pane.update(cx, |_, cx| {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, ReadWrite));
         cx.new_view(|cx| build_editor(multibuffer.clone(), cx))
     });
 
@@ -7425,7 +7423,7 @@ async fn test_copilot_multibuffer(executor: BackgroundExecutor, cx: &mut gpui::T
     let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a = 1\nb = 2\n"));
     let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "c = 3\nd = 4\n"));
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [ExcerptRange {
@@ -7552,7 +7550,7 @@ async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut gpui
         .unwrap();
 
     let multibuffer = cx.new_model(|cx| {
-        let mut multibuffer = MultiBuffer::new(0);
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
         multibuffer.push_excerpts(
             private_buffer.clone(),
             [ExcerptRange {
@@ -8130,8 +8128,8 @@ fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewCo
 /// Handle completion request passing a marked string specifying where the completion
 /// should be triggered from using '|' character, what range should be replaced, and what completions
 /// should be returned using '<' and '>' to delimit the range
-pub fn handle_completion_request<'a>(
-    cx: &mut EditorLspTestContext<'a>,
+pub fn handle_completion_request(
+    cx: &mut EditorLspTestContext,
     marked_string: &str,
     completions: Vec<&'static str>,
 ) -> impl Future<Output = ()> {
@@ -8176,8 +8174,8 @@ pub fn handle_completion_request<'a>(
     }
 }
 
-fn handle_resolve_completion_request<'a>(
-    cx: &mut EditorLspTestContext<'a>,
+fn handle_resolve_completion_request(
+    cx: &mut EditorLspTestContext,
     edits: Option<Vec<(&'static str, &'static str)>>,
 ) -> impl Future<Output = ()> {
     let edits = edits.map(|edits| {
