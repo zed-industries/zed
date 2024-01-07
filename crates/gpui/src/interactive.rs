@@ -214,7 +214,7 @@ impl Render for ExternalPaths {
 pub enum FileDropEvent {
     Entered {
         position: Point<Pixels>,
-        files: ExternalPaths,
+        paths: ExternalPaths,
     },
     Pending {
         position: Point<Pixels>,
