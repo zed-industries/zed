@@ -2394,12 +2394,7 @@ impl CollabPanel {
         {
             item.child(Label::new(pending_name))
         } else {
-            item.child(
-                div()
-                    .w_full()
-                    .py_1() // todo!() @nate this is a px off at the default font size.
-                    .child(self.channel_name_editor.clone()),
-            )
+            item.child(self.channel_name_editor.clone())
         }
     }
 }
