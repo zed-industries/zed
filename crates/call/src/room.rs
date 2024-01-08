@@ -620,6 +620,27 @@ impl Room {
         self.local_participant.role == proto::ChannelRole::Admin
     }
 
+    pub fn set_participant_role(
+        &mut self,
+        user_id: u64,
+        role: proto::ChannelRole,
+        cx: &ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let room_id = self.id;
+        let role = role.into();
+        cx.spawn(|_, _| async move {
+            client
+                .request(proto::SetRoomParticipantRole {
+                    room_id,
+                    user_id,
+                    role,
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+
     pub fn pending_participants(&self) -> &[Arc<User>] {
         &self.pending_participants
     }
@@ -731,7 +752,7 @@ impl Room {
 
                         this.joined_projects.retain(|project| {
                             if let Some(project) = project.upgrade() {
-                                project.update(cx, |project, _| project.set_role(role));
+                                project.update(cx, |project, cx| project.set_role(role, cx));
                                 true
                             } else {
                                 false

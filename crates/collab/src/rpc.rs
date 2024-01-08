@@ -202,6 +202,7 @@ impl Server {
             .add_request_handler(join_room)
             .add_request_handler(rejoin_room)
             .add_request_handler(leave_room)
+            .add_request_handler(set_room_participant_role)
             .add_request_handler(call)
             .add_request_handler(cancel_call)
             .add_message_handler(decline_call)
@@ -1254,6 +1255,27 @@ async fn leave_room(
     session: Session,
 ) -> Result<()> {
     leave_room_for_session(&session).await?;
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn set_room_participant_role(
+    request: proto::SetRoomParticipantRole,
+    response: Response<proto::SetRoomParticipantRole>,
+    session: Session,
+) -> Result<()> {
+    let room = session
+        .db()
+        .await
+        .set_room_participant_role(
+            session.user_id,
+            RoomId::from_proto(request.room_id),
+            UserId::from_proto(request.user_id),
+            ChannelRole::from(request.role()),
+        )
+        .await?;
+
+    room_updated(&room, &session.peer);
     response.send(proto::Ack {})?;
     Ok(())
 }

@@ -238,6 +238,10 @@ impl TestAppContext {
         }
     }
 
+    pub fn run_until_parked(&mut self) {
+        self.background_executor.run_until_parked()
+    }
+
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
         A: Action,

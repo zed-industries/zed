@@ -799,7 +799,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
             };
-            this.set_role(role);
+            this.set_role(role, cx);
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
             }
@@ -1622,14 +1622,22 @@ impl Project {
         cx.notify();
     }
 
-    pub fn set_role(&mut self, role: proto::ChannelRole) {
-        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
-            *capability = if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin
-            {
+    pub fn set_role(&mut self, role: proto::ChannelRole, cx: &mut ModelContext<Self>) {
+        let new_capability =
+            if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin {
                 Capability::ReadWrite
             } else {
                 Capability::ReadOnly
             };
+        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
+            if *capability == new_capability {
+                return;
+            }
+
+            *capability = new_capability;
+        }
+        for buffer in self.opened_buffers() {
+            buffer.update(cx, |buffer, cx| buffer.set_capability(new_capability, cx));
         }
     }
 

@@ -17,7 +17,6 @@ pub struct VimTestContext {
 impl VimTestContext {
     pub fn init(cx: &mut gpui::TestAppContext) {
         if cx.has_global::<Vim>() {
-            dbg!("OOPS");
             return;
         }
         cx.update(|cx| {
