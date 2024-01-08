@@ -1,3 +1,9 @@
+// TODO - Test if locking slows Zed typing down
+// TODO - Make sure to send last event on flush
+// TODO - Move code to be used as arcs in editor and terminal
+
+mod event_coalescer;
+
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use chrono::{DateTime, Utc};
 use futures::Future;
@@ -5,7 +11,6 @@ use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
-use serde_json;
 use settings::{Settings, SettingsStore};
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{
@@ -14,6 +19,8 @@ use sysinfo::{
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
+
+use self::event_coalescer::EventCoalescer;
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
@@ -34,6 +41,7 @@ struct TelemetryState {
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
     first_event_datetime: Option<DateTime<Utc>>,
+    edit_activity: EventCoalescer,
 }
 
 const EVENTS_URL_PATH: &'static str = "/api/events";
@@ -118,6 +126,11 @@ pub enum Event {
         value: String,
         milliseconds_since_first_event: i64,
     },
+    Edit {
+        duration: i64,
+        environment: &'static str,
+        milliseconds_since_first_event: i64,
+    },
 }
 
 #[cfg(debug_assertions)]
@@ -127,10 +140,10 @@ const MAX_QUEUE_LEN: usize = 1;
 const MAX_QUEUE_LEN: usize = 50;
 
 #[cfg(debug_assertions)]
-const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
+const FLUSH_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
-const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(60 * 5);
+const FLUSH_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
@@ -150,11 +163,12 @@ impl Telemetry {
             installation_id: None,
             metrics_id: None,
             session_id: None,
-            events_queue: Default::default(),
-            flush_events_task: Default::default(),
+            events_queue: Vec::new(),
+            flush_events_task: None,
             log_file: None,
             is_staff: None,
             first_event_datetime: None,
+            edit_activity: EventCoalescer::new(),
         }));
 
         cx.observe_global::<SettingsStore>({
@@ -392,6 +406,23 @@ impl Telemetry {
         }
     }
 
+    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
+        let mut state = self.state.lock();
+
+        let coalesced_duration = state.edit_activity.log_event(environment);
+
+        if let Some((start, end)) = coalesced_duration {
+            let event = Event::Edit {
+                duration: end.timestamp_millis() - start.timestamp_millis(),
+                environment,
+                milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            };
+
+            drop(state);
+            self.report_event(event);
+        }
+    }
+
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
@@ -410,7 +441,7 @@ impl Telemetry {
                 let this = self.clone();
                 let executor = self.executor.clone();
                 state.flush_events_task = Some(self.executor.spawn(async move {
-                    executor.timer(DEBOUNCE_INTERVAL).await;
+                    executor.timer(FLUSH_DEBOUNCE_INTERVAL).await;
                     this.flush_events();
                 }));
             }

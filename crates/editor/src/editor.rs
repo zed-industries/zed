@@ -8664,6 +8664,10 @@ impl Editor {
                         }
                     }
                 }
+
+                let Some(project) = &self.project else { return };
+                let telemetry = project.read(cx).client().telemetry().clone();
+                telemetry.log_edit_event("editor");
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
