@@ -12,7 +12,7 @@ use crate::{
     VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -256,6 +256,7 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    pub(crate) dirty_views: FxHashSet<EntityId>,
     frame_arena: Arena,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
@@ -295,6 +296,8 @@ pub(crate) struct Frame {
     pub(crate) next_stacking_order_id: u32,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
+    pub(crate) view_parents: FxHashMap<EntityId, EntityId>,
+    pub(crate) view_stack: Vec<EntityId>,
 }
 
 impl Frame {
@@ -310,6 +313,8 @@ impl Frame {
             depth_map: Default::default(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            view_parents: FxHashMap::default(),
+            view_stack: Vec::new(),
         }
     }
 
@@ -319,6 +324,8 @@ impl Frame {
         self.dispatch_tree.clear();
         self.depth_map.clear();
         self.next_stacking_order_id = 0;
+        self.view_parents.clear();
+        debug_assert!(self.view_stack.is_empty());
     }
 
     fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -404,6 +411,7 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            dirty_views: FxHashSet::default(),
             frame_arena: Arena::new(1024 * 1024),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
@@ -1423,6 +1431,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.drawing = false;
+        self.window.dirty_views.clear();
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
         scene
@@ -2119,6 +2128,13 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         result
     }
 
+    fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window_mut().next_frame.view_stack.push(view_id);
+        let result = f(self);
+        self.window_mut().next_frame.view_stack.pop();
+        result
+    }
+
     /// Update the global element offset relative to the current offset. This is used to implement
     /// scrolling.
     fn with_element_offset<R>(
@@ -2476,6 +2492,21 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     pub fn notify(&mut self) {
+        let mut dirty_view_id = Some(self.view.entity_id());
+        while let Some(view_id) = dirty_view_id {
+            if self.window_cx.window.dirty_views.insert(view_id) {
+                dirty_view_id = self
+                    .window_cx
+                    .window
+                    .rendered_frame
+                    .view_parents
+                    .get(&view_id)
+                    .copied();
+            } else {
+                break;
+            }
+        }
+
         if !self.window.drawing {
             self.window_cx.notify();
             self.window_cx.app.push_effect(Effect::Notify {

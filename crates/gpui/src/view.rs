@@ -95,7 +95,7 @@ impl<V: Render> Element for View<V> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
-        element.take().unwrap().paint(cx);
+        cx.with_view_id(self.entity_id(), |cx| element.take().unwrap().paint(cx));
     }
 }
 
@@ -272,33 +272,36 @@ impl Element for AnyView {
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        if !self.cache {
-            state.element.take().unwrap().paint(cx);
-            return;
-        }
-
-        if let Some(cache_key) = state.cache_key.as_mut() {
-            if cache_key.bounds == bounds
-                && cache_key.content_mask == cx.content_mask()
-                && cache_key.stacking_order == *cx.stacking_order()
-                && cache_key.text_style == cx.text_style()
-            {
-                println!("could reuse geometry for view {}", self.entity_id());
+        cx.with_view_id(self.entity_id(), |cx| {
+            if !self.cache {
+                state.element.take().unwrap().paint(cx);
+                return;
             }
-        }
 
-        let mut element = state
-            .element
-            .take()
-            .unwrap_or_else(|| (self.request_layout)(self, cx).1);
-        element.draw(bounds.origin, bounds.size.into(), cx);
+            if let Some(cache_key) = state.cache_key.as_mut() {
+                if cache_key.bounds == bounds
+                    && cache_key.content_mask == cx.content_mask()
+                    && cache_key.stacking_order == *cx.stacking_order()
+                    && cache_key.text_style == cx.text_style()
+                    && !cx.window.dirty_views.contains(&self.entity_id())
+                {
+                    println!("could reuse geometry for view {}", self.entity_id());
+                }
+            }
 
-        state.cache_key = Some(ViewCacheKey {
-            bounds,
-            stacking_order: cx.stacking_order().clone(),
-            content_mask: cx.content_mask(),
-            text_style: cx.text_style(),
-        });
+            let mut element = state
+                .element
+                .take()
+                .unwrap_or_else(|| (self.request_layout)(self, cx).1);
+            element.draw(bounds.origin, bounds.size.into(), cx);
+
+            state.cache_key = Some(ViewCacheKey {
+                bounds,
+                stacking_order: cx.stacking_order().clone(),
+                content_mask: cx.content_mask(),
+                text_style: cx.text_style(),
+            });
+        })
     }
 }
 
