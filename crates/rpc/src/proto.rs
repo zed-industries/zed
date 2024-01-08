@@ -31,6 +31,7 @@ pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 's
 }
 
 pub trait EntityMessage: EnvelopedMessage {
+    type Entity;
     fn remote_entity_id(&self) -> u64;
 }
 
@@ -369,7 +370,7 @@ request_messages!(
 );
 
 entity_messages!(
-    project_id,
+    {project_id, ShareProject},
     AddProjectCollaborator,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
@@ -422,7 +423,7 @@ entity_messages!(
 );
 
 entity_messages!(
-    channel_id,
+    {channel_id, Channel},
     ChannelMessageSent,
     RemoveChannelMessage,
     UpdateChannelBuffer,

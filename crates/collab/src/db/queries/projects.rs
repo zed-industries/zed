@@ -777,6 +777,34 @@ impl Database {
         .await
     }
 
+    pub async fn check_user_is_project_host(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<()> {
+        let room_id = self.room_id_for_project(project_id).await?;
+        self.room_transaction(room_id, |tx| async move {
+            project_collaborator::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(project_collaborator::Column::ProjectId.eq(project_id))
+                        .add(project_collaborator::Column::IsHost.eq(true))
+                        .add(project_collaborator::Column::ConnectionId.eq(connection_id.id))
+                        .add(
+                            project_collaborator::Column::ConnectionServerId
+                                .eq(connection_id.owner_id),
+                        ),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("failed to read project host"))?;
+
+            Ok(())
+        })
+        .await
+        .map(|guard| guard.into_inner())
+    }
+
     pub async fn host_for_mutating_project_request(
         &self,
         project_id: ProjectId,
