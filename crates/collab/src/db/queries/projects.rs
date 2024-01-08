@@ -805,6 +805,43 @@ impl Database {
         .map(|guard| guard.into_inner())
     }
 
+    pub async fn host_for_read_only_project_request(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<ConnectionId> {
+        let room_id = self.room_id_for_project(project_id).await?;
+        self.room_transaction(room_id, |tx| async move {
+            let current_participant = room_participant::Entity::find()
+                .filter(room_participant::Column::RoomId.eq(room_id))
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such room"))?;
+
+            if !current_participant
+                .role
+                .map_or(false, |role| role.can_read_projects())
+            {
+                Err(anyhow!("not authorized to read projects"))?;
+            }
+
+            let host = project_collaborator::Entity::find()
+                .filter(
+                    project_collaborator::Column::ProjectId
+                        .eq(project_id)
+                        .and(project_collaborator::Column::IsHost.eq(true)),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("failed to read project host"))?;
+
+            Ok(host.connection())
+        })
+        .await
+        .map(|guard| guard.into_inner())
+    }
+
     pub async fn host_for_mutating_project_request(
         &self,
         project_id: ProjectId,
@@ -821,8 +858,7 @@ impl Database {
 
             if !current_participant
                 .role
-                .unwrap_or(ChannelRole::Guest)
-                .can_edit_projects()
+                .map_or(false, |role| role.can_edit_projects())
             {
                 Err(anyhow!("not authorized to edit projects"))?;
             }
@@ -843,13 +879,27 @@ impl Database {
         .map(|guard| guard.into_inner())
     }
 
-    pub async fn project_collaborators(
+    pub async fn project_collaborators_for_buffer_update(
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
     ) -> Result<RoomGuard<Vec<ProjectCollaborator>>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
+            let current_participant = room_participant::Entity::find()
+                .filter(room_participant::Column::RoomId.eq(room_id))
+                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such room"))?;
+
+            if !current_participant
+                .role
+                .map_or(false, |role| role.can_edit_projects())
+            {
+                Err(anyhow!("not authorized to edit projects"))?;
+            }
+
             let collaborators = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
                 .all(&*tx)

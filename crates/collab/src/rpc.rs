@@ -227,7 +227,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
-            .add_request_handler(forward_mutating_project_request::<proto::OpenBufferByPath>)
+            .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_mutating_project_request::<proto::GetCompletions>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
@@ -1750,24 +1750,15 @@ where
     T: EntityMessage + RequestMessage,
 {
     let project_id = ProjectId::from_proto(request.remote_entity_id());
-    let host_connection_id = {
-        let collaborators = session
-            .db()
-            .await
-            .project_collaborators(project_id, session.connection_id)
-            .await?;
-        collaborators
-            .iter()
-            .find(|collaborator| collaborator.is_host)
-            .ok_or_else(|| anyhow!("host not found"))?
-            .connection_id
-    };
-
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_read_only_project_request(project_id, session.connection_id)
+        .await?;
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
         .await?;
-
     response.send(payload)?;
     Ok(())
 }
@@ -1786,12 +1777,10 @@ where
         .await
         .host_for_mutating_project_request(project_id, session.connection_id)
         .await?;
-
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
         .await?;
-
     response.send(payload)?;
     Ok(())
 }
@@ -1823,11 +1812,12 @@ async fn update_buffer(
     let project_id = ProjectId::from_proto(request.project_id);
     let mut guest_connection_ids;
     let mut host_connection_id = None;
+
     {
         let collaborators = session
             .db()
             .await
-            .project_collaborators(project_id, session.connection_id)
+            .project_collaborators_for_buffer_update(project_id, session.connection_id)
             .await?;
         guest_connection_ids = Vec::with_capacity(collaborators.len() - 1);
         for collaborator in collaborators.iter() {
