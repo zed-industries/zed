@@ -585,7 +585,6 @@ pub fn handle_keymap_file_changes(
                     }
                 }
             }
-
             cx.update(|cx| reload_keymaps(cx, &user_keymap)).ok();
         }
     })
@@ -773,10 +772,9 @@ mod tests {
     use super::*;
     use assets::Assets;
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
-    use fs::{FakeFs, Fs};
     use gpui::{
-        actions, div, Action, AnyWindowHandle, AppContext, AssetSource, Entity, FocusHandle,
-        InteractiveElement, IntoElement, Render, TestAppContext, VisualTestContext, WindowHandle,
+        actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
+        VisualTestContext, WindowHandle,
     };
     use language::LanguageRegistry;
     use project::{project_settings::ProjectSettings, Project, ProjectPath};
@@ -841,7 +839,6 @@ mod tests {
         let workspace_1 = cx
             .read(|cx| cx.windows()[0].downcast::<Workspace>())
             .unwrap();
-        dbg!(workspace_1.window_id());
         workspace_1
             .update(cx, |workspace, cx| {
                 assert_eq!(workspace.worktrees(cx).count(), 2);
@@ -2432,132 +2429,146 @@ mod tests {
                 .unwrap()
         }
     }
+    fn init_keymap_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
 
+            theme::init(theme::LoadThemes::JustBase, cx);
+            client::init(&app_state.client, cx);
+            language::init(cx);
+            workspace::init(app_state.clone(), cx);
+            welcome::init(cx);
+            Project::init_settings(cx);
+            app_state
+        })
+    }
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
-        struct TestView;
+        let executor = cx.executor();
+        let app_state = init_keymap_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
-        impl Render for TestView {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
-        let executor = cx.background_executor.clone();
-        let fs = FakeFs::new(executor.clone());
-
-        actions!(test, [A, B]);
+        actions!(test1, [A, B]);
         // From the Atom keymap
-        actions!(workspace, [ActivatePreviousPane]);
+        use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
-        actions!(pane, [ActivatePrevItem]);
+        use workspace::ActivatePrevItem;
 
-        fs.save(
-            "/settings.json".as_ref(),
-            &r#"
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
                 {
                     "base_keymap": "Atom"
                 }
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
 
-        fs.save(
-            "/keymap.json".as_ref(),
-            &r#"
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
                 [
                     {
                         "bindings": {
-                            "backspace": "test::A"
+                            "backspace": "test1::A"
                         }
                     }
                 ]
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-
-        cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            welcome::init(cx);
-
-            cx.on_action(|_: &A, _cx| {});
-            cx.on_action(|_: &B, _cx| {});
-            cx.on_action(|_: &ActivatePreviousPane, _cx| {});
-            cx.on_action(|_: &ActivatePrevItem, _cx| {});
-
-            let settings_rx =
-                watch_config_file(&executor, fs.clone(), PathBuf::from("/settings.json"));
-            let keymap_rx = watch_config_file(&executor, fs.clone(), PathBuf::from("/keymap.json"));
-
-            handle_keymap_file_changes(keymap_rx, cx);
-            handle_settings_file_changes(settings_rx, cx);
-        });
-
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
         executor.run_until_parked();
-
-        let window = cx.add_window(|_| TestView);
-
+        cx.update(|cx| {
+            let settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/settings.json"),
+            );
+            let keymap_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/keymap.json"),
+            );
+            handle_settings_file_changes(settings_rx, cx);
+            handle_keymap_file_changes(keymap_rx, cx);
+        });
+        workspace
+            .update(cx, |workspace, _| {
+                workspace.register_action(|_, _: &A, _cx| {});
+                workspace.register_action(|_, _: &B, _cx| {});
+                workspace.register_action(|_, _: &ActivatePreviousPane, _cx| {});
+                workspace.register_action(|_, _: &ActivatePrevItem, _cx| {});
+            })
+            .unwrap();
+        executor.run_until_parked();
         // Test loading the keymap base at all
         assert_key_bindings_for(
-            window.into(),
+            workspace.into(),
             cx,
             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
         // Test modifying the users keymap, while retaining the base keymap
-        fs.save(
-            "/keymap.json".as_ref(),
-            &r#"
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
                 [
                     {
                         "bindings": {
-                            "backspace": "test::B"
+                            "backspace": "test1::B"
                         }
                     }
                 ]
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
 
         executor.run_until_parked();
 
         assert_key_bindings_for(
-            window.into(),
+            workspace.into(),
             cx,
             vec![("backspace", &B), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
         // Test modifying the base, while retaining the users keymap
-        fs.save(
-            "/settings.json".as_ref(),
-            &r#"
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
                 {
                     "base_keymap": "JetBrains"
                 }
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
 
         executor.run_until_parked();
 
         assert_key_bindings_for(
-            window.into(),
+            workspace.into(),
             cx,
             vec![("backspace", &B), ("[", &ActivatePrevItem)],
             line!(),
@@ -2566,98 +2577,89 @@ mod tests {
 
     #[gpui::test]
     async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
-        struct TestView {
-            focus_handle: FocusHandle,
-        }
+        let executor = cx.executor();
+        let app_state = init_keymap_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
-        impl Render for TestView {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-                div()
-                    .id("test")
-                    .on_action(|_: &A, _| {})
-                    .on_action(|_: &B, _| {})
-                    .on_action(|_: &ActivatePreviousPane, _| {})
-                    .on_action(|_: &ActivatePrevItem, _| {})
-            }
-        }
-
-        impl FocusableView for TestView {
-            fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-                self.focus_handle.clone()
-            }
-        }
-        let executor = cx.background_executor.clone();
-        let fs = FakeFs::new(executor.clone());
-
-        actions!(test, [A, B]);
+        actions!(test2, [A, B]);
         // From the Atom keymap
-        actions!(workspace, [ActivatePreviousPane]);
+        use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
-        actions!(pane, [ActivatePrevItem]);
-
-        fs.save(
-            "/settings.json".as_ref(),
-            &r#"
+        use pane::ActivatePrevItem;
+        workspace
+            .update(cx, |workspace, _| {
+                workspace
+                    .register_action(|_, _: &A, _| {})
+                    .register_action(|_, _: &B, _| {});
+            })
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
                 {
                     "base_keymap": "Atom"
                 }
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-        fs.save(
-            "/keymap.json".as_ref(),
-            &r#"
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
                 [
                     {
                         "bindings": {
-                            "backspace": "test::A"
+                            "backspace": "test2::A"
                         }
                     }
                 ]
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
 
         cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            welcome::init(cx);
+            let settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/settings.json"),
+            );
+            let keymap_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/keymap.json"),
+            );
 
-            let settings_rx =
-                watch_config_file(&executor, fs.clone(), PathBuf::from("/settings.json"));
-            let keymap_rx = watch_config_file(&executor, fs.clone(), PathBuf::from("/keymap.json"));
-
-            handle_keymap_file_changes(keymap_rx, cx);
             handle_settings_file_changes(settings_rx, cx);
+            handle_keymap_file_changes(keymap_rx, cx);
         });
 
         cx.background_executor.run_until_parked();
 
-        let window = cx.add_window(|cx| TestView {
-            focus_handle: cx.focus_handle(),
-        });
-        cx.update(|cx| window.update(cx, |_, cx| cx.focus_self()))
-            .unwrap();
         cx.background_executor.run_until_parked();
         // Test loading the keymap base at all
         assert_key_bindings_for(
-            window.into(),
+            workspace.into(),
             cx,
             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
         // Test disabling the key binding for the base keymap
-        fs.save(
-            "/keymap.json".as_ref(),
-            &r#"
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
                 [
                     {
                         "bindings": {
@@ -2666,38 +2668,45 @@ mod tests {
                     }
                 ]
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
 
         cx.background_executor.run_until_parked();
 
         assert_key_bindings_for(
-            window.into(),
+            workspace.into(),
             cx,
             vec![("k", &ActivatePreviousPane)],
             line!(),
         );
 
         // Test modifying the base, while retaining the users keymap
-        fs.save(
-            "/settings.json".as_ref(),
-            &r#"
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
                 {
                     "base_keymap": "JetBrains"
                 }
                 "#
-            .into(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
 
         cx.background_executor.run_until_parked();
 
-        assert_key_bindings_for(window.into(), cx, vec![("[", &ActivatePrevItem)], line!());
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("[", &ActivatePrevItem)],
+            line!(),
+        );
     }
 
     #[gpui::test]
@@ -2801,21 +2810,16 @@ mod tests {
         let available_actions = cx
             .update(|cx| window.update(cx, |_, cx| cx.available_actions()))
             .unwrap();
-
-        let focus_handle = cx
-            .update(|cx| window.update(cx, |_, cx| cx.focus_handle()))
-            .unwrap();
         for (key, action) in actions {
             let bindings = cx
-                .update(|cx| {
-                    window.update(cx, |_, cx| cx.bindings_for_action_in(action, &focus_handle))
-                })
+                .update(|cx| window.update(cx, |_, cx| cx.bindings_for_action(action)))
                 .unwrap();
             // assert that...
             assert!(
-                available_actions.iter().any(|bound_action|
-                        // action names match...
-                        bound_action.partial_eq(action)),
+                available_actions.iter().any(|bound_action| {
+                    // actions match...
+                    bound_action.partial_eq(action)
+                }),
                 "On {} Failed to find {}",
                 line,
                 action.name(),
