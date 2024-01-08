@@ -67,7 +67,10 @@ impl Render for Breadcrumbs {
                     })
                     .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
             ),
-            None => element.child(breadcrumbs_stack),
+            None => element
+                // Match the height of the `ButtonLike` in the other arm.
+                .h(rems(22. / 16.))
+                .child(breadcrumbs_stack),
         }
     }
 }

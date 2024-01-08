@@ -95,7 +95,6 @@ impl Render for QuickActionBar {
 
         h_stack()
             .id("quick action bar")
-            .p_1()
             .gap_2()
             .children(inlay_hints_button)
             .children(search_button)
