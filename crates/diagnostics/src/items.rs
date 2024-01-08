@@ -25,11 +25,7 @@ impl Render for DiagnosticIndicator {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_stack().map(|this| {
                 if !self.in_progress_checks.is_empty() {
-                    this.child(
-                        IconElement::new(Icon::ArrowCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
+                    this.child(IconElement::new(Icon::ArrowCircle).size(IconSize::Small))
                 } else {
                     this.child(
                         IconElement::new(Icon::Check)
@@ -74,7 +70,6 @@ impl Render for DiagnosticIndicator {
             Some(
                 Label::new("Checking…")
                     .size(LabelSize::Small)
-                    .color(Color::Muted)
                     .into_any_element(),
             )
         } else if let Some(diagnostic) = &self.current_diagnostic {
