@@ -1515,6 +1515,16 @@ impl Render for ProjectPanel {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, cx| {
+                        // When deploying the context menu anywhere below the last project entry,
+                        // act as if the user clicked the root of the last worktree.
+                        if let Some(entry_id) = this.last_worktree_root_id {
+                            this.deploy_context_menu(event.position, entry_id, cx);
+                        }
+                    }),
+                )
                 .track_focus(&self.focus_handle)
                 .child(
                     uniform_list(
