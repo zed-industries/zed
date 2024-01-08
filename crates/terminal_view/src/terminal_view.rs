@@ -2,8 +2,6 @@ mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 
-// todo!()
-// use crate::terminal_element::TerminalElement;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
