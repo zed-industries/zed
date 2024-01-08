@@ -84,10 +84,14 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: current_project_directory
     pub working_directory: Option<WorkingDirectory>,
-    /// Set the terminal's font size. If this option is not included,
+    /// Set the terminal's font size.
+    ///
+    /// If this option is not included,
     /// the terminal will default to matching the buffer's font size.
     pub font_size: Option<f32>,
-    /// Set the terminal's font family. If this option is not included,
+    /// Set the terminal's font family.
+    ///
+    /// If this option is not included,
     /// the terminal will default to matching the buffer's font family.
     pub font_family: Option<String>,
     /// Set the terminal's line height.
