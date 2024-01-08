@@ -6581,7 +6581,14 @@ impl Project {
                 let removed = *change == PathChange::Removed;
                 let abs_path = worktree.absolutize(path);
                 settings_contents.push(async move {
-                    (settings_dir, (!removed).then_some(fs.load(&abs_path).await))
+                    (
+                        settings_dir,
+                        if removed {
+                            None
+                        } else {
+                            Some(async move { fs.load(&abs_path?).await }.await)
+                        },
+                    )
                 });
             }
         }

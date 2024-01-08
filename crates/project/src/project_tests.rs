@@ -4278,6 +4278,81 @@ fn test_glob_literal_prefix() {
     assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
 }
 
+#[gpui::test]
+async fn test_create_entry(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/one/two",
+        json!({
+            "three": {
+                "a.txt": "",
+                "four": {}
+            },
+            "c.rs": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/one/two/three".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| {
+            let id = project.worktrees().next().unwrap().read(cx).id();
+            project.create_entry((id, "b.."), true, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+    // Can't create paths outside the project
+    let result = project
+        .update(cx, |project, cx| {
+            let id = project.worktrees().next().unwrap().read(cx).id();
+            project.create_entry((id, "../../boop"), true, cx)
+        })
+        .await;
+    assert!(result.is_err());
+
+    // Can't create paths with '..'
+    let result = project
+        .update(cx, |project, cx| {
+            let id = project.worktrees().next().unwrap().read(cx).id();
+            project.create_entry((id, "four/../beep"), true, cx)
+        })
+        .await;
+    assert!(result.is_err());
+
+    assert_eq!(
+        fs.paths(true),
+        vec![
+            PathBuf::from("/"),
+            PathBuf::from("/one"),
+            PathBuf::from("/one/two"),
+            PathBuf::from("/one/two/c.rs"),
+            PathBuf::from("/one/two/three"),
+            PathBuf::from("/one/two/three/a.txt"),
+            PathBuf::from("/one/two/three/b.."),
+            PathBuf::from("/one/two/three/four"),
+        ]
+    );
+
+    // ************************************
+    // Note: unsure if this is the best fix for the integration failure, but assuming we want
+    // to keep that behavior, then this test should cover it
+    // ************************************
+
+    // But we can open buffers with '..'
+    let result = project
+        .update(cx, |project, cx| {
+            let id = project.worktrees().next().unwrap().read(cx).id();
+            project.open_buffer((id, "../c.rs"), cx)
+        })
+        .await;
+
+    assert!(dbg!(result).is_ok())
+}
+
 async fn search(
     project: &Model<Project>,
     query: SearchQuery,
