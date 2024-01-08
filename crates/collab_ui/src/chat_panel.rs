@@ -19,7 +19,6 @@ use rich_text::RichText;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, TabBar, Tooltip};
 use util::{ResultExt, TryFutureExt};
@@ -48,7 +47,7 @@ pub struct ChatPanel {
     languages: Arc<LanguageRegistry>,
     message_list: ListState,
     active_chat: Option<(Model<ChannelChat>, Subscription)>,
-    input_editor: View<MessageEditor>,
+    message_editor: View<MessageEditor>,
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
@@ -120,7 +119,7 @@ impl ChatPanel {
                 message_list,
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
-                input_editor,
+                message_editor: input_editor,
                 local_timezone: cx.local_timezone(),
                 subscriptions: Vec::new(),
                 workspace: workspace_handle,
@@ -209,7 +208,7 @@ impl ChatPanel {
                 self.message_list.reset(chat.message_count());
 
                 let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
-                self.input_editor.update(cx, |editor, cx| {
+                self.message_editor.update(cx, |editor, cx| {
                     editor.set_channel(channel_id, channel_name, cx);
                 });
             };
@@ -300,13 +299,7 @@ impl ChatPanel {
                     this
                 }
             }))
-            .child(
-                div()
-                    .z_index(1)
-                    .p_2()
-                    .bg(cx.theme().colors().background)
-                    .child(self.input_editor.clone()),
-            )
+            .child(h_stack().p_2().child(self.message_editor.clone()))
             .into_any()
     }
 
@@ -469,7 +462,7 @@ impl ChatPanel {
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             let message = self
-                .input_editor
+                .message_editor
                 .update(cx, |editor, cx| editor.take_message(cx));
 
             if let Some(task) = chat
@@ -585,7 +578,7 @@ impl Render for ChatPanel {
 
 impl FocusableView for ChatPanel {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.input_editor.read(cx).focus_handle(cx)
+        self.message_editor.read(cx).focus_handle(cx)
     }
 }
 
