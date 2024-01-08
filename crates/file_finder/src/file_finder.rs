@@ -1297,7 +1297,7 @@ mod tests {
         // so that one should be sorted earlier
         let b_path = ProjectPath {
             worktree_id,
-            path: Arc::from(Path::new("/root/dir2/b.txt")),
+            path: Arc::from(Path::new("dir2/b.txt")),
         };
         workspace
             .update(cx, |workspace, cx| {

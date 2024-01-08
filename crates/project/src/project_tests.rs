@@ -4337,20 +4337,14 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    // ************************************
-    // Note: unsure if this is the best fix for the integration failure, but assuming we want
-    // to keep that behavior, then this test should cover it
-    // ************************************
-
-    // But we can open buffers with '..'
+    // And we cannot open buffers with '..'
     let result = project
         .update(cx, |project, cx| {
             let id = project.worktrees().next().unwrap().read(cx).id();
             project.open_buffer((id, "../c.rs"), cx)
         })
         .await;
-
-    assert!(dbg!(result).is_ok())
+    assert!(result.is_err())
 }
 
 async fn search(
