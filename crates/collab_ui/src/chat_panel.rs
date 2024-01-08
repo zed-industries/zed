@@ -428,26 +428,42 @@ impl ChatPanel {
         rich_text::render_markdown(message.body.clone(), &mentions, language_registry, None)
     }
 
-    fn render_sign_in_prompt(&self, cx: &mut ViewContext<Self>) -> AnyElement {
-        Button::new("sign-in", "Sign in to use chat")
-            .on_click(cx.listener(move |this, _, cx| {
-                let client = this.client.clone();
-                cx.spawn(|this, mut cx| async move {
-                    if client
-                        .authenticate_and_connect(true, &cx)
-                        .log_err()
-                        .await
-                        .is_some()
-                    {
-                        this.update(&mut cx, |_, cx| {
-                            cx.focus_self();
+    fn render_sign_in_prompt(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_stack()
+            .gap_2()
+            .p_4()
+            .child(
+                Button::new("sign-in", "Sign in")
+                    .style(ButtonStyle::Filled)
+                    .icon_color(Color::Muted)
+                    .icon(Icon::Github)
+                    .icon_position(IconPosition::Start)
+                    .full_width()
+                    .on_click(cx.listener(move |this, _, cx| {
+                        let client = this.client.clone();
+                        cx.spawn(|this, mut cx| async move {
+                            if client
+                                .authenticate_and_connect(true, &cx)
+                                .log_err()
+                                .await
+                                .is_some()
+                            {
+                                this.update(&mut cx, |_, cx| {
+                                    cx.focus_self();
+                                })
+                                .ok();
+                            }
                         })
-                        .ok();
-                    }
-                })
-                .detach();
-            }))
-            .into_any_element()
+                        .detach();
+                    })),
+            )
+            .child(
+                div().flex().w_full().items_center().child(
+                    Label::new("Sign in to chat.")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                ),
+            )
     }
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -550,12 +566,18 @@ impl EventEmitter<Event> for ChatPanel {}
 
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .full()
-            .child(if self.client.user_id().is_some() {
-                self.render_channel(cx)
-            } else {
-                self.render_sign_in_prompt(cx)
+        v_stack()
+            .size_full()
+            .map(|this| match (self.client.user_id(), self.active_chat()) {
+                (Some(_), Some(_)) => this.child(self.render_channel(cx)),
+                (Some(_), None) => this.child(
+                    div().p_4().child(
+                        Label::new("Select a channel to chat in.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+                ),
+                (None, _) => this.child(self.render_sign_in_prompt(cx)),
             })
             .min_w(px(150.))
     }
