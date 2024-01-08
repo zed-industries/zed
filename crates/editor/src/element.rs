@@ -795,7 +795,7 @@ impl EditorElement {
                     cx.paint_quad(quad(
                         highlight_bounds,
                         Corners::all(1. * line_height),
-                        gpui::yellow(), // todo!("use the right color")
+                        cx.theme().status().modified,
                         Edges::default(),
                         transparent_black(),
                     ));
