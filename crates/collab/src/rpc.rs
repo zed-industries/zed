@@ -217,39 +217,43 @@ impl Server {
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
             .add_message_handler(refresh_inlay_hints)
-            .add_request_handler(forward_project_request::<proto::GetHover>)
-            .add_request_handler(forward_project_request::<proto::GetDefinition>)
-            .add_request_handler(forward_project_request::<proto::GetTypeDefinition>)
-            .add_request_handler(forward_project_request::<proto::GetReferences>)
-            .add_request_handler(forward_project_request::<proto::SearchProject>)
-            .add_request_handler(forward_project_request::<proto::GetDocumentHighlights>)
-            .add_request_handler(forward_project_request::<proto::GetProjectSymbols>)
-            .add_request_handler(forward_project_request::<proto::OpenBufferForSymbol>)
-            .add_request_handler(forward_project_request::<proto::OpenBufferById>)
-            .add_request_handler(forward_project_request::<proto::OpenBufferByPath>)
-            .add_request_handler(forward_project_request::<proto::GetCompletions>)
-            .add_request_handler(forward_project_request::<proto::ApplyCompletionAdditionalEdits>)
-            .add_request_handler(forward_project_request::<proto::ResolveCompletionDocumentation>)
-            .add_request_handler(forward_project_request::<proto::GetCodeActions>)
-            .add_request_handler(forward_project_request::<proto::ApplyCodeAction>)
-            .add_request_handler(forward_project_request::<proto::PrepareRename>)
-            .add_request_handler(forward_project_request::<proto::PerformRename>)
-            .add_request_handler(forward_project_request::<proto::ReloadBuffers>)
-            .add_request_handler(forward_project_request::<proto::SynchronizeBuffers>)
-            .add_request_handler(forward_project_request::<proto::FormatBuffers>)
-            .add_request_handler(forward_project_request::<proto::CreateProjectEntry>)
-            .add_request_handler(forward_project_request::<proto::RenameProjectEntry>)
-            .add_request_handler(forward_project_request::<proto::CopyProjectEntry>)
-            .add_request_handler(forward_project_request::<proto::DeleteProjectEntry>)
-            .add_request_handler(forward_project_request::<proto::ExpandProjectEntry>)
-            .add_request_handler(forward_project_request::<proto::OnTypeFormatting>)
-            .add_request_handler(forward_project_request::<proto::InlayHints>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetHover>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
+            .add_request_handler(forward_read_only_project_request::<proto::SearchProject>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetProjectSymbols>)
+            .add_request_handler(forward_read_only_project_request::<proto::OpenBufferForSymbol>)
+            .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
+            .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
+            .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
+            .add_request_handler(forward_mutating_project_request::<proto::OpenBufferByPath>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetCompletions>)
+            .add_request_handler(
+                forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
+            )
+            .add_request_handler(
+                forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
+            )
+            .add_request_handler(forward_mutating_project_request::<proto::GetCodeActions>)
+            .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
+            .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
+            .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
+            .add_request_handler(forward_mutating_project_request::<proto::ReloadBuffers>)
+            .add_request_handler(forward_mutating_project_request::<proto::FormatBuffers>)
+            .add_request_handler(forward_mutating_project_request::<proto::CreateProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::RenameProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::CopyProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::DeleteProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
+            .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
+            .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(update_buffer_file)
             .add_message_handler(buffer_reloaded)
             .add_message_handler(buffer_saved)
-            .add_request_handler(forward_project_request::<proto::SaveBuffer>)
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
             .add_request_handler(request_contact)
@@ -1741,7 +1745,7 @@ async fn update_language_server(
     Ok(())
 }
 
-async fn forward_project_request<T>(
+async fn forward_read_only_project_request<T>(
     request: T,
     response: Response<T>,
     session: Session,
@@ -1762,6 +1766,30 @@ where
             .ok_or_else(|| anyhow!("host not found"))?
             .connection_id
     };
+
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+
+    response.send(payload)?;
+    Ok(())
+}
+
+async fn forward_mutating_project_request<T>(
+    request: T,
+    response: Response<T>,
+    session: Session,
+) -> Result<()>
+where
+    T: EntityMessage + RequestMessage,
+{
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_mutating_project_request(project_id, session.connection_id)
+        .await?;
 
     let payload = session
         .peer
