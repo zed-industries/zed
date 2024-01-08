@@ -487,6 +487,7 @@ impl PaneAxis {
             basis,
             self.flexes.clone(),
             self.bounding_boxes.clone(),
+            cx.view().downgrade(),
         )
         .children(self.members.iter().enumerate().map(|(ix, member)| {
             if member.contains(active_pane) {
@@ -575,21 +576,25 @@ mod element {
     use gpui::{
         px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, InteractiveBounds,
         IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WindowContext,
+        Size, Style, WeakView, WindowContext,
     };
     use parking_lot::Mutex;
     use smallvec::SmallVec;
     use ui::prelude::*;
+    use util::ResultExt;
+
+    use crate::Workspace;
 
     use super::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE};
 
     const DIVIDER_SIZE: f32 = 1.0;
 
-    pub fn pane_axis(
+    pub(super) fn pane_axis(
         axis: Axis,
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+        workspace: WeakView<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
@@ -598,6 +603,7 @@ mod element {
             bounding_boxes,
             children: SmallVec::new(),
             active_pane_ix: None,
+            workspace,
         }
     }
 
@@ -608,6 +614,7 @@ mod element {
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
+        workspace: WeakView<Workspace>,
     }
 
     impl PaneAxisElement {
@@ -623,6 +630,7 @@ mod element {
             axis: Axis,
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
+            workspace: WeakView<Workspace>,
             cx: &mut WindowContext,
         ) {
             let min_size = match axis {
@@ -697,7 +705,9 @@ mod element {
             }
 
             // todo!(schedule serialize)
-            // workspace.schedule_serialize(cx);
+            workspace
+                .update(cx, |this, cx| this.schedule_serialize(cx))
+                .log_err();
             cx.notify();
         }
 
@@ -708,6 +718,7 @@ mod element {
             ix: usize,
             pane_bounds: Bounds<Pixels>,
             axis_bounds: Bounds<Pixels>,
+            workspace: WeakView<Workspace>,
             cx: &mut WindowContext,
         ) {
             let handle_bounds = Bounds {
@@ -743,30 +754,38 @@ mod element {
                 cx.on_mouse_event({
                     let dragged_handle = dragged_handle.clone();
                     let flexes = flexes.clone();
+                    let workspace = workspace.clone();
                     move |e: &MouseDownEvent, phase, cx| {
                         if phase.bubble() && handle_bounds.contains(&e.position) {
                             dragged_handle.replace(Some(ix));
                             if e.click_count >= 2 {
                                 let mut borrow = flexes.lock();
                                 *borrow = vec![1.; borrow.len()];
-
+                                workspace
+                                    .update(cx, |this, cx| this.schedule_serialize(cx))
+                                    .log_err();
                                 cx.notify();
                             }
                         }
                     }
                 });
-                cx.on_mouse_event(move |e: &MouseMoveEvent, phase, cx| {
-                    let dragged_handle = dragged_handle.borrow();
-                    if phase.bubble() && *dragged_handle == Some(ix) {
-                        Self::compute_resize(
-                            &flexes,
-                            e,
-                            ix,
-                            axis,
-                            pane_bounds.origin,
-                            axis_bounds.size,
-                            cx,
-                        )
+                cx.on_mouse_event({
+                    let workspace = workspace.clone();
+                    move |e: &MouseMoveEvent, phase, cx| {
+                        let dragged_handle = dragged_handle.borrow();
+
+                        if phase.bubble() && *dragged_handle == Some(ix) {
+                            Self::compute_resize(
+                                &flexes,
+                                e,
+                                ix,
+                                axis,
+                                pane_bounds.origin,
+                                axis_bounds.size,
+                                workspace.clone(),
+                                cx,
+                            )
+                        }
                     }
                 });
             });
@@ -847,6 +866,7 @@ mod element {
                             ix,
                             child_bounds,
                             bounds,
+                            self.workspace.clone(),
                             cx,
                         );
                     }
