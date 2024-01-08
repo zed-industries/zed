@@ -179,12 +179,12 @@ impl FeedbackModal {
             editor
         });
 
-        let placeholder_text =
-            "You can use markdown to organize your feedback with code and links.";
-
         let feedback_editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
-            editor.set_placeholder_text(placeholder_text, cx);
+            editor.set_placeholder_text(
+                "You can use markdown to organize your feedback with code and links.",
+                cx,
+            );
             editor.set_show_gutter(false, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
@@ -421,9 +421,6 @@ impl Render for FeedbackModal {
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
-        let provide_an_email_address =
-            "Provide an email address if you want us to be able to reply.";
-
         v_stack()
             .elevation_3(cx)
             .key_context("GiveFeedback")
@@ -463,17 +460,26 @@ impl Render for FeedbackModal {
                     .child(self.feedback_editor.clone()),
             )
             .child(
-                h_stack()
-                    .bg(cx.theme().colors().editor_background)
-                    .p_2()
-                    .border()
-                    .rounded_md()
-                    .border_color(if self.valid_email_address() {
-                        cx.theme().colors().border
-                    } else {
-                        cx.theme().status().error_border
-                    })
-                    .child(self.email_address_editor.clone()),
+                v_stack()
+                    .gap_1()
+                    .child(
+                        h_stack()
+                            .bg(cx.theme().colors().editor_background)
+                            .p_2()
+                            .border()
+                            .rounded_md()
+                            .border_color(if self.valid_email_address() {
+                                cx.theme().colors().border
+                            } else {
+                                cx.theme().status().error_border
+                            })
+                            .child(self.email_address_editor.clone()),
+                    )
+                    .child(
+                        Label::new("Provide an email address if you want us to be able to reply.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
             .child(
                 h_stack()
@@ -510,12 +516,7 @@ impl Render for FeedbackModal {
                                         this.submit(cx).detach();
                                     }))
                                     .tooltip(move |cx| {
-                                        Tooltip::with_meta(
-                                            "Submit feedback to the Zed team.",
-                                            None,
-                                            provide_an_email_address,
-                                            cx,
-                                        )
+                                        Tooltip::text("Submit feedback to the Zed team.", cx)
                                     })
                                     .when(!self.can_submit(), |this| this.disabled(true)),
                             ),
