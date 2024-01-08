@@ -1459,14 +1459,16 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
     }
 }
 
-///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
-///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
+/// Generates the RGB channels in [0, 5] for a given index into the 6x6x6 ANSI color cube.
+/// See: [8 bit ANSI color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
 ///
-///Wikipedia gives a formula for calculating the index for a given color:
+/// Wikipedia gives a formula for calculating the index for a given color:
 ///
-///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
+/// ```
+/// index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
+/// ```
 ///
-///This function does the reverse, calculating the r, g, and b components from a given index.
+/// This function does the reverse, calculating the `r`, `g`, and `b` components from a given index.
 fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
     debug_assert!((&16..=&231).contains(&i));
     let i = i - 16;
