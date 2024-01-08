@@ -179,14 +179,13 @@ impl FeedbackModal {
             editor
         });
 
-        // Moved here because providing it inline breaks rustfmt
         let placeholder_text =
             "You can use markdown to organize your feedback with code and links.";
 
         let feedback_editor = cx.new_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
             editor.set_placeholder_text(placeholder_text, cx);
-            // editor.set_show_gutter(false, cx);
+            editor.set_show_gutter(false, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -422,7 +421,6 @@ impl Render for FeedbackModal {
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
-        // Moved this here because providing it inline breaks rustfmt
         let provide_an_email_address =
             "Provide an email address if you want us to be able to reply.";
 
@@ -434,11 +432,8 @@ impl Render for FeedbackModal {
             .max_w(rems(96.))
             .h(rems(32.))
             .p_4()
-            .gap_4()
-            .child(v_stack().child(
-                // TODO: Add Headline component to `ui2`
-                div().text_xl().child("Share Feedback"),
-            ))
+            .gap_2()
+            .child(Headline::new("Share Feedback"))
             .child(
                 Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
                     format!(
