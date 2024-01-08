@@ -11,7 +11,7 @@ If you already have an idea of what you'd like to contribute, you can skip this 
 
 *If you are a plugin developer looking to contribute by building out the Zed ecosystem, have a look at these [issues](https://github.com/zed-industries/community/issues?q=is%3Aopen+is%3Aissue+label%3A%22potential+plugin%22+sort%3Areactions-%2B1-desc).*
 
-In the short term, we want to provide a generalized solutions to these problems (plugin system/theme system), so we are not looking to add these features to Zed itself.
+In the short term, we want to provide a generalized solutions to these problems (plugin system/theme system), so we are not looking to add these features to Zed itself
 
 - Adding languages
 - Themes
