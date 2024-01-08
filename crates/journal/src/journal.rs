@@ -15,7 +15,7 @@ use workspace::{AppState, OpenVisible, Workspace};
 
 actions!(journal, [NewJournalEntry]);
 
-/// // Settings specific to journaling
+/// Settings specific to journaling
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JournalSettings {
     /// The path of the directory where journal entries are stored.
