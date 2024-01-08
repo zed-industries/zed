@@ -15,9 +15,16 @@ use workspace::{AppState, OpenVisible, Workspace};
 
 actions!(journal, [NewJournalEntry]);
 
+/// // Settings specific to journaling
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JournalSettings {
+    /// The path of the directory where journal entries are stored.
+    ///
+    /// Default: `~`
     pub path: Option<String>,
+    /// What format to display the hours in.
+    ///
+    /// Default: hour12
     pub hour_format: Option<HourFormat>,
 }
 

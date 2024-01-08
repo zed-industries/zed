@@ -11,6 +11,7 @@ pub struct CallSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct CallSettingsContent {
+    /// Whether the microphone should be muted when joining a channel or a call.
     pub mute_on_join: Option<bool>,
 }
 
