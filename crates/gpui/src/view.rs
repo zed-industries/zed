@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use std::{
-    any::TypeId,
+    any::{type_name, TypeId},
     fmt,
     hash::{Hash, Hasher},
 };
@@ -101,6 +101,14 @@ impl<V> Clone for View<V> {
         Self {
             model: self.model.clone(),
         }
+    }
+}
+
+impl<T> std::fmt::Debug for View<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(&format!("View<{}>", type_name::<T>()))
+            .field("entity_id", &self.model.entity_id)
+            .finish_non_exhaustive()
     }
 }
 

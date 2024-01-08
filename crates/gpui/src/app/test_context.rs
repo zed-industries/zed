@@ -532,6 +532,33 @@ impl<'a> VisualTestContext {
         }
         self.background_executor.run_until_parked();
     }
+    /// Returns true if the window was closed.
+    pub fn simulate_close(&mut self) -> bool {
+        let handler = self
+            .cx
+            .update_window(self.window, |_, cx| {
+                cx.window
+                    .platform_window
+                    .as_test()
+                    .unwrap()
+                    .0
+                    .lock()
+                    .should_close_handler
+                    .take()
+            })
+            .unwrap();
+        if let Some(mut handler) = handler {
+            let should_close = handler();
+            self.cx
+                .update_window(self.window, |_, cx| {
+                    cx.window.platform_window.on_should_close(handler);
+                })
+                .unwrap();
+            should_close
+        } else {
+            false
+        }
+    }
 }
 
 impl Context for VisualTestContext {

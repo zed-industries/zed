@@ -266,7 +266,7 @@ impl Platform for TestPlatform {
     }
 
     fn local_timezone(&self) -> time::UtcOffset {
-        unimplemented!()
+        time::UtcOffset::UTC
     }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<std::path::PathBuf> {

@@ -658,7 +658,7 @@ impl Workspace {
             cx.on_release(|this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
-                    debug_assert!(store.workspaces.remove(&window));
+                    store.workspaces.remove(&window);
                 })
             }),
         ];
