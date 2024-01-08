@@ -1,3 +1,4 @@
+use crate::sign_in::CopilotCodeVerification;
 use anyhow::Result;
 use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
@@ -331,7 +332,9 @@ fn initiate_sign_in(cx: &mut WindowContext) {
         return;
     };
     let status = copilot.read(cx).status();
-
+    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+        return;
+    };
     match status {
         Status::Starting { task } => {
             let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
@@ -370,9 +373,12 @@ fn initiate_sign_in(cx: &mut WindowContext) {
             .detach();
         }
         _ => {
-            copilot
-                .update(cx, |copilot, cx| copilot.sign_in(cx))
-                .detach_and_log_err(cx);
+            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
+            workspace
+                .update(cx, |this, cx| {
+                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
+                })
+                .ok();
         }
     }
 }

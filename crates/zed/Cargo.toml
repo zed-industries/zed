@@ -30,7 +30,7 @@ command_palette = { path = "../command_palette" }
 client = { path = "../client" }
 # clock = { path = "../clock" }
 copilot = { path = "../copilot" }
-copilot_button = { path = "../copilot_button" }
+copilot_ui = { path = "../copilot_ui" }
 diagnostics = { path = "../diagnostics" }
 db = { path = "../db" }
 editor = { path = "../editor" }

@@ -1688,12 +1688,11 @@ dependencies = [
  "settings",
  "smol",
  "theme",
- "ui",
  "util",
 ]
 
 [[package]]
-name = "copilot_button"
+name = "copilot_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1706,6 +1705,7 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "ui",
  "util",
  "workspace",
  "zed_actions",
@@ -9547,7 +9547,7 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot",
- "copilot_button",
+ "copilot_ui",
  "ctor",
  "db",
  "diagnostics",

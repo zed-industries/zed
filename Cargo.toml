@@ -16,7 +16,7 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/copilot",
-    "crates/copilot_button",
+    "crates/copilot_ui",
     "crates/db",
     "crates/refineable",
     "crates/refineable/derive_refineable",
