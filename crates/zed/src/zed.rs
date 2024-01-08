@@ -877,6 +877,7 @@ mod tests {
         })
         .await
         .unwrap();
+        cx.background_executor.run_until_parked();
         assert_eq!(cx.read(|cx| cx.windows().len()), 2);
         let workspace_1 = cx
             .update(|cx| cx.windows()[0].downcast::<Workspace>())
