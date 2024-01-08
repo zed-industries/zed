@@ -58,6 +58,11 @@ impl CopilotCodeVerification {
             .map(|item| item.text() == &data.user_code)
             .unwrap_or(false);
         h_stack()
+            .w_full()
+            .p_1()
+            .border()
+            .border_muted(cx)
+            .rounded_md()
             .cursor_pointer()
             .justify_between()
             .on_mouse_down(gpui::MouseButton::Left, {
@@ -67,9 +72,12 @@ impl CopilotCodeVerification {
                     cx.notify();
                 }
             })
-            .child(Label::new(data.user_code.clone()))
-            .child(div())
-            .child(Label::new(if copied { "Copied!" } else { "Copy" }))
+            .child(div().flex_1().child(Label::new(data.user_code.clone())))
+            .child(div().flex_none().px_1().child(Label::new(if copied {
+                "Copied!"
+            } else {
+                "Copy"
+            })))
     }
 
     fn render_prompting_modal(
@@ -111,27 +119,28 @@ impl CopilotCodeVerification {
     }
     fn render_enabled_modal(cx: &mut ViewContext<Self>) -> impl Element {
         v_stack()
-            .child(Label::new("Copilot Enabled!"))
+            .gap_2()
+            .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
             .child(Label::new(
                 "You can update your settings or sign out from the Copilot menu in the status bar.",
             ))
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
+                    .full_width()
                     .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
             )
     }
 
     fn render_unauthorized_modal() -> impl Element {
         v_stack()
+            .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
+
             .child(Label::new(
-                "Enable Copilot by connecting your existing license.",
-            ))
-            .child(
-                Label::new("You must have an active Copilot license to use it in Zed.")
-                    .color(Color::Warning),
-            )
+                "You can enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.",
+            ).color(Color::Warning))
             .child(
                 Button::new("copilot-subscribe-button", "Subscibe on Github")
+                    .full_width()
                     .on_click(|_, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
     }
