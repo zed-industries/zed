@@ -4732,7 +4732,8 @@ impl Project {
             } else {
                 return Task::ready(Err(anyhow!("worktree not found for symbol")));
             };
-            let symbol_abs_path = worktree_abs_path.join(&symbol.path.path);
+
+            let symbol_abs_path = resolve_path(worktree_abs_path, &symbol.path.path);
             let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -6581,7 +6582,14 @@ impl Project {
                 let removed = *change == PathChange::Removed;
                 let abs_path = worktree.absolutize(path);
                 settings_contents.push(async move {
-                    (settings_dir, (!removed).then_some(fs.load(&abs_path).await))
+                    (
+                        settings_dir,
+                        if removed {
+                            None
+                        } else {
+                            Some(async move { fs.load(&abs_path?).await }.await)
+                        },
+                    )
                 });
             }
         }
@@ -8716,6 +8724,20 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     components.iter().map(|c| c.as_os_str()).collect()
+}
+
+fn resolve_path(base: &Path, path: &Path) -> PathBuf {
+    let mut result = base.to_path_buf();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                result.pop();
+            }
+            Component::CurDir => (),
+            _ => result.push(component),
+        }
+    }
+    result
 }
 
 impl Item for Buffer {
