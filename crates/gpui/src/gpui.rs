@@ -30,7 +30,16 @@ mod util;
 mod view;
 mod window;
 
-mod private {
+/// Do not touch, here be dragons for use by gpui_macros and such.
+#[doc(hidden)]
+pub mod private {
+    pub use linkme;
+    pub use serde;
+    pub use serde_derive;
+    pub use serde_json;
+}
+
+mod seal {
     /// A mechanism for restricting implementations of a trait to only those in GPUI.
     /// See: https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/
     pub trait Sealed {}
@@ -47,22 +56,17 @@ pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
-pub use gpui_macros::*;
+pub use gpui_macros::{register_action, test, IntoElement, Render};
 pub use image_cache::*;
 pub use input::*;
 pub use interactive::*;
 pub use key_dispatch::*;
 pub use keymap::*;
-pub use linkme;
 pub use platform::*;
-use private::Sealed;
 pub use refineable::*;
 pub use scene::*;
-pub use serde;
-pub use serde_derive;
-pub use serde_json;
+use seal::Sealed;
 pub use shared_string::*;
-pub use smallvec;
 pub use smol::Timer;
 pub use style::*;
 pub use styled::*;

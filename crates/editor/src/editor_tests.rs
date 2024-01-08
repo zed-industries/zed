@@ -9,11 +9,7 @@ use crate::{
 };
 
 use futures::StreamExt;
-use gpui::{
-    div,
-    serde_json::{self, json},
-    TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
-};
+use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
@@ -24,6 +20,7 @@ use language::{
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
+use serde_json::{self, json};
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
@@ -8131,8 +8128,8 @@ fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewCo
 /// Handle completion request passing a marked string specifying where the completion
 /// should be triggered from using '|' character, what range should be replaced, and what completions
 /// should be returned using '<' and '>' to delimit the range
-pub fn handle_completion_request<'a>(
-    cx: &mut EditorLspTestContext<'a>,
+pub fn handle_completion_request(
+    cx: &mut EditorLspTestContext,
     marked_string: &str,
     completions: Vec<&'static str>,
 ) -> impl Future<Output = ()> {
@@ -8177,8 +8174,8 @@ pub fn handle_completion_request<'a>(
     }
 }
 
-fn handle_resolve_completion_request<'a>(
-    cx: &mut EditorLspTestContext<'a>,
+fn handle_resolve_completion_request(
+    cx: &mut EditorLspTestContext,
     edits: Option<Vec<(&'static str, &'static str)>>,
 ) -> impl Future<Output = ()> {
     let edits = edits.map(|edits| {

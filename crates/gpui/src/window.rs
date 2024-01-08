@@ -1462,12 +1462,12 @@ impl<'a> WindowContext<'a> {
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
             InputEvent::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, files } => {
+                FileDropEvent::Entered { position, paths } => {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
-                            value: Box::new(files.clone()),
-                            view: self.new_view(|_| files).into(),
+                            value: Box::new(paths.clone()),
+                            view: self.new_view(|_| paths).into(),
                             cursor_offset: position,
                         });
                     }
@@ -1826,9 +1826,11 @@ impl<'a> WindowContext<'a> {
         result
     }
 
-    /// Set an input handler, such as [ElementInputHandler], which interfaces with the
+    /// Set an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
     /// platform to receive textual input with proper integration with concerns such
     /// as IME interactions.
+    ///
+    /// [element_input_handler]: crate::ElementInputHandler
     pub fn handle_input(
         &mut self,
         focus_handle: &FocusHandle,
@@ -2500,8 +2502,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the given focus handle receives focus.
-    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
-    /// is dropped.
+    /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus(
         &mut self,
         handle: &FocusHandle,
@@ -2527,8 +2528,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants receives focus.
-    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
-    /// is dropped.
+    /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_in(
         &mut self,
         handle: &FocusHandle,
@@ -2554,8 +2554,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the given focus handle loses focus.
-    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
-    /// is dropped.
+    /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_blur(
         &mut self,
         handle: &FocusHandle,
@@ -2581,8 +2580,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the window loses focus.
-    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
-    /// is dropped.
+    /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_blur_window(
         &mut self,
         mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
@@ -2597,8 +2595,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a listener to be called when the given focus handle or one of its descendants loses focus.
-    /// Unlike [on_focus_changed], returns a subscription and persists until the subscription
-    /// is dropped.
+    /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_out(
         &mut self,
         handle: &FocusHandle,

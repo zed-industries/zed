@@ -442,7 +442,7 @@ impl<T: Item> ItemHandle for View<T> {
                         ) && !pending_update_scheduled.load(Ordering::SeqCst)
                         {
                             pending_update_scheduled.store(true, Ordering::SeqCst);
-                            cx.on_next_frame({
+                            cx.defer({
                                 let pending_update = pending_update.clone();
                                 let pending_update_scheduled = pending_update_scheduled.clone();
                                 move |this, cx| {

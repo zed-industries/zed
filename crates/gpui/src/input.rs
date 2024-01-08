@@ -5,8 +5,8 @@ use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
 ///
-/// Once your view `V` implements this trait, you can use it to construct an [ElementInputHandler<V>].
-/// This input handler can then be assigned during paint by calling [WindowContext::handle_input].
+/// Once your view `V` implements this trait, you can use it to construct an [`ElementInputHandler<V>`].
+/// This input handler can then be assigned during paint by calling [`WindowContext::handle_input`].
 pub trait InputHandler: 'static + Sized {
     fn text_for_range(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>)
         -> Option<String>;
@@ -43,8 +43,10 @@ pub struct ElementInputHandler<V> {
 }
 
 impl<V: 'static> ElementInputHandler<V> {
-    /// Used in [Element::paint] with the element's bounds and a view context for its
+    /// Used in [`Element::paint`][element_paint] with the element's bounds and a view context for its
     /// containing view.
+    ///
+    /// [element_paint]: crate::Element::paint
     pub fn new(element_bounds: Bounds<Pixels>, view: View<V>, cx: &mut WindowContext) -> Self {
         ElementInputHandler {
             view,

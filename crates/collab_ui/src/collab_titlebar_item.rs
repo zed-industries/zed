@@ -41,6 +41,7 @@ pub fn init(cx: &mut AppContext) {
         workspace.set_titlebar_item(titlebar_item.into(), cx)
     })
     .detach();
+    // todo!()
     // cx.add_action(CollabTitlebarItem::share_project);
     // cx.add_action(CollabTitlebarItem::unshare_project);
     // cx.add_action(CollabTitlebarItem::toggle_user_menu);
@@ -92,7 +93,7 @@ impl Render for CollabTitlebarItem {
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
-                    .children(self.render_project_branch(cx))
+                    .child(div().pr_1().children(self.render_project_branch(cx)))
                     .when_some(
                         current_user.clone().zip(client.peer_id()).zip(room.clone()),
                         |this, ((current_user, peer_id), room)| {
@@ -184,6 +185,16 @@ impl Render for CollabTitlebarItem {
                                     "toggle_sharing",
                                     if is_shared { "Unshare" } else { "Share" },
                                 )
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if is_shared {
+                                            "Stop sharing project with call participants"
+                                        } else {
+                                            "Share project with call participants"
+                                        },
+                                        cx,
+                                    )
+                                })
                                 .style(ButtonStyle::Subtle)
                                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                 .selected(is_shared)
@@ -200,14 +211,19 @@ impl Render for CollabTitlebarItem {
                             )
                         })
                         .child(
-                            IconButton::new("leave-call", ui::Icon::Exit)
-                                .style(ButtonStyle::Subtle)
-                                .icon_size(IconSize::Small)
-                                .on_click(move |_, cx| {
-                                    ActiveCall::global(cx)
-                                        .update(cx, |call, cx| call.hang_up(cx))
-                                        .detach_and_log_err(cx);
-                                }),
+                            div()
+                                .child(
+                                    IconButton::new("leave-call", ui::Icon::Exit)
+                                        .style(ButtonStyle::Subtle)
+                                        .tooltip(|cx| Tooltip::text("Leave call", cx))
+                                        .icon_size(IconSize::Small)
+                                        .on_click(move |_, cx| {
+                                            ActiveCall::global(cx)
+                                                .update(cx, |call, cx| call.hang_up(cx))
+                                                .detach_and_log_err(cx);
+                                        }),
+                                )
+                                .pr_2(),
                         )
                         .when(!read_only, |this| {
                             this.child(
@@ -219,6 +235,16 @@ impl Render for CollabTitlebarItem {
                                         ui::Icon::Mic
                                     },
                                 )
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        if is_muted {
+                                            "Unmute microphone"
+                                        } else {
+                                            "Mute microphone"
+                                        },
+                                        cx,
+                                    )
+                                })
                                 .style(ButtonStyle::Subtle)
                                 .icon_size(IconSize::Small)
                                 .selected(is_muted)
@@ -260,11 +286,22 @@ impl Render for CollabTitlebarItem {
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
                                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            if is_screen_sharing {
+                                                "Stop Sharing Screen"
+                                            } else {
+                                                "Share Screen"
+                                            },
+                                            cx,
+                                        )
+                                    })
                                     .on_click(move |_, cx| {
                                         crate::toggle_screen_sharing(&Default::default(), cx)
                                     }),
                             )
                         })
+                        .child(div().pr_2())
                     })
                     .map(|el| {
                         let status = self.client.status();
@@ -284,11 +321,19 @@ impl Render for CollabTitlebarItem {
 fn render_color_ribbon(participant_index: ParticipantIndex, colors: &PlayerColors) -> gpui::Canvas {
     let color = colors.color_for_participant(participant_index.0).cursor;
     canvas(move |bounds, cx| {
-        let mut path = Path::new(bounds.lower_left());
         let height = bounds.size.height;
-        path.curve_to(bounds.origin + point(height, px(0.)), bounds.origin);
-        path.line_to(bounds.upper_right() - point(height, px(0.)));
-        path.curve_to(bounds.lower_right(), bounds.upper_right());
+        let horizontal_offset = height;
+        let vertical_offset = px(height.0 / 2.0);
+        let mut path = Path::new(bounds.lower_left());
+        path.curve_to(
+            bounds.origin + point(horizontal_offset, vertical_offset),
+            bounds.origin + point(px(0.0), vertical_offset),
+        );
+        path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+        path.curve_to(
+            bounds.lower_right(),
+            bounds.upper_right() + point(px(0.0), vertical_offset),
+        );
         path.line_to(bounds.lower_left());
         cx.paint_path(path, color);
     })

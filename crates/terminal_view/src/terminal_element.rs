@@ -1,12 +1,12 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
-    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, ExternalPaths, FocusHandle, Font,
-    FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveBounds, InteractiveElement,
+    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveBounds, InteractiveElement,
     InteractiveElementState, Interactivity, IntoElement, LayoutId, Model, ModelContext,
     ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, PlatformInputHandler, Point,
-    ShapedLine, StatefulInteractiveElement, StyleRefinement, Styled, TextRun, TextStyle,
-    TextSystem, UnderlineStyle, WhiteSpace, WindowContext,
+    ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle,
+    WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -25,7 +25,7 @@ use terminal::{
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::Tooltip;
 
-use std::{any::TypeId, mem};
+use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
 
 ///The information generated during layout that is necessary for painting
@@ -674,28 +674,6 @@ impl TerminalElement {
                     terminal.scroll_wheel(e, origin);
                     cx.notify();
                 })
-            }
-        });
-
-        self.interactivity.drag_over_styles.push((
-            TypeId::of::<ExternalPaths>(),
-            StyleRefinement::default().bg(cx.theme().colors().drop_target_background),
-        ));
-        self.interactivity.on_drop::<ExternalPaths>({
-            let focus = focus.clone();
-            let terminal = terminal.clone();
-            move |external_paths, cx| {
-                cx.focus(&focus);
-                let mut new_text = external_paths
-                    .paths()
-                    .iter()
-                    .map(|path| format!(" {path:?}"))
-                    .join("");
-                new_text.push(' ');
-                terminal.update(cx, |terminal, _| {
-                    // todo!() long paths are not displayed properly albeit the text is there
-                    terminal.paste(&new_text);
-                });
             }
         });
 

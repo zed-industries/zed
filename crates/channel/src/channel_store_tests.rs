@@ -343,12 +343,13 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 }
 
 fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
+    let settings_store = SettingsStore::test(cx);
+    cx.set_global(settings_store);
+
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(http.clone(), cx);
     let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
 
-    let settings_store = SettingsStore::test(cx);
-    cx.set_global(settings_store);
     client::init(&client, cx);
     crate::init(&client, user_store, cx);
 

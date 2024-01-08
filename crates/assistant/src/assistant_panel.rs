@@ -2298,11 +2298,10 @@ impl ConversationEditor {
                         move |_cx| {
                             let message_id = message.id;
                             let sender = ButtonLike::new("role")
+                                .style(ButtonStyle::Filled)
                                 .child(match message.role {
                                     Role::User => Label::new("You").color(Color::Default),
-                                    Role::Assistant => {
-                                        Label::new("Assistant").color(Color::Modified)
-                                    }
+                                    Role::Assistant => Label::new("Assistant").color(Color::Info),
                                     Role::System => Label::new("System").color(Color::Warning),
                                 })
                                 .tooltip(|cx| {
@@ -2325,11 +2324,12 @@ impl ConversationEditor {
                                     }
                                 });
 
-                            h_stack()
+                            div()
+                                .h_flex()
                                 .id(("message_header", message_id.0))
                                 .h_11()
+                                .relative()
                                 .gap_1()
-                                .p_1()
                                 .child(sender)
                                 // TODO: Only show this if the message if the message has been sent
                                 .child(
@@ -2538,7 +2538,7 @@ impl Render for ConversationEditor {
             .child(
                 div()
                     .size_full()
-                    .pl_2()
+                    .pl_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
@@ -3538,5 +3538,5 @@ fn report_assistant_event(
         .default_open_ai_model
         .clone();
 
-    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name(), cx)
+    telemetry.report_assistant_event(conversation_id, assistant_kind, model.full_name())
 }
