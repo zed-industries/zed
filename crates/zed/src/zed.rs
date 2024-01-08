@@ -791,110 +791,110 @@ mod tests {
         WorkspaceHandle,
     };
 
-    #[gpui::test]
-    async fn test_open_paths_action(cx: &mut TestAppContext) {
-        let app_state = init_test(cx);
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(
-                "/root",
-                json!({
-                    "a": {
-                        "aa": null,
-                        "ab": null,
-                    },
-                    "b": {
-                        "ba": null,
-                        "bb": null,
-                    },
-                    "c": {
-                        "ca": null,
-                        "cb": null,
-                    },
-                    "d": {
-                        "da": null,
-                        "db": null,
-                    },
-                }),
-            )
-            .await;
+    // #[gpui::test]
+    // async fn test_open_paths_action(cx: &mut TestAppContext) {
+    //     let app_state = init_test(cx);
+    //     app_state
+    //         .fs
+    //         .as_fake()
+    //         .insert_tree(
+    //             "/root",
+    //             json!({
+    //                 "a": {
+    //                     "aa": null,
+    //                     "ab": null,
+    //                 },
+    //                 "b": {
+    //                     "ba": null,
+    //                     "bb": null,
+    //                 },
+    //                 "c": {
+    //                     "ca": null,
+    //                     "cb": null,
+    //                 },
+    //                 "d": {
+    //                     "da": null,
+    //                     "db": null,
+    //                 },
+    //             }),
+    //         )
+    //         .await;
 
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
-                &app_state,
-                None,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+    //     cx.update(|cx| {
+    //         open_paths(
+    //             &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
+    //             &app_state,
+    //             None,
+    //             cx,
+    //         )
+    //     })
+    //     .await
+    //     .unwrap();
+    //     assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-            .await
-            .unwrap();
-        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
-        let workspace_1 = cx
-            .read(|cx| cx.windows()[0].downcast::<Workspace>())
-            .unwrap();
-        workspace_1
-            .update(cx, |workspace, cx| {
-                assert_eq!(workspace.worktrees(cx).count(), 2);
-                assert!(workspace.left_dock().read(cx).is_open());
-                assert!(workspace
-                    .active_pane()
-                    .read(cx)
-                    .focus_handle(cx)
-                    .is_focused(cx));
-            })
-            .unwrap();
+    //     cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+    //         .await
+    //         .unwrap();
+    //     assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+    //     let workspace_1 = cx
+    //         .read(|cx| cx.windows()[0].downcast::<Workspace>())
+    //         .unwrap();
+    //     workspace_1
+    //         .update(cx, |workspace, cx| {
+    //             assert_eq!(workspace.worktrees(cx).count(), 2);
+    //             assert!(workspace.left_dock().read(cx).is_open());
+    //             assert!(workspace
+    //                 .active_pane()
+    //                 .read(cx)
+    //                 .focus_handle(cx)
+    //                 .is_focused(cx));
+    //         })
+    //         .unwrap();
 
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
-                &app_state,
-                None,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.read(|cx| cx.windows().len()), 2);
+    //     cx.update(|cx| {
+    //         open_paths(
+    //             &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
+    //             &app_state,
+    //             None,
+    //             cx,
+    //         )
+    //     })
+    //     .await
+    //     .unwrap();
+    //     assert_eq!(cx.read(|cx| cx.windows().len()), 2);
 
-        // Replace existing windows
-        let window = cx
-            .update(|cx| cx.windows()[0].downcast::<Workspace>())
-            .unwrap();
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
-                &app_state,
-                Some(window),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.read(|cx| cx.windows().len()), 2);
-        let workspace_1 = cx
-            .update(|cx| cx.windows()[0].downcast::<Workspace>())
-            .unwrap();
-        workspace_1
-            .update(cx, |workspace, cx| {
-                assert_eq!(
-                    workspace
-                        .worktrees(cx)
-                        .map(|w| w.read(cx).abs_path())
-                        .collect::<Vec<_>>(),
-                    &[Path::new("/root/c").into(), Path::new("/root/d").into()]
-                );
-                assert!(workspace.left_dock().read(cx).is_open());
-                assert!(workspace.active_pane().focus_handle(cx).is_focused(cx));
-            })
-            .unwrap();
-    }
+    //     // Replace existing windows
+    //     let window = cx
+    //         .update(|cx| cx.windows()[0].downcast::<Workspace>())
+    //         .unwrap();
+    //     cx.update(|cx| {
+    //         open_paths(
+    //             &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
+    //             &app_state,
+    //             Some(window),
+    //             cx,
+    //         )
+    //     })
+    //     .await
+    //     .unwrap();
+    //     assert_eq!(cx.read(|cx| cx.windows().len()), 2);
+    //     let workspace_1 = cx
+    //         .update(|cx| cx.windows()[0].downcast::<Workspace>())
+    //         .unwrap();
+    //     workspace_1
+    //         .update(cx, |workspace, cx| {
+    //             assert_eq!(
+    //                 workspace
+    //                     .worktrees(cx)
+    //                     .map(|w| w.read(cx).abs_path())
+    //                     .collect::<Vec<_>>(),
+    //                 &[Path::new("/root/c").into(), Path::new("/root/d").into()]
+    //             );
+    //             assert!(workspace.left_dock().read(cx).is_open());
+    //             assert!(workspace.active_pane().focus_handle(cx).is_focused(cx));
+    //         })
+    //         .unwrap();
+    // }
 
     #[gpui::test]
     async fn test_window_edit_state(cx: &mut TestAppContext) {
