@@ -2211,8 +2211,12 @@ impl CollabPanel {
                     .map(|user| Avatar::new(user.avatar_uri.clone()).into_any_element())
                     .take(FACEPILE_LIMIT)
                     .chain(if extra_count > 0 {
-                        // todo!() @nate - this label looks wrong.
-                        Some(Label::new(format!("+{}", extra_count)).into_any_element())
+                        Some(
+                            div()
+                                .ml_1()
+                                .child(Label::new(format!("+{extra_count}")))
+                                .into_any_element(),
+                        )
                     } else {
                         None
                     })
