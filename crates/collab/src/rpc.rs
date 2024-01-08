@@ -66,7 +66,6 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
-use util::channel::RELEASE_CHANNEL_NAME;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -104,6 +103,7 @@ impl<R: RequestMessage> Response<R> {
 
 #[derive(Clone)]
 struct Session {
+    zed_environment: Arc<str>,
     user_id: UserId,
     connection_id: ConnectionId,
     db: Arc<tokio::sync::Mutex<DbHandle>>,
@@ -609,6 +609,7 @@ impl Server {
                 user_id,
                 connection_id,
                 db: Arc::new(tokio::sync::Mutex::new(DbHandle(this.app_state.db.clone()))),
+                zed_environment: this.app_state.config.zed_environment.clone(),
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 live_kit_client: this.app_state.live_kit_client.clone(),
@@ -965,7 +966,7 @@ async fn create_room(
             session.user_id,
             session.connection_id,
             &live_kit_room,
-            RELEASE_CHANNEL_NAME.as_str(),
+            &session.zed_environment,
         )
         .await?;
 
@@ -999,7 +1000,7 @@ async fn join_room(
                 room_id,
                 session.user_id,
                 session.connection_id,
-                RELEASE_CHANNEL_NAME.as_str(),
+                session.zed_environment.as_ref(),
             )
             .await?;
         room_updated(&room.room, &session.peer);
@@ -2608,7 +2609,7 @@ async fn join_channel_internal(
                 channel_id,
                 session.user_id,
                 session.connection_id,
-                RELEASE_CHANNEL_NAME.as_str(),
+                session.zed_environment.as_ref(),
             )
             .await?;
 

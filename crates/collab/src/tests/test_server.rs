@@ -2,7 +2,7 @@ use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    AppState,
+    AppState, Config,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
@@ -414,7 +414,19 @@ impl TestServer {
         Arc::new(AppState {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
-            config: Default::default(),
+            config: Config {
+                http_port: 0,
+                database_url: "".into(),
+                database_max_connections: 0,
+                api_token: "".into(),
+                invite_link_prefix: "".into(),
+                live_kit_server: None,
+                live_kit_key: None,
+                live_kit_secret: None,
+                rust_log: None,
+                log_json: None,
+                zed_environment: "test".into(),
+            },
         })
     }
 }

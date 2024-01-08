@@ -455,7 +455,7 @@ async fn test_project_count(db: &Arc<Database>) {
         .unwrap();
 
     let room_id = RoomId::from_proto(
-        db.create_room(user1.user_id, ConnectionId { owner_id, id: 0 }, "", "dev")
+        db.create_room(user1.user_id, ConnectionId { owner_id, id: 0 }, "", "test")
             .await
             .unwrap()
             .id,
@@ -473,7 +473,7 @@ async fn test_project_count(db: &Arc<Database>) {
         room_id,
         user2.user_id,
         ConnectionId { owner_id, id: 1 },
-        "dev",
+        "test",
     )
     .await
     .unwrap();
