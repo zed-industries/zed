@@ -754,6 +754,14 @@ impl<'a> WindowContext<'a> {
             .request_measured_layout(style, rem_size, measure)
     }
 
+    pub fn layout_style(&self, layout_id: LayoutId) -> Option<&Style> {
+        self.window
+            .layout_engine
+            .as_ref()
+            .unwrap()
+            .requested_style(layout_id)
+    }
+
     pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
         let mut layout_engine = self.window.layout_engine.take().unwrap();
         layout_engine.compute_layout(layout_id, available_space, self);
@@ -1313,6 +1321,7 @@ impl<'a> WindowContext<'a> {
 
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) -> Scene {
+        println!("=====================");
         self.window.dirty = false;
         self.window.drawing = true;
 

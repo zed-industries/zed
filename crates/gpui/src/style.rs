@@ -146,7 +146,7 @@ pub enum WhiteSpace {
     Nowrap,
 }
 
-#[derive(Refineable, Clone, Debug)]
+#[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug)]
 pub struct TextStyle {
     pub color: Hsla,

@@ -601,7 +601,7 @@ impl Render for Dock {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
                         })
-                        .child(entry.panel.to_any()),
+                        .child(entry.panel.to_any().cached()),
                 )
                 .child(handle)
         } else {

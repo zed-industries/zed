@@ -1,8 +1,8 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
-    Bounds, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
-    LayoutId, Model, Pixels, Point, Render, Size, ViewContext, VisualContext, WeakModel,
-    WindowContext,
+    Bounds, ContentMask, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
+    IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style, TextStyle,
+    ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -16,6 +16,19 @@ pub struct View<V> {
 }
 
 impl<V> Sealed for View<V> {}
+
+pub struct AnyViewState {
+    root_style: Style,
+    cache_key: Option<ViewCacheKey>,
+    element: Option<AnyElement>,
+}
+
+struct ViewCacheKey {
+    bounds: Bounds<Pixels>,
+    stacking_order: StackingOrder,
+    content_mask: ContentMask<Pixels>,
+    text_style: TextStyle,
+}
 
 impl<V: 'static> Entity<V> for View<V> {
     type Weak = WeakView<V>;
@@ -59,16 +72,6 @@ impl<V: 'static> View<V> {
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
         self.model.read(cx)
     }
-
-    // pub fn render_with<E>(&self, component: E) -> RenderViewWith<E, V>
-    // where
-    //     E: 'static + Element,
-    // {
-    //     RenderViewWith {
-    //         view: self.clone(),
-    //         element: Some(component),
-    //     }
-    // }
 
     pub fn focus_handle(&self, cx: &AppContext) -> FocusHandle
     where
@@ -183,16 +186,20 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
-    paint: fn(&AnyView, &mut AnyElement, &mut WindowContext),
+    request_layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
+    cache: bool,
 }
 
 impl AnyView {
+    pub fn cached(mut self) -> Self {
+        self.cache = true;
+        self
+    }
+
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             model: self.model.downgrade(),
-            layout: self.layout,
-            paint: self.paint,
+            layout: self.request_layout,
         }
     }
 
@@ -201,8 +208,8 @@ impl AnyView {
             Ok(model) => Ok(View { model }),
             Err(model) => Err(Self {
                 model,
-                layout: self.layout,
-                paint: self.paint,
+                request_layout: self.request_layout,
+                cache: self.cache,
             }),
         }
     }
@@ -222,9 +229,9 @@ impl AnyView {
         cx: &mut WindowContext,
     ) {
         cx.with_absolute_element_offset(origin, |cx| {
-            let (layout_id, mut rendered_element) = (self.layout)(self, cx);
+            let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
             cx.compute_layout(layout_id, available_space);
-            (self.paint)(self, &mut rendered_element, cx);
+            rendered_element.paint(cx);
         })
     }
 }
@@ -233,30 +240,65 @@ impl<V: Render> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
         AnyView {
             model: value.model.into_any(),
-            layout: any_view::layout::<V>,
-            paint: any_view::paint,
+            request_layout: any_view::request_layout::<V>,
+            cache: false,
         }
     }
 }
 
 impl Element for AnyView {
-    type State = Option<AnyElement>;
+    type State = AnyViewState;
 
     fn request_layout(
         &mut self,
-        _state: Option<Self::State>,
+        state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let (layout_id, state) = (self.layout)(self, cx);
-        (layout_id, Some(state))
+        if self.cache {
+            if let Some(state) = state {
+                let layout_id = cx.request_layout(&state.root_style, None);
+                return (layout_id, state);
+            }
+        }
+
+        let (layout_id, element) = (self.request_layout)(self, cx);
+        let root_style = cx.layout_style(layout_id).unwrap().clone();
+        let state = AnyViewState {
+            root_style,
+            cache_key: None,
+            element: Some(element),
+        };
+        (layout_id, state)
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        debug_assert!(
-            state.is_some(),
-            "state is None. Did you include an AnyView twice in the tree?"
-        );
-        (self.paint)(self, state.as_mut().unwrap(), cx)
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        if !self.cache {
+            state.element.take().unwrap().paint(cx);
+            return;
+        }
+
+        if let Some(cache_key) = state.cache_key.as_mut() {
+            if cache_key.bounds == bounds
+                && cache_key.content_mask == cx.content_mask()
+                && cache_key.stacking_order == *cx.stacking_order()
+                && cache_key.text_style == cx.text_style()
+            {
+                println!("could reuse geometry for view {}", self.entity_id());
+            }
+        }
+
+        let mut element = state
+            .element
+            .take()
+            .unwrap_or_else(|| (self.request_layout)(self, cx).1);
+        element.draw(bounds.origin, bounds.size.into(), cx);
+
+        state.cache_key = Some(ViewCacheKey {
+            bounds,
+            stacking_order: cx.stacking_order().clone(),
+            content_mask: cx.content_mask(),
+            text_style: cx.text_style(),
+        });
     }
 }
 
@@ -287,7 +329,6 @@ impl IntoElement for AnyView {
 pub struct AnyWeakView {
     model: AnyWeakModel,
     layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
-    paint: fn(&AnyView, &mut AnyElement, &mut WindowContext),
 }
 
 impl AnyWeakView {
@@ -295,8 +336,8 @@ impl AnyWeakView {
         let model = self.model.upgrade()?;
         Some(AnyView {
             model,
-            layout: self.layout,
-            paint: self.paint,
+            request_layout: self.layout,
+            cache: false,
         })
     }
 }
@@ -305,8 +346,7 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
     fn from(view: WeakView<V>) -> Self {
         Self {
             model: view.model.into(),
-            layout: any_view::layout::<V>,
-            paint: any_view::paint,
+            layout: any_view::request_layout::<V>,
         }
     }
 }
@@ -328,7 +368,7 @@ impl std::fmt::Debug for AnyWeakView {
 mod any_view {
     use crate::{AnyElement, AnyView, IntoElement, LayoutId, Render, WindowContext};
 
-    pub(crate) fn layout<V: 'static + Render>(
+    pub(crate) fn request_layout<V: 'static + Render>(
         view: &AnyView,
         cx: &mut WindowContext,
     ) -> (LayoutId, AnyElement) {
@@ -336,9 +376,5 @@ mod any_view {
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
         let layout_id = element.request_layout(cx);
         (layout_id, element)
-    }
-
-    pub(crate) fn paint(_view: &AnyView, element: &mut AnyElement, cx: &mut WindowContext) {
-        element.paint(cx);
     }
 }

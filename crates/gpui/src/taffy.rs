@@ -12,6 +12,7 @@ use taffy::{
 
 pub struct TaffyLayoutEngine {
     tree: TaffyTree,
+    styles: FxHashMap<LayoutId, Style>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
     nodes_to_measure: FxHashMap<
@@ -32,6 +33,7 @@ impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
             tree: TaffyTree::new(),
+            styles: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             nodes_to_measure: FxHashMap::default(),
@@ -43,6 +45,11 @@ impl TaffyLayoutEngine {
         self.absolute_layout_bounds.clear();
         self.computed_layouts.clear();
         self.nodes_to_measure.clear();
+        self.styles.clear();
+    }
+
+    pub fn requested_style(&self, layout_id: LayoutId) -> Option<&Style> {
+        self.styles.get(&layout_id)
     }
 
     pub fn request_layout(
@@ -51,16 +58,21 @@ impl TaffyLayoutEngine {
         rem_size: Pixels,
         children: &[LayoutId],
     ) -> LayoutId {
-        let style = style.to_taffy(rem_size);
-        if children.is_empty() {
-            self.tree.new_leaf(style).expect(EXPECT_MESSAGE).into()
+        let taffy_style = style.to_taffy(rem_size);
+        let layout_id = if children.is_empty() {
+            self.tree
+                .new_leaf(taffy_style)
+                .expect(EXPECT_MESSAGE)
+                .into()
         } else {
             self.tree
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(style, unsafe { std::mem::transmute(children) })
+                .new_with_children(taffy_style, unsafe { std::mem::transmute(children) })
                 .expect(EXPECT_MESSAGE)
                 .into()
-        }
+        };
+        self.styles.insert(layout_id, style.clone());
+        layout_id
     }
 
     pub fn request_measured_layout(
@@ -70,14 +82,16 @@ impl TaffyLayoutEngine {
         measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
-        let style = style.to_taffy(rem_size);
+        let style = style.clone();
+        let taffy_style = style.to_taffy(rem_size);
 
         let layout_id = self
             .tree
-            .new_leaf_with_context(style, ())
+            .new_leaf_with_context(taffy_style, ())
             .expect(EXPECT_MESSAGE)
             .into();
         self.nodes_to_measure.insert(layout_id, Box::new(measure));
+        self.styles.insert(layout_id, style.clone());
         layout_id
     }
 
