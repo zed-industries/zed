@@ -896,7 +896,7 @@ impl CollabPanel {
             .start_slot(
                 h_stack()
                     .gap_1()
-                    .child(render_tree_branch(is_last, cx))
+                    .child(render_tree_branch(is_last, false, cx))
                     .child(IconButton::new(0, Icon::Folder)),
             )
             .child(Label::new(project_name.clone()))
@@ -917,7 +917,7 @@ impl CollabPanel {
             .start_slot(
                 h_stack()
                     .gap_1()
-                    .child(render_tree_branch(is_last, cx))
+                    .child(render_tree_branch(is_last, false, cx))
                     .child(IconButton::new(0, Icon::Screen)),
             )
             .child(Label::new("Screen"))
@@ -958,7 +958,7 @@ impl CollabPanel {
             .start_slot(
                 h_stack()
                     .gap_1()
-                    .child(render_tree_branch(false, cx))
+                    .child(render_tree_branch(false, true, cx))
                     .child(IconButton::new(0, Icon::File)),
             )
             .child(div().h_7().w_full().child(Label::new("notes")))
@@ -979,7 +979,7 @@ impl CollabPanel {
             .start_slot(
                 h_stack()
                     .gap_1()
-                    .child(render_tree_branch(false, cx))
+                    .child(render_tree_branch(false, false, cx))
                     .child(IconButton::new(0, Icon::MessageBubbles)),
             )
             .child(Label::new("chat"))
@@ -1007,7 +1007,7 @@ impl CollabPanel {
             .start_slot(
                 h_stack()
                     .gap_1()
-                    .child(render_tree_branch(!has_visible_participants, cx))
+                    .child(render_tree_branch(!has_visible_participants, false, cx))
                     .child(""),
             )
             .child(Label::new(if count == 1 {
@@ -2404,11 +2404,11 @@ impl CollabPanel {
     }
 }
 
-fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement {
+fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> impl IntoElement {
     let rem_size = cx.rem_size();
     let line_height = cx.text_style().line_height_in_pixels(rem_size);
     let width = rem_size * 1.5;
-    let thickness = px(2.);
+    let thickness = px(1.);
     let color = cx.theme().colors().text;
 
     canvas(move |bounds, cx| {
@@ -2422,7 +2422,11 @@ fn render_tree_branch(is_last: bool, cx: &mut WindowContext) -> impl IntoElement
                 point(start_x, top),
                 point(
                     start_x + thickness,
-                    if is_last { start_y } else { bounds.bottom() },
+                    if is_last {
+                        start_y
+                    } else {
+                        bounds.bottom() + if overdraw { px(1.) } else { px(0.) }
+                    },
                 ),
             ),
             color,
