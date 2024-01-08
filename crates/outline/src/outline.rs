@@ -54,7 +54,13 @@ impl FocusableView for OutlineView {
 }
 
 impl EventEmitter<DismissEvent> for OutlineView {}
-impl ModalView for OutlineView {}
+impl ModalView for OutlineView {
+    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.picker
+            .update(cx, |picker, cx| picker.delegate.restore_active_editor(cx));
+        true
+    }
+}
 
 impl Render for OutlineView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
