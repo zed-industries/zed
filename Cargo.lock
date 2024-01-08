@@ -293,6 +293,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 
 [[package]]
+name = "assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "rust-embed",
+]
+
+[[package]]
 name = "assistant"
 version = "0.1.0"
 dependencies = [
@@ -9529,6 +9538,7 @@ dependencies = [
  "activity_indicator",
  "ai",
  "anyhow",
+ "assets",
  "assistant",
  "async-compression",
  "async-recursion 0.3.2",

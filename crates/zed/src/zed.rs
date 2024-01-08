@@ -1,11 +1,9 @@
 mod app_menus;
-mod assets;
 pub mod languages;
 mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
-pub use assets::*;
 use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
@@ -18,6 +16,7 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::{anyhow, Context as _};
+use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
