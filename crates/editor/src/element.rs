@@ -850,7 +850,7 @@ impl EditorElement {
             cx.paint_quad(quad(
                 highlight_bounds,
                 Corners::all(0.05 * line_height),
-                color, // todo!("use the right color")
+                color,
                 Edges::default(),
                 transparent_black(),
             ));
