@@ -742,9 +742,16 @@ mod element {
 
                 cx.on_mouse_event({
                     let dragged_handle = dragged_handle.clone();
-                    move |e: &MouseDownEvent, phase, _cx| {
+                    let flexes = flexes.clone();
+                    move |e: &MouseDownEvent, phase, cx| {
                         if phase.bubble() && handle_bounds.contains(&e.position) {
                             dragged_handle.replace(Some(ix));
+                            if e.click_count >= 2 {
+                                let mut borrow = flexes.lock();
+                                *borrow = vec![1.; borrow.len()];
+
+                                cx.notify();
+                            }
                         }
                     }
                 });
