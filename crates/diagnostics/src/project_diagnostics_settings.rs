@@ -6,8 +6,12 @@ pub struct ProjectDiagnosticsSettings {
     pub include_warnings: bool,
 }
 
+/// Diagnostics configuration.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectDiagnosticsSettingsContent {
+    /// Whether to show warnings or not by default.
+    ///
+    /// Default: true
     include_warnings: Option<bool>,
 }
 

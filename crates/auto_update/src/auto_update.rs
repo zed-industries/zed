@@ -10,6 +10,7 @@ use gpui::{
 };
 use isahc::AsyncBody;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use smol::io::AsyncReadExt;
@@ -61,18 +62,27 @@ struct JsonRelease {
 
 struct AutoUpdateSetting(bool);
 
+/// Whether or not to automatically check for updates.
+///
+/// Default: true
+#[derive(Clone, Default, JsonSchema, Deserialize, Serialize)]
+#[serde(transparent)]
+struct AutoUpdateSettingOverride(Option<bool>);
+
 impl Settings for AutoUpdateSetting {
     const KEY: Option<&'static str> = Some("auto_update");
 
-    type FileContent = Option<bool>;
+    type FileContent = AutoUpdateSettingOverride;
 
     fn load(
-        default_value: &Option<bool>,
-        user_values: &[&Option<bool>],
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
         _: &mut AppContext,
     ) -> Result<Self> {
         Ok(Self(
-            Self::json_merge(default_value, user_values)?.ok_or_else(Self::missing_default)?,
+            Self::json_merge(default_value, user_values)?
+                .0
+                .ok_or_else(Self::missing_default)?,
         ))
     }
 }

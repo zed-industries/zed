@@ -677,6 +677,7 @@ dependencies = [
  "log",
  "menu",
  "project",
+ "schemars",
  "serde",
  "serde_derive",
  "serde_json",
