@@ -2300,9 +2300,7 @@ impl ConversationEditor {
                             let sender = ButtonLike::new("role")
                                 .child(match message.role {
                                     Role::User => Label::new("You").color(Color::Default),
-                                    Role::Assistant => {
-                                        Label::new("Assistant").color(Color::Modified)
-                                    }
+                                    Role::Assistant => Label::new("Assistant").color(Color::Info),
                                     Role::System => Label::new("System").color(Color::Warning),
                                 })
                                 .tooltip(|cx| {
