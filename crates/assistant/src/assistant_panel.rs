@@ -2298,6 +2298,7 @@ impl ConversationEditor {
                         move |_cx| {
                             let message_id = message.id;
                             let sender = ButtonLike::new("role")
+                                .style(ButtonStyle::Filled)
                                 .child(match message.role {
                                     Role::User => Label::new("You").color(Color::Default),
                                     Role::Assistant => Label::new("Assistant").color(Color::Info),
@@ -2329,10 +2330,7 @@ impl ConversationEditor {
                                 .h_11()
                                 .relative()
                                 .gap_1()
-                                // Sender is a button with a padding of 1, but only has a background on hover,
-                                // so we shift it left by the same amount to align the text with the content
-                                // in the un-hovered state.
-                                .child(div().child(sender).relative().neg_left_1())
+                                .child(sender)
                                 // TODO: Only show this if the message if the message has been sent
                                 .child(
                                     Label::new(
