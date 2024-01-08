@@ -66,7 +66,6 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
-use util::channel::RELEASE_CHANNEL_NAME;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -967,7 +966,7 @@ async fn create_room(
             session.user_id,
             session.connection_id,
             &live_kit_room,
-            RELEASE_CHANNEL_NAME.as_str(),
+            &session.zed_environment,
         )
         .await?;
 
