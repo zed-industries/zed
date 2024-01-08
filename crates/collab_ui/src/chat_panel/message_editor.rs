@@ -246,7 +246,7 @@ impl Render for MessageEditor {
 mod tests {
     use super::*;
     use client::{Client, User, UserStore};
-    use gpui::{Context as _, TestAppContext, VisualContext as _};
+    use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use rpc::proto;
     use settings::SettingsStore;
