@@ -2408,7 +2408,7 @@ fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> 
     let rem_size = cx.rem_size();
     let line_height = cx.text_style().line_height_in_pixels(rem_size);
     let width = rem_size * 1.5;
-    let thickness = px(2.);
+    let thickness = px(1.);
     let color = cx.theme().colors().text;
 
     canvas(move |bounds, cx| {
