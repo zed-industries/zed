@@ -28,8 +28,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             if let Some(incoming_call) = incoming_call {
                 let unique_screens = cx.update(|cx| cx.displays()).unwrap();
                 let window_size = gpui::Size {
-                    width: px(380.),
-                    height: px(64.),
+                    width: px(400.),
+                    height: px(72.),
                 };
 
                 for screen in unique_screens {

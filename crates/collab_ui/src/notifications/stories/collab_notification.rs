@@ -17,7 +17,7 @@ impl Render for CollabNotificationStory {
         .child(
             StorySection::new().child(StoryItem::new(
                 "Incoming Call Notification",
-                window_container(380., 64.).child(
+                window_container(400., 72.).child(
                     CollabNotification::new(
                         "https://avatars.githubusercontent.com/u/1486634?v=4",
                         Button::new("accept", "Accept"),
