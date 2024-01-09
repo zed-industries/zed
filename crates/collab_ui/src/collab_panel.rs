@@ -2228,25 +2228,19 @@ impl CollabPanel {
             None
         };
 
-        let button_container = |cx: &mut ViewContext<Self>| {
+        let button_container = |_cx: &mut ViewContext<Self>| {
             h_stack()
+                .h_full()
                 .absolute()
-                // We're using a negative coordinate for the right anchor to
-                // counteract the padding of the `ListItem`.
-                //
-                // This prevents a gap from showing up between the background
-                // of this element and the edge of the collab panel.
-                .right(rems(-0.5))
+                .right(rems(0.))
                 // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
                 .z_index(10)
-                .bg(cx.theme().colors().panel_background)
-                .when(is_selected || is_active, |this| {
-                    this.bg(cx.theme().colors().ghost_element_selected)
-                })
         };
 
         let messages_button = |cx: &mut ViewContext<Self>| {
             IconButton::new("channel_chat", IconName::MessageBubbles)
+                .style(ButtonStyle::Filled)
+                .size(ButtonSize::Compact)
                 .icon_size(IconSize::Small)
                 .icon_color(if has_messages_notification {
                     Color::Default
@@ -2259,6 +2253,8 @@ impl CollabPanel {
 
         let notes_button = |cx: &mut ViewContext<Self>| {
             IconButton::new("channel_notes", IconName::File)
+                .style(ButtonStyle::Filled)
+                .size(ButtonSize::Compact)
                 .icon_size(IconSize::Small)
                 .icon_color(if has_notes_notification {
                     Color::Default
@@ -2334,51 +2330,23 @@ impl CollabPanel {
                             .w_px()
                             .child(Label::new(channel.name.clone()))
                             .children(face_pile.map(|face_pile| face_pile.render(cx))),
-                    )
-                    .end_slot::<Div>(
-                        // If we have a notification for either button, we want to show the corresponding
-                        // button(s) as indicators.
-                        if has_messages_notification || has_notes_notification {
-                            Some(
-                                button_container(cx).child(
-                                    h_stack()
-                                        .px_1()
-                                        .children(
-                                            // We only want to render the messages button if there are unseen messages.
-                                            // This way we don't take up any space that might overlap the channel name
-                                            // when there are no notifications.
-                                            has_messages_notification.then(|| messages_button(cx)),
-                                        )
-                                        .child(
-                                            // We always want the notes button to take up space to prevent layout
-                                            // shift when hovering over the channel.
-                                            // However, if there are is no notes notification we just show an empty slot.
-                                            notes_button(cx)
-                                                .when(!has_notes_notification, |this| {
-                                                    this.visible_on_hover("")
-                                                }),
-                                        ),
-                                ),
-                            )
-                        } else {
-                            None
-                        },
-                    )
-                    .end_hover_slot(
-                        // When we hover the channel entry we want to always show both buttons.
-                        button_container(cx).child(
-                            h_stack()
-                                .px_1()
-                                // The element hover background has a slight transparency to it, so we
-                                // need to apply it to the inner element so that it blends with the solid
-                                // background color of the absolutely-positioned element.
-                                .group_hover("", |style| {
-                                    style.bg(cx.theme().colors().ghost_element_hover)
-                                })
-                                .child(messages_button(cx))
-                                .child(notes_button(cx)),
-                        ),
                     ),
+            )
+            .child(
+                button_container(cx).child(
+                    h_stack()
+                        .h_full()
+                        .gap_1()
+                        .px_1()
+                        .child(
+                            messages_button(cx)
+                                .when(!has_messages_notification, |this| this.visible_on_hover("")),
+                        )
+                        .child(
+                            notes_button(cx)
+                                .when(!has_notes_notification, |this| this.visible_on_hover("")),
+                        ),
+                ),
             )
             .tooltip(|cx| Tooltip::text("Join channel", cx))
     }
