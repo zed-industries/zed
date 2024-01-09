@@ -2228,43 +2228,6 @@ impl CollabPanel {
             None
         };
 
-        let button_container = |_cx: &mut ViewContext<Self>| {
-            h_stack()
-                .h_full()
-                .absolute()
-                .right(rems(0.))
-                // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
-                .z_index(10)
-        };
-
-        let messages_button = |cx: &mut ViewContext<Self>| {
-            IconButton::new("channel_chat", IconName::MessageBubbles)
-                .style(ButtonStyle::Filled)
-                .size(ButtonSize::Compact)
-                .icon_size(IconSize::Small)
-                .icon_color(if has_messages_notification {
-                    Color::Default
-                } else {
-                    Color::Muted
-                })
-                .on_click(cx.listener(move |this, _, cx| this.join_channel_chat(channel_id, cx)))
-                .tooltip(|cx| Tooltip::text("Open channel chat", cx))
-        };
-
-        let notes_button = |cx: &mut ViewContext<Self>| {
-            IconButton::new("channel_notes", IconName::File)
-                .style(ButtonStyle::Filled)
-                .size(ButtonSize::Compact)
-                .icon_size(IconSize::Small)
-                .icon_color(if has_notes_notification {
-                    Color::Default
-                } else {
-                    Color::Muted
-                })
-                .on_click(cx.listener(move |this, _, cx| this.open_channel_notes(channel_id, cx)))
-                .tooltip(|cx| Tooltip::text("Open channel notes", cx))
-        };
-
         let width = self.width.unwrap_or(px(240.));
 
         div()
@@ -2327,20 +2290,54 @@ impl CollabPanel {
                     ),
             )
             .child(
-                button_container(cx).child(
-                    h_stack()
-                        .h_full()
-                        .gap_1()
-                        .px_1()
-                        .child(
-                            messages_button(cx)
-                                .when(!has_messages_notification, |this| this.visible_on_hover("")),
-                        )
-                        .child(
-                            notes_button(cx)
-                                .when(!has_notes_notification, |this| this.visible_on_hover("")),
-                        ),
-                ),
+                h_stack()
+                    .absolute()
+                    .right(rems(0.))
+                    .h_full()
+                    // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
+                    .z_index(10)
+                    .child(
+                        h_stack()
+                            .h_full()
+                            .gap_1()
+                            .px_1()
+                            .child(
+                                IconButton::new("channel_chat", IconName::MessageBubbles)
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Compact)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(if has_messages_notification {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.join_channel_chat(channel_id, cx)
+                                    }))
+                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx))
+                                    .when(!has_messages_notification, |this| {
+                                        this.visible_on_hover("")
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("channel_notes", IconName::File)
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Compact)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(if has_notes_notification {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.open_channel_notes(channel_id, cx)
+                                    }))
+                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx))
+                                    .when(!has_notes_notification, |this| {
+                                        this.visible_on_hover("")
+                                    }),
+                            ),
+                    ),
             )
             .tooltip(|cx| Tooltip::text("Join channel", cx))
     }
