@@ -1640,8 +1640,8 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
-        Some(ui::Icon::FileTree)
+    fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
+        Some(ui::IconName::FileTree)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

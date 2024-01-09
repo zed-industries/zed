@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
-use ui::{h_stack, prelude::*, Button, ButtonLike, Color, Icon, IconElement, Label, Tooltip};
+use ui::{h_stack, prelude::*, Button, ButtonLike, Color, IconElement, IconName, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::{Deploy, ProjectDiagnosticsEditor};
@@ -25,7 +25,7 @@ impl Render for DiagnosticIndicator {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_stack().map(|this| {
                 this.child(
-                    IconElement::new(Icon::Check)
+                    IconElement::new(IconName::Check)
                         .size(IconSize::Small)
                         .color(Color::Default),
                 )
@@ -33,7 +33,7 @@ impl Render for DiagnosticIndicator {
             (0, warning_count) => h_stack()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::ExclamationTriangle)
+                    IconElement::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
@@ -41,7 +41,7 @@ impl Render for DiagnosticIndicator {
             (error_count, 0) => h_stack()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::XCircle)
+                    IconElement::new(IconName::XCircle)
                         .size(IconSize::Small)
                         .color(Color::Error),
                 )
@@ -49,13 +49,13 @@ impl Render for DiagnosticIndicator {
             (error_count, warning_count) => h_stack()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::XCircle)
+                    IconElement::new(IconName::XCircle)
                         .size(IconSize::Small)
                         .color(Color::Error),
                 )
                 .child(Label::new(error_count.to_string()).size(LabelSize::Small))
                 .child(
-                    IconElement::new(Icon::ExclamationTriangle)
+                    IconElement::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
@@ -66,7 +66,7 @@ impl Render for DiagnosticIndicator {
             Some(
                 h_stack()
                     .gap_2()
-                    .child(IconElement::new(Icon::ArrowCircle).size(IconSize::Small))
+                    .child(IconElement::new(IconName::ArrowCircle).size(IconSize::Small))
                     .child(
                         Label::new("Checking…")
                             .size(LabelSize::Small)

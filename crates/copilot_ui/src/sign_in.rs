@@ -4,7 +4,7 @@ use gpui::{
     FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, Styled,
     Subscription, ViewContext,
 };
-use ui::{prelude::*, Button, Icon, Label};
+use ui::{prelude::*, Button, IconName, Label};
 use workspace::ModalView;
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
@@ -175,7 +175,7 @@ impl Render for CopilotCodeVerification {
                     .w_32()
                     .h_16()
                     .flex_none()
-                    .path(Icon::ZedXCopilot.path())
+                    .path(IconName::ZedXCopilot.path())
                     .text_color(cx.theme().colors().icon),
             )
             .child(prompt)

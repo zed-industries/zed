@@ -2,7 +2,7 @@ use gpui::Render;
 use story::Story;
 
 use crate::{prelude::*, IconButton};
-use crate::{Icon, ListHeader};
+use crate::{IconName, ListHeader};
 
 pub struct ListHeaderStory;
 
@@ -13,19 +13,19 @@ impl Render for ListHeaderStory {
             .child(Story::label("Default"))
             .child(ListHeader::new("Section 1"))
             .child(Story::label("With left icon"))
-            .child(ListHeader::new("Section 2").start_slot(IconElement::new(Icon::Bell)))
+            .child(ListHeader::new("Section 2").start_slot(IconElement::new(IconName::Bell)))
             .child(Story::label("With left icon and meta"))
             .child(
                 ListHeader::new("Section 3")
-                    .start_slot(IconElement::new(Icon::BellOff))
-                    .end_slot(IconButton::new("action_1", Icon::Bolt)),
+                    .start_slot(IconElement::new(IconName::BellOff))
+                    .end_slot(IconButton::new("action_1", IconName::Bolt)),
             )
             .child(Story::label("With multiple meta"))
             .child(
                 ListHeader::new("Section 4")
-                    .end_slot(IconButton::new("action_1", Icon::Bolt))
-                    .end_slot(IconButton::new("action_2", Icon::ExclamationTriangle))
-                    .end_slot(IconButton::new("action_3", Icon::Plus)),
+                    .end_slot(IconButton::new("action_1", IconName::Bolt))
+                    .end_slot(IconButton::new("action_2", IconName::ExclamationTriangle))
+                    .end_slot(IconButton::new("action_3", IconName::Plus)),
             )
     }
 }

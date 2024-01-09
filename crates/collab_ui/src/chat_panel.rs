@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, TabBar, Tooltip};
+use ui::{prelude::*, Avatar, Button, IconButton, IconName, Label, TabBar, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -281,12 +281,12 @@ impl ChatPanel {
                                 )),
                         )
                         .end_child(
-                            IconButton::new("notes", Icon::File)
+                            IconButton::new("notes", IconName::File)
                                 .on_click(cx.listener(Self::open_notes))
                                 .tooltip(|cx| Tooltip::text("Open notes", cx)),
                         )
                         .end_child(
-                            IconButton::new("call", Icon::AudioOn)
+                            IconButton::new("call", IconName::AudioOn)
                                 .on_click(cx.listener(Self::join_call))
                                 .tooltip(|cx| Tooltip::text("Join call", cx)),
                         ),
@@ -395,7 +395,7 @@ impl ChatPanel {
                     .w_8()
                     .visible_on_hover("")
                     .children(message_id_to_remove.map(|message_id| {
-                        IconButton::new(("remove", message_id), Icon::XCircle).on_click(
+                        IconButton::new(("remove", message_id), IconName::XCircle).on_click(
                             cx.listener(move |this, _, cx| {
                                 this.remove_message(message_id, cx);
                             }),
@@ -429,7 +429,7 @@ impl ChatPanel {
                 Button::new("sign-in", "Sign in")
                     .style(ButtonStyle::Filled)
                     .icon_color(Color::Muted)
-                    .icon(Icon::Github)
+                    .icon(IconName::Github)
                     .icon_position(IconPosition::Start)
                     .full_width()
                     .on_click(cx.listener(move |this, _, cx| {
@@ -622,12 +622,12 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         if !is_channels_feature_enabled(cx) {
             return None;
         }
 
-        Some(ui::Icon::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
+        Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
