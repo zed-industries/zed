@@ -9,6 +9,8 @@ use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
 use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
+/// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
+/// an implementation of `Context` with additional methods that are useful in tests.
 #[derive(Clone)]
 pub struct TestAppContext {
     pub app: Rc<AppCell>,
@@ -95,38 +97,47 @@ impl TestAppContext {
         }
     }
 
+    /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
     pub fn new_app(&self) -> TestAppContext {
         Self::new(self.dispatcher.clone())
     }
 
+    /// Simulates quitting the app.
     pub fn quit(&self) {
         self.app.borrow_mut().shutdown();
     }
 
+    /// Schedules all windows to be redrawn on the next effect cycle.
     pub fn refresh(&mut self) -> Result<()> {
         let mut app = self.app.borrow_mut();
         app.refresh();
         Ok(())
     }
 
+    /// Returns an executor (for running tasks in the background)
     pub fn executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
 
+    /// Returns an executor (for running tasks on the main thread)
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
     }
 
+    /// Gives you an `&mut AppContext` for the duration of the closure
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
         let mut cx = self.app.borrow_mut();
         cx.update(f)
     }
 
+    /// Gives you an `&AppContext` for the duration of the closure
     pub fn read<R>(&self, f: impl FnOnce(&AppContext) -> R) -> R {
         let cx = self.app.borrow();
         f(&*cx)
     }
 
+    // Adds a new window. The Window will always be backed by a `TestWindow` which
+    // can be retrieved with `self.test_window(handle)`
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
@@ -136,12 +147,16 @@ impl TestAppContext {
         cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window))
     }
 
+    // Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> AnyWindowHandle {
         let mut cx = self.app.borrow_mut();
         cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| EmptyView {}))
             .any_handle
     }
 
+    /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
+    /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
+    /// the returned one. `let (view, cx) = cx.add_window_view(...);`
     pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
@@ -156,18 +171,23 @@ impl TestAppContext {
         (view, Box::leak(cx))
     }
 
+    /// returns the TextSystem
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }
 
+    /// Simulates writing to the platform clipboard
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.test_platform.write_to_clipboard(item)
     }
 
+    /// Simulates reading from the platform clipboard.
+    /// This will return the most recent value from `write_to_clipboard`.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.test_platform.read_from_clipboard()
     }
 
+    /// Simulates choosing a File in the platform's "Open" dialog.
     pub fn simulate_new_path_selection(
         &self,
         select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
@@ -175,22 +195,27 @@ impl TestAppContext {
         self.test_platform.simulate_new_path_selection(select_path);
     }
 
+    /// Simulates clicking a button in an platform-level alert dialog.
     pub fn simulate_prompt_answer(&self, button_ix: usize) {
         self.test_platform.simulate_prompt_answer(button_ix);
     }
 
+    /// Returns true if there's an alert dialog open.
     pub fn has_pending_prompt(&self) -> bool {
         self.test_platform.has_pending_prompt()
     }
 
+    /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Returns all windows open in the test.
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.app.borrow().windows().clone()
     }
 
+    /// Run the given task on the main thread.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
