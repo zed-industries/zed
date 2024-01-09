@@ -424,7 +424,8 @@ impl Item for ProjectSearchView {
             .current()
             .as_ref()
             .map(|query| {
-                let query_text = util::truncate_and_trailoff(query, MAX_TAB_TITLE_LEN);
+                let query = query.replace('\n', "");
+                let query_text = util::truncate_and_trailoff(&query, MAX_TAB_TITLE_LEN);
                 query_text.into()
             });
         let tab_name = last_query
