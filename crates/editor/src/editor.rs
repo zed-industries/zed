@@ -99,8 +99,8 @@ use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_stack, prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, ListItem, Popover,
-    Tooltip,
+    h_stack, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem,
+    Popover, Tooltip,
 };
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
@@ -507,7 +507,7 @@ pub enum SoftWrap {
     Column(u32),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EditorStyle {
     pub background: Hsla,
     pub local_player: PlayerColor,
@@ -517,6 +517,24 @@ pub struct EditorStyle {
     pub status: StatusColors,
     pub inlays_style: HighlightStyle,
     pub suggestions_style: HighlightStyle,
+}
+
+impl Default for EditorStyle {
+    fn default() -> Self {
+        Self {
+            background: Hsla::default(),
+            local_player: PlayerColor::default(),
+            text: TextStyle::default(),
+            scrollbar_width: Pixels::default(),
+            syntax: Default::default(),
+            // HACK: Status colors don't have a real default.
+            // We should look into removing the status colors from the editor
+            // style and retrieve them directly from the theme.
+            status: StatusColors::dark(),
+            inlays_style: HighlightStyle::default(),
+            suggestions_style: HighlightStyle::default(),
+        }
+    }
 }
 
 type CompletionId = usize;
@@ -4223,7 +4241,7 @@ impl Editor {
     ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui::Icon::Bolt)
+                IconButton::new("code_actions_indicator", ui::IconName::Bolt)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .selected(is_active)
@@ -4257,7 +4275,7 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            IconButton::new(ix as usize, ui::Icon::ChevronDown)
+                            IconButton::new(ix as usize, ui::IconName::ChevronDown)
                                 .on_click(cx.listener(move |editor, _e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
@@ -4269,7 +4287,7 @@ impl Editor {
                                 .icon_color(ui::Color::Muted)
                                 .icon_size(ui::IconSize::Small)
                                 .selected(fold_status == FoldStatus::Folded)
-                                .selected_icon(ui::Icon::ChevronRight)
+                                .selected_icon(ui::IconName::ChevronRight)
                                 .size(ui::ButtonSize::None)
                         })
                     })
@@ -9739,7 +9757,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
                 ),
             )
             .child(
-                IconButton::new(("copy-block", cx.block_id), Icon::Copy)
+                IconButton::new(("copy-block", cx.block_id), IconName::Copy)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::Compact)
                     .style(ButtonStyle::Transparent)

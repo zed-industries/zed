@@ -1,13 +1,26 @@
 use crate::prelude::*;
 use gpui::{img, Hsla, ImageSource, Img, IntoElement, Styled};
 
+/// The shape of an [`Avatar`].
 #[derive(Debug, Default, PartialEq, Clone)]
-pub enum Shape {
+pub enum AvatarShape {
+    /// The avatar is shown in a circle.
     #[default]
     Circle,
+    /// The avatar is shown in a rectangle with rounded corners.
     RoundedRectangle,
 }
 
+/// An element that renders a user avatar with customizable appearance options.
+///
+/// # Examples
+///
+/// ```
+/// Avatar::new("path/to/image.png")
+///     .shape(AvatarShape::Circle)
+///     .grayscale(true)
+///     .border_color(cx.theme().colors().border)
+/// ```
 #[derive(IntoElement)]
 pub struct Avatar {
     image: Img,
@@ -18,7 +31,7 @@ pub struct Avatar {
 impl RenderOnce for Avatar {
     fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
         if self.image.style().corner_radii.top_left.is_none() {
-            self = self.shape(Shape::Circle);
+            self = self.shape(AvatarShape::Circle);
         }
 
         let size = cx.rem_size();
@@ -66,14 +79,31 @@ impl Avatar {
         }
     }
 
-    pub fn shape(mut self, shape: Shape) -> Self {
+    /// Sets the shape of the avatar image.
+    ///
+    /// This method allows the shape of the avatar to be specified using a [`Shape`].
+    /// It modifies the corner radius of the image to match the specified shape.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Avatar::new("path/to/image.png").shape(AvatarShape::Circle);
+    /// ```
+    pub fn shape(mut self, shape: AvatarShape) -> Self {
         self.image = match shape {
-            Shape::Circle => self.image.rounded_full(),
-            Shape::RoundedRectangle => self.image.rounded_md(),
+            AvatarShape::Circle => self.image.rounded_full(),
+            AvatarShape::RoundedRectangle => self.image.rounded_md(),
         };
         self
     }
 
+    /// Applies a grayscale filter to the avatar image.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let avatar = Avatar::new("path/to/image.png").grayscale(true);
+    /// ```
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.image = self.image.grayscale(grayscale);
         self

@@ -7,10 +7,10 @@ pub enum DateTimeType {
 }
 
 impl DateTimeType {
-    /// Converts the DateTimeType to a NaiveDateTime.
+    /// Converts the [`DateTimeType`] to a [`NaiveDateTime`].
     ///
-    /// If the DateTimeType is already a NaiveDateTime, it will be returned as is.
-    /// If the DateTimeType is a DateTime<Local>, it will be converted to a NaiveDateTime.
+    /// If the [`DateTimeType`] is already a [`NaiveDateTime`], it will be returned as is.
+    /// If the [`DateTimeType`] is a [`DateTime<Local>`], it will be converted to a [`NaiveDateTime`].
     pub fn to_naive(&self) -> NaiveDateTime {
         match self {
             DateTimeType::Naive(naive) => *naive,
@@ -68,13 +68,13 @@ impl FormatDistance {
     }
 }
 
-/// Calculates the distance in seconds between two NaiveDateTime objects.
+/// Calculates the distance in seconds between two [`NaiveDateTime`] objects.
 /// It returns a signed integer denoting the difference. If `date` is earlier than `base_date`, the returned value will be negative.
 ///
 /// ## Arguments
 ///
-/// * `date` - A NaiveDateTime object representing the date of interest
-/// * `base_date` - A NaiveDateTime object representing the base date against which the comparison is made
+/// * `date` - A [NaiveDateTime`] object representing the date of interest
+/// * `base_date` - A [NaiveDateTime`] object representing the base date against which the comparison is made
 fn distance_in_seconds(date: NaiveDateTime, base_date: NaiveDateTime) -> i64 {
     let duration = date.signed_duration_since(base_date);
     -duration.num_seconds()
@@ -233,12 +233,12 @@ fn distance_string(
 ///
 /// For example, "less than a minute ago", "about 2 hours ago", "3 months from now", etc.
 ///
-/// Use [naive_format_distance_from_now] to compare a NaiveDateTime against now.
+/// Use [`format_distance_from_now`] to compare a NaiveDateTime against now.
 ///
 /// # Arguments
 ///
-/// * `date` - The NaiveDateTime to compare.
-/// * `base_date` - The NaiveDateTime to compare against.
+/// * `date` - The [`NaiveDateTime`] to compare.
+/// * `base_date` - The [`NaiveDateTime`] to compare against.
 /// * `include_seconds` - A boolean. If true, distances less than a minute are more detailed
 /// * `add_suffix` - A boolean. If true, result indicates if the time is in the past or future
 ///
@@ -274,7 +274,7 @@ pub fn format_distance(
 ///
 /// # Arguments
 ///
-/// * `datetime` - The NaiveDateTime to compare with the current time.
+/// * `datetime` - The [`NaiveDateTime`] to compare with the current time.
 /// * `include_seconds` - A boolean. If true, distances less than a minute are more detailed
 /// * `add_suffix` - A boolean. If true, result indicates if the time is in the past or future
 ///

@@ -7,6 +7,7 @@ enum DividerDirection {
     Vertical,
 }
 
+/// The color of a [`Divider`].
 #[derive(Default)]
 pub enum DividerColor {
     Border,

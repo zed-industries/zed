@@ -31,7 +31,7 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    prelude::*, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize, Label,
+    prelude::*, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconName, IconSize, Label,
     ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
@@ -844,7 +844,7 @@ impl CollabPanel {
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
             } else if is_current_user {
-                IconButton::new("leave-call", Icon::Exit)
+                IconButton::new("leave-call", IconName::Exit)
                     .style(ButtonStyle::Subtle)
                     .on_click(move |_, cx| Self::leave_call(cx))
                     .tooltip(|cx| Tooltip::text("Leave Call", cx))
@@ -903,7 +903,7 @@ impl CollabPanel {
                 h_stack()
                     .gap_1()
                     .child(render_tree_branch(is_last, false, cx))
-                    .child(IconButton::new(0, Icon::Folder)),
+                    .child(IconButton::new(0, IconName::Folder)),
             )
             .child(Label::new(project_name.clone()))
             .tooltip(move |cx| Tooltip::text(format!("Open {}", project_name), cx))
@@ -924,7 +924,7 @@ impl CollabPanel {
                 h_stack()
                     .gap_1()
                     .child(render_tree_branch(is_last, false, cx))
-                    .child(IconButton::new(0, Icon::Screen)),
+                    .child(IconButton::new(0, IconName::Screen)),
             )
             .child(Label::new("Screen"))
             .when_some(peer_id, |this, _| {
@@ -965,7 +965,7 @@ impl CollabPanel {
                 h_stack()
                     .gap_1()
                     .child(render_tree_branch(false, true, cx))
-                    .child(IconButton::new(0, Icon::File)),
+                    .child(IconButton::new(0, IconName::File)),
             )
             .child(div().h_7().w_full().child(Label::new("notes")))
             .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
@@ -986,7 +986,7 @@ impl CollabPanel {
                 h_stack()
                     .gap_1()
                     .child(render_tree_branch(false, false, cx))
-                    .child(IconButton::new(0, Icon::MessageBubbles)),
+                    .child(IconButton::new(0, IconName::MessageBubbles)),
             )
             .child(Label::new("chat"))
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
@@ -1757,7 +1757,7 @@ impl CollabPanel {
                     .child(
                         Button::new("sign_in", "Sign in")
                             .icon_color(Color::Muted)
-                            .icon(Icon::Github)
+                            .icon(IconName::Github)
                             .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .full_width()
@@ -1949,7 +1949,7 @@ impl CollabPanel {
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
                 let channel_link_copy = channel_link.clone();
-                IconButton::new("channel-link", Icon::Copy)
+                IconButton::new("channel-link", IconName::Copy)
                     .icon_size(IconSize::Small)
                     .size(ButtonSize::None)
                     .visible_on_hover("section-header")
@@ -1961,13 +1961,13 @@ impl CollabPanel {
                     .into_any_element()
             }),
             Section::Contacts => Some(
-                IconButton::new("add-contact", Icon::Plus)
+                IconButton::new("add-contact", IconName::Plus)
                     .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
                     .tooltip(|cx| Tooltip::text("Search for new contact", cx))
                     .into_any_element(),
             ),
             Section::Channels => Some(
-                IconButton::new("add-channel", Icon::Plus)
+                IconButton::new("add-channel", IconName::Plus)
                     .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
                     .tooltip(|cx| Tooltip::text("Create a channel", cx))
                     .into_any_element(),
@@ -2038,7 +2038,7 @@ impl CollabPanel {
                         })
                         .when(!calling, |el| {
                             el.child(
-                                IconButton::new("remove_contact", Icon::Close)
+                                IconButton::new("remove_contact", IconName::Close)
                                     .icon_color(Color::Muted)
                                     .visible_on_hover("")
                                     .tooltip(|cx| Tooltip::text("Remove Contact", cx))
@@ -2099,13 +2099,13 @@ impl CollabPanel {
 
         let controls = if is_incoming {
             vec![
-                IconButton::new("decline-contact", Icon::Close)
+                IconButton::new("decline-contact", IconName::Close)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
                     .icon_color(color)
                     .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-                IconButton::new("accept-contact", Icon::Check)
+                IconButton::new("accept-contact", IconName::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
@@ -2114,7 +2114,7 @@ impl CollabPanel {
             ]
         } else {
             let github_login = github_login.clone();
-            vec![IconButton::new("remove_contact", Icon::Close)
+            vec![IconButton::new("remove_contact", IconName::Close)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
@@ -2154,13 +2154,13 @@ impl CollabPanel {
         };
 
         let controls = [
-            IconButton::new("reject-invite", Icon::Close)
+            IconButton::new("reject-invite", IconName::Close)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.respond_to_channel_invite(channel_id, false, cx);
                 }))
                 .icon_color(color)
                 .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-            IconButton::new("accept-invite", Icon::Check)
+            IconButton::new("accept-invite", IconName::Check)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.respond_to_channel_invite(channel_id, true, cx);
                 }))
@@ -2178,7 +2178,7 @@ impl CollabPanel {
                     .child(h_stack().children(controls)),
             )
             .start_slot(
-                IconElement::new(Icon::Hash)
+                Icon::new(IconName::Hash)
                     .size(IconSize::Small)
                     .color(Color::Muted),
             )
@@ -2190,7 +2190,7 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> ListItem {
         ListItem::new("contact-placeholder")
-            .child(IconElement::new(Icon::Plus))
+            .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))
             .selected(is_selected)
             .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
@@ -2274,7 +2274,7 @@ impl CollabPanel {
         };
 
         let messages_button = |cx: &mut ViewContext<Self>| {
-            IconButton::new("channel_chat", Icon::MessageBubbles)
+            IconButton::new("channel_chat", IconName::MessageBubbles)
                 .icon_size(IconSize::Small)
                 .icon_color(if has_messages_notification {
                     Color::Default
@@ -2286,7 +2286,7 @@ impl CollabPanel {
         };
 
         let notes_button = |cx: &mut ViewContext<Self>| {
-            IconButton::new("channel_notes", Icon::File)
+            IconButton::new("channel_notes", IconName::File)
                 .icon_size(IconSize::Small)
                 .icon_color(if has_notes_notification {
                     Color::Default
@@ -2343,9 +2343,13 @@ impl CollabPanel {
                         },
                     ))
                     .start_slot(
-                        IconElement::new(if is_public { Icon::Public } else { Icon::Hash })
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
+                        Icon::new(if is_public {
+                            IconName::Public
+                        } else {
+                            IconName::Hash
+                        })
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
                     )
                     .child(
                         h_stack()
@@ -2414,7 +2418,7 @@ impl CollabPanel {
             .indent_level(depth + 1)
             .indent_step_size(px(20.))
             .start_slot(
-                IconElement::new(Icon::Hash)
+                Icon::new(IconName::Hash)
                     .size(IconSize::Small)
                     .color(Color::Muted),
             );
@@ -2528,10 +2532,10 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::Icon> {
+    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
-            .then(|| ui::Icon::Collab)
+            .then(|| ui::IconName::Collab)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -2669,11 +2673,11 @@ impl Render for DraggedChannelView {
             .p_1()
             .gap_1()
             .child(
-                IconElement::new(
+                Icon::new(
                     if self.channel.visibility == proto::ChannelVisibility::Public {
-                        Icon::Public
+                        IconName::Public
                     } else {
-                        Icon::Hash
+                        IconName::Hash
                     },
                 )
                 .size(IconSize::Small)

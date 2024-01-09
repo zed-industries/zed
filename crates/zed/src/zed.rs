@@ -764,7 +764,6 @@ fn open_bundled_file(
     .detach_and_log_err(cx);
 }
 
-// todo!()
 #[cfg(test)]
 mod tests {
     use super::*;
