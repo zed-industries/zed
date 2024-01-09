@@ -2,41 +2,31 @@ use gpui::{AppContext, Hsla, SharedString};
 
 use crate::{ActiveTheme, Appearance};
 
-/// A one-based step in a [`ColorScale`].
+/// A collection of colors that are used to style the UI.
+///
+/// Each step has a semantic meaning, and is used to style different parts of the UI.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct ColorScaleStep(usize);
 
 impl ColorScaleStep {
-    pub const ONE: Self = Self(1);
-    pub const TWO: Self = Self(2);
-    pub const THREE: Self = Self(3);
-    pub const FOUR: Self = Self(4);
-    pub const FIVE: Self = Self(5);
-    pub const SIX: Self = Self(6);
-    pub const SEVEN: Self = Self(7);
-    pub const EIGHT: Self = Self(8);
-    pub const NINE: Self = Self(9);
-    pub const TEN: Self = Self(10);
-    pub const ELEVEN: Self = Self(11);
-    pub const TWELVE: Self = Self(12);
-
-    /// All of the steps in a [`ColorScale`].
-    pub const ALL: [ColorScaleStep; 12] = [
-        Self::ONE,
-        Self::TWO,
-        Self::THREE,
-        Self::FOUR,
-        Self::FIVE,
-        Self::SIX,
-        Self::SEVEN,
-        Self::EIGHT,
-        Self::NINE,
-        Self::TEN,
-        Self::ELEVEN,
-        Self::TWELVE,
-    ];
+    const ONE: Self = Self(1);
+    const TWO: Self = Self(2);
+    const THREE: Self = Self(3);
+    const FOUR: Self = Self(4);
+    const FIVE: Self = Self(5);
+    const SIX: Self = Self(6);
+    const SEVEN: Self = Self(7);
+    const EIGHT: Self = Self(8);
+    const NINE: Self = Self(9);
+    const TEN: Self = Self(10);
+    const ELEVEN: Self = Self(11);
+    const TWELVE: Self = Self(12);
 }
 
+/// A scale of colors for a given [ColorScaleSet].
+///
+/// Each [ColorScale] contains exactly 12 colors. Refer to
+/// [ColorScaleStep] for a reference of what each step is used for.
 pub struct ColorScale(Vec<Hsla>);
 
 impl FromIterator<Hsla> for ColorScale {
@@ -229,6 +219,7 @@ impl IntoIterator for ColorScales {
     }
 }
 
+/// Provides groups of [ColorScale]s for light and dark themes, as well as transparent versions of each scale.
 pub struct ColorScaleSet {
     name: SharedString,
     light: ColorScale,

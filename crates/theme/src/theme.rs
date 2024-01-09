@@ -1,3 +1,11 @@
+//! # Theme
+//!
+//! This crate provides the theme system for Zed.
+//!
+//! ## Overview
+//!
+//! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
+
 mod default_colors;
 mod default_theme;
 mod one_themes;

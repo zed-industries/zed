@@ -7,6 +7,7 @@ use crate::{PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme, Sys
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug, serde::Deserialize)]
 pub struct ThemeColors {
+    /// Border color. Used for most borders, is usually a high contrast color.
     pub border: Hsla,
     /// Border color. Used for deemphasized borders, like a visual divider between two sections
     pub border_variant: Hsla,
