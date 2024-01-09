@@ -95,6 +95,7 @@ impl From<ButtonStyle> for Color {
     }
 }
 
+/// Sets the visual appearance of a button.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ButtonStyle {
     /// A filled button with a solid background color. Provides emphasis versus
@@ -262,8 +263,7 @@ impl ButtonStyle {
     }
 }
 
-/// ButtonSize can also be used to help build  non-button elements
-/// that are consistently sized with buttons.
+/// Sets the height of a button. Can also be used to size  non-button elements to align with [Button]s.
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonSize {
     Large,

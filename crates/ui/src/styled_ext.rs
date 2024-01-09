@@ -30,6 +30,7 @@ pub trait StyledExt: Styled + Sized {
         self.flex().flex_col()
     }
 
+    /// Sets the text size using a [UiTextSize].
     fn text_ui_size(self, size: UiTextSize) -> Self {
         self.text_size(size.rems())
     }
@@ -40,7 +41,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use [`text_ui_sm`] for regular-sized text.
+    /// Use `text_ui_sm` for smaller text.
     fn text_ui(self) -> Self {
         self.text_size(UiTextSize::default().rems())
     }
@@ -51,7 +52,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use [`text_ui`] for regular-sized text.
+    /// Use `text_ui` for regular-sized text.
     fn text_ui_sm(self) -> Self {
         self.text_size(UiTextSize::Small.rems())
     }
@@ -62,7 +63,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use [`text_ui`] for regular-sized text.
+    /// Use `text_ui` for regular-sized text.
     fn text_ui_xs(self) -> Self {
         self.text_size(UiTextSize::XSmall.rems())
     }
