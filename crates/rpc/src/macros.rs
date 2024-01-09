@@ -60,8 +60,10 @@ macro_rules! request_messages {
 
 #[macro_export]
 macro_rules! entity_messages {
-    ($id_field:ident, $($name:ident),* $(,)?) => {
+    ({$id_field:ident, $entity_type:ty}, $($name:ident),* $(,)?) => {
         $(impl EntityMessage for $name {
+            type Entity = $entity_type;
+
             fn remote_entity_id(&self) -> u64 {
                 self.$id_field
             }

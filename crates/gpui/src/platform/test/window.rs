@@ -18,7 +18,7 @@ pub struct TestWindowState {
     pub(crate) edited: bool,
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
-
+    pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     input_callback: Option<Box<dyn FnMut(InputEvent) -> bool>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -44,7 +44,7 @@ impl TestWindow {
             sprite_atlas: Arc::new(TestAtlas::new()),
             title: Default::default(),
             edited: false,
-
+            should_close_handler: None,
             input_callback: None,
             active_status_change_callback: None,
             resize_callback: None,
@@ -116,6 +116,9 @@ impl TestWindow {
         input_handler.replace_text_in_range(None, &text);
 
         self.0.lock().input_handler = Some(input_handler);
+    }
+    pub fn edited(&self) -> bool {
+        self.0.lock().edited
     }
 }
 
@@ -235,8 +238,8 @@ impl PlatformWindow for TestWindow {
         self.0.lock().moved_callback = Some(callback)
     }
 
-    fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {
-        unimplemented!()
+    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.lock().should_close_handler = Some(callback);
     }
 
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {

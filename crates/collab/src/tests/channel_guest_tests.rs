@@ -82,5 +82,13 @@ async fn test_channel_guests(
         project_b.read_with(cx_b, |project, _| project.remote_id()),
         Some(project_id),
     );
-    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()))
+    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+
+    assert!(project_b
+        .update(cx_b, |project, cx| {
+            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            project.create_entry((worktree_id, "b.txt"), false, cx)
+        })
+        .await
+        .is_err())
 }

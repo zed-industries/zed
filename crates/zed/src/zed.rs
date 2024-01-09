@@ -1,11 +1,9 @@
 mod app_menus;
-mod assets;
 pub mod languages;
 mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
-pub use assets::*;
 use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
@@ -18,6 +16,7 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::{anyhow, Context as _};
+use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -33,11 +32,11 @@ use util::{
 };
 use uuid::Uuid;
 use welcome::BaseKeymap;
-use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
 };
+use workspace::{dock::Panel, Pane};
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
 
 actions!(
@@ -114,16 +113,13 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        //     cx.emit(workspace2::Event::PaneAdded(
-        //         workspace.active_pane().clone(),
-        //     ));
+        // cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
 
         //     let collab_titlebar_item =
         //         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
         //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
-        let copilot =
-            cx.new_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
+        let copilot = cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -187,6 +183,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
+                let position = project_panel.read(cx).position(cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
@@ -194,19 +191,18 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
 
-                // if !was_deserialized
-                //     && workspace
-                //         .project()
-                //         .read(cx)
-                //         .visible_worktrees(cx)
-                //         .any(|tree| {
-                //             tree.read(cx)
-                //                 .root_entry()
-                //                 .map_or(false, |entry| entry.is_dir())
-                //         })
-                // {
-                //     workspace.toggle_dock(project_panel_position, cx);
-                // }
+                if workspace
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .any(|tree| {
+                        tree.read(cx)
+                            .root_entry()
+                            .map_or(false, |entry| entry.is_dir())
+                    })
+                {
+                    workspace.toggle_dock(position, cx);
+                }
                 cx.focus_self();
             })
         })
@@ -587,7 +583,6 @@ pub fn handle_keymap_file_changes(
                     }
                 }
             }
-
             cx.update(|cx| reload_keymaps(cx, &user_keymap)).ok();
         }
     })
@@ -769,1845 +764,2074 @@ fn open_bundled_file(
     .detach_and_log_err(cx);
 }
 
-// todo!()
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use assets::Assets;
-//     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
-//     use fs::{FakeFs, Fs};
-//     use gpui::{
-//         actions, elements::Empty, executor::Deterministic, Action, AnyElement, AnyWindowHandle,
-//         AppContext, AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
-//     };
-//     use language::LanguageRegistry;
-//     use project::{project_settings::ProjectSettings, Project, ProjectPath};
-//     use serde_json::json;
-//     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
-//     use std::{
-//         collections::HashSet,
-//         path::{Path, PathBuf},
-//     };
-//     use theme::{ThemeRegistry, ThemeSettings};
-//     use workspace::{
-//         item::{Item, ItemHandle},
-//         open_new, open_paths, pane, NewFile, SaveIntent, SplitDirection, WorkspaceHandle,
-//     };
-
-//     #[gpui::test]
-//     async fn test_open_paths_action(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 "/root",
-//                 json!({
-//                     "a": {
-//                         "aa": null,
-//                         "ab": null,
-//                     },
-//                     "b": {
-//                         "ba": null,
-//                         "bb": null,
-//                     },
-//                     "c": {
-//                         "ca": null,
-//                         "cb": null,
-//                     },
-//                     "d": {
-//                         "da": null,
-//                         "db": null,
-//                     },
-//                 }),
-//             )
-//             .await;
-
-//         cx.update(|cx| {
-//             open_paths(
-//                 &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
-//                 &app_state,
-//                 None,
-//                 cx,
-//             )
-//         })
-//         .await
-//         .unwrap();
-//         assert_eq!(cx.windows().len(), 1);
-
-//         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(cx.windows().len(), 1);
-//         let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
-//         workspace_1.update(cx, |workspace, cx| {
-//             assert_eq!(workspace.worktrees(cx).count(), 2);
-//             assert!(workspace.left_dock().read(cx).is_open());
-//             assert!(workspace.active_pane().is_focused(cx));
-//         });
-
-//         cx.update(|cx| {
-//             open_paths(
-//                 &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
-//                 &app_state,
-//                 None,
-//                 cx,
-//             )
-//         })
-//         .await
-//         .unwrap();
-//         assert_eq!(cx.windows().len(), 2);
-
-//         // Replace existing windows
-//         let window = cx.windows()[0].downcast::<Workspace>().unwrap();
-//         cx.update(|cx| {
-//             open_paths(
-//                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
-//                 &app_state,
-//                 Some(window),
-//                 cx,
-//             )
-//         })
-//         .await
-//         .unwrap();
-//         assert_eq!(cx.windows().len(), 2);
-//         let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
-//         workspace_1.update(cx, |workspace, cx| {
-//             assert_eq!(
-//                 workspace
-//                     .worktrees(cx)
-//                     .map(|w| w.read(cx).abs_path())
-//                     .collect::<Vec<_>>(),
-//                 &[Path::new("/root/c").into(), Path::new("/root/d").into()]
-//             );
-//             assert!(workspace.left_dock().read(cx).is_open());
-//             assert!(workspace.active_pane().is_focused(cx));
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_window_edit_state(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree("/root", json!({"a": "hey"}))
-//             .await;
-
-//         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(cx.windows().len(), 1);
-
-//         // When opening the workspace, the window is not in a edited state.
-//         let window = cx.windows()[0].downcast::<Workspace>().unwrap();
-//         let workspace = window.root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-//         let editor = workspace.read_with(cx, |workspace, cx| {
-//             workspace
-//                 .active_item(cx)
-//                 .unwrap()
-//                 .downcast::<Editor>()
-//                 .unwrap()
-//         });
-//         assert!(!window.is_edited(cx));
-
-//         // Editing a buffer marks the window as edited.
-//         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-//         assert!(window.is_edited(cx));
-
-//         // Undoing the edit restores the window's edited state.
-//         editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
-//         assert!(!window.is_edited(cx));
-
-//         // Redoing the edit marks the window as edited again.
-//         editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
-//         assert!(window.is_edited(cx));
-
-//         // Closing the item restores the window's edited state.
-//         let close = pane.update(cx, |pane, cx| {
-//             drop(editor);
-//             pane.close_active_item(&Default::default(), cx).unwrap()
-//         });
-//         executor.run_until_parked();
-
-//         window.simulate_prompt_answer(1, cx);
-//         close.await.unwrap();
-//         assert!(!window.is_edited(cx));
-
-//         // Opening the buffer again doesn't impact the window's edited state.
-//         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-//             .await
-//             .unwrap();
-//         let editor = workspace.read_with(cx, |workspace, cx| {
-//             workspace
-//                 .active_item(cx)
-//                 .unwrap()
-//                 .downcast::<Editor>()
-//                 .unwrap()
-//         });
-//         assert!(!window.is_edited(cx));
-
-//         // Editing the buffer marks the window as edited.
-//         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
-//         assert!(window.is_edited(cx));
-
-//         // Ensure closing the window via the mouse gets preempted due to the
-//         // buffer having unsaved changes.
-//         assert!(!window.simulate_close(cx));
-//         executor.run_until_parked();
-//         assert_eq!(cx.windows().len(), 1);
-
-//         // The window is successfully closed after the user dismisses the prompt.
-//         window.simulate_prompt_answer(1, cx);
-//         executor.run_until_parked();
-//         assert_eq!(cx.windows().len(), 0);
-//     }
-
-//     #[gpui::test]
-//     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         cx.update(|cx| {
-//             open_new(&app_state, cx, |workspace, cx| {
-//                 Editor::new_file(workspace, &Default::default(), cx)
-//             })
-//         })
-//         .await;
-
-//         let window = cx
-//             .windows()
-//             .first()
-//             .unwrap()
-//             .downcast::<Workspace>()
-//             .unwrap();
-//         let workspace = window.root(cx);
-
-//         let editor = workspace.update(cx, |workspace, cx| {
-//             workspace
-//                 .active_item(cx)
-//                 .unwrap()
-//                 .downcast::<editor::Editor>()
-//                 .unwrap()
-//         });
-
-//         editor.update(cx, |editor, cx| {
-//             assert!(editor.text(cx).is_empty());
-//             assert!(!editor.is_dirty(cx));
-//         });
-
-//         let save_task = workspace.update(cx, |workspace, cx| {
-//             workspace.save_active_item(SaveIntent::Save, cx)
-//         });
-//         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
-//         cx.foreground().run_until_parked();
-//         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
-//         save_task.await.unwrap();
-//         editor.read_with(cx, |editor, cx| {
-//             assert!(!editor.is_dirty(cx));
-//             assert_eq!(editor.title(cx), "the-new-name");
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_open_entry(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 "/root",
-//                 json!({
-//                     "a": {
-//                         "file1": "contents 1",
-//                         "file2": "contents 2",
-//                         "file3": "contents 3",
-//                     },
-//                 }),
-//             )
-//             .await;
-
-//         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
-
-//         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-//         let file1 = entries[0].clone();
-//         let file2 = entries[1].clone();
-//         let file3 = entries[2].clone();
-
-//         // Open the first entry
-//         let entry_1 = workspace
-//             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-//             .await
-//             .unwrap();
-//         cx.read(|cx| {
-//             let pane = workspace.read(cx).active_pane().read(cx);
-//             assert_eq!(
-//                 pane.active_item().unwrap().project_path(cx),
-//                 Some(file1.clone())
-//             );
-//             assert_eq!(pane.items_len(), 1);
-//         });
-
-//         // Open the second entry
-//         workspace
-//             .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
-//             .await
-//             .unwrap();
-//         cx.read(|cx| {
-//             let pane = workspace.read(cx).active_pane().read(cx);
-//             assert_eq!(
-//                 pane.active_item().unwrap().project_path(cx),
-//                 Some(file2.clone())
-//             );
-//             assert_eq!(pane.items_len(), 2);
-//         });
-
-//         // Open the first entry again. The existing pane item is activated.
-//         let entry_1b = workspace
-//             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(entry_1.id(), entry_1b.id());
-
-//         cx.read(|cx| {
-//             let pane = workspace.read(cx).active_pane().read(cx);
-//             assert_eq!(
-//                 pane.active_item().unwrap().project_path(cx),
-//                 Some(file1.clone())
-//             );
-//             assert_eq!(pane.items_len(), 2);
-//         });
-
-//         // Split the pane with the first entry, then open the second entry again.
-//         workspace
-//             .update(cx, |w, cx| {
-//                 w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, cx);
-//                 w.open_path(file2.clone(), None, true, cx)
-//             })
-//             .await
-//             .unwrap();
-
-//         workspace.read_with(cx, |w, cx| {
-//             assert_eq!(
-//                 w.active_pane()
-//                     .read(cx)
-//                     .active_item()
-//                     .unwrap()
-//                     .project_path(cx),
-//                 Some(file2.clone())
-//             );
-//         });
-
-//         // Open the third entry twice concurrently. Only one pane item is added.
-//         let (t1, t2) = workspace.update(cx, |w, cx| {
-//             (
-//                 w.open_path(file3.clone(), None, true, cx),
-//                 w.open_path(file3.clone(), None, true, cx),
-//             )
-//         });
-//         t1.await.unwrap();
-//         t2.await.unwrap();
-//         cx.read(|cx| {
-//             let pane = workspace.read(cx).active_pane().read(cx);
-//             assert_eq!(
-//                 pane.active_item().unwrap().project_path(cx),
-//                 Some(file3.clone())
-//             );
-//             let pane_entries = pane
-//                 .items()
-//                 .map(|i| i.project_path(cx).unwrap())
-//                 .collect::<Vec<_>>();
-//             assert_eq!(pane_entries, &[file1, file2, file3]);
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_open_paths(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 "/",
-//                 json!({
-//                     "dir1": {
-//                         "a.txt": ""
-//                     },
-//                     "dir2": {
-//                         "b.txt": ""
-//                     },
-//                     "dir3": {
-//                         "c.txt": ""
-//                     },
-//                     "d.txt": ""
-//                 }),
-//             )
-//             .await;
-
-//         cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(cx.windows().len(), 1);
-//         let workspace = cx.windows()[0].downcast::<Workspace>().unwrap().root(cx);
-
-//         #[track_caller]
-//         fn assert_project_panel_selection(
-//             workspace: &Workspace,
-//             expected_worktree_path: &Path,
-//             expected_entry_path: &Path,
-//             cx: &AppContext,
-//         ) {
-//             let project_panel = [
-//                 workspace.left_dock().read(cx).panel::<ProjectPanel>(),
-//                 workspace.right_dock().read(cx).panel::<ProjectPanel>(),
-//                 workspace.bottom_dock().read(cx).panel::<ProjectPanel>(),
-//             ]
-//             .into_iter()
-//             .find_map(std::convert::identity)
-//             .expect("found no project panels")
-//             .read(cx);
-//             let (selected_worktree, selected_entry) = project_panel
-//                 .selected_entry(cx)
-//                 .expect("project panel should have a selected entry");
-//             assert_eq!(
-//                 selected_worktree.abs_path().as_ref(),
-//                 expected_worktree_path,
-//                 "Unexpected project panel selected worktree path"
-//             );
-//             assert_eq!(
-//                 selected_entry.path.as_ref(),
-//                 expected_entry_path,
-//                 "Unexpected project panel selected entry path"
-//             );
-//         }
-
-//         // Open a file within an existing worktree.
-//         workspace
-//             .update(cx, |view, cx| {
-//                 view.open_paths(vec!["/dir1/a.txt".into()], true, cx)
-//             })
-//             .await;
-//         cx.read(|cx| {
-//             let workspace = workspace.read(cx);
-//             assert_project_panel_selection(workspace, Path::new("/dir1"), Path::new("a.txt"), cx);
-//             assert_eq!(
-//                 workspace
-//                     .active_pane()
-//                     .read(cx)
-//                     .active_item()
-//                     .unwrap()
-//                     .as_any()
-//                     .downcast_ref::<Editor>()
-//                     .unwrap()
-//                     .read(cx)
-//                     .title(cx),
-//                 "a.txt"
-//             );
-//         });
-
-//         // Open a file outside of any existing worktree.
-//         workspace
-//             .update(cx, |view, cx| {
-//                 view.open_paths(vec!["/dir2/b.txt".into()], true, cx)
-//             })
-//             .await;
-//         cx.read(|cx| {
-//             let workspace = workspace.read(cx);
-//             assert_project_panel_selection(workspace, Path::new("/dir2/b.txt"), Path::new(""), cx);
-//             let worktree_roots = workspace
-//                 .worktrees(cx)
-//                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-//                 .collect::<HashSet<_>>();
-//             assert_eq!(
-//                 worktree_roots,
-//                 vec!["/dir1", "/dir2/b.txt"]
-//                     .into_iter()
-//                     .map(Path::new)
-//                     .collect(),
-//             );
-//             assert_eq!(
-//                 workspace
-//                     .active_pane()
-//                     .read(cx)
-//                     .active_item()
-//                     .unwrap()
-//                     .as_any()
-//                     .downcast_ref::<Editor>()
-//                     .unwrap()
-//                     .read(cx)
-//                     .title(cx),
-//                 "b.txt"
-//             );
-//         });
-
-//         // Ensure opening a directory and one of its children only adds one worktree.
-//         workspace
-//             .update(cx, |view, cx| {
-//                 view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], true, cx)
-//             })
-//             .await;
-//         cx.read(|cx| {
-//             let workspace = workspace.read(cx);
-//             assert_project_panel_selection(workspace, Path::new("/dir3"), Path::new("c.txt"), cx);
-//             let worktree_roots = workspace
-//                 .worktrees(cx)
-//                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-//                 .collect::<HashSet<_>>();
-//             assert_eq!(
-//                 worktree_roots,
-//                 vec!["/dir1", "/dir2/b.txt", "/dir3"]
-//                     .into_iter()
-//                     .map(Path::new)
-//                     .collect(),
-//             );
-//             assert_eq!(
-//                 workspace
-//                     .active_pane()
-//                     .read(cx)
-//                     .active_item()
-//                     .unwrap()
-//                     .as_any()
-//                     .downcast_ref::<Editor>()
-//                     .unwrap()
-//                     .read(cx)
-//                     .title(cx),
-//                 "c.txt"
-//             );
-//         });
-
-//         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
-//         workspace
-//             .update(cx, |view, cx| {
-//                 view.open_paths(vec!["/d.txt".into()], false, cx)
-//             })
-//             .await;
-//         cx.read(|cx| {
-//             let workspace = workspace.read(cx);
-//             assert_project_panel_selection(workspace, Path::new("/d.txt"), Path::new(""), cx);
-//             let worktree_roots = workspace
-//                 .worktrees(cx)
-//                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-//                 .collect::<HashSet<_>>();
-//             assert_eq!(
-//                 worktree_roots,
-//                 vec!["/dir1", "/dir2/b.txt", "/dir3", "/d.txt"]
-//                     .into_iter()
-//                     .map(Path::new)
-//                     .collect(),
-//             );
-
-//             let visible_worktree_roots = workspace
-//                 .visible_worktrees(cx)
-//                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
-//                 .collect::<HashSet<_>>();
-//             assert_eq!(
-//                 visible_worktree_roots,
-//                 vec!["/dir1", "/dir2/b.txt", "/dir3"]
-//                     .into_iter()
-//                     .map(Path::new)
-//                     .collect(),
-//             );
-
-//             assert_eq!(
-//                 workspace
-//                     .active_pane()
-//                     .read(cx)
-//                     .active_item()
-//                     .unwrap()
-//                     .as_any()
-//                     .downcast_ref::<Editor>()
-//                     .unwrap()
-//                     .read(cx)
-//                     .title(cx),
-//                 "d.txt"
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_opening_excluded_paths(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         cx.update(|cx| {
-//             cx.update_global::<SettingsStore, _, _>(|store, cx| {
-//                 store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-//                     project_settings.file_scan_exclusions =
-//                         Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
-//                 });
-//             });
-//         });
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 "/root",
-//                 json!({
-//                     ".gitignore": "ignored_dir\n",
-//                     ".git": {
-//                         "HEAD": "ref: refs/heads/main",
-//                     },
-//                     "regular_dir": {
-//                         "file": "regular file contents",
-//                     },
-//                     "ignored_dir": {
-//                         "ignored_subdir": {
-//                             "file": "ignored subfile contents",
-//                         },
-//                         "file": "ignored file contents",
-//                     },
-//                     "excluded_dir": {
-//                         "file": "excluded file contents",
-//                     },
-//                 }),
-//             )
-//             .await;
-
-//         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
-
-//         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
-//         let paths_to_open = [
-//             Path::new("/root/excluded_dir/file").to_path_buf(),
-//             Path::new("/root/.git/HEAD").to_path_buf(),
-//             Path::new("/root/excluded_dir/ignored_subdir").to_path_buf(),
-//         ];
-//         let (opened_workspace, new_items) = cx
-//             .update(|cx| workspace::open_paths(&paths_to_open, &app_state, None, cx))
-//             .await
-//             .unwrap();
-
-//         assert_eq!(
-//             opened_workspace.id(),
-//             workspace.id(),
-//             "Excluded files in subfolders of a workspace root should be opened in the workspace"
-//         );
-//         let mut opened_paths = cx.read(|cx| {
-//             assert_eq!(
-//                 new_items.len(),
-//                 paths_to_open.len(),
-//                 "Expect to get the same number of opened items as submitted paths to open"
-//             );
-//             new_items
-//                 .iter()
-//                 .zip(paths_to_open.iter())
-//                 .map(|(i, path)| {
-//                     match i {
-//                         Some(Ok(i)) => {
-//                             Some(i.project_path(cx).map(|p| p.path.display().to_string()))
-//                         }
-//                         Some(Err(e)) => panic!("Excluded file {path:?} failed to open: {e:?}"),
-//                         None => None,
-//                     }
-//                     .flatten()
-//                 })
-//                 .collect::<Vec<_>>()
-//         });
-//         opened_paths.sort();
-//         assert_eq!(
-//             opened_paths,
-//             vec![
-//                 None,
-//                 Some(".git/HEAD".to_string()),
-//                 Some("excluded_dir/file".to_string()),
-//             ],
-//             "Excluded files should get opened, excluded dir should not get opened"
-//         );
-
-//         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-//         assert_eq!(
-//             initial_entries, entries,
-//             "Workspace entries should not change after opening excluded files and directories paths"
-//         );
-
-//         cx.read(|cx| {
-//             let pane = workspace.read(cx).active_pane().read(cx);
-//             let mut opened_buffer_paths = pane
-//                 .items()
-//                 .map(|i| {
-//                     i.project_path(cx)
-//                         .expect("all excluded files that got open should have a path")
-//                         .path
-//                         .display()
-//                         .to_string()
-//                 })
-//                 .collect::<Vec<_>>();
-//             opened_buffer_paths.sort();
-//             assert_eq!(
-//                 opened_buffer_paths,
-//                 vec![".git/HEAD".to_string(), "excluded_dir/file".to_string()],
-//                 "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_save_conflicting_item(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree("/root", json!({ "a.txt": "" }))
-//             .await;
-
-//         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
-
-//         // Open a file within an existing worktree.
-//         workspace
-//             .update(cx, |view, cx| {
-//                 view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
-//             })
-//             .await;
-//         let editor = cx.read(|cx| {
-//             let pane = workspace.read(cx).active_pane().read(cx);
-//             let item = pane.active_item().unwrap();
-//             item.downcast::<Editor>().unwrap()
-//         });
-
-//         editor.update(cx, |editor, cx| editor.handle_input("x", cx));
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_file("/root/a.txt", "changed".to_string())
-//             .await;
-//         editor
-//             .condition(cx, |editor, cx| editor.has_conflict(cx))
-//             .await;
-//         cx.read(|cx| assert!(editor.is_dirty(cx)));
-
-//         let save_task = workspace.update(cx, |workspace, cx| {
-//             workspace.save_active_item(SaveIntent::Save, cx)
-//         });
-//         cx.foreground().run_until_parked();
-//         window.simulate_prompt_answer(0, cx);
-//         save_task.await.unwrap();
-//         editor.read_with(cx, |editor, cx| {
-//             assert!(!editor.is_dirty(cx));
-//             assert!(!editor.has_conflict(cx));
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
-
-//         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-//         project.update(cx, |project, _| project.languages().add(rust_lang()));
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
-//         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
-
-//         // Create a new untitled buffer
-//         cx.dispatch_action(window.into(), NewFile);
-//         let editor = workspace.read_with(cx, |workspace, cx| {
-//             workspace
-//                 .active_item(cx)
-//                 .unwrap()
-//                 .downcast::<Editor>()
-//                 .unwrap()
-//         });
-
-//         editor.update(cx, |editor, cx| {
-//             assert!(!editor.is_dirty(cx));
-//             assert_eq!(editor.title(cx), "untitled");
-//             assert!(Arc::ptr_eq(
-//                 &editor.language_at(0, cx).unwrap(),
-//                 &languages::PLAIN_TEXT
-//             ));
-//             editor.handle_input("hi", cx);
-//             assert!(editor.is_dirty(cx));
-//         });
-
-//         // Save the buffer. This prompts for a filename.
-//         let save_task = workspace.update(cx, |workspace, cx| {
-//             workspace.save_active_item(SaveIntent::Save, cx)
-//         });
-//         cx.foreground().run_until_parked();
-//         cx.simulate_new_path_selection(|parent_dir| {
-//             assert_eq!(parent_dir, Path::new("/root"));
-//             Some(parent_dir.join("the-new-name.rs"))
-//         });
-//         cx.read(|cx| {
-//             assert!(editor.is_dirty(cx));
-//             assert_eq!(editor.read(cx).title(cx), "untitled");
-//         });
-
-//         // When the save completes, the buffer's title is updated and the language is assigned based
-//         // on the path.
-//         save_task.await.unwrap();
-//         editor.read_with(cx, |editor, cx| {
-//             assert!(!editor.is_dirty(cx));
-//             assert_eq!(editor.title(cx), "the-new-name.rs");
-//             assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust");
-//         });
-
-//         // Edit the file and save it again. This time, there is no filename prompt.
-//         editor.update(cx, |editor, cx| {
-//             editor.handle_input(" there", cx);
-//             assert!(editor.is_dirty(cx));
-//         });
-//         let save_task = workspace.update(cx, |workspace, cx| {
-//             workspace.save_active_item(SaveIntent::Save, cx)
-//         });
-//         save_task.await.unwrap();
-//         assert!(!cx.did_prompt_for_new_path());
-//         editor.read_with(cx, |editor, cx| {
-//             assert!(!editor.is_dirty(cx));
-//             assert_eq!(editor.title(cx), "the-new-name.rs")
-//         });
-
-//         // Open the same newly-created file in another pane item. The new editor should reuse
-//         // the same buffer.
-//         cx.dispatch_action(window.into(), NewFile);
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.split_and_clone(
-//                     workspace.active_pane().clone(),
-//                     SplitDirection::Right,
-//                     cx,
-//                 );
-//                 workspace.open_path((worktree.read(cx).id(), "the-new-name.rs"), None, true, cx)
-//             })
-//             .await
-//             .unwrap();
-//         let editor2 = workspace.update(cx, |workspace, cx| {
-//             workspace
-//                 .active_item(cx)
-//                 .unwrap()
-//                 .downcast::<Editor>()
-//                 .unwrap()
-//         });
-//         cx.read(|cx| {
-//             assert_eq!(
-//                 editor2.read(cx).buffer().read(cx).as_singleton().unwrap(),
-//                 editor.read(cx).buffer().read(cx).as_singleton().unwrap()
-//             );
-//         })
-//     }
-
-//     #[gpui::test]
-//     async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
-
-//         let project = Project::test(app_state.fs.clone(), [], cx).await;
-//         project.update(cx, |project, _| project.languages().add(rust_lang()));
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
-
-//         // Create a new untitled buffer
-//         cx.dispatch_action(window.into(), NewFile);
-//         let editor = workspace.read_with(cx, |workspace, cx| {
-//             workspace
-//                 .active_item(cx)
-//                 .unwrap()
-//                 .downcast::<Editor>()
-//                 .unwrap()
-//         });
-
-//         editor.update(cx, |editor, cx| {
-//             assert!(Arc::ptr_eq(
-//                 &editor.language_at(0, cx).unwrap(),
-//                 &languages::PLAIN_TEXT
-//             ));
-//             editor.handle_input("hi", cx);
-//             assert!(editor.is_dirty(cx));
-//         });
-
-//         // Save the buffer. This prompts for a filename.
-//         let save_task = workspace.update(cx, |workspace, cx| {
-//             workspace.save_active_item(SaveIntent::Save, cx)
-//         });
-//         cx.foreground().run_until_parked();
-//         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
-//         save_task.await.unwrap();
-//         // The buffer is not dirty anymore and the language is assigned based on the path.
-//         editor.read_with(cx, |editor, cx| {
-//             assert!(!editor.is_dirty(cx));
-//             assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust")
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_pane_actions(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 "/root",
-//                 json!({
-//                     "a": {
-//                         "file1": "contents 1",
-//                         "file2": "contents 2",
-//                         "file3": "contents 3",
-//                     },
-//                 }),
-//             )
-//             .await;
-
-//         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-//         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-//         let workspace = window.root(cx);
-
-//         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-//         let file1 = entries[0].clone();
-
-//         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
-
-//         workspace
-//             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-//             .await
-//             .unwrap();
-
-//         let (editor_1, buffer) = pane_1.update(cx, |pane_1, cx| {
-//             let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
-//             assert_eq!(editor.project_path(cx), Some(file1.clone()));
-//             let buffer = editor.update(cx, |editor, cx| {
-//                 editor.insert("dirt", cx);
-//                 editor.buffer().downgrade()
-//             });
-//             (editor.downgrade(), buffer)
-//         });
-
-//         cx.dispatch_action(window.into(), pane::SplitRight);
-//         let editor_2 = cx.update(|cx| {
-//             let pane_2 = workspace.read(cx).active_pane().clone();
-//             assert_ne!(pane_1, pane_2);
-
-//             let pane2_item = pane_2.read(cx).active_item().unwrap();
-//             assert_eq!(pane2_item.project_path(cx), Some(file1.clone()));
-
-//             pane2_item.downcast::<Editor>().unwrap().downgrade()
-//         });
-//         cx.dispatch_action(
-//             window.into(),
-//             workspace::CloseActiveItem { save_intent: None },
-//         );
-
-//         cx.foreground().run_until_parked();
-//         workspace.read_with(cx, |workspace, _| {
-//             assert_eq!(workspace.panes().len(), 1);
-//             assert_eq!(workspace.active_pane(), &pane_1);
-//         });
-
-//         cx.dispatch_action(
-//             window.into(),
-//             workspace::CloseActiveItem { save_intent: None },
-//         );
-//         cx.foreground().run_until_parked();
-//         window.simulate_prompt_answer(1, cx);
-//         cx.foreground().run_until_parked();
-
-//         workspace.read_with(cx, |workspace, cx| {
-//             assert_eq!(workspace.panes().len(), 1);
-//             assert!(workspace.active_item(cx).is_none());
-//         });
-
-//         cx.assert_dropped(editor_1);
-//         cx.assert_dropped(editor_2);
-//         cx.assert_dropped(buffer);
-//     }
-
-//     #[gpui::test]
-//     async fn test_navigation(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 "/root",
-//                 json!({
-//                     "a": {
-//                         "file1": "contents 1\n".repeat(20),
-//                         "file2": "contents 2\n".repeat(20),
-//                         "file3": "contents 3\n".repeat(20),
-//                     },
-//                 }),
-//             )
-//             .await;
-
-//         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project.clone(), cx))
-//             .root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-//         let file1 = entries[0].clone();
-//         let file2 = entries[1].clone();
-//         let file3 = entries[2].clone();
-
-//         let editor1 = workspace
-//             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-//             .await
-//             .unwrap()
-//             .downcast::<Editor>()
-//             .unwrap();
-//         editor1.update(cx, |editor, cx| {
-//             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)])
-//             });
-//         });
-//         let editor2 = workspace
-//             .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
-//             .await
-//             .unwrap()
-//             .downcast::<Editor>()
-//             .unwrap();
-//         let editor3 = workspace
-//             .update(cx, |w, cx| w.open_path(file3.clone(), None, true, cx))
-//             .await
-//             .unwrap()
-//             .downcast::<Editor>()
-//             .unwrap();
-
-//         editor3
-//             .update(cx, |editor, cx| {
-//                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-//                     s.select_display_ranges([DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)])
-//                 });
-//                 editor.newline(&Default::default(), cx);
-//                 editor.newline(&Default::default(), cx);
-//                 editor.move_down(&Default::default(), cx);
-//                 editor.move_down(&Default::default(), cx);
-//                 editor.save(project.clone(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         editor3.update(cx, |editor, cx| {
-//             editor.set_scroll_position(vec2f(0., 12.5), cx)
-//         });
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file3.clone(), DisplayPoint::new(16, 0), 12.5)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file3.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file2.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file1.clone(), DisplayPoint::new(10, 0), 0.)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file1.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         // Go back one more time and ensure we don't navigate past the first item in the history.
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file1.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file1.clone(), DisplayPoint::new(10, 0), 0.)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file2.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
-//         // location.
-//         pane.update(cx, |pane, cx| {
-//             let editor3_id = editor3.id();
-//             drop(editor3);
-//             pane.close_item_by_id(editor3_id, SaveIntent::Close, cx)
-//         })
-//         .await
-//         .unwrap();
-//         workspace
-//             .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file3.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file3.clone(), DisplayPoint::new(16, 0), 12.5)
-//         );
-
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file3.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
-//         pane.update(cx, |pane, cx| {
-//             let editor2_id = editor2.id();
-//             drop(editor2);
-//             pane.close_item_by_id(editor2_id, SaveIntent::Close, cx)
-//         })
-//         .await
-//         .unwrap();
-//         app_state
-//             .fs
-//             .remove_file(Path::new("/root/a/file2"), Default::default())
-//             .await
-//             .unwrap();
-//         cx.foreground().run_until_parked();
-
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file1.clone(), DisplayPoint::new(10, 0), 0.)
-//         );
-//         workspace
-//             .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file3.clone(), DisplayPoint::new(0, 0), 0.)
-//         );
-
-//         // Modify file to collapse multiple nav history entries into the same location.
-//         // Ensure we don't visit the same location twice when navigating.
-//         editor1.update(cx, |editor, cx| {
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)])
-//             })
-//         });
-
-//         for _ in 0..5 {
-//             editor1.update(cx, |editor, cx| {
-//                 editor.change_selections(None, cx, |s| {
-//                     s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
-//                 });
-//             });
-//             editor1.update(cx, |editor, cx| {
-//                 editor.change_selections(None, cx, |s| {
-//                     s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)])
-//                 })
-//             });
-//         }
-
-//         editor1.update(cx, |editor, cx| {
-//             editor.transact(cx, |editor, cx| {
-//                 editor.change_selections(None, cx, |s| {
-//                     s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)])
-//                 });
-//                 editor.insert("", cx);
-//             })
-//         });
-
-//         editor1.update(cx, |editor, cx| {
-//             editor.change_selections(None, cx, |s| {
-//                 s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
-//             })
-//         });
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file1.clone(), DisplayPoint::new(2, 0), 0.)
-//         );
-//         workspace
-//             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
-//             .await
-//             .unwrap();
-//         assert_eq!(
-//             active_location(&workspace, cx),
-//             (file1.clone(), DisplayPoint::new(3, 0), 0.)
-//         );
-
-//         fn active_location(
-//             workspace: &ViewHandle<Workspace>,
-//             cx: &mut TestAppContext,
-//         ) -> (ProjectPath, DisplayPoint, f32) {
-//             workspace.update(cx, |workspace, cx| {
-//                 let item = workspace.active_item(cx).unwrap();
-//                 let editor = item.downcast::<Editor>().unwrap();
-//                 let (selections, scroll_position) = editor.update(cx, |editor, cx| {
-//                     (
-//                         editor.selections.display_ranges(cx),
-//                         editor.scroll_position(cx),
-//                     )
-//                 });
-//                 (
-//                     item.project_path(cx).unwrap(),
-//                     selections[0].start,
-//                     scroll_position.y(),
-//                 )
-//             })
-//         }
-//     }
-
-//     #[gpui::test]
-//     async fn test_reopening_closed_items(cx: &mut TestAppContext) {
-//         let app_state = init_test(cx);
-//         app_state
-//             .fs
-//             .as_fake()
-//             .insert_tree(
-//                 "/root",
-//                 json!({
-//                     "a": {
-//                         "file1": "",
-//                         "file2": "",
-//                         "file3": "",
-//                         "file4": "",
-//                     },
-//                 }),
-//             )
-//             .await;
-
-//         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-//         let workspace = cx
-//             .add_window(|cx| Workspace::test_new(project, cx))
-//             .root(cx);
-//         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-//         let entries = cx.read(|cx| workspace.file_project_paths(cx));
-//         let file1 = entries[0].clone();
-//         let file2 = entries[1].clone();
-//         let file3 = entries[2].clone();
-//         let file4 = entries[3].clone();
-
-//         let file1_item_id = workspace
-//             .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
-//             .await
-//             .unwrap()
-//             .id();
-//         let file2_item_id = workspace
-//             .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
-//             .await
-//             .unwrap()
-//             .id();
-//         let file3_item_id = workspace
-//             .update(cx, |w, cx| w.open_path(file3.clone(), None, true, cx))
-//             .await
-//             .unwrap()
-//             .id();
-//         let file4_item_id = workspace
-//             .update(cx, |w, cx| w.open_path(file4.clone(), None, true, cx))
-//             .await
-//             .unwrap()
-//             .id();
-//         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
-
-//         // Close all the pane items in some arbitrary order.
-//         pane.update(cx, |pane, cx| {
-//             pane.close_item_by_id(file1_item_id, SaveIntent::Close, cx)
-//         })
-//         .await
-//         .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_item_by_id(file4_item_id, SaveIntent::Close, cx)
-//         })
-//         .await
-//         .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_item_by_id(file2_item_id, SaveIntent::Close, cx)
-//         })
-//         .await
-//         .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
-
-//         pane.update(cx, |pane, cx| {
-//             pane.close_item_by_id(file3_item_id, SaveIntent::Close, cx)
-//         })
-//         .await
-//         .unwrap();
-//         assert_eq!(active_path(&workspace, cx), None);
-
-//         // Reopen all the closed items, ensuring they are reopened in the same order
-//         // in which they were closed.
-//         workspace
-//             .update(cx, Workspace::reopen_closed_item)
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
-
-//         workspace
-//             .update(cx, Workspace::reopen_closed_item)
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
-
-//         workspace
-//             .update(cx, Workspace::reopen_closed_item)
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
-
-//         workspace
-//             .update(cx, Workspace::reopen_closed_item)
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
-
-//         // Reopening past the last closed item is a no-op.
-//         workspace
-//             .update(cx, Workspace::reopen_closed_item)
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
-
-//         // Reopening closed items doesn't interfere with navigation history.
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
-
-//         workspace
-//             .update(cx, |workspace, cx| {
-//                 workspace.go_back(workspace.active_pane().downgrade(), cx)
-//             })
-//             .await
-//             .unwrap();
-//         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
-
-//         fn active_path(
-//             workspace: &ViewHandle<Workspace>,
-//             cx: &TestAppContext,
-//         ) -> Option<ProjectPath> {
-//             workspace.read_with(cx, |workspace, cx| {
-//                 let item = workspace.active_item(cx)?;
-//                 item.project_path(cx)
-//             })
-//         }
-//     }
-
-//     #[gpui::test]
-//     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
-//         struct TestView;
-
-//         impl Entity for TestView {
-//             type Event = ();
-//         }
-
-//         impl View for TestView {
-//             fn ui_name() -> &'static str {
-//                 "TestView"
-//             }
-
-//             fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-//                 Empty::new().into_any()
-//             }
-//         }
-
-//         let executor = cx.background();
-//         let fs = FakeFs::new(executor.clone());
-
-//         actions!(test, [A, B]);
-//         // From the Atom keymap
-//         actions!(workspace, [ActivatePreviousPane]);
-//         // From the JetBrains keymap
-//         actions!(pane, [ActivatePrevItem]);
-
-//         fs.save(
-//             "/settings.json".as_ref(),
-//             &r#"
-//             {
-//                 "base_keymap": "Atom"
-//             }
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         fs.save(
-//             "/keymap.json".as_ref(),
-//             &r#"
-//             [
-//                 {
-//                     "bindings": {
-//                         "backspace": "test::A"
-//                     }
-//                 }
-//             ]
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         cx.update(|cx| {
-//             cx.set_global(SettingsStore::test(cx));
-//             theme::init(Assets, cx);
-//             welcome::init(cx);
-
-//             cx.add_global_action(|_: &A, _cx| {});
-//             cx.add_global_action(|_: &B, _cx| {});
-//             cx.add_global_action(|_: &ActivatePreviousPane, _cx| {});
-//             cx.add_global_action(|_: &ActivatePrevItem, _cx| {});
-
-//             let settings_rx = watch_config_file(
-//                 executor.clone(),
-//                 fs.clone(),
-//                 PathBuf::from("/settings.json"),
-//             );
-//             let keymap_rx =
-//                 watch_config_file(executor.clone(), fs.clone(), PathBuf::from("/keymap.json"));
-
-//             handle_keymap_file_changes(keymap_rx, cx);
-//             handle_settings_file_changes(settings_rx, cx);
-//         });
-
-//         cx.foreground().run_until_parked();
-
-//         let window = cx.add_window(|_| TestView);
-
-//         // Test loading the keymap base at all
-//         assert_key_bindings_for(
-//             window.into(),
-//             cx,
-//             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
-//             line!(),
-//         );
-
-//         // Test modifying the users keymap, while retaining the base keymap
-//         fs.save(
-//             "/keymap.json".as_ref(),
-//             &r#"
-//             [
-//                 {
-//                     "bindings": {
-//                         "backspace": "test::B"
-//                     }
-//                 }
-//             ]
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         cx.foreground().run_until_parked();
-
-//         assert_key_bindings_for(
-//             window.into(),
-//             cx,
-//             vec![("backspace", &B), ("k", &ActivatePreviousPane)],
-//             line!(),
-//         );
-
-//         // Test modifying the base, while retaining the users keymap
-//         fs.save(
-//             "/settings.json".as_ref(),
-//             &r#"
-//             {
-//                 "base_keymap": "JetBrains"
-//             }
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         cx.foreground().run_until_parked();
-
-//         assert_key_bindings_for(
-//             window.into(),
-//             cx,
-//             vec![("backspace", &B), ("[", &ActivatePrevItem)],
-//             line!(),
-//         );
-
-//         #[track_caller]
-//         fn assert_key_bindings_for<'a>(
-//             window: AnyWindowHandle,
-//             cx: &TestAppContext,
-//             actions: Vec<(&'static str, &'a dyn Action)>,
-//             line: u32,
-//         ) {
-//             for (key, action) in actions {
-//                 // assert that...
-//                 assert!(
-//                     cx.available_actions(window, 0)
-//                         .into_iter()
-//                         .any(|(_, bound_action, b)| {
-//                             // action names match...
-//                             bound_action.name() == action.name()
-//                         && bound_action.namespace() == action.namespace()
-//                         // and key strokes contain the given key
-//                         && b.iter()
-//                             .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
-//                         }),
-//                     "On {} Failed to find {} with key binding {}",
-//                     line,
-//                     action.name(),
-//                     key
-//                 );
-//             }
-//         }
-//     }
-
-//     #[gpui::test]
-//     async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
-//         struct TestView;
-
-//         impl Entity for TestView {
-//             type Event = ();
-//         }
-
-//         impl View for TestView {
-//             fn ui_name() -> &'static str {
-//                 "TestView"
-//             }
-
-//             fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-//                 Empty::new().into_any()
-//             }
-//         }
-
-//         let executor = cx.background();
-//         let fs = FakeFs::new(executor.clone());
-
-//         actions!(test, [A, B]);
-//         // From the Atom keymap
-//         actions!(workspace, [ActivatePreviousPane]);
-//         // From the JetBrains keymap
-//         actions!(pane, [ActivatePrevItem]);
-
-//         fs.save(
-//             "/settings.json".as_ref(),
-//             &r#"
-//             {
-//                 "base_keymap": "Atom"
-//             }
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         fs.save(
-//             "/keymap.json".as_ref(),
-//             &r#"
-//             [
-//                 {
-//                     "bindings": {
-//                         "backspace": "test::A"
-//                     }
-//                 }
-//             ]
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         cx.update(|cx| {
-//             cx.set_global(SettingsStore::test(cx));
-//             theme::init(Assets, cx);
-//             welcome::init(cx);
-
-//             cx.add_global_action(|_: &A, _cx| {});
-//             cx.add_global_action(|_: &B, _cx| {});
-//             cx.add_global_action(|_: &ActivatePreviousPane, _cx| {});
-//             cx.add_global_action(|_: &ActivatePrevItem, _cx| {});
-
-//             let settings_rx = watch_config_file(
-//                 executor.clone(),
-//                 fs.clone(),
-//                 PathBuf::from("/settings.json"),
-//             );
-//             let keymap_rx =
-//                 watch_config_file(executor.clone(), fs.clone(), PathBuf::from("/keymap.json"));
-
-//             handle_keymap_file_changes(keymap_rx, cx);
-//             handle_settings_file_changes(settings_rx, cx);
-//         });
-
-//         cx.foreground().run_until_parked();
-
-//         let window = cx.add_window(|_| TestView);
-
-//         // Test loading the keymap base at all
-//         assert_key_bindings_for(
-//             window.into(),
-//             cx,
-//             vec![("backspace", &A), ("k", &ActivatePreviousPane)],
-//             line!(),
-//         );
-
-//         // Test disabling the key binding for the base keymap
-//         fs.save(
-//             "/keymap.json".as_ref(),
-//             &r#"
-//             [
-//                 {
-//                     "bindings": {
-//                         "backspace": null
-//                     }
-//                 }
-//             ]
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         cx.foreground().run_until_parked();
-
-//         assert_key_bindings_for(
-//             window.into(),
-//             cx,
-//             vec![("k", &ActivatePreviousPane)],
-//             line!(),
-//         );
-
-//         // Test modifying the base, while retaining the users keymap
-//         fs.save(
-//             "/settings.json".as_ref(),
-//             &r#"
-//             {
-//                 "base_keymap": "JetBrains"
-//             }
-//             "#
-//             .into(),
-//             Default::default(),
-//         )
-//         .await
-//         .unwrap();
-
-//         cx.foreground().run_until_parked();
-
-//         assert_key_bindings_for(window.into(), cx, vec![("[", &ActivatePrevItem)], line!());
-
-//         #[track_caller]
-//         fn assert_key_bindings_for<'a>(
-//             window: AnyWindowHandle,
-//             cx: &TestAppContext,
-//             actions: Vec<(&'static str, &'a dyn Action)>,
-//             line: u32,
-//         ) {
-//             for (key, action) in actions {
-//                 // assert that...
-//                 assert!(
-//                     cx.available_actions(window, 0)
-//                         .into_iter()
-//                         .any(|(_, bound_action, b)| {
-//                             // action names match...
-//                             bound_action.name() == action.name()
-//                         && bound_action.namespace() == action.namespace()
-//                         // and key strokes contain the given key
-//                         && b.iter()
-//                             .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
-//                         }),
-//                     "On {} Failed to find {} with key binding {}",
-//                     line,
-//                     action.name(),
-//                     key
-//                 );
-//             }
-//         }
-//     }
-
-//     #[gpui::test]
-//     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
-//         cx.platform()
-//             .fonts()
-//             .add_fonts(&[
-//                 Assets
-//                     .load("fonts/zed-sans/zed-sans-extended.ttf")
-//                     .unwrap()
-//                     .to_vec()
-//                     .into(),
-//                 Assets
-//                     .load("fonts/zed-mono/zed-mono-extended.ttf")
-//                     .unwrap()
-//                     .to_vec()
-//                     .into(),
-//                 Assets
-//                     .load("fonts/plex/IBMPlexSans-Regular.ttf")
-//                     .unwrap()
-//                     .to_vec()
-//                     .into(),
-//             ])
-//             .unwrap();
-//         let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
-//         let mut settings = SettingsStore::default();
-//         settings
-//             .set_default_settings(&settings::default_settings(), cx)
-//             .unwrap();
-//         cx.set_global(settings);
-//         theme::init(Assets, cx);
-
-//         let mut has_default_theme = false;
-//         for theme_name in themes.list(false).map(|meta| meta.name) {
-//             let theme = themes.get(&theme_name).unwrap();
-//             assert_eq!(theme.meta.name, theme_name);
-//             if theme.meta.name == settings::get::<ThemeSettings>(cx).theme.meta.name {
-//                 has_default_theme = true;
-//             }
-//         }
-//         assert!(has_default_theme);
-//     }
-
-//     #[gpui::test]
-//     fn test_bundled_languages(cx: &mut AppContext) {
-//         cx.set_global(SettingsStore::test(cx));
-//         let mut languages = LanguageRegistry::test();
-//         languages.set_executor(cx.background().clone());
-//         let languages = Arc::new(languages);
-//         let node_runtime = node_runtime::FakeNodeRuntime::new();
-//         languages::init(languages.clone(), node_runtime, cx);
-//         for name in languages.language_names() {
-//             languages.language_for_name(&name);
-//         }
-//         cx.foreground().run_until_parked();
-//     }
-
-//     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-//         cx.foreground().forbid_parking();
-//         cx.update(|cx| {
-//             let mut app_state = AppState::test(cx);
-//             let state = Arc::get_mut(&mut app_state).unwrap();
-//             state.initialize_workspace = initialize_workspace;
-//             state.build_window_options = build_window_options;
-//             theme::init((), cx);
-//             audio::init((), cx);
-//             channel::init(&app_state.client, app_state.user_store.clone(), cx);
-//             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-//             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-//             workspace::init(app_state.clone(), cx);
-//             Project::init_settings(cx);
-//             language::init(cx);
-//             editor::init(cx);
-//             project_panel::init_settings(cx);
-//             collab_ui::init(&app_state, cx);
-//             pane::init(cx);
-//             project_panel::init((), cx);
-//             terminal_view::init(cx);
-//             assistant::init(cx);
-//             app_state
-//         })
-//     }
-
-//     fn rust_lang() -> Arc<language::Language> {
-//         Arc::new(language::Language::new(
-//             language::LanguageConfig {
-//                 name: "Rust".into(),
-//                 path_suffixes: vec!["rs".to_string()],
-//                 ..Default::default()
-//             },
-//             Some(tree_sitter_rust::language()),
-//         ))
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assets::Assets;
+    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
+    use gpui::{
+        actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
+        VisualTestContext, WindowHandle,
+    };
+    use language::LanguageRegistry;
+    use project::{project_settings::ProjectSettings, Project, ProjectPath};
+    use serde_json::json;
+    use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
+    use std::{
+        collections::HashSet,
+        path::{Path, PathBuf},
+    };
+    use theme::{ThemeRegistry, ThemeSettings};
+    use workspace::{
+        item::{Item, ItemHandle},
+        open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
+        WorkspaceHandle,
+    };
+
+    #[gpui::test]
+    async fn test_open_paths_action(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "aa": null,
+                        "ab": null,
+                    },
+                    "b": {
+                        "ba": null,
+                        "bb": null,
+                    },
+                    "c": {
+                        "ca": null,
+                        "cb": null,
+                    },
+                    "d": {
+                        "da": null,
+                        "db": null,
+                    },
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
+                &app_state,
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        let workspace_1 = cx
+            .read(|cx| cx.windows()[0].downcast::<Workspace>())
+            .unwrap();
+        workspace_1
+            .update(cx, |workspace, cx| {
+                assert_eq!(workspace.worktrees(cx).count(), 2);
+                assert!(workspace.left_dock().read(cx).is_open());
+                assert!(workspace
+                    .active_pane()
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(cx));
+            })
+            .unwrap();
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
+                &app_state,
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.read(|cx| cx.windows().len()), 2);
+
+        // Replace existing windows
+        let window = cx
+            .update(|cx| cx.windows()[0].downcast::<Workspace>())
+            .unwrap();
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
+                &app_state,
+                Some(window),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.background_executor.run_until_parked();
+        assert_eq!(cx.read(|cx| cx.windows().len()), 2);
+        let workspace_1 = cx
+            .update(|cx| cx.windows()[0].downcast::<Workspace>())
+            .unwrap();
+        workspace_1
+            .update(cx, |workspace, cx| {
+                assert_eq!(
+                    workspace
+                        .worktrees(cx)
+                        .map(|w| w.read(cx).abs_path())
+                        .collect::<Vec<_>>(),
+                    &[Path::new("/root/c").into(), Path::new("/root/d").into()]
+                );
+                assert!(workspace.left_dock().read(cx).is_open());
+                assert!(workspace.active_pane().focus_handle(cx).is_focused(cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_window_edit_state(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({"a": "hey"}))
+            .await;
+
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        // When opening the workspace, the window is not in a edited state.
+        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+
+        let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
+            cx.test_window(window.into()).edited()
+        };
+        let pane = window
+            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .unwrap();
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+
+        assert!(!window_is_edited(window, cx));
+
+        // Editing a buffer marks the window as edited.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            })
+            .unwrap();
+
+        assert!(window_is_edited(window, cx));
+
+        // Undoing the edit restores the window's edited state.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
+            })
+            .unwrap();
+        assert!(!window_is_edited(window, cx));
+
+        // Redoing the edit marks the window as edited again.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
+            })
+            .unwrap();
+        assert!(window_is_edited(window, cx));
+
+        // Closing the item restores the window's edited state.
+        let close = window
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    drop(editor);
+                    pane.close_active_item(&Default::default(), cx).unwrap()
+                })
+            })
+            .unwrap();
+        executor.run_until_parked();
+
+        cx.simulate_prompt_answer(1);
+        close.await.unwrap();
+        assert!(!window_is_edited(window, cx));
+
+        // Opening the buffer again doesn't impact the window's edited state.
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
+            .await
+            .unwrap();
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+        assert!(!window_is_edited(window, cx));
+
+        // Editing the buffer marks the window as edited.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+            })
+            .unwrap();
+        assert!(window_is_edited(window, cx));
+
+        // Ensure closing the window via the mouse gets preempted due to the
+        // buffer having unsaved changes.
+        assert!(!VisualTestContext::from_window(window.into(), cx).simulate_close());
+        executor.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        // The window is successfully closed after the user dismisses the prompt.
+        cx.simulate_prompt_answer(1);
+        executor.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 0);
+    }
+
+    #[gpui::test]
+    async fn test_new_empty_workspace(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            open_new(&app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+        })
+        .await;
+
+        let workspace = cx
+            .update(|cx| cx.windows().first().unwrap().downcast::<Workspace>())
+            .unwrap();
+
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                let editor = workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<editor::Editor>()
+                    .unwrap();
+                editor.update(cx, |editor, cx| {
+                    assert!(editor.text(cx).is_empty());
+                    assert!(!editor.is_dirty(cx));
+                });
+
+                editor
+            })
+            .unwrap();
+
+        let save_task = workspace
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+        cx.background_executor.run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
+        save_task.await.unwrap();
+        workspace
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(editor.title(cx), "the-new-name");
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_entry(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "contents 1",
+                        "file2": "contents 2",
+                        "file3": "contents 3",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let file1 = entries[0].clone();
+        let file2 = entries[1].clone();
+        let file3 = entries[2].clone();
+
+        // Open the first entry
+        let entry_1 = window
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file1.clone())
+            );
+            assert_eq!(pane.items_len(), 1);
+        });
+
+        // Open the second entry
+        window
+            .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file2.clone())
+            );
+            assert_eq!(pane.items_len(), 2);
+        });
+
+        // Open the first entry again. The existing pane item is activated.
+        let entry_1b = window
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(entry_1.item_id(), entry_1b.item_id());
+
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file1.clone())
+            );
+            assert_eq!(pane.items_len(), 2);
+        });
+
+        // Split the pane with the first entry, then open the second entry again.
+        window
+            .update(cx, |w, cx| {
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, cx);
+                w.open_path(file2.clone(), None, true, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        window
+            .read_with(cx, |w, cx| {
+                assert_eq!(
+                    w.active_pane()
+                        .read(cx)
+                        .active_item()
+                        .unwrap()
+                        .project_path(cx),
+                    Some(file2.clone())
+                );
+            })
+            .unwrap();
+
+        // Open the third entry twice concurrently. Only one pane item is added.
+        let (t1, t2) = window
+            .update(cx, |w, cx| {
+                (
+                    w.open_path(file3.clone(), None, true, cx),
+                    w.open_path(file3.clone(), None, true, cx),
+                )
+            })
+            .unwrap();
+        t1.await.unwrap();
+        t2.await.unwrap();
+        cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            assert_eq!(
+                pane.active_item().unwrap().project_path(cx),
+                Some(file3.clone())
+            );
+            let pane_entries = pane
+                .items()
+                .map(|i| i.project_path(cx).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(pane_entries, &[file1, file2, file3]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/",
+                json!({
+                    "dir1": {
+                        "a.txt": ""
+                    },
+                    "dir2": {
+                        "b.txt": ""
+                    },
+                    "dir3": {
+                        "c.txt": ""
+                    },
+                    "d.txt": ""
+                }),
+            )
+            .await;
+
+        cx.update(|cx| open_paths(&[PathBuf::from("/dir1/")], &app_state, None, cx))
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let workspace = window.root(cx).unwrap();
+
+        #[track_caller]
+        fn assert_project_panel_selection(
+            workspace: &Workspace,
+            expected_worktree_path: &Path,
+            expected_entry_path: &Path,
+            cx: &AppContext,
+        ) {
+            let project_panel = [
+                workspace.left_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.right_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.bottom_dock().read(cx).panel::<ProjectPanel>(),
+            ]
+            .into_iter()
+            .find_map(std::convert::identity)
+            .expect("found no project panels")
+            .read(cx);
+            let (selected_worktree, selected_entry) = project_panel
+                .selected_entry(cx)
+                .expect("project panel should have a selected entry");
+            assert_eq!(
+                selected_worktree.abs_path().as_ref(),
+                expected_worktree_path,
+                "Unexpected project panel selected worktree path"
+            );
+            assert_eq!(
+                selected_entry.path.as_ref(),
+                expected_entry_path,
+                "Unexpected project panel selected entry path"
+            );
+        }
+
+        // Open a file within an existing worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec!["/dir1/a.txt".into()], OpenVisible::All, None, cx)
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir1"), Path::new("a.txt"), cx);
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "a.txt"
+            );
+        });
+
+        // Open a file outside of any existing worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec!["/dir2/b.txt".into()], OpenVisible::All, None, cx)
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir2/b.txt"), Path::new(""), cx);
+            let worktree_roots = workspace
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "b.txt"
+            );
+        });
+
+        // Ensure opening a directory and one of its children only adds one worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(
+                    vec!["/dir3".into(), "/dir3/c.txt".into()],
+                    OpenVisible::All,
+                    None,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/dir3"), Path::new("c.txt"), cx);
+            let worktree_roots = workspace
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "c.txt"
+            );
+        });
+
+        // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(vec!["/d.txt".into()], OpenVisible::None, None, cx)
+            })
+            .unwrap()
+            .await;
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            assert_project_panel_selection(workspace, Path::new("/d.txt"), Path::new(""), cx);
+            let worktree_roots = workspace
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3", "/d.txt"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+
+            let visible_worktree_roots = workspace
+                .visible_worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                visible_worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+
+            assert_eq!(
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .act_as::<Editor>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "d.txt"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_opening_excluded_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_scan_exclusions =
+                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                });
+            });
+        });
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    ".gitignore": "ignored_dir\n",
+                    ".git": {
+                        "HEAD": "ref: refs/heads/main",
+                    },
+                    "regular_dir": {
+                        "file": "regular file contents",
+                    },
+                    "ignored_dir": {
+                        "ignored_subdir": {
+                            "file": "ignored subfile contents",
+                        },
+                        "file": "ignored file contents",
+                    },
+                    "excluded_dir": {
+                        "file": "excluded file contents",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let paths_to_open = [
+            Path::new("/root/excluded_dir/file").to_path_buf(),
+            Path::new("/root/.git/HEAD").to_path_buf(),
+            Path::new("/root/excluded_dir/ignored_subdir").to_path_buf(),
+        ];
+        let (opened_workspace, new_items) = cx
+            .update(|cx| workspace::open_paths(&paths_to_open, &app_state, None, cx))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            opened_workspace.root_view(cx).unwrap().entity_id(),
+            workspace.entity_id(),
+            "Excluded files in subfolders of a workspace root should be opened in the workspace"
+        );
+        let mut opened_paths = cx.read(|cx| {
+            assert_eq!(
+                new_items.len(),
+                paths_to_open.len(),
+                "Expect to get the same number of opened items as submitted paths to open"
+            );
+            new_items
+                .iter()
+                .zip(paths_to_open.iter())
+                .map(|(i, path)| {
+                    match i {
+                        Some(Ok(i)) => {
+                            Some(i.project_path(cx).map(|p| p.path.display().to_string()))
+                        }
+                        Some(Err(e)) => panic!("Excluded file {path:?} failed to open: {e:?}"),
+                        None => None,
+                    }
+                    .flatten()
+                })
+                .collect::<Vec<_>>()
+        });
+        opened_paths.sort();
+        assert_eq!(
+            opened_paths,
+            vec![
+                None,
+                Some(".git/HEAD".to_string()),
+                Some("excluded_dir/file".to_string()),
+            ],
+            "Excluded files should get opened, excluded dir should not get opened"
+        );
+
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        assert_eq!(
+                initial_entries, entries,
+                "Workspace entries should not change after opening excluded files and directories paths"
+            );
+
+        cx.read(|cx| {
+                let pane = workspace.read(cx).active_pane().read(cx);
+                let mut opened_buffer_paths = pane
+                    .items()
+                    .map(|i| {
+                        i.project_path(cx)
+                            .expect("all excluded files that got open should have a path")
+                            .path
+                            .display()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>();
+                opened_buffer_paths.sort();
+                assert_eq!(
+                    opened_buffer_paths,
+                    vec![".git/HEAD".to_string(), "excluded_dir/file".to_string()],
+                    "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
+                );
+            });
+    }
+
+    #[gpui::test]
+    async fn test_save_conflicting_item(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({ "a.txt": "" }))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
+
+        // Open a file within an existing worktree.
+        window
+            .update(cx, |view, cx| {
+                view.open_paths(
+                    vec![PathBuf::from("/root/a.txt")],
+                    OpenVisible::All,
+                    None,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await;
+        let editor = cx.read(|cx| {
+            let pane = workspace.read(cx).active_pane().read(cx);
+            let item = pane.active_item().unwrap();
+            item.downcast::<Editor>().unwrap()
+        });
+
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| editor.handle_input("x", cx));
+            })
+            .unwrap();
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_file("/root/a.txt", "changed".to_string())
+            .await;
+        editor
+            .condition::<EditorEvent>(cx, |editor, cx| editor.has_conflict(cx))
+            .await;
+        cx.read(|cx| assert!(editor.is_dirty(cx)));
+
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        cx.simulate_prompt_answer(0);
+        save_task.await.unwrap();
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert!(!editor.has_conflict(cx));
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let worktree = cx.update(|cx| window.read(cx).unwrap().worktrees(cx).next().unwrap());
+
+        // Create a new untitled buffer
+        cx.dispatch_action(window.into(), NewFile);
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(editor.title(cx), "untitled");
+                    assert!(Arc::ptr_eq(
+                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &languages::PLAIN_TEXT
+                    ));
+                    editor.handle_input("hi", cx);
+                    assert!(editor.is_dirty(cx));
+                });
+            })
+            .unwrap();
+
+        // Save the buffer. This prompts for a filename.
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        cx.simulate_new_path_selection(|parent_dir| {
+            assert_eq!(parent_dir, Path::new("/root"));
+            Some(parent_dir.join("the-new-name.rs"))
+        });
+        cx.read(|cx| {
+            assert!(editor.is_dirty(cx));
+            assert_eq!(editor.read(cx).title(cx), "untitled");
+        });
+
+        // When the save completes, the buffer's title is updated and the language is assigned based
+        // on the path.
+        save_task.await.unwrap();
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(editor.title(cx), "the-new-name.rs");
+                    assert_eq!(
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(0, cx)
+                            .unwrap()
+                            .name()
+                            .as_ref(),
+                        "Rust"
+                    );
+                });
+            })
+            .unwrap();
+
+        // Edit the file and save it again. This time, there is no filename prompt.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.handle_input(" there", cx);
+                    assert!(editor.is_dirty(cx));
+                });
+            })
+            .unwrap();
+
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        save_task.await.unwrap();
+        // todo!() po
+        //assert!(!cx.did_prompt_for_new_path());
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(editor.title(cx), "the-new-name.rs")
+                });
+            })
+            .unwrap();
+
+        // Open the same newly-created file in another pane item. The new editor should reuse
+        // the same buffer.
+        cx.dispatch_action(window.into(), NewFile);
+        window
+            .update(cx, |workspace, cx| {
+                workspace.split_and_clone(
+                    workspace.active_pane().clone(),
+                    SplitDirection::Right,
+                    cx,
+                );
+                workspace.open_path((worktree.read(cx).id(), "the-new-name.rs"), None, true, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let editor2 = window
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+        cx.read(|cx| {
+            assert_eq!(
+                editor2.read(cx).buffer().read(cx).as_singleton().unwrap(),
+                editor.read(cx).buffer().read(cx).as_singleton().unwrap()
+            );
+        })
+    }
+
+    #[gpui::test]
+    async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+
+        // Create a new untitled buffer
+        cx.dispatch_action(window.into(), NewFile);
+        let editor = window
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<Editor>()
+                    .unwrap()
+            })
+            .unwrap();
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(Arc::ptr_eq(
+                        &editor.buffer().read(cx).language_at(0, cx).unwrap(),
+                        &languages::PLAIN_TEXT
+                    ));
+                    editor.handle_input("hi", cx);
+                    assert!(editor.is_dirty(cx));
+                });
+            })
+            .unwrap();
+
+        // Save the buffer. This prompts for a filename.
+        let save_task = window
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(SaveIntent::Save, cx)
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
+        save_task.await.unwrap();
+        // The buffer is not dirty anymore and the language is assigned based on the path.
+        window
+            .update(cx, |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    assert!(!editor.is_dirty(cx));
+                    assert_eq!(
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .language_at(0, cx)
+                            .unwrap()
+                            .name()
+                            .as_ref(),
+                        "Rust"
+                    )
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_pane_actions(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "contents 1",
+                        "file2": "contents 2",
+                        "file3": "contents 3",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let file1 = entries[0].clone();
+
+        let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
+
+        window
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap();
+
+        let (editor_1, buffer) = window
+            .update(cx, |_, cx| {
+                pane_1.update(cx, |pane_1, cx| {
+                    let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
+                    assert_eq!(editor.project_path(cx), Some(file1.clone()));
+                    let buffer = editor.update(cx, |editor, cx| {
+                        editor.insert("dirt", cx);
+                        editor.buffer().downgrade()
+                    });
+                    (editor.downgrade(), buffer)
+                })
+            })
+            .unwrap();
+
+        cx.dispatch_action(window.into(), pane::SplitRight);
+        let editor_2 = cx.update(|cx| {
+            let pane_2 = workspace.read(cx).active_pane().clone();
+            assert_ne!(pane_1, pane_2);
+
+            let pane2_item = pane_2.read(cx).active_item().unwrap();
+            assert_eq!(pane2_item.project_path(cx), Some(file1.clone()));
+
+            pane2_item.downcast::<Editor>().unwrap().downgrade()
+        });
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem { save_intent: None },
+        );
+
+        cx.background_executor.run_until_parked();
+        window
+            .read_with(cx, |workspace, _| {
+                assert_eq!(workspace.panes().len(), 1);
+                assert_eq!(workspace.active_pane(), &pane_1);
+            })
+            .unwrap();
+
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem { save_intent: None },
+        );
+        cx.background_executor.run_until_parked();
+        cx.simulate_prompt_answer(1);
+        cx.background_executor.run_until_parked();
+
+        window
+            .read_with(cx, |workspace, cx| {
+                assert_eq!(workspace.panes().len(), 1);
+                assert!(workspace.active_item(cx).is_none());
+            })
+            .unwrap();
+        editor_1.assert_dropped();
+        editor_2.assert_dropped();
+        buffer.assert_dropped();
+    }
+
+    #[gpui::test]
+    async fn test_navigation(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "contents 1\n".repeat(20),
+                        "file2": "contents 2\n".repeat(20),
+                        "file3": "contents 3\n".repeat(20),
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace
+            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .unwrap();
+
+        let entries = cx.update(|cx| workspace.root(cx).unwrap().file_project_paths(cx));
+        let file1 = entries[0].clone();
+        let file2 = entries[1].clone();
+        let file3 = entries[2].clone();
+
+        let editor1 = workspace
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        workspace
+            .update(cx, |_, cx| {
+                editor1.update(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select_display_ranges(
+                            [DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)],
+                        )
+                    });
+                });
+            })
+            .unwrap();
+
+        let editor2 = workspace
+            .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let editor3 = workspace
+            .update(cx, |w, cx| w.open_path(file3.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        workspace
+            .update(cx, |_, cx| {
+                editor3.update(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select_display_ranges(
+                            [DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)],
+                        )
+                    });
+                    editor.newline(&Default::default(), cx);
+                    editor.newline(&Default::default(), cx);
+                    editor.move_down(&Default::default(), cx);
+                    editor.move_down(&Default::default(), cx);
+                    editor.save(project.clone(), cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        workspace
+            .update(cx, |_, cx| {
+                editor3.update(cx, |editor, cx| {
+                    editor.set_scroll_position(point(0., 12.5), cx)
+                });
+            })
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(16, 0), 12.5)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file2.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(10, 0), 0.)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        // Go back one more time and ensure we don't navigate past the first item in the history.
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(10, 0), 0.)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file2.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        // Go forward to an item that has been closed, ensuring it gets re-opened at the same
+        // location.
+        workspace
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    let editor3_id = editor3.entity_id();
+                    drop(editor3);
+                    pane.close_item_by_id(editor3_id, SaveIntent::Close, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        workspace
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(16, 0), 12.5)
+        );
+
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
+        workspace
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    let editor2_id = editor2.entity_id();
+                    drop(editor2);
+                    pane.close_item_by_id(editor2_id, SaveIntent::Close, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .remove_file(Path::new("/root/a/file2"), Default::default())
+            .await
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(10, 0), 0.)
+        );
+        workspace
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        // Modify file to collapse multiple nav history entries into the same location.
+        // Ensure we don't visit the same location twice when navigating.
+        workspace
+            .update(cx, |_, cx| {
+                editor1.update(cx, |editor, cx| {
+                    editor.change_selections(None, cx, |s| {
+                        s.select_display_ranges(
+                            [DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)],
+                        )
+                    })
+                });
+            })
+            .unwrap();
+        for _ in 0..5 {
+            workspace
+                .update(cx, |_, cx| {
+                    editor1.update(cx, |editor, cx| {
+                        editor.change_selections(None, cx, |s| {
+                            s.select_display_ranges([
+                                DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)
+                            ])
+                        });
+                    });
+                })
+                .unwrap();
+
+            workspace
+                .update(cx, |_, cx| {
+                    editor1.update(cx, |editor, cx| {
+                        editor.change_selections(None, cx, |s| {
+                            s.select_display_ranges([
+                                DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)
+                            ])
+                        })
+                    });
+                })
+                .unwrap();
+        }
+        workspace
+            .update(cx, |_, cx| {
+                editor1.update(cx, |editor, cx| {
+                    editor.transact(cx, |editor, cx| {
+                        editor.change_selections(None, cx, |s| {
+                            s.select_display_ranges([
+                                DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)
+                            ])
+                        });
+                        editor.insert("", cx);
+                    })
+                });
+            })
+            .unwrap();
+
+        workspace
+            .update(cx, |_, cx| {
+                editor1.update(cx, |editor, cx| {
+                    editor.change_selections(None, cx, |s| {
+                        s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+                    })
+                });
+            })
+            .unwrap();
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(2, 0), 0.)
+        );
+        workspace
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(3, 0), 0.)
+        );
+
+        fn active_location(
+            workspace: &WindowHandle<Workspace>,
+            cx: &mut TestAppContext,
+        ) -> (ProjectPath, DisplayPoint, f32) {
+            workspace
+                .update(cx, |workspace, cx| {
+                    let item = workspace.active_item(cx).unwrap();
+                    let editor = item.downcast::<Editor>().unwrap();
+                    let (selections, scroll_position) = editor.update(cx, |editor, cx| {
+                        (
+                            editor.selections.display_ranges(cx),
+                            editor.scroll_position(cx),
+                        )
+                    });
+                    (
+                        item.project_path(cx).unwrap(),
+                        selections[0].start,
+                        scroll_position.y,
+                    )
+                })
+                .unwrap()
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reopening_closed_items(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "",
+                        "file2": "",
+                        "file3": "",
+                        "file4": "",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let pane = workspace
+            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .unwrap();
+
+        let entries = cx.update(|cx| workspace.root(cx).unwrap().file_project_paths(cx));
+        let file1 = entries[0].clone();
+        let file2 = entries[1].clone();
+        let file3 = entries[2].clone();
+        let file4 = entries[3].clone();
+
+        let file1_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file1.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap()
+            .item_id();
+        let file2_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file2.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap()
+            .item_id();
+        let file3_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file3.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap()
+            .item_id();
+        let file4_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file4.clone(), None, true, cx))
+            .unwrap()
+            .await
+            .unwrap()
+            .item_id();
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        // Close all the pane items in some arbitrary order.
+        workspace
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(file1_item_id, SaveIntent::Close, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(file4_item_id, SaveIntent::Close, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(file2_item_id, SaveIntent::Close, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+        workspace
+            .update(cx, |_, cx| {
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(file3_item_id, SaveIntent::Close, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        assert_eq!(active_path(&workspace, cx), None);
+
+        // Reopen all the closed items, ensuring they are reopened in the same order
+        // in which they were closed.
+        workspace
+            .update(cx, Workspace::reopen_closed_item)
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, Workspace::reopen_closed_item)
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
+
+        workspace
+            .update(cx, Workspace::reopen_closed_item)
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, Workspace::reopen_closed_item)
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        // Reopening past the last closed item is a no-op.
+        workspace
+            .update(cx, Workspace::reopen_closed_item)
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        // Reopening closed items doesn't interfere with navigation history.
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        fn active_path(
+            workspace: &WindowHandle<Workspace>,
+            cx: &TestAppContext,
+        ) -> Option<ProjectPath> {
+            workspace
+                .read_with(cx, |workspace, cx| {
+                    let item = workspace.active_item(cx)?;
+                    item.project_path(cx)
+                })
+                .unwrap()
+        }
+    }
+    fn init_keymap_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+
+            theme::init(theme::LoadThemes::JustBase, cx);
+            client::init(&app_state.client, cx);
+            language::init(cx);
+            workspace::init(app_state.clone(), cx);
+            welcome::init(cx);
+            Project::init_settings(cx);
+            app_state
+        })
+    }
+    #[gpui::test]
+    async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
+        let executor = cx.executor();
+        let app_state = init_keymap_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+
+        actions!(test1, [A, B]);
+        // From the Atom keymap
+        use workspace::ActivatePreviousPane;
+        // From the JetBrains keymap
+        use workspace::ActivatePrevItem;
+
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
+                {
+                    "base_keymap": "Atom"
+                }
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
+                [
+                    {
+                        "bindings": {
+                            "backspace": "test1::A"
+                        }
+                    }
+                ]
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        executor.run_until_parked();
+        cx.update(|cx| {
+            let settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/settings.json"),
+            );
+            let keymap_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/keymap.json"),
+            );
+            handle_settings_file_changes(settings_rx, cx);
+            handle_keymap_file_changes(keymap_rx, cx);
+        });
+        workspace
+            .update(cx, |workspace, _| {
+                workspace.register_action(|_, _: &A, _cx| {});
+                workspace.register_action(|_, _: &B, _cx| {});
+                workspace.register_action(|_, _: &ActivatePreviousPane, _cx| {});
+                workspace.register_action(|_, _: &ActivatePrevItem, _cx| {});
+            })
+            .unwrap();
+        executor.run_until_parked();
+        // Test loading the keymap base at all
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
+
+        // Test modifying the users keymap, while retaining the base keymap
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
+                [
+                    {
+                        "bindings": {
+                            "backspace": "test1::B"
+                        }
+                    }
+                ]
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        executor.run_until_parked();
+
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("backspace", &B), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
+
+        // Test modifying the base, while retaining the users keymap
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
+                {
+                    "base_keymap": "JetBrains"
+                }
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        executor.run_until_parked();
+
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("backspace", &B), ("[", &ActivatePrevItem)],
+            line!(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_disabled_keymap_binding(cx: &mut gpui::TestAppContext) {
+        let executor = cx.executor();
+        let app_state = init_keymap_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+
+        actions!(test2, [A, B]);
+        // From the Atom keymap
+        use workspace::ActivatePreviousPane;
+        // From the JetBrains keymap
+        use pane::ActivatePrevItem;
+        workspace
+            .update(cx, |workspace, _| {
+                workspace
+                    .register_action(|_, _: &A, _| {})
+                    .register_action(|_, _: &B, _| {});
+            })
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
+                {
+                    "base_keymap": "Atom"
+                }
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
+                [
+                    {
+                        "bindings": {
+                            "backspace": "test2::A"
+                        }
+                    }
+                ]
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            let settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/settings.json"),
+            );
+            let keymap_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/keymap.json"),
+            );
+
+            handle_settings_file_changes(settings_rx, cx);
+            handle_keymap_file_changes(keymap_rx, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        cx.background_executor.run_until_parked();
+        // Test loading the keymap base at all
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
+
+        // Test disabling the key binding for the base keymap
+        app_state
+            .fs
+            .save(
+                "/keymap.json".as_ref(),
+                &r#"
+                [
+                    {
+                        "bindings": {
+                            "backspace": null
+                        }
+                    }
+                ]
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        cx.background_executor.run_until_parked();
+
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("k", &ActivatePreviousPane)],
+            line!(),
+        );
+
+        // Test modifying the base, while retaining the users keymap
+        app_state
+            .fs
+            .save(
+                "/settings.json".as_ref(),
+                &r#"
+                {
+                    "base_keymap": "JetBrains"
+                }
+                "#
+                .into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        cx.background_executor.run_until_parked();
+
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("[", &ActivatePrevItem)],
+            line!(),
+        );
+    }
+
+    #[gpui::test]
+    fn test_bundled_settings_and_themes(cx: &mut AppContext) {
+        cx.text_system()
+            .add_fonts(&[
+                Assets
+                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/plex/IBMPlexSans-Regular.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+            ])
+            .unwrap();
+        let themes = ThemeRegistry::default();
+        let mut settings = SettingsStore::default();
+        settings
+            .set_default_settings(&settings::default_settings(), cx)
+            .unwrap();
+        cx.set_global(settings);
+        theme::init(theme::LoadThemes::JustBase, cx);
+
+        let mut has_default_theme = false;
+        for theme_name in themes.list(false).map(|meta| meta.name) {
+            let theme = themes.get(&theme_name).unwrap();
+            assert_eq!(theme.name, theme_name);
+            if theme.name == ThemeSettings::get(None, cx).active_theme.name {
+                has_default_theme = true;
+            }
+        }
+        assert!(has_default_theme);
+    }
+
+    #[gpui::test]
+    fn test_bundled_languages(cx: &mut AppContext) {
+        let settings = SettingsStore::test(cx);
+        cx.set_global(settings);
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.background_executor().clone());
+        let languages = Arc::new(languages);
+        let node_runtime = node_runtime::FakeNodeRuntime::new();
+        languages::init(languages.clone(), node_runtime, cx);
+        for name in languages.language_names() {
+            languages.language_for_name(&name);
+        }
+        cx.background_executor().run_until_parked();
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let mut app_state = AppState::test(cx);
+
+            let state = Arc::get_mut(&mut app_state).unwrap();
+
+            state.build_window_options = build_window_options;
+            theme::init(theme::LoadThemes::JustBase, cx);
+            audio::init((), cx);
+            channel::init(&app_state.client, app_state.user_store.clone(), cx);
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+            language::init(cx);
+            editor::init(cx);
+            project_panel::init_settings(cx);
+            collab_ui::init(&app_state, cx);
+            project_panel::init((), cx);
+            terminal_view::init(cx);
+            assistant::init(cx);
+            initialize_workspace(app_state.clone(), cx);
+            app_state
+        })
+    }
+
+    fn rust_lang() -> Arc<language::Language> {
+        Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ))
+    }
+    #[track_caller]
+    fn assert_key_bindings_for<'a>(
+        window: AnyWindowHandle,
+        cx: &TestAppContext,
+        actions: Vec<(&'static str, &'a dyn Action)>,
+        line: u32,
+    ) {
+        let available_actions = cx
+            .update(|cx| window.update(cx, |_, cx| cx.available_actions()))
+            .unwrap();
+        for (key, action) in actions {
+            let bindings = cx
+                .update(|cx| window.update(cx, |_, cx| cx.bindings_for_action(action)))
+                .unwrap();
+            // assert that...
+            assert!(
+                available_actions.iter().any(|bound_action| {
+                    // actions match...
+                    bound_action.partial_eq(action)
+                }),
+                "On {} Failed to find {}",
+                line,
+                action.name(),
+            );
+            assert!(
+                // and key strokes contain the given key
+                bindings
+                    .into_iter()
+                    .any(|binding| binding.keystrokes().iter().any(|k| k.key == key)),
+                "On {} Failed to find {} with key binding {}",
+                line,
+                action.name(),
+                key
+            );
+        }
+    }
+}

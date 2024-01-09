@@ -21,7 +21,7 @@ use settings::Settings;
 use std::{any::Any, sync::Arc};
 use theme::ThemeSettings;
 
-use ui::{h_stack, prelude::*, Icon, IconButton, IconElement, ToggleButton, Tooltip};
+use ui::{h_stack, prelude::*, Icon, IconButton, IconName, ToggleButton, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -225,7 +225,7 @@ impl Render for BufferSearchBar {
                     .border_color(editor_border)
                     .min_w(rems(384. / 16.))
                     .rounded_lg()
-                    .child(IconElement::new(Icon::MagnifyingGlass))
+                    .child(Icon::new(IconName::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx))
                     .children(supported_options.case.then(|| {
                         self.render_search_option_button(
@@ -287,7 +287,7 @@ impl Render for BufferSearchBar {
                         this.child(
                             IconButton::new(
                                 "buffer-search-bar-toggle-replace-button",
-                                Icon::Replace,
+                                IconName::Replace,
                             )
                             .style(ButtonStyle::Subtle)
                             .when(self.replace_enabled, |button| {
@@ -323,7 +323,7 @@ impl Render for BufferSearchBar {
                         )
                         .when(should_show_replace_input, |this| {
                             this.child(
-                                IconButton::new("search-replace-next", ui::Icon::ReplaceNext)
+                                IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
                                     .tooltip(move |cx| {
                                         Tooltip::for_action("Replace next", &ReplaceNext, cx)
                                     })
@@ -332,7 +332,7 @@ impl Render for BufferSearchBar {
                                     })),
                             )
                             .child(
-                                IconButton::new("search-replace-all", ui::Icon::ReplaceAll)
+                                IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
                                     .tooltip(move |cx| {
                                         Tooltip::for_action("Replace all", &ReplaceAll, cx)
                                     })
@@ -350,7 +350,7 @@ impl Render for BufferSearchBar {
                     .gap_0p5()
                     .flex_none()
                     .child(
-                        IconButton::new("select-all", ui::Icon::SelectAll)
+                        IconButton::new("select-all", ui::IconName::SelectAll)
                             .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
                             .tooltip(|cx| {
                                 Tooltip::for_action("Select all matches", &SelectAllMatches, cx)
@@ -358,13 +358,13 @@ impl Render for BufferSearchBar {
                     )
                     .children(match_count)
                     .child(render_nav_button(
-                        ui::Icon::ChevronLeft,
+                        ui::IconName::ChevronLeft,
                         self.active_match_index.is_some(),
                         "Select previous match",
                         &SelectPrevMatch,
                     ))
                     .child(render_nav_button(
-                        ui::Icon::ChevronRight,
+                        ui::IconName::ChevronRight,
                         self.active_match_index.is_some(),
                         "Select next match",
                         &SelectNextMatch,

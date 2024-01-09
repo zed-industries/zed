@@ -28,7 +28,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
     fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
@@ -52,7 +52,7 @@ pub trait PanelHandle: Send + Sync {
     fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
     fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -104,7 +104,7 @@ where
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         self.read(cx).icon(cx)
     }
 
@@ -395,7 +395,6 @@ impl Dock {
                         })
                         .ok();
                 }
-                // todo!() we do not use this event in the production code (even in zed1), remove it
                 PanelEvent::Activate => {
                     if let Some(ix) = this
                         .panel_entries
@@ -775,7 +774,7 @@ pub mod test {
             self.size = size.unwrap_or(px(300.));
         }
 
-        fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+        fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
             None
         }
 

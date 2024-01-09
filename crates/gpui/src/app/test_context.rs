@@ -467,12 +467,11 @@ impl<V> View<V> {
                         }
                     }
 
-                    // todo!(start_waiting)
-                    // cx.borrow().foreground_executor().start_waiting();
+                    cx.borrow().background_executor().start_waiting();
                     rx.recv()
                         .await
                         .expect("view dropped with pending condition");
-                    // cx.borrow().foreground_executor().finish_waiting();
+                    cx.borrow().background_executor().finish_waiting();
                 }
             })
             .await
@@ -531,6 +530,33 @@ impl<'a> VisualTestContext {
             self.test_platform.set_active_window(None)
         }
         self.background_executor.run_until_parked();
+    }
+    /// Returns true if the window was closed.
+    pub fn simulate_close(&mut self) -> bool {
+        let handler = self
+            .cx
+            .update_window(self.window, |_, cx| {
+                cx.window
+                    .platform_window
+                    .as_test()
+                    .unwrap()
+                    .0
+                    .lock()
+                    .should_close_handler
+                    .take()
+            })
+            .unwrap();
+        if let Some(mut handler) = handler {
+            let should_close = handler();
+            self.cx
+                .update_window(self.window, |_, cx| {
+                    cx.window.platform_window.on_should_close(handler);
+                })
+                .unwrap();
+            should_close
+        } else {
+            false
+        }
     }
 }
 

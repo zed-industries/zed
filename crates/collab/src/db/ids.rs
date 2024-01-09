@@ -140,6 +140,22 @@ impl ChannelRole {
             Guest | Banned => false,
         }
     }
+
+    pub fn can_edit_projects(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member => true,
+            Guest | Banned => false,
+        }
+    }
+
+    pub fn can_read_projects(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member | Guest => true,
+            Banned => false,
+        }
+    }
 }
 
 impl From<proto::ChannelRole> for ChannelRole {

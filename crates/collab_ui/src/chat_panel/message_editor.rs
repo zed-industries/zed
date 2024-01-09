@@ -1,16 +1,19 @@
+use std::{sync::Arc, time::Duration};
+
 use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
 use collections::HashMap;
-use editor::{AnchorRangeExt, Editor};
+use editor::{AnchorRangeExt, Editor, EditorElement, EditorStyle};
 use gpui::{
-    AsyncWindowContext, FocusableView, IntoElement, Model, Render, SharedString, Task, View,
-    ViewContext, WeakView,
+    AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
+    Render, SharedString, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
 };
 use language::{language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry};
 use lazy_static::lazy_static;
 use project::search::SearchQuery;
-use std::{sync::Arc, time::Duration};
-use workspace::item::ItemHandle;
+use settings::Settings;
+use theme::ThemeSettings;
+use ui::prelude::*;
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -181,7 +184,14 @@ impl MessageEditor {
                 }
 
                 editor.clear_highlights::<Self>(cx);
-                editor.highlight_text::<Self>(anchor_ranges, gpui::red().into(), cx)
+                editor.highlight_text::<Self>(
+                    anchor_ranges,
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..Default::default()
+                    },
+                    cx,
+                )
             });
 
             this.mentions = mentioned_user_ids;
@@ -196,8 +206,39 @@ impl MessageEditor {
 }
 
 impl Render for MessageEditor {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.editor.to_any()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if self.editor.read(cx).read_only(cx) {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+
+        div()
+            .w_full()
+            .px_2()
+            .py_1()
+            .bg(cx.theme().colors().editor_background)
+            .rounded_md()
+            .child(EditorElement::new(
+                &self.editor,
+                EditorStyle {
+                    local_player: cx.theme().players().local(),
+                    text: text_style,
+                    ..Default::default()
+                },
+            ))
     }
 }
 
@@ -205,7 +246,7 @@ impl Render for MessageEditor {
 mod tests {
     use super::*;
     use client::{Client, User, UserStore};
-    use gpui::{Context as _, TestAppContext, VisualContext as _};
+    use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use rpc::proto;
     use settings::SettingsStore;

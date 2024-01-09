@@ -26,12 +26,12 @@ use futures::{
 };
 use gpui::{
     actions, canvas, div, impl_actions, point, size, Action, AnyElement, AnyModel, AnyView,
-    AnyWeakView, AnyWindowHandle, AppContext, AsyncAppContext, AsyncWindowContext, BorrowWindow,
-    Bounds, Context, Div, DragMoveEvent, Element, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
-    ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, BorrowWindow, Bounds, Context,
+    Div, DragMoveEvent, Element, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
+    GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId, ManagedView, Model,
+    ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, Size,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -658,7 +658,7 @@ impl Workspace {
             cx.on_release(|this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
-                    debug_assert!(store.workspaces.remove(&window));
+                    store.workspaces.remove(&window);
                 })
             }),
         ];
@@ -943,10 +943,8 @@ impl Workspace {
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
-            // todo!("focus")
-            // cx.focus(&pane);
-
             pane.update(cx, |pane, cx| {
+                pane.focus(cx);
                 loop {
                     // Retrieve the weak item handle from the history.
                     let entry = pane.nav_history_mut().pop(mode, cx)?;
@@ -1631,8 +1629,7 @@ impl Workspace {
             });
         }
 
-        // todo!("focus")
-        // cx.focus_self();
+        cx.focus_self();
         cx.notify();
         self.serialize_workspace(cx);
     }
@@ -1713,6 +1710,7 @@ impl Workspace {
         cx.notify();
     }
 
+    // todo!()
     //     #[cfg(any(test, feature = "test-support"))]
     //     pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
     //         self.zoomed.and_then(|view| view.upgrade(cx))
@@ -2992,7 +2990,6 @@ impl Workspace {
         cx.notify();
     }
 
-    #[allow(unused)]
     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
         self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
@@ -4034,34 +4031,34 @@ pub fn join_channel(
             return anyhow::Ok(());
         }
 
-        if requesting_window.is_some() {
-            return anyhow::Ok(());
-        }
-
         // find an existing workspace to focus and show call controls
-        let mut active_window = activate_any_workspace_window(&mut cx);
+        let mut active_window =
+            requesting_window.or_else(|| activate_any_workspace_window(&mut cx));
         if active_window.is_none() {
             // no open workspaces, make one to show the error in (blergh)
-            cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), requesting_window, cx))?
+            let (window_handle, _) = cx
+                .update(|cx| {
+                    Workspace::new_local(vec![], app_state.clone(), requesting_window, cx)
+                })?
                 .await?;
+
+            active_window = Some(window_handle);
         }
 
-        active_window = activate_any_workspace_window(&mut cx);
-        let Some(active_window) = active_window else {
-            return anyhow::Ok(());
-        };
-
         if let Err(err) = result {
-            active_window
-                .update(&mut cx, |_, cx| {
-                    cx.prompt(
-                        PromptLevel::Critical,
-                        &format!("Failed to join channel: {}", err),
-                        &["Ok"],
-                    )
-                })?
-                .await
-                .ok();
+            log::error!("failed to join channel: {}", err);
+            if let Some(active_window) = active_window {
+                active_window
+                    .update(&mut cx, |_, cx| {
+                        cx.prompt(
+                            PromptLevel::Critical,
+                            &format!("Failed to join channel: {}", err),
+                            &["Ok"],
+                        )
+                    })?
+                    .await
+                    .ok();
+            }
         }
 
         // return ok, we showed the error to the user.
@@ -4079,19 +4076,17 @@ pub async fn get_any_active_workspace(
         cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, cx))?
             .await?;
     }
-    activate_any_workspace_window(&mut cx)
-        .context("could not open zed")?
-        .downcast::<Workspace>()
-        .context("could not open zed workspace window")
+    activate_any_workspace_window(&mut cx).context("could not open zed")
 }
 
-fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<AnyWindowHandle> {
+fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandle<Workspace>> {
     cx.update(|cx| {
         for window in cx.windows() {
-            let is_workspace = window.downcast::<Workspace>().is_some();
-            if is_workspace {
-                window.update(cx, |_, cx| cx.activate_window()).ok();
-                return Some(window);
+            if let Some(workspace_window) = window.downcast::<Workspace>() {
+                workspace_window
+                    .update(cx, |_, cx| cx.activate_window())
+                    .ok();
+                return Some(workspace_window);
             }
         }
         None

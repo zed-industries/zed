@@ -203,7 +203,6 @@ macro_rules! __impl_action {
                 )
             }
 
-            // todo!() why is this needed in addition to name?
             fn debug_name() -> &'static str
             where
                 Self: ::std::marker::Sized
