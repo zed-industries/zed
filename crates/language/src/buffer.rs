@@ -42,7 +42,13 @@ use std::{
 };
 use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
-pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
+use text::*;
+pub use text::{
+    Anchor, Bias, Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Edit, OffsetRangeExt,
+    OffsetUtf16, Patch, Point, PointUtf16, Rope, RopeFingerprint, Selection, SelectionGoal,
+    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
+    Transaction, TransactionId, Unclipped,
+};
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
@@ -63,6 +69,7 @@ pub enum Capability {
     ReadOnly,
 }
 
+/// An in-memory representation of a source code file.
 pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<String>,
@@ -99,6 +106,8 @@ pub struct Buffer {
     capability: Capability,
 }
 
+/// An immutable, cheaply cloneable representation of a certain
+/// state of a buffer.
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     pub git_diff: git::diff::BufferDiff,
@@ -150,6 +159,7 @@ pub struct GroupId {
     id: usize,
 }
 
+/// A diagnostic associated with a certain range of a buffer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub source: Option<String>,
@@ -257,6 +267,7 @@ pub enum Event {
     Closed,
 }
 
+/// The file associated with a buffer.
 pub trait File: Send + Sync {
     fn as_local(&self) -> Option<&dyn LocalFile>;
 
@@ -306,6 +317,10 @@ pub trait LocalFile: File {
     );
 }
 
+/// The auto-indent behavior associated with an editing operation.
+/// For some editing operations, each affected line of text has its
+/// indentation recomputed. For other operations, the entire block
+/// of edited text is adjusted uniformly.
 #[derive(Clone, Debug)]
 pub enum AutoindentMode {
     /// Indent each line of inserted text.
@@ -353,6 +368,8 @@ struct BufferChunkHighlights<'a> {
     highlight_maps: Vec<HighlightMap>,
 }
 
+/// An iterator that yields chunks of a buffer's text, along with their
+/// syntax highlights and diagnostic status.
 pub struct BufferChunks<'a> {
     range: Range<usize>,
     chunks: text::Chunks<'a>,
@@ -365,6 +382,8 @@ pub struct BufferChunks<'a> {
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
+/// A chunk of a buffer's text, along with its syntax highlight and
+/// diagnostic status.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Chunk<'a> {
     pub text: &'a str,
@@ -375,6 +394,7 @@ pub struct Chunk<'a> {
     pub is_tab: bool,
 }
 
+/// A set of edits to a given version of a buffer, computed asynchronously.
 pub struct Diff {
     pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
@@ -407,6 +427,7 @@ impl CharKind {
 }
 
 impl Buffer {
+    /// Create a new buffer with the given base text.
     pub fn new<T: Into<String>>(replica_id: ReplicaId, id: u64, base_text: T) -> Self {
         Self::build(
             TextBuffer::new(replica_id, id, base_text.into()),
@@ -416,6 +437,7 @@ impl Buffer {
         )
     }
 
+    /// Create a new buffer that is a replica of a remote buffer.
     pub fn remote(
         remote_id: u64,
         replica_id: ReplicaId,
@@ -430,6 +452,8 @@ impl Buffer {
         )
     }
 
+    /// Create a new buffer that is a replica of a remote buffer, populating its
+    /// state from the given protobuf message.
     pub fn from_proto(
         replica_id: ReplicaId,
         capability: Capability,
@@ -456,6 +480,7 @@ impl Buffer {
         Ok(this)
     }
 
+    /// Serialize the buffer's state to a protobuf message.
     pub fn to_proto(&self) -> proto::BufferState {
         proto::BufferState {
             id: self.remote_id(),
@@ -469,6 +494,7 @@ impl Buffer {
         }
     }
 
+    /// Serialize as protobufs all of the changes to the buffer since the given version.
     pub fn serialize_ops(
         &self,
         since: Option<clock::Global>,
@@ -515,6 +541,7 @@ impl Buffer {
         })
     }
 
+    /// Assign a language to the buffer, returning the buffer.
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
         self.set_language(Some(language), cx);
         self
@@ -572,6 +599,8 @@ impl Buffer {
         }
     }
 
+    /// Retrieve a snapshot of the buffer's current state. This is computationally
+    /// cheap, and allows reading from the buffer on a background thread.
     pub fn snapshot(&self) -> BufferSnapshot {
         let text = self.text.snapshot();
         let mut syntax_map = self.syntax_map.lock();
@@ -594,18 +623,22 @@ impl Buffer {
         }
     }
 
-    pub fn as_text_snapshot(&self) -> &text::BufferSnapshot {
+    pub(crate) fn as_text_snapshot(&self) -> &text::BufferSnapshot {
         &self.text
     }
 
+    /// Retrieve a snapshot of the buffer's raw text, without any
+    /// language-related state like the syntax tree or diagnostics.
     pub fn text_snapshot(&self) -> text::BufferSnapshot {
         self.text.snapshot()
     }
 
+    /// The file associated with the buffer, if any.
     pub fn file(&self) -> Option<&Arc<dyn File>> {
         self.file.as_ref()
     }
 
+    /// The version of the buffer that was last saved or reloaded from disk.
     pub fn saved_version(&self) -> &clock::Global {
         &self.saved_version
     }
@@ -614,10 +647,12 @@ impl Buffer {
         self.file_fingerprint
     }
 
+    /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
     pub fn saved_mtime(&self) -> SystemTime {
         self.saved_mtime
     }
 
+    /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
         self.syntax_map.lock().clear();
         self.language = language;
@@ -625,6 +660,8 @@ impl Buffer {
         cx.emit(Event::LanguageChanged);
     }
 
+    /// Assign a language registry to the buffer. This allows the buffer to retrieve
+    /// other languages if parts of the buffer are written in different languages.
     pub fn set_language_registry(&mut self, language_registry: Arc<LanguageRegistry>) {
         self.syntax_map
             .lock()
@@ -935,6 +972,7 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Assign to the buffer a set of diagnostics created by a given language server.
     pub fn update_diagnostics(
         &mut self,
         server_id: LanguageServerId,
@@ -1164,9 +1202,9 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
-    // Create a minimal edit that will cause the the given row to be indented
-    // with the given size. After applying this edit, the length of the line
-    // will always be at least `new_size.len`.
+    /// Create a minimal edit that will cause the the given row to be indented
+    /// with the given size. After applying this edit, the length of the line
+    /// will always be at least `new_size.len`.
     pub fn edit_for_indent_size_adjustment(
         row: u32,
         current_size: IndentSize,
@@ -1201,6 +1239,8 @@ impl Buffer {
         }
     }
 
+    /// Spawns a background task that asynchronously computes a `Diff` between the buffer's text
+    /// and the given new text.
     pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
@@ -1272,7 +1312,7 @@ impl Buffer {
             })
     }
 
-    /// Spawn a background task that searches the buffer for any whitespace
+    /// Spawns a background task that searches the buffer for any whitespace
     /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
     pub fn remove_trailing_whitespace(&self, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
@@ -1292,7 +1332,7 @@ impl Buffer {
         })
     }
 
-    /// Ensure that the buffer ends with a single newline character, and
+    /// Ensures that the buffer ends with a single newline character, and
     /// no other whitespace.
     pub fn ensure_final_newline(&mut self, cx: &mut ModelContext<Self>) {
         let len = self.len();
@@ -1313,7 +1353,7 @@ impl Buffer {
         self.edit([(offset..len, "\n")], None, cx);
     }
 
-    /// Apply a diff to the buffer. If the buffer has changed since the given diff was
+    /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
     pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -1352,11 +1392,14 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
+    /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.file_fingerprint != self.as_rope().fingerprint()
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
+    /// Checks if the buffer and its file have both changed since the buffer
+    /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
         self.file_fingerprint != self.as_rope().fingerprint()
             && self
@@ -1365,14 +1408,23 @@ impl Buffer {
                 .map_or(false, |file| file.mtime() > self.saved_mtime)
     }
 
+    /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
     pub fn subscribe(&mut self) -> Subscription {
         self.text.subscribe()
     }
 
+    /// Starts a transaction, if one is not already in-progress. When undoing or
+    /// redoing edits, all of the edits performed within a transaction are undone
+    /// or redone together.
     pub fn start_transaction(&mut self) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now())
     }
 
+    /// Starts a transaction, providing the current time. Subsequent transactions
+    /// that occur within a short period of time will be grouped together. This
+    /// is controlled by the buffer's undo grouping duration.
+    ///
+    /// See [`Buffer::set_group_interval`].
     pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.was_dirty_before_starting_transaction.is_none() {
@@ -1381,10 +1433,16 @@ impl Buffer {
         self.text.start_transaction_at(now)
     }
 
+    /// Terminates the current transaction, if this is the outermost transaction.
     pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         self.end_transaction_at(Instant::now(), cx)
     }
 
+    /// Terminates the current transaction, providing the current time. Subsequent transactions
+    /// that occur within a short period of time will be grouped together. This
+    /// is controlled by the buffer's undo grouping duration.
+    ///
+    /// See [`Buffer::set_group_interval`].
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
@@ -1405,26 +1463,33 @@ impl Buffer {
         }
     }
 
+    /// Manually add a transaction to the buffer's undo history.
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.text.push_transaction(transaction, now);
     }
 
+    /// Prevent the last transaction from being grouped with any subsequent transactions,
+    /// even if they occur with the buffer's undo grouping duration.
     pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
         self.text.finalize_last_transaction()
     }
 
+    /// Manually group all changes since a given transaction.
     pub fn group_until_transaction(&mut self, transaction_id: TransactionId) {
         self.text.group_until_transaction(transaction_id);
     }
 
+    /// Manually remove a transaction from the buffer's undo history
     pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
         self.text.forget_transaction(transaction_id);
     }
 
+    /// Manually merge two adjacent transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
     }
 
+    /// Waits for the buffer to receive operations with the given timestamps.
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Lamport>,
@@ -1432,6 +1497,7 @@ impl Buffer {
         self.text.wait_for_edits(edit_ids)
     }
 
+    /// Waits for the buffer to receive the operations necessary for resolving the given anchors.
     pub fn wait_for_anchors(
         &mut self,
         anchors: impl IntoIterator<Item = Anchor>,
@@ -1439,14 +1505,18 @@ impl Buffer {
         self.text.wait_for_anchors(anchors)
     }
 
+    /// Waits for the buffer to receive operations up to the given version.
     pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
         self.text.wait_for_version(version)
     }
 
+    /// Forces all futures returned by [`Buffer::wait_for_version`], [`Buffer::wait_for_edits`], or
+    /// [`Buffer::wait_for_version`] to resolve with an error.
     pub fn give_up_waiting(&mut self) {
         self.text.give_up_waiting();
     }
 
+    /// Stores a set of selections that should be broadcasted to all of the buffer's replicas.
     pub fn set_active_selections(
         &mut self,
         selections: Arc<[Selection<Anchor>]>,
@@ -1475,6 +1545,8 @@ impl Buffer {
         );
     }
 
+    /// Clears the selections, so that other replicas of the buffer do not see any selections for
+    /// this replica.
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
         if self
             .remote_selections
@@ -1485,6 +1557,7 @@ impl Buffer {
         }
     }
 
+    /// Replaces the buffer's entire text.
     pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Lamport>
     where
         T: Into<Arc<str>>,
@@ -1493,6 +1566,15 @@ impl Buffer {
         self.edit([(0..self.len(), text)], None, cx)
     }
 
+    /// Applies the given edits to the buffer. Each edit is specified as a range of text to
+    /// delete, and a string of text to insert at that location.
+    ///
+    /// If an [`AutoindentMode`] is provided, then the buffer will enqueue an auto-indent
+    /// request for the edited ranges, which will be processed when the buffer finishes
+    /// parsing.
+    ///
+    /// Parsing takes place at the end of a transaction, and may compute synchronously
+    /// or asynchronously, depending on the changes.
     pub fn edit<I, S, T>(
         &mut self,
         edits_iter: I,
@@ -1626,6 +1708,7 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Applies the given remote operations to the buffer.
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,
         ops: I,
@@ -1773,11 +1856,13 @@ impl Buffer {
         cx.emit(Event::Operation(operation));
     }
 
+    /// Removes the selections for a given peer.
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
         self.remote_selections.remove(&replica_id);
         cx.notify();
     }
 
+    /// Undoes the most recent transaction.
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1791,6 +1876,7 @@ impl Buffer {
         }
     }
 
+    /// Manually undoes a specific transaction in the buffer's undo history.
     pub fn undo_transaction(
         &mut self,
         transaction_id: TransactionId,
@@ -1807,6 +1893,7 @@ impl Buffer {
         }
     }
 
+    /// Manually undoes all changes after a given transaction in the buffer's undo history.
     pub fn undo_to_transaction(
         &mut self,
         transaction_id: TransactionId,

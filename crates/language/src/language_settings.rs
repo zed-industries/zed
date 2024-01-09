@@ -1,3 +1,5 @@
+//! Provides `language`-related settings.
+
 use crate::{File, Language};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
@@ -11,10 +13,12 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
-pub fn init(cx: &mut AppContext) {
+/// Initializes the language settings.
+pub(crate) fn init(cx: &mut AppContext) {
     AllLanguageSettings::register(cx);
 }
 
+/// Returns the settings for the specified language from the provided file.
 pub fn language_settings<'a>(
     language: Option<&Arc<Language>>,
     file: Option<&Arc<dyn File>>,
@@ -24,6 +28,7 @@ pub fn language_settings<'a>(
     all_language_settings(file, cx).language(language_name.as_deref())
 }
 
+/// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
@@ -32,36 +37,68 @@ pub fn all_language_settings<'a>(
     AllLanguageSettings::get(location, cx)
 }
 
+/// The settings for all languages.
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
+    /// The settings for GitHub Copilot.
     pub copilot: CopilotSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
 }
 
+/// The settings for a particular language.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageSettings {
+    /// How many columns a tab should occupy.
     pub tab_size: NonZeroU32,
+    /// Whether to indent lines using tab characters, as opposed to multiple
+    /// spaces.
     pub hard_tabs: bool,
+    /// How to soft-wrap long lines of text.
     pub soft_wrap: SoftWrap,
+    /// The column at which to soft-wrap lines, for buffers where soft-wrap
+    /// is enabled.
     pub preferred_line_length: u32,
+    /// Whether to show wrap guides in the editor. Setting this to true will
+    /// show a guide at the 'preferred_line_length' value if softwrap is set to
+    /// 'preferred_line_length', and will show any additional guides as specified
+    /// by the 'wrap_guides' setting.
     pub show_wrap_guides: bool,
+    /// Character counts at which to show wrap guides in the editor.
     pub wrap_guides: Vec<usize>,
+    /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
+    /// Whether or not to remove any trailing whitespace from lines of a buffer
+    /// before saving it.
     pub remove_trailing_whitespace_on_save: bool,
+    /// Whether or not to ensure there's a single newline at the end of a buffer
+    /// when saving it.
     pub ensure_final_newline_on_save: bool,
+    /// How to perform a buffer format.
     pub formatter: Formatter,
+    /// Zed's Prettier integration settings.
+    /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+    /// the project has no other Prettier installed.
     pub prettier: HashMap<String, serde_json::Value>,
+    /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
+    /// Controls whether Copilot provides suggestion immediately (true)
+    /// or waits for a `copilot::Toggle` (false).
     pub show_copilot_suggestions: bool,
+    /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
+    /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
 }
 
+/// The settings for [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
+    /// Whether Copilit is enabled.
     pub feature_enabled: bool,
+    /// A list of globs representing files that Copilot should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
 }
 
@@ -138,7 +175,7 @@ pub struct LanguageSettingsContent {
     pub formatter: Option<Formatter>,
     /// Zed's Prettier integration settings.
     /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
-    /// project has no other Prettier installed.
+    /// the project has no other Prettier installed.
     ///
     /// Default: {}
     #[serde(default)]
@@ -148,7 +185,7 @@ pub struct LanguageSettingsContent {
     /// Default: true
     #[serde(default)]
     pub enable_language_server: Option<bool>,
-    /// Controls whether copilot provides suggestion immediately (true)
+    /// Controls whether Copilot provides suggestion immediately (true)
     /// or waits for a `copilot::Toggle` (false).
     ///
     /// Default: true
@@ -176,9 +213,11 @@ pub struct CopilotSettingsContent {
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
+    /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
 }
 
+/// Controls the soft-wrapping behavior in the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
@@ -190,14 +229,20 @@ pub enum SoftWrap {
     PreferredLineLength,
 }
 
+/// Controls the behavior of formatting files when they are saved.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
+    /// Files should be formatted on save.
     On,
+    /// Files should not be formatted on save.
     Off,
     LanguageServer,
+    /// The external program to use to format the files on save.
     External {
+        /// The external program to run.
         command: Arc<str>,
+        /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
 }
@@ -231,6 +276,7 @@ pub enum Formatter {
     },
 }
 
+/// The settings for inlay hints.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct InlayHintSettings {
     /// Global switch to toggle hints on and off.
@@ -238,10 +284,19 @@ pub struct InlayHintSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
+    /// Whether type hints should be shown.
+    ///
+    /// Default: true
     #[serde(default = "default_true")]
     pub show_type_hints: bool,
+    /// Whether parameter hints should be shown.
+    ///
+    /// Default: true
     #[serde(default = "default_true")]
     pub show_parameter_hints: bool,
+    /// Whether other hints should be shown.
+    ///
+    /// Default: true
     #[serde(default = "default_true")]
     pub show_other_hints: bool,
 }
@@ -251,6 +306,7 @@ fn default_true() -> bool {
 }
 
 impl InlayHintSettings {
+    /// Returns the kinds of inlay hints that are enabled based on the settings.
     pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
         let mut kinds = HashSet::default();
         if self.show_type_hints {

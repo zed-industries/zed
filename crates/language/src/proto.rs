@@ -1,3 +1,5 @@
+//! Handles conversions of `language` items to and from the [`rpc`] protocol.
+
 use crate::{
     diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, CursorShape, Diagnostic,
     Language,
@@ -11,15 +13,18 @@ use text::*;
 
 pub use proto::{BufferState, Operation};
 
+/// Serializes a [`RopeFingerprint`] to be sent over the wire.
 pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
     fingerprint.to_hex()
 }
 
+/// Deserializes a [`RopeFingerprint`] from the wire format.
 pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
     RopeFingerprint::from_hex(fingerprint)
         .map_err(|error| anyhow!("invalid fingerprint: {}", error))
 }
 
+/// Deserializes a `[text::LineEnding]` from the wire format.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
         proto::LineEnding::Unix => text::LineEnding::Unix,
@@ -27,6 +32,7 @@ pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     }
 }
 
+/// Serializes a [`text::LineEnding`] to be sent over the wire.
 pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     match message {
         text::LineEnding::Unix => proto::LineEnding::Unix,
@@ -34,6 +40,7 @@ pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     }
 }
 
+/// Serializes a [`crate::Operation`] to be sent over the wire.
 pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
     proto::Operation {
         variant: Some(match operation {
@@ -96,6 +103,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
     }
 }
 
+/// Serializes an [`operation::EditOperation`] to be sent over the wire.
 pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::Edit {
     proto::operation::Edit {
         replica_id: operation.timestamp.replica_id as u32,
@@ -110,6 +118,7 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
     }
 }
 
+/// Serializes an entry in the undo map to be sent over the wire.
 pub fn serialize_undo_map_entry(
     (edit_id, counts): (&clock::Lamport, &[(clock::Lamport, u32)]),
 ) -> proto::UndoMapEntry {

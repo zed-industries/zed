@@ -1,3 +1,7 @@
+//! The `language` crate provides... ???
+
+#![warn(missing_docs)]
+
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
@@ -58,6 +62,9 @@ pub use syntax_map::{OwnedSyntaxLayerInfo, SyntaxLayerInfo};
 pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
 
+/// Initializes the `language` crate.
+///
+/// This should be called before making use of items from the create.
 pub fn init(cx: &mut AppContext) {
     language_settings::init(cx);
 }
@@ -90,7 +97,7 @@ thread_local! {
 }
 
 lazy_static! {
-    pub static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
+    pub(crate) static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
@@ -358,14 +365,22 @@ pub struct CodeLabel {
 
 #[derive(Clone, Deserialize)]
 pub struct LanguageConfig {
+    /// Human-readable name of the language.
     pub name: Arc<str>,
+    // The name of the grammar in a WASM bundle.
     pub grammar_name: Option<Arc<str>>,
+    /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     pub path_suffixes: Vec<String>,
+    /// List of
     pub brackets: BracketPairConfig,
+    /// A regex pattern that determines whether the language should be assigned to a file or not.
     #[serde(default, deserialize_with = "deserialize_regex")]
     pub first_line_pattern: Option<Regex>,
+    /// If set to true, auto indentation uses last non empty line to determine
+    /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
+    /// A regex that is used to determine whether the  
     #[serde(default, deserialize_with = "deserialize_regex")]
     pub increase_indent_pattern: Option<Regex>,
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -382,12 +397,16 @@ pub struct LanguageConfig {
     pub scope_opt_in_language_servers: Vec<String>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
+    /// A list of characters that Zed should treat as word characters for the
+    /// purpose of features that operate on word boundaries, like 'move to next word end'
+    /// or a whole-word search in buffer search.
     #[serde(default)]
     pub word_characters: HashSet<char>,
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
 }
 
+/// Tree-sitter language queries for a given language.
 #[derive(Debug, Default)]
 pub struct LanguageQueries {
     pub highlights: Option<Cow<'static, str>>,
@@ -399,6 +418,9 @@ pub struct LanguageQueries {
     pub overrides: Option<Cow<'static, str>>,
 }
 
+/// Represents a language for the given range. Some languages (e.g. HTML)
+/// interleave several languages together, thus a single buffer might actually contain
+/// several nested scopes.
 #[derive(Clone, Debug)]
 pub struct LanguageScope {
     language: Arc<Language>,
@@ -491,7 +513,10 @@ pub struct FakeLspAdapter {
 
 #[derive(Clone, Debug, Default)]
 pub struct BracketPairConfig {
+    /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
+    /// A list of tree-sitter scopes for which a given bracket should not be active.
+    /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
 }
 
@@ -1641,6 +1666,8 @@ impl LanguageScope {
         self.language.config.collapsed_placeholder.as_ref()
     }
 
+    /// Returns line prefix that is inserted in e.g. line continuations or
+    /// in `toggle comments` action.
     pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
         Override::as_option(
             self.config_override().map(|o| &o.line_comment),
@@ -1656,6 +1683,11 @@ impl LanguageScope {
         .map(|e| (&e.0, &e.1))
     }
 
+    /// Returns a list of language-specific word characters.
+    ///
+    /// By default, Zed treats alphanumeric characters (and '_') as word characters for
+    /// the purpose of actions like 'move to next word end` or whole-word search.
+    /// It additionally accounts for language's additional word characters.
     pub fn word_characters(&self) -> Option<&HashSet<char>> {
         Override::as_option(
             self.config_override().map(|o| &o.word_characters),
@@ -1663,6 +1695,8 @@ impl LanguageScope {
         )
     }
 
+    /// Returns a list of bracket pairs for a given language with an additional
+    /// piece of information about whether the particular bracket pair is currently active for a given language.
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
         let mut disabled_ids = self
             .config_override()
