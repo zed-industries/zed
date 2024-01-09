@@ -248,7 +248,7 @@ pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> {}
 
 impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 
-/// Emitted by implementers of [ManagedView] to indicate the view should be dismissed, such as when a view is presented as a modal.
+/// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
 pub struct DismissEvent;
 
 // Holds the state for a specific window.
@@ -464,8 +464,8 @@ impl ContentMask<Pixels> {
 }
 
 /// Provides access to application state in the context of a single window. Derefs
-/// to an `AppContext`, so you can also pass a `WindowContext` to any method that takes
-/// an `AppContext` and call any `AppContext` methods.
+/// to an [`AppContext`], so you can also pass a [`WindowContext`] to any method that takes
+/// an [`AppContext`] and call any [`AppContext`] methods.
 pub struct WindowContext<'a> {
     pub(crate) app: &'a mut AppContext,
     pub(crate) window: &'a mut Window,
@@ -493,20 +493,20 @@ impl<'a> WindowContext<'a> {
         self.window.removed = true;
     }
 
-    /// Obtain a new `FocusHandle`, which allows you to track and manipulate the keyboard focus
+    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
     /// for elements rendered within this window.
     pub fn focus_handle(&mut self) -> FocusHandle {
         FocusHandle::new(&self.window.focus_handles)
     }
 
-    /// Obtain the currently focused `FocusHandle`. If no elements are focused, returns `None`.
+    /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
     pub fn focused(&self) -> Option<FocusHandle> {
         self.window
             .focus
             .and_then(|id| FocusHandle::for_id(id, &self.window.focus_handles))
     }
 
-    /// Move focus to the element associated with the given `FocusHandle`.
+    /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle) {
         if !self.window.focus_enabled || self.window.focus == Some(handle.id) {
             return;
@@ -605,8 +605,8 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Subscribe to events emitted by a model or view.
-    /// The entity to which you're subscribing must implement the [EventEmitter] trait.
-    /// The callback will be invoked a handle to the emitting entity (either a [View] or [Model]), the event, and a window context for the current window.
+    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
     pub fn subscribe<Emitter, E, Evt>(
         &mut self,
         entity: &E,
@@ -2061,7 +2061,7 @@ impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
     }
 }
 
-/// This trait contains functionality that is shared across [ViewContext] and [WindowContext]
+/// This trait contains functionality that is shared across [`ViewContext`] and [`WindowContext`]
 pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     #[doc(hidden)]
     fn app_mut(&mut self) -> &mut AppContext {
@@ -2328,10 +2328,10 @@ impl BorrowMut<Window> for WindowContext<'_> {
 
 impl<T> BorrowWindow for T where T: BorrowMut<AppContext> + BorrowMut<Window> {}
 
-/// Provides access to application state that is specialized for a particular [View].
+/// Provides access to application state that is specialized for a particular [`View`].
 /// Allows you to interact with focus, emit events, etc.
-/// ViewContext also derefs to [WindowContext], giving you access to all of its methods as well.
-/// When you call [View::<V>::update], you're passed a `&mut V` and an `&mut ViewContext<V>`.
+/// ViewContext also derefs to [`WindowContext`], giving you access to all of its methods as well.
+/// When you call [`View::update`], you're passed a `&mut V` and an `&mut ViewContext<V>`.
 pub struct ViewContext<'a, V> {
     window_cx: WindowContext<'a>,
     view: &'a View<V>,
@@ -2407,7 +2407,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         });
     }
 
-    /// Observe another model or view for changes to it's state, as tracked by the [AppContext::notify]
+    /// Observe another model or view for changes to its state, as tracked by [`ModelContext::notify`].
     pub fn observe<V2, E>(
         &mut self,
         entity: &E,
@@ -2442,8 +2442,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Subscribe to events emitted by another model or view.
-    /// The entity to which you're subscribing must implement the [EventEmitter] trait.
-    /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [View] or [Model]), the event, and a view context for the current view.
+    /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
+    /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a view context for the current view.
     pub fn subscribe<V2, E, Evt>(
         &mut self,
         entity: &E,
@@ -2687,8 +2687,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Schedule a future to be run asynchronously.
-    /// The given callback is invoked with a [WeakView<V>] to avoid leaking the view for a long-running process.
-    /// It's also given an `AsyncWindowContext`, which can be used to access the state of the view across await points.
+    /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
+    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
     pub fn spawn<Fut, R>(
         &mut self,
@@ -2789,7 +2789,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         });
     }
 
-    /// Move focus to the current view, assuming it implements [FocusableView].
+    /// Move focus to the current view, assuming it implements [`FocusableView`].
     pub fn focus_self(&mut self)
     where
         V: FocusableView,
@@ -3119,21 +3119,21 @@ impl AnyWindowHandle {
 //     }
 // }
 
-/// An identifier for an [Element].
+/// An identifier for an [`Element`](crate::Element).
 ///
 /// Can be constructed with a string, a number, or both, as well
 /// as other internal representations.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {
-    /// The id of a View element
+    /// The ID of a View element
     View(EntityId),
-    /// An integer id
+    /// An integer ID.
     Integer(usize),
-    /// A string based id
+    /// A string based ID.
     Name(SharedString),
-    /// An id that's equated with a focus handle
+    /// An ID that's equated with a focus handle.
     FocusHandle(FocusId),
-    /// A combination of a name and an integer
+    /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
 }
 
@@ -3204,7 +3204,7 @@ impl From<(&'static str, u64)> for ElementId {
 }
 
 /// A rectangle to be rendered in the window at the given position and size.
-/// Passed as an argument [WindowContext::paint_quad].
+/// Passed as an argument [`WindowContext::paint_quad`].
 #[derive(Clone)]
 pub struct PaintQuad {
     bounds: Bounds<Pixels>,
