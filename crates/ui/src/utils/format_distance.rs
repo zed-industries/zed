@@ -246,12 +246,11 @@ fn distance_string(
 ///
 /// ```rust
 /// use chrono::DateTime;
-/// use ui::utils::format_distance;
 ///
 /// fn time_between_moon_landings() -> String {
 ///     let date = DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z").unwrap().naive_local();
 ///     let base_date = DateTime::parse_from_rfc3339("1972-12-14T00:00:00Z").unwrap().naive_local();
-///     format!("There was {} between the first and last crewed moon landings.", naive_format_distance(date, base_date, false, false))
+///     format!("There was {} between the first and last crewed moon landings.", format_distance(date, base_date, false, false))
 /// }
 /// ```
 ///
@@ -282,11 +281,10 @@ pub fn format_distance(
 ///
 /// ```rust
 /// use chrono::DateTime;
-/// use ui::utils::naive_format_distance_from_now;
 ///
 /// fn time_since_first_moon_landing() -> String {
-///     let date = DateTime::parse_from_rfc3339("1969-07-20T00:00:00Z").unwrap().naive_local();
-///     format!("It's been {} since Apollo 11 first landed on the moon.", naive_format_distance_from_now(date, false, false))
+///     let date = NaiveDateTime::parse_from_rfc3339("1969-07-20T00:00:00Z").unwrap().naive_local();
+///     format!("It's been {} since Apollo 11 first landed on the moon.", format_distance_from_now(date, false, false))
 /// }
 /// ```
 ///

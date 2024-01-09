@@ -10,18 +10,24 @@ use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 /// # Examples
 ///
 /// ```
-/// Label::new("Hello, World!")
+/// use ui::prelude::*;
+///
+/// Label::new("Hello, World!");
 /// ```
 ///
 /// **A colored label**, for example labeling a dangerous action:
 ///
 /// ```
+/// use ui::prelude::*;
+///
 /// let my_label = Label::new("Delete").color(Color::Error);
 /// ```
 ///
 /// **A label with a strikethrough**, for example labeling something that has been deleted:
 ///
 /// ```
+/// use ui::prelude::*;
+///
 /// let my_label = Label::new("Deleted").strikethrough(true);
 /// ```
 #[derive(IntoElement)]
@@ -36,6 +42,8 @@ impl Label {
     /// # Examples
     ///
     /// ```
+    /// use ui::prelude::*;
+    ///
     /// let my_label = Label::new("Hello, World!");
     /// ```
     pub fn new(label: impl Into<SharedString>) -> Self {
@@ -52,6 +60,8 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
+    /// use ui::prelude::*;
+    ///
     /// let my_label = Label::new("Hello, World!").size(LabelSize::Large);
     /// ```
     fn size(mut self, size: LabelSize) -> Self {
@@ -64,6 +74,8 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
+    /// use ui::prelude::*;
+    ///
     /// let my_label = Label::new("Hello, World!").line_height_style(LineHeightStyle::Normal);
     /// ```
     fn line_height_style(mut self, line_height_style: LineHeightStyle) -> Self {
@@ -76,6 +88,8 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
+    /// use ui::prelude::*;
+    ///
     /// let my_label = Label::new("Hello, World!").color(Color::Primary);
     /// ```
     fn color(mut self, color: Color) -> Self {
@@ -88,6 +102,8 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
+    /// use ui::prelude::*;
+    ///
     /// let my_label = Label::new("Hello, World!").strikethrough(true);
     /// ```
     fn strikethrough(mut self, strikethrough: bool) -> Self {
