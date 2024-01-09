@@ -10,12 +10,12 @@ use super::button_icon::ButtonIcon;
 /// An element that creates a button with a label and an optional icon.
 ///
 /// Common buttons:
-/// - Label, Icon + Label: [Button] (this component)
-/// - Icon only: [IconButton]
-/// - Custom: [ButtonLike]
+/// - Label, Icon + Label: [`Button`] (this component)
+/// - Icon only: [`IconButton`]
+/// - Custom: [`ButtonLike`]
 ///
-/// To create a more complex button than what the [Button] or [IconButton] components provide, use
-/// [ButtonLike] directly.
+/// To create a more complex button than what the [`Button`] or [`IconButton`] components provide, use
+/// [`ButtonLike`] directly.
 ///
 /// # Examples
 ///
@@ -42,7 +42,7 @@ use super::button_icon::ButtonIcon;
 ///     });
 /// ```
 ///
-/// To change the style of the button when it is selected use the [selected_style][Button::selected_style] method.
+/// To change the style of the button when it is selected use the [`selected_style`][Button::selected_style] method.
 ///
 /// ```
 /// Button::new("button_id", "Click me!")
@@ -81,9 +81,9 @@ pub struct Button {
 }
 
 impl Button {
-    /// Creates a new [Button] with a specified identifier and label.
+    /// Creates a new [`Button`] with a specified identifier and label.
     ///
-    /// This is the primary constructor for a `Button` component. It initializes
+    /// This is the primary constructor for a [`Button`] component. It initializes
     /// the button with the provided identifier and label text, setting all other
     /// properties to their default values, which can be customized using the
     /// builder pattern methods provided by this struct.
@@ -174,7 +174,7 @@ impl Selectable for Button {
     ///     });
     /// ```
     ///
-    /// Use [selected_style](Button::selected_style) to change the style of the button when it is selected.
+    /// Use [`selected_style`](Button::selected_style) to change the style of the button when it is selected.
     fn selected(mut self, selected: bool) -> Self {
         self.base = self.base.selected(selected);
         self
@@ -282,13 +282,13 @@ impl ButtonCommon for Button {
         self.base.id()
     }
 
-    /// Sets the visual style of the button using a [ButtonStyle].
+    /// Sets the visual style of the button using a [`ButtonStyle`].
     fn style(mut self, style: ButtonStyle) -> Self {
         self.base = self.base.style(style);
         self
     }
 
-    /// Sets the button's size using a [ButtonSize].
+    /// Sets the button's size using a [`ButtonSize`].
     fn size(mut self, size: ButtonSize) -> Self {
         self.base = self.base.size(size);
         self
@@ -297,7 +297,7 @@ impl ButtonCommon for Button {
     /// Sets a tooltip for the button.
     ///
     /// This method allows a tooltip to be set for the button. The tooltip is a function that
-    /// takes a mutable reference to a [WindowContext] and returns an [AnyView]. The tooltip
+    /// takes a mutable reference to a [`WindowContext`] and returns an [`AnyView`]. The tooltip
     /// is displayed when the user hovers over the button.
     ///
     /// # Examples

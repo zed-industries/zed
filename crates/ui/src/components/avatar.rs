@@ -78,7 +78,7 @@ impl Avatar {
 
     /// Sets the shape of the avatar image.
     ///
-    /// This method allows the shape of the avatar to be specified using the [Shape] enum.
+    /// This method allows the shape of the avatar to be specified using a [`Shape`].
     /// It modifies the corner radius of the image to match the specified shape.
     ///
     /// # Examples
