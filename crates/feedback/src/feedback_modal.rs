@@ -487,7 +487,7 @@ impl Render for FeedbackModal {
                     .child(
                         Button::new("community_repository", "Community Repository")
                             .style(ButtonStyle::Transparent)
-                            .icon(IconPath::ExternalLink)
+                            .icon(Icon::ExternalLink)
                             .icon_position(IconPosition::End)
                             .icon_size(IconSize::Small)
                             .on_click(open_community_repo),

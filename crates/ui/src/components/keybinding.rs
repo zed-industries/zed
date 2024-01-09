@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, Icon, IconPath, IconSize};
+use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
 use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
@@ -26,16 +26,16 @@ impl RenderOnce for KeyBinding {
                     .text_color(cx.theme().colors().text_muted)
                     .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
                     .when(keystroke.modifiers.control, |el| {
-                        el.child(KeyIcon::new(IconPath::Control))
+                        el.child(KeyIcon::new(Icon::Control))
                     })
                     .when(keystroke.modifiers.alt, |el| {
-                        el.child(KeyIcon::new(IconPath::Option))
+                        el.child(KeyIcon::new(Icon::Option))
                     })
                     .when(keystroke.modifiers.command, |el| {
-                        el.child(KeyIcon::new(IconPath::Command))
+                        el.child(KeyIcon::new(Icon::Command))
                     })
                     .when(keystroke.modifiers.shift, |el| {
-                        el.child(KeyIcon::new(IconPath::Shift))
+                        el.child(KeyIcon::new(Icon::Shift))
                     })
                     .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
                     .when(key_icon.is_none(), |el| {
@@ -65,21 +65,21 @@ impl KeyBinding {
         Some(Self::new(key_binding))
     }
 
-    fn icon_for_key(keystroke: &Keystroke) -> Option<IconPath> {
+    fn icon_for_key(keystroke: &Keystroke) -> Option<Icon> {
         match keystroke.key.as_str() {
-            "left" => Some(IconPath::ArrowLeft),
-            "right" => Some(IconPath::ArrowRight),
-            "up" => Some(IconPath::ArrowUp),
-            "down" => Some(IconPath::ArrowDown),
-            "backspace" => Some(IconPath::Backspace),
-            "delete" => Some(IconPath::Delete),
-            "return" => Some(IconPath::Return),
-            "enter" => Some(IconPath::Return),
-            "tab" => Some(IconPath::Tab),
-            "space" => Some(IconPath::Space),
-            "escape" => Some(IconPath::Escape),
-            "pagedown" => Some(IconPath::PageDown),
-            "pageup" => Some(IconPath::PageUp),
+            "left" => Some(Icon::ArrowLeft),
+            "right" => Some(Icon::ArrowRight),
+            "up" => Some(Icon::ArrowUp),
+            "down" => Some(Icon::ArrowDown),
+            "backspace" => Some(Icon::Backspace),
+            "delete" => Some(Icon::Delete),
+            "return" => Some(Icon::Return),
+            "enter" => Some(Icon::Return),
+            "tab" => Some(Icon::Tab),
+            "space" => Some(Icon::Space),
+            "escape" => Some(Icon::Escape),
+            "pagedown" => Some(Icon::PageDown),
+            "pageup" => Some(Icon::PageUp),
             _ => None,
         }
     }
@@ -123,13 +123,13 @@ impl Key {
 
 #[derive(IntoElement)]
 pub struct KeyIcon {
-    icon: IconPath,
+    icon: Icon,
 }
 
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div().w(rems(14. / 16.)).child(
-            Icon::new(self.icon)
+            IconElement::new(self.icon)
                 .size(IconSize::Small)
                 .color(Color::Muted),
         )
@@ -137,7 +137,7 @@ impl RenderOnce for KeyIcon {
 }
 
 impl KeyIcon {
-    pub fn new(icon: IconPath) -> Self {
+    pub fn new(icon: Icon) -> Self {
         Self { icon }
     }
 }

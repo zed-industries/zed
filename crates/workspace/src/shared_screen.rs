@@ -12,7 +12,7 @@ use gpui::{
     WindowContext,
 };
 use std::sync::{Arc, Weak};
-use ui::{h_stack, prelude::*, Icon, IconPath, Label};
+use ui::{h_stack, prelude::*, Icon, IconElement, Label};
 
 pub enum Event {
     Close,
@@ -100,7 +100,7 @@ impl Item for SharedScreen {
     ) -> gpui::AnyElement {
         h_stack()
             .gap_1()
-            .child(Icon::new(IconPath::Screen))
+            .child(IconElement::new(Icon::Screen))
             .child(
                 Label::new(format!("{}'s screen", self.user.github_login)).color(if selected {
                     Color::Default

@@ -175,7 +175,7 @@ pub mod simple_message_notification {
     };
     use std::sync::Arc;
     use ui::prelude::*;
-    use ui::{h_stack, v_stack, Button, Icon, IconPath, Label, StyledExt};
+    use ui::{h_stack, v_stack, Button, Icon, IconElement, Label, StyledExt};
 
     pub struct MessageNotification {
         message: SharedString,
@@ -230,7 +230,7 @@ pub mod simple_message_notification {
                         .child(
                             div()
                                 .id("cancel")
-                                .child(Icon::new(IconPath::Close))
+                                .child(IconElement::new(Icon::Close))
                                 .cursor_pointer()
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
                         ),

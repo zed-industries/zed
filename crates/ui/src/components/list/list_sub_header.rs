@@ -1,10 +1,10 @@
 use crate::prelude::*;
-use crate::{h_stack, Icon, IconPath, IconSize, Label};
+use crate::{h_stack, Icon, IconElement, IconSize, Label};
 
 #[derive(IntoElement)]
 pub struct ListSubHeader {
     label: SharedString,
-    start_slot: Option<IconPath>,
+    start_slot: Option<Icon>,
     inset: bool,
 }
 
@@ -17,7 +17,7 @@ impl ListSubHeader {
         }
     }
 
-    pub fn left_icon(mut self, left_icon: Option<IconPath>) -> Self {
+    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.start_slot = left_icon;
         self
     }
@@ -40,10 +40,11 @@ impl RenderOnce for ListSubHeader {
                         .flex()
                         .gap_1()
                         .items_center()
-                        .children(
-                            self.start_slot
-                                .map(|i| Icon::new(i).color(Color::Muted).size(IconSize::Small)),
-                        )
+                        .children(self.start_slot.map(|i| {
+                            IconElement::new(i)
+                                .color(Color::Muted)
+                                .size(IconSize::Small)
+                        }))
                         .child(Label::new(self.label.clone()).color(Color::Muted)),
                 ),
         )

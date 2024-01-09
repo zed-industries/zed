@@ -933,7 +933,7 @@ impl AssistantPanel {
     }
 
     fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("hamburger_button", IconPath::Menu)
+        IconButton::new("hamburger_button", Icon::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 if this.active_editor().is_some() {
                     this.set_active_editor_index(None, cx);
@@ -957,7 +957,7 @@ impl AssistantPanel {
     }
 
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("split_button", IconPath::Snip)
+        IconButton::new("split_button", Icon::Snip)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
@@ -968,7 +968,7 @@ impl AssistantPanel {
     }
 
     fn render_assist_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("assist_button", IconPath::MagicWand)
+        IconButton::new("assist_button", Icon::MagicWand)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
@@ -979,7 +979,7 @@ impl AssistantPanel {
     }
 
     fn render_quote_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("quote_button", IconPath::Quote)
+        IconButton::new("quote_button", Icon::Quote)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(workspace) = this.workspace.upgrade() {
                     cx.window_context().defer(move |cx| {
@@ -994,7 +994,7 @@ impl AssistantPanel {
     }
 
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("plus_button", IconPath::Plus)
+        IconButton::new("plus_button", Icon::Plus)
             .on_click(cx.listener(|this, _event, cx| {
                 this.new_conversation(cx);
             }))
@@ -1004,12 +1004,12 @@ impl AssistantPanel {
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let zoomed = self.zoomed;
-        IconButton::new("zoom_button", IconPath::Maximize)
+        IconButton::new("zoom_button", Icon::Maximize)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
             .selected(zoomed)
-            .selected_icon(IconPath::Minimize)
+            .selected_icon(Icon::Minimize)
             .icon_size(IconSize::Small)
             .tooltip(move |cx| {
                 Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
@@ -1286,8 +1286,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<IconPath> {
-        Some(IconPath::Ai).filter(|_| AssistantSettings::get_global(cx).button)
+    fn icon(&self, cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::Ai).filter(|_| AssistantSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -2353,7 +2353,7 @@ impl ConversationEditor {
                                             div()
                                                 .id("error")
                                                 .tooltip(move |cx| Tooltip::text(error.clone(), cx))
-                                                .child(Icon::new(IconPath::XCircle)),
+                                                .child(IconElement::new(Icon::XCircle)),
                                         )
                                     } else {
                                         None
@@ -2649,7 +2649,7 @@ impl Render for InlineAssistant {
                     .justify_center()
                     .w(measurements.gutter_width)
                     .child(
-                        IconButton::new("include_conversation", IconPath::Ai)
+                        IconButton::new("include_conversation", Icon::Ai)
                             .on_click(cx.listener(|this, _, cx| {
                                 this.toggle_include_conversation(&ToggleIncludeConversation, cx)
                             }))
@@ -2664,7 +2664,7 @@ impl Render for InlineAssistant {
                     )
                     .children(if SemanticIndex::enabled(cx) {
                         Some(
-                            IconButton::new("retrieve_context", IconPath::MagnifyingGlass)
+                            IconButton::new("retrieve_context", Icon::MagnifyingGlass)
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.toggle_retrieve_context(&ToggleRetrieveContext, cx)
                                 }))
@@ -2686,7 +2686,7 @@ impl Render for InlineAssistant {
                             div()
                                 .id("error")
                                 .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                .child(Icon::new(IconPath::XCircle).color(Color::Error)),
+                                .child(IconElement::new(Icon::XCircle).color(Color::Error)),
                         )
                     } else {
                         None
@@ -2961,7 +2961,7 @@ impl InlineAssistant {
                 div()
                     .id("error")
                     .tooltip(|cx| Tooltip::text("Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.", cx))
-                    .child(Icon::new(IconPath::XCircle))
+                    .child(IconElement::new(Icon::XCircle))
                     .into_any_element()
             ),
 
@@ -2969,7 +2969,7 @@ impl InlineAssistant {
                 div()
                     .id("error")
                     .tooltip(|cx| Tooltip::text("Not Indexed", cx))
-                    .child(Icon::new(IconPath::XCircle))
+                    .child(IconElement::new(Icon::XCircle))
                     .into_any_element()
             ),
 
@@ -3000,7 +3000,7 @@ impl InlineAssistant {
                     div()
                         .id("update")
                         .tooltip(move |cx| Tooltip::text(status_text.clone(), cx))
-                        .child(Icon::new(IconPath::Update).color(Color::Info))
+                        .child(IconElement::new(Icon::Update).color(Color::Info))
                         .into_any_element()
                 )
             }
@@ -3009,7 +3009,7 @@ impl InlineAssistant {
                 div()
                     .id("check")
                     .tooltip(|cx| Tooltip::text("Index up to date", cx))
-                    .child(Icon::new(IconPath::Check).color(Color::Success))
+                    .child(IconElement::new(Icon::Check).color(Color::Success))
                     .into_any_element()
             ),
         }

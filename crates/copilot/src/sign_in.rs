@@ -5,7 +5,7 @@ use gpui::{
     WindowHandle, WindowKind, WindowOptions,
 };
 use theme::ActiveTheme;
-use ui::{prelude::*, Button, Icon, IconPath, Label};
+use ui::{prelude::*, Button, Icon, IconElement, Label};
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
@@ -205,7 +205,7 @@ impl Render for CopilotCodeVerification {
             .p_10()
             .bg(cx.theme().colors().element_background)
             .child(ui::Label::new("Connect Copilot to Zed"))
-            .child(Icon::new(IconPath::ZedXCopilot))
+            .child(IconElement::new(Icon::ZedXCopilot))
             .child(prompt)
     }
 }

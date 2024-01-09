@@ -168,7 +168,7 @@ impl Render for ChannelModal {
                             .w_px()
                             .flex_1()
                             .gap_1()
-                            .child(Icon::new(IconPath::Hash).size(IconSize::Medium))
+                            .child(IconElement::new(Icon::Hash).size(IconSize::Medium))
                             .child(Label::new(channel_name)),
                     )
                     .child(
@@ -406,7 +406,7 @@ impl PickerDelegate for ChannelModalDelegate {
                                 Some(ChannelRole::Guest) => Some(Label::new("Guest")),
                                 _ => None,
                             })
-                            .child(IconButton::new("ellipsis", IconPath::Ellipsis))
+                            .child(IconButton::new("ellipsis", Icon::Ellipsis))
                             .children(
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
                                     Some(

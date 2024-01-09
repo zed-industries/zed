@@ -31,8 +31,8 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconPath, IconSize, Indicator,
-    Label, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize, Indicator, Label,
+    Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
@@ -384,7 +384,7 @@ impl Pane {
                 h_stack()
                     .gap_2()
                     .child(
-                        IconButton::new("plus", IconPath::Plus)
+                        IconButton::new("plus", Icon::Plus)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
@@ -406,7 +406,7 @@ impl Pane {
                         el.child(Self::render_menu_overlay(new_item_menu))
                     })
                     .child(
-                        IconButton::new("split", IconPath::Split)
+                        IconButton::new("split", Icon::Split)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
@@ -427,11 +427,11 @@ impl Pane {
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconPath::Maximize)
+                        IconButton::new("toggle_zoom", Icon::Maximize)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .selected(zoomed)
-                            .selected_icon(IconPath::Minimize)
+                            .selected_icon(Icon::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&crate::ToggleZoom, cx);
                             }))
@@ -1570,7 +1570,7 @@ impl Pane {
             })
             .start_slot::<Indicator>(indicator)
             .end_slot(
-                IconButton::new("close tab", IconPath::Close)
+                IconButton::new("close tab", Icon::Close)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
                     .icon_size(IconSize::XSmall)
@@ -1676,7 +1676,7 @@ impl Pane {
                     h_stack()
                         .gap_2()
                         .child(
-                            IconButton::new("navigate_backward", IconPath::ArrowLeft)
+                            IconButton::new("navigate_backward", Icon::ArrowLeft)
                                 .icon_size(IconSize::Small)
                                 .on_click({
                                     let view = cx.view().clone();
@@ -1686,7 +1686,7 @@ impl Pane {
                                 .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
                         )
                         .child(
-                            IconButton::new("navigate_forward", IconPath::ArrowRight)
+                            IconButton::new("navigate_forward", Icon::ArrowRight)
                                 .icon_size(IconSize::Small)
                                 .on_click({
                                     let view = cx.view().clone();

@@ -1,4 +1,4 @@
-use crate::{prelude::*, Icon, IconPath, IconSize};
+use crate::{prelude::*, Icon, IconElement, IconSize};
 
 /// An icon that appears within a button.
 ///
@@ -6,17 +6,17 @@ use crate::{prelude::*, Icon, IconPath, IconSize};
 /// or as a standalone icon, like in [`IconButton`](crate::IconButton).
 #[derive(IntoElement)]
 pub(super) struct ButtonIcon {
-    icon: IconPath,
+    icon: Icon,
     size: IconSize,
     color: Color,
     disabled: bool,
     selected: bool,
-    selected_icon: Option<IconPath>,
+    selected_icon: Option<Icon>,
     selected_style: Option<ButtonStyle>,
 }
 
 impl ButtonIcon {
-    pub fn new(icon: IconPath) -> Self {
+    pub fn new(icon: Icon) -> Self {
         Self {
             icon,
             size: IconSize::default(),
@@ -44,7 +44,7 @@ impl ButtonIcon {
         self
     }
 
-    pub fn selected_icon(mut self, icon: impl Into<Option<IconPath>>) -> Self {
+    pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
         self.selected_icon = icon.into();
         self
     }
@@ -88,6 +88,6 @@ impl RenderOnce for ButtonIcon {
             self.color
         };
 
-        Icon::new(icon).size(self.size).color(icon_color)
+        IconElement::new(icon).size(self.size).color(icon_color)
     }
 }

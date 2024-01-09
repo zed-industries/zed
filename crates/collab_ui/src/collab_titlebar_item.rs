@@ -15,7 +15,7 @@ use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
     h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconPath, TintColor, Tooltip,
+    IconButton, IconElement, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -64,8 +64,7 @@ impl Render for CollabTitlebarItem {
         let client = self.client.clone();
         let project_id = self.project.read(cx).remote_id();
 
-        div()
-            .h_flex()
+        h_stack()
             .id("titlebar")
             .justify_between()
             .w_full()
@@ -214,7 +213,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             div()
                                 .child(
-                                    IconButton::new("leave-call", ui::IconPath::Exit)
+                                    IconButton::new("leave-call", ui::Icon::Exit)
                                         .style(ButtonStyle::Subtle)
                                         .tooltip(|cx| Tooltip::text("Leave call", cx))
                                         .icon_size(IconSize::Small)
@@ -231,9 +230,9 @@ impl Render for CollabTitlebarItem {
                                 IconButton::new(
                                     "mute-microphone",
                                     if is_muted {
-                                        ui::IconPath::MicMute
+                                        ui::Icon::MicMute
                                     } else {
-                                        ui::IconPath::Mic
+                                        ui::Icon::Mic
                                     },
                                 )
                                 .tooltip(move |cx| {
@@ -257,9 +256,9 @@ impl Render for CollabTitlebarItem {
                             IconButton::new(
                                 "mute-sound",
                                 if is_deafened {
-                                    ui::IconPath::AudioOff
+                                    ui::Icon::AudioOff
                                 } else {
-                                    ui::IconPath::AudioOn
+                                    ui::Icon::AudioOn
                                 },
                             )
                             .style(ButtonStyle::Subtle)
@@ -282,7 +281,7 @@ impl Render for CollabTitlebarItem {
                         )
                         .when(!read_only, |this| {
                             this.child(
-                                IconButton::new("screen-share", ui::IconPath::Screen)
+                                IconButton::new("screen-share", ui::Icon::Screen)
                                     .style(ButtonStyle::Subtle)
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
@@ -574,7 +573,7 @@ impl CollabTitlebarItem {
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")
-                    .child(Icon::new(IconPath::Disconnected).size(IconSize::Small))
+                    .child(IconElement::new(Icon::Disconnected).size(IconSize::Small))
                     .tooltip(|cx| Tooltip::text("Disconnected", cx))
                     .into_any_element(),
             ),
@@ -644,7 +643,7 @@ impl CollabTitlebarItem {
                             h_stack()
                                 .gap_0p5()
                                 .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(Icon::new(IconPath::ChevronDown).color(Color::Muted)),
+                                .child(IconElement::new(Icon::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
@@ -666,7 +665,7 @@ impl CollabTitlebarItem {
                         .child(
                             h_stack()
                                 .gap_0p5()
-                                .child(Icon::new(IconPath::ChevronDown).color(Color::Muted)),
+                                .child(IconElement::new(Icon::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),

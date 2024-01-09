@@ -2,7 +2,7 @@ use gpui::{AnyView, DefiniteLength};
 
 use crate::{prelude::*, IconPosition, KeyBinding};
 use crate::{
-    ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconPath, IconSize, Label, LineHeightStyle,
+    ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize, Label, LineHeightStyle,
 };
 
 use super::button_icon::ButtonIcon;
@@ -14,11 +14,11 @@ pub struct Button {
     label_color: Option<Color>,
     label_size: Option<LabelSize>,
     selected_label: Option<SharedString>,
-    icon: Option<IconPath>,
+    icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     icon_size: Option<IconSize>,
     icon_color: Option<Color>,
-    selected_icon: Option<IconPath>,
+    selected_icon: Option<Icon>,
     key_binding: Option<KeyBinding>,
 }
 
@@ -54,7 +54,7 @@ impl Button {
         self
     }
 
-    pub fn icon(mut self, icon: impl Into<Option<IconPath>>) -> Self {
+    pub fn icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
         self.icon = icon.into();
         self
     }
@@ -74,7 +74,7 @@ impl Button {
         self
     }
 
-    pub fn selected_icon(mut self, icon: impl Into<Option<IconPath>>) -> Self {
+    pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
         self.selected_icon = icon.into();
         self
     }

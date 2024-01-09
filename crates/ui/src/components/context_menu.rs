@@ -1,5 +1,5 @@
 use crate::{
-    h_stack, prelude::*, v_stack, Icon, IconPath, KeyBinding, Label, List, ListItem,
+    h_stack, prelude::*, v_stack, Icon, IconElement, KeyBinding, Label, List, ListItem,
     ListSeparator, ListSubHeader,
 };
 use gpui::{
@@ -14,7 +14,7 @@ enum ContextMenuItem {
     Header(SharedString),
     Entry {
         label: SharedString,
-        icon: Option<IconPath>,
+        icon: Option<Icon>,
         handler: Rc<dyn Fn(&mut WindowContext)>,
         action: Option<Box<dyn Action>>,
     },
@@ -117,7 +117,7 @@ impl ContextMenu {
             label: label.into(),
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
-            icon: Some(IconPath::Link),
+            icon: Some(Icon::Link),
         });
         self
     }
@@ -280,7 +280,7 @@ impl Render for ContextMenu {
                                 h_stack()
                                     .gap_1()
                                     .child(Label::new(label.clone()))
-                                    .child(Icon::new(*icon))
+                                    .child(IconElement::new(*icon))
                                     .into_any_element()
                             } else {
                                 Label::new(label.clone()).into_any_element()

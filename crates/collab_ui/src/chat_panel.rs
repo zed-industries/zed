@@ -21,7 +21,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{prelude::*, Avatar, Button, IconButton, IconPath, Label, TabBar, Tooltip};
+use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, TabBar, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -282,12 +282,12 @@ impl ChatPanel {
                                 )),
                         )
                         .end_child(
-                            IconButton::new("notes", IconPath::File)
+                            IconButton::new("notes", Icon::File)
                                 .on_click(cx.listener(Self::open_notes))
                                 .tooltip(|cx| Tooltip::text("Open notes", cx)),
                         )
                         .end_child(
-                            IconButton::new("call", IconPath::AudioOn)
+                            IconButton::new("call", Icon::AudioOn)
                                 .on_click(cx.listener(Self::join_call))
                                 .tooltip(|cx| Tooltip::text("Join call", cx)),
                         ),
@@ -402,7 +402,7 @@ impl ChatPanel {
                     .w_8()
                     .visible_on_hover("")
                     .children(message_id_to_remove.map(|message_id| {
-                        IconButton::new(("remove", message_id), IconPath::XCircle).on_click(
+                        IconButton::new(("remove", message_id), Icon::XCircle).on_click(
                             cx.listener(move |this, _, cx| {
                                 this.remove_message(message_id, cx);
                             }),
@@ -607,12 +607,12 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::IconPath> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
         if !is_channels_feature_enabled(cx) {
             return None;
         }
 
-        Some(ui::IconPath::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
+        Some(ui::Icon::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

@@ -3,17 +3,17 @@ use story::Story;
 use strum::IntoEnumIterator;
 
 use crate::prelude::*;
-use crate::{IconPath, Icon};
+use crate::{Icon, IconElement};
 
 pub struct IconStory;
 
 impl Render for IconStory {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let icons = IconPath::iter();
+        let icons = Icon::iter();
 
         Story::container()
-            .child(Story::title_for::<Icon>())
+            .child(Story::title_for::<IconElement>())
             .child(Story::label("All Icons"))
-            .child(div().flex().gap_3().children(icons.map(Icon::new)))
+            .child(div().flex().gap_3().children(icons.map(IconElement::new)))
     }
 }

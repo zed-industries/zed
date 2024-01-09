@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_stack, prelude::*, v_stack, Avatar, Button, Icon, IconButton, IconPath, Label};
+use ui::{h_stack, prelude::*, v_stack, Avatar, Button, Icon, IconButton, IconElement, Label};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -553,7 +553,7 @@ impl Render for NotificationPanel {
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(Label::new("Notifications"))
-                    .child(Icon::new(IconPath::Envelope)),
+                    .child(IconElement::new(Icon::Envelope)),
             )
             .map(|this| {
                 if self.client.user_id().is_none() {
@@ -564,7 +564,7 @@ impl Render for NotificationPanel {
                             .child(
                                 Button::new("sign_in_prompt_button", "Sign in")
                                     .icon_color(Color::Muted)
-                                    .icon(IconPath::Github)
+                                    .icon(Icon::Github)
                                     .icon_position(IconPosition::Start)
                                     .style(ButtonStyle::Filled)
                                     .full_width()
@@ -655,10 +655,10 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<IconPath> {
+    fn icon(&self, cx: &gpui::WindowContext) -> Option<Icon> {
         (NotificationPanelSettings::get_global(cx).button
             && self.notification_store.read(cx).notification_count() > 0)
-            .then(|| IconPath::Bell)
+            .then(|| Icon::Bell)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -716,7 +716,7 @@ impl Render for NotificationToast {
             .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
             .child(Label::new(self.text.clone()))
             .child(
-                IconButton::new("close", IconPath::Close)
+                IconButton::new("close", Icon::Close)
                     .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
             )
             .on_click(cx.listener(|this, _, cx| {
