@@ -943,10 +943,8 @@ impl Workspace {
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
-            // todo!("focus")
-            // cx.focus(&pane);
-
             pane.update(cx, |pane, cx| {
+                pane.focus(cx);
                 loop {
                     // Retrieve the weak item handle from the history.
                     let entry = pane.nav_history_mut().pop(mode, cx)?;
@@ -1631,8 +1629,7 @@ impl Workspace {
             });
         }
 
-        // todo!("focus")
-        // cx.focus_self();
+        cx.focus_self();
         cx.notify();
         self.serialize_workspace(cx);
     }
@@ -1713,6 +1710,7 @@ impl Workspace {
         cx.notify();
     }
 
+    // todo!()
     //     #[cfg(any(test, feature = "test-support"))]
     //     pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
     //         self.zoomed.and_then(|view| view.upgrade(cx))
@@ -2992,7 +2990,6 @@ impl Workspace {
         cx.notify();
     }
 
-    #[allow(unused)]
     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
         self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()

@@ -103,7 +103,6 @@ impl TestPlatform {
     }
 }
 
-// todo!("implement out what our tests needed in GPUI 1")
 impl Platform for TestPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()

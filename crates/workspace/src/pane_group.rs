@@ -12,7 +12,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use ui::{prelude::*, Button};
 
-const HANDLE_HITBOX_SIZE: f32 = 10.0; //todo!(change this back to 4)
+const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
@@ -707,7 +707,6 @@ mod element {
                 proposed_current_pixel_change -= current_pixel_change;
             }
 
-            // todo!(schedule serialize)
             workspace
                 .update(cx, |this, cx| this.schedule_serialize(cx))
                 .log_err();
