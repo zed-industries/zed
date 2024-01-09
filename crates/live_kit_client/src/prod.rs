@@ -723,29 +723,22 @@ impl Drop for LocalTrackPublication {
     }
 }
 
-pub struct RemoteTrackPublication {
-    native_publication: swift::RemoteTrackPublication,
-}
+pub struct RemoteTrackPublication(swift::RemoteTrackPublication);
 
 impl RemoteTrackPublication {
     pub fn new(native_track_publication: swift::RemoteTrackPublication) -> Self {
         unsafe {
             CFRetain(native_track_publication.0);
         }
-        Self {
-            native_publication: native_track_publication,
-        }
+        Self(native_track_publication)
     }
 
     pub fn sid(&self) -> String {
-        unsafe {
-            CFString::wrap_under_get_rule(LKRemoteTrackPublicationGetSid(self.native_publication))
-                .to_string()
-        }
+        unsafe { CFString::wrap_under_get_rule(LKRemoteTrackPublicationGetSid(self.0)).to_string() }
     }
 
     pub fn is_muted(&self) -> bool {
-        unsafe { LKRemoteTrackPublicationIsMuted(self.native_publication) }
+        unsafe { LKRemoteTrackPublicationIsMuted(self.0) }
     }
 
     pub fn set_enabled(&self, enabled: bool) -> impl Future<Output = Result<()>> {
@@ -763,7 +756,7 @@ impl RemoteTrackPublication {
 
         unsafe {
             LKRemoteTrackPublicationSetEnabled(
-                self.native_publication,
+                self.0,
                 enabled,
                 complete_callback,
                 Box::into_raw(Box::new(tx)) as *mut c_void,
@@ -776,7 +769,7 @@ impl RemoteTrackPublication {
 
 impl Drop for RemoteTrackPublication {
     fn drop(&mut self) {
-        unsafe { CFRelease(self.native_publication.0) }
+        unsafe { CFRelease(self.0 .0) }
     }
 }
 
