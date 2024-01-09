@@ -507,7 +507,7 @@ pub enum SoftWrap {
     Column(u32),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EditorStyle {
     pub background: Hsla,
     pub local_player: PlayerColor,
@@ -517,6 +517,24 @@ pub struct EditorStyle {
     pub status: StatusColors,
     pub inlays_style: HighlightStyle,
     pub suggestions_style: HighlightStyle,
+}
+
+impl Default for EditorStyle {
+    fn default() -> Self {
+        Self {
+            background: Hsla::default(),
+            local_player: PlayerColor::default(),
+            text: TextStyle::default(),
+            scrollbar_width: Pixels::default(),
+            syntax: Default::default(),
+            // HACK: Status colors don't have a real default.
+            // We should look into removing the status colors from the editor
+            // style and retrieve them directly from the theme.
+            status: StatusColors::dark(),
+            inlays_style: HighlightStyle::default(),
+            suggestions_style: HighlightStyle::default(),
+        }
+    }
 }
 
 type CompletionId = usize;
