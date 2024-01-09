@@ -39,10 +39,10 @@ impl ColorScaleStep {
     ];
 }
 
-/// A scale of colors for a given [ColorScaleSet].
+/// A scale of colors for a given [`ColorScaleSet`].
 ///
-/// Each [ColorScale] contains exactly 12 colors. Refer to
-/// [ColorScaleStep] for a reference of what each step is used for.
+/// Each [`ColorScale`] contains exactly 12 colors. Refer to
+/// [`ColorScaleStep`] for a reference of what each step is used for.
 pub struct ColorScale(Vec<Hsla>);
 
 impl FromIterator<Hsla> for ColorScale {
@@ -235,7 +235,7 @@ impl IntoIterator for ColorScales {
     }
 }
 
-/// Provides groups of [ColorScale]s for light and dark themes, as well as transparent versions of each scale.
+/// Provides groups of [`ColorScale`]s for light and dark themes, as well as transparent versions of each scale.
 pub struct ColorScaleSet {
     name: SharedString,
     light: ColorScale,

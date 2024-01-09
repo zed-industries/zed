@@ -47,7 +47,7 @@ impl Label {
 }
 
 impl LabelCommon for Label {
-    /// Sets the size of the label using a [LabelSize].
+    /// Sets the size of the label using a [`LabelSize`].
     ///
     /// # Examples
     ///
@@ -59,7 +59,7 @@ impl LabelCommon for Label {
         self
     }
 
-    /// Sets the line height style of the label using a [LineHeightStyle].
+    /// Sets the line height style of the label using a [`LineHeightStyle`].
     ///
     /// # Examples
     ///
@@ -71,7 +71,7 @@ impl LabelCommon for Label {
         self
     }
 
-    /// Sets the color of the label using a [Color].
+    /// Sets the color of the label using a [`Color`].
     ///
     /// # Examples
     ///
