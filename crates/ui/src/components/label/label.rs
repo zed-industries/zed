@@ -94,6 +94,7 @@ impl LabelCommon for Label {
         self.base = self.base.strikethrough(strikethrough);
         self
     }
+}
 
 impl RenderOnce for Label {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
