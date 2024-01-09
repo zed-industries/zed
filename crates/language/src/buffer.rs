@@ -1920,6 +1920,7 @@ impl Buffer {
         undone
     }
 
+    /// Manually redoes a specific transaction in the buffer's redo history.
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1933,6 +1934,7 @@ impl Buffer {
         }
     }
 
+    /// Manually undoes all changes until a given transaction in the buffer's redo history.
     pub fn redo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
@@ -1952,6 +1954,7 @@ impl Buffer {
         redone
     }
 
+    /// Override current completion triggers with the user-provided completion triggers.
     pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
         self.completion_triggers = triggers.clone();
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
@@ -1965,11 +1968,14 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Returns a list of strings which trigger a completion menu for this language.
+    /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
     }
 }
 
+#[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
     pub fn edit_via_marked_text(
@@ -2042,10 +2048,12 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
+    /// Returns [`IndentSize`] for a given line that respects user settings and /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         indent_size_for_line(self, row)
     }
-
+    /// Returns [`IndentSize`] for a given position that respects user settings
+    /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
         let settings = language_settings(self.language_at(position), self.file(), cx);
         if settings.hard_tabs {
