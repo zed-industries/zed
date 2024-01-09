@@ -10,7 +10,7 @@ use crate::{
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
-        SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
+        SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
     CodeLabel, LanguageScope, Outline,
@@ -69,7 +69,8 @@ pub enum Capability {
     ReadOnly,
 }
 
-/// An in-memory representation of a source code file.
+/// An in-memory representation of a source code file, including its text,
+/// syntax trees, git status, and diagnostics.
 pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<String>,
@@ -123,12 +124,15 @@ pub struct BufferSnapshot {
     parse_count: usize,
 }
 
+/// The kind and amount of indentation in a particular line. For now,
+/// assumes that indentation is all the same character.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct IndentSize {
     pub len: u32,
     pub kind: IndentKind,
 }
 
+/// A whitespace character that's used for indentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum IndentKind {
     #[default]
@@ -136,6 +140,7 @@ pub enum IndentKind {
     Tab,
 }
 
+/// The shape of a selection cursor.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum CursorShape {
     #[default]
@@ -300,6 +305,7 @@ pub trait File: Send + Sync {
     fn to_proto(&self) -> rpc::proto::File;
 }
 
+/// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
     /// Returns the absolute path of this file.
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
@@ -409,6 +415,7 @@ pub(crate) struct DiagnosticEndpoint {
     is_unnecessary: bool,
 }
 
+/// A class of characters, used for characterizing a run of text.
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub enum CharKind {
     Whitespace,
@@ -2048,6 +2055,8 @@ impl BufferSnapshot {
         }
     }
 
+    /// Retrieve the suggested indent size for all of the given rows. The unit of indentation
+    /// is passed in as `single_indent_size`.
     pub fn suggested_indents(
         &self,
         rows: impl Iterator<Item = u32>,
@@ -2294,6 +2303,10 @@ impl BufferSnapshot {
         None
     }
 
+    /// Iterates over chunks of text in the given range of the buffer. Text is chunked
+    /// in an arbitrary way due to being stored in a [`rope::Rope`]. The text is also
+    /// returned in chunks where each chunk has a single syntax highlighting style and
+    /// diagnostic status.
     pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
@@ -2330,7 +2343,9 @@ impl BufferSnapshot {
         BufferChunks::new(self.text.as_rope(), range, syntax, diagnostic_endpoints)
     }
 
-    pub fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
+    /// Invokes the given callback for each line of text in the given range of the buffer.
+    /// Uses callback to avoid allocating a string for each line.
+    fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
         let mut line = String::new();
         let mut row = range.start.row;
         for chunk in self
@@ -2349,11 +2364,12 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayerInfo> + '_ {
+    /// Iterates over every [`SyntaxLayer`] in the buffer.
+    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer> + '_ {
         self.syntax.layers_for_range(0..self.len(), &self.text)
     }
 
-    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayerInfo> {
+    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text)

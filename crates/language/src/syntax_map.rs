@@ -29,7 +29,7 @@ pub struct SyntaxMap {
 
 #[derive(Clone, Default)]
 pub struct SyntaxSnapshot {
-    layers: SumTree<SyntaxLayer>,
+    layers: SumTree<SyntaxLayerEntry>,
     parsed_version: clock::Global,
     interpolated_version: clock::Global,
     language_registry_version: usize,
@@ -84,7 +84,7 @@ struct SyntaxMapMatchesLayer<'a> {
 }
 
 #[derive(Clone)]
-struct SyntaxLayer {
+struct SyntaxLayerEntry {
     depth: usize,
     range: Range<Anchor>,
     content: SyntaxLayerContent,
@@ -118,7 +118,7 @@ impl SyntaxLayerContent {
 }
 
 #[derive(Debug)]
-pub struct SyntaxLayerInfo<'a> {
+pub struct SyntaxLayer<'a> {
     pub depth: usize,
     pub language: &'a Arc<Language>,
     tree: &'a Tree,
@@ -126,7 +126,7 @@ pub struct SyntaxLayerInfo<'a> {
 }
 
 #[derive(Clone)]
-pub struct OwnedSyntaxLayerInfo {
+pub struct OwnedSyntaxLayer {
     pub depth: usize,
     pub language: Arc<Language>,
     tree: tree_sitter::Tree,
@@ -691,7 +691,7 @@ impl SyntaxSnapshot {
             };
 
             layers.push(
-                SyntaxLayer {
+                SyntaxLayerEntry {
                     depth: step.depth,
                     range: step.range,
                     content,
@@ -741,7 +741,7 @@ impl SyntaxSnapshot {
         SyntaxMapCaptures::new(
             range.clone(),
             text,
-            [SyntaxLayerInfo {
+            [SyntaxLayer {
                 language,
                 tree,
                 depth: 0,
@@ -781,7 +781,7 @@ impl SyntaxSnapshot {
     }
 
     #[cfg(test)]
-    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayerInfo> {
+    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer> {
         self.layers_for_range(0..buffer.len(), buffer).collect()
     }
 
@@ -789,7 +789,7 @@ impl SyntaxSnapshot {
         &'a self,
         range: Range<T>,
         buffer: &'a BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = SyntaxLayerInfo> {
+    ) -> impl 'a + Iterator<Item = SyntaxLayer> {
         let start_offset = range.start.to_offset(buffer);
         let end_offset = range.end.to_offset(buffer);
         let start = buffer.anchor_before(start_offset);
@@ -813,7 +813,7 @@ impl SyntaxSnapshot {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
 
-                    info = Some(SyntaxLayerInfo {
+                    info = Some(SyntaxLayer {
                         tree,
                         language,
                         depth: layer.depth,
@@ -842,7 +842,7 @@ impl<'a> SyntaxMapCaptures<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
-        layers: impl Iterator<Item = SyntaxLayerInfo<'a>>,
+        layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> Self {
         let mut result = Self {
@@ -964,7 +964,7 @@ impl<'a> SyntaxMapMatches<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
-        layers: impl Iterator<Item = SyntaxLayerInfo<'a>>,
+        layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> Self {
         let mut result = Self::default();
@@ -1436,16 +1436,16 @@ fn insert_newlines_between_ranges(
     }
 }
 
-impl OwnedSyntaxLayerInfo {
+impl OwnedSyntaxLayer {
     pub fn node(&self) -> Node {
         self.tree
             .root_node_with_offset(self.offset.0, self.offset.1)
     }
 }
 
-impl<'a> SyntaxLayerInfo<'a> {
-    pub fn to_owned(&self) -> OwnedSyntaxLayerInfo {
-        OwnedSyntaxLayerInfo {
+impl<'a> SyntaxLayer<'a> {
+    pub fn to_owned(&self) -> OwnedSyntaxLayer {
+        OwnedSyntaxLayer {
             tree: self.tree.clone(),
             offset: self.offset,
             depth: self.depth,
@@ -1564,7 +1564,7 @@ impl ChangeRegionSet {
         )
     }
 
-    fn intersects(&self, layer: &SyntaxLayer, text: &BufferSnapshot) -> bool {
+    fn intersects(&self, layer: &SyntaxLayerEntry, text: &BufferSnapshot) -> bool {
         for region in &self.0 {
             if region.depth < layer.depth {
                 continue;
@@ -1675,7 +1675,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
     }
 }
 
-impl sum_tree::Item for SyntaxLayer {
+impl sum_tree::Item for SyntaxLayerEntry {
     type Summary = SyntaxLayerSummary;
 
     fn summary(&self) -> Self::Summary {
@@ -1690,7 +1690,7 @@ impl sum_tree::Item for SyntaxLayer {
     }
 }
 
-impl std::fmt::Debug for SyntaxLayer {
+impl std::fmt::Debug for SyntaxLayerEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyntaxLayer")
             .field("depth", &self.depth)

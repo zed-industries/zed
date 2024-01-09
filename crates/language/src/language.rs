@@ -58,7 +58,7 @@ pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
-pub use syntax_map::{OwnedSyntaxLayerInfo, SyntaxLayerInfo};
+pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
 
@@ -246,6 +246,8 @@ impl CachedLspAdapter {
     }
 }
 
+/// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
+// e.g. to display a notification or fetch data from the web.
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
@@ -291,6 +293,10 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
+    /// Returns true if a language server can be reinstalled.
+    /// If language server initialization fails, a reinstallation will be attempted unless the value returned from this method is false.
+    /// Implementations that rely on software already installed on user's system
+    /// should have [`can_be_reinstalled`] return false.
     fn can_be_reinstalled(&self) -> bool {
         true
     }
@@ -302,6 +308,9 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
+    /// A callback called for each [`lsp_types::CompletionItem`] obtained from LSP server.
+    /// Some LspAdapter implementations might want to modify the obtained item to
+    /// change how it's displayed.
     async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
 
     async fn label_for_completion(
@@ -321,6 +330,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
+    /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp_types::InitializeParams`]
     async fn initialization_options(&self) -> Option<Value> {
         None
     }
@@ -329,6 +339,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         futures::future::ready(serde_json::json!({})).boxed()
     }
 
+    /// Returns a list of code actions supported by a given LspAdapter
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![
             CodeActionKind::EMPTY,
@@ -380,19 +391,29 @@ pub struct LanguageConfig {
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
-    /// A regex that is used to determine whether the  
+    /// A regex that is used to determine whether the indentation level should be
+    /// increased in the following line.
     #[serde(default, deserialize_with = "deserialize_regex")]
     pub increase_indent_pattern: Option<Regex>,
+    /// A regex that is used to determine whether the indentation level should be
+    /// decreased in the following line.
     #[serde(default, deserialize_with = "deserialize_regex")]
     pub decrease_indent_pattern: Option<Regex>,
+    /// A list of characters that trigger the automatic insertion of a closing
+    /// bracket when they immediately precede the point where an opening
+    /// bracket is inserted.
     #[serde(default)]
     pub autoclose_before: String,
-    #[serde(default)]
-    pub line_comment: Option<Arc<str>>,
+    /// A placeholder used internally by Semantic Index.
     #[serde(default)]
     pub collapsed_placeholder: String,
+    /// A line comment string that is inserted in e.g. `toggle comments` action.
+    #[serde(default)]
+    pub line_comment: Option<Arc<str>>,
+    /// Starting and closing characters of a block comment.
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
+    /// A list of language servers that are allowed to run on subranges of a given language.
     #[serde(default)]
     pub scope_opt_in_language_servers: Vec<String>,
     #[serde(default)]
@@ -402,6 +423,7 @@ pub struct LanguageConfig {
     /// or a whole-word search in buffer search.
     #[serde(default)]
     pub word_characters: HashSet<char>,
+    /// The name of a Prettier parser that should be used for this language.
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
 }
@@ -480,9 +502,9 @@ impl Default for LanguageConfig {
             block_comment: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
-            collapsed_placeholder: Default::default(),
             word_characters: Default::default(),
             prettier_parser_name: None,
+            collapsed_placeholder: Default::default(),
         }
     }
 }

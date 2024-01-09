@@ -2,6 +2,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle};
 use std::ops::Range;
 
+/// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,

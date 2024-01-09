@@ -96,24 +96,30 @@ pub struct LanguageSettings {
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
-    /// Whether Copilit is enabled.
+    /// Whether Copilot is enabled.
     pub feature_enabled: bool,
     /// A list of globs representing files that Copilot should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
 }
 
+/// The settings for all languages.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
+    /// The settings for enabling/disabling features.
     #[serde(default)]
     pub features: Option<FeaturesContent>,
+    /// The settings for GitHub Copilot.
     #[serde(default)]
     pub copilot: Option<CopilotSettingsContent>,
+    /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
+    /// The settings for individual languages.
     #[serde(default, alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
 }
 
+/// The settings for a particular language.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
@@ -204,12 +210,15 @@ pub struct LanguageSettingsContent {
     pub inlay_hints: Option<InlayHintSettings>,
 }
 
+/// The contents of the GitHub Copilot settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CopilotSettingsContent {
+    /// A list of globs representing files that Copilot should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
 }
 
+/// The settings for enabling/disabling features.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
@@ -237,6 +246,7 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
+    /// Files should be formatted using the current language server.
     LanguageServer,
     /// The external program to use to format the files on save.
     External {
@@ -247,17 +257,19 @@ pub enum FormatOnSave {
     },
 }
 
+/// Controls how whitespace should be displayedin the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
-    /// Draw tabs and spaces only for the selected text.
+    /// Draw whitespace only for the selected text.
     Selection,
-    /// Do not draw any tabs or spaces
+    /// Do not draw any tabs or spaces.
     None,
-    /// Draw all invisible symbols
+    /// Draw all invisible symbols.
     All,
 }
 
+/// Controls which formatter should be used when formatting code.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
@@ -271,7 +283,9 @@ pub enum Formatter {
     Prettier,
     /// Format code using an external command.
     External {
+        /// The external program to run.
         command: Arc<str>,
+        /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
 }
@@ -323,6 +337,7 @@ impl InlayHintSettings {
 }
 
 impl AllLanguageSettings {
+    /// Returns the [`LanguageSettings`] for the language with the specified name.
     pub fn language<'a>(&'a self, language_name: Option<&str>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
             if let Some(overrides) = self.languages.get(name) {
@@ -332,6 +347,7 @@ impl AllLanguageSettings {
         &self.defaults
     }
 
+    /// Returns whether GitHub Copilot is enabled for the given path.
     pub fn copilot_enabled_for_path(&self, path: &Path) -> bool {
         !self
             .copilot
@@ -340,6 +356,7 @@ impl AllLanguageSettings {
             .any(|glob| glob.is_match(path))
     }
 
+    /// Returns whether GitHub Copilot is enabled for the given language and path.
     pub fn copilot_enabled(&self, language: Option<&Arc<Language>>, path: Option<&Path>) -> bool {
         if !self.copilot.feature_enabled {
             return false;
@@ -356,13 +373,20 @@ impl AllLanguageSettings {
     }
 }
 
+/// The kind of an inlay hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InlayHintKind {
+    /// An inlay hint for a type.
     Type,
+    /// An inlay hint for a parameter.
     Parameter,
 }
 
 impl InlayHintKind {
+    /// Returns the [`InlayHintKind`] from the given name.
+    ///
+    /// Returns `None` if `name` does not match any of the expected
+    /// string representations.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "type" => Some(InlayHintKind::Type),
@@ -371,6 +395,7 @@ impl InlayHintKind {
         }
     }
 
+    /// Returns the name of this [`InlayHintKind`].
     pub fn name(&self) -> &'static str {
         match self {
             InlayHintKind::Type => "type",
