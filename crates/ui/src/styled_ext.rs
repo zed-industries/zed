@@ -14,7 +14,7 @@ fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -
         .shadow(index.shadow())
 }
 
-/// Extends [`Styled`](gpui::Styled) with Zed specific styling methods.
+/// Extends [gpui::Styled] with Zed specific styling methods.
 pub trait StyledExt: Styled + Sized {
     /// Horizontally stacks elements.
     ///
@@ -30,6 +30,7 @@ pub trait StyledExt: Styled + Sized {
         self.flex().flex_col()
     }
 
+    /// Sets the text size using a [UiTextSize].
     fn text_ui_size(self, size: UiTextSize) -> Self {
         self.text_size(size.rems())
     }
@@ -40,7 +41,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use [`text_ui_sm`] for regular-sized text.
+    /// Use `text_ui_sm` for smaller text.
     fn text_ui(self) -> Self {
         self.text_size(UiTextSize::default().rems())
     }
@@ -51,7 +52,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use [`text_ui`] for regular-sized text.
+    /// Use `text_ui` for regular-sized text.
     fn text_ui_sm(self) -> Self {
         self.text_size(UiTextSize::Small.rems())
     }
@@ -62,7 +63,7 @@ pub trait StyledExt: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use [`text_ui`] for regular-sized text.
+    /// Use `text_ui` for regular-sized text.
     fn text_ui_xs(self) -> Self {
         self.text_size(UiTextSize::XSmall.rems())
     }
@@ -119,26 +120,32 @@ pub trait StyledExt: Styled + Sized {
         self.border_color(cx.theme().colors().border_variant)
     }
 
+    /// Sets the background color to red for debugging when building UI.
     fn debug_bg_red(self) -> Self {
         self.bg(hsla(0. / 360., 1., 0.5, 1.))
     }
 
+    /// Sets the background color to green for debugging when building UI.
     fn debug_bg_green(self) -> Self {
         self.bg(hsla(120. / 360., 1., 0.5, 1.))
     }
 
+    /// Sets the background color to blue for debugging when building UI.
     fn debug_bg_blue(self) -> Self {
         self.bg(hsla(240. / 360., 1., 0.5, 1.))
     }
 
+    /// Sets the background color to yellow for debugging when building UI.
     fn debug_bg_yellow(self) -> Self {
         self.bg(hsla(60. / 360., 1., 0.5, 1.))
     }
 
+    /// Sets the background color to cyan for debugging when building UI.
     fn debug_bg_cyan(self) -> Self {
         self.bg(hsla(160. / 360., 1., 0.5, 1.))
     }
 
+    /// Sets the background color to magenta for debugging when building UI.
     fn debug_bg_magenta(self) -> Self {
         self.bg(hsla(300. / 360., 1., 0.5, 1.))
     }

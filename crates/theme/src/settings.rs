@@ -27,7 +27,7 @@ pub struct ThemeSettings {
 }
 
 #[derive(Default)]
-pub struct AdjustedBufferFontSize(Pixels);
+pub(crate) struct AdjustedBufferFontSize(Pixels);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {

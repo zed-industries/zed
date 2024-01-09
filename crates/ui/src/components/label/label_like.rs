@@ -19,6 +19,7 @@ pub enum LineHeightStyle {
     UiLabel,
 }
 
+/// A common set of traits all labels must implement.
 pub trait LabelCommon {
     fn size(self, size: LabelSize) -> Self;
     fn line_height_style(self, line_height_style: LineHeightStyle) -> Self;
