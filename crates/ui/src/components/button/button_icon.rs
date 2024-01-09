@@ -1,4 +1,4 @@
-use crate::{prelude::*, IconElement, IconName, IconSize};
+use crate::{prelude::*, Icon, IconName, IconSize};
 
 /// An icon that appears within a button.
 ///
@@ -88,6 +88,6 @@ impl RenderOnce for ButtonIcon {
             self.color
         };
 
-        IconElement::new(icon).size(self.size).color(icon_color)
+        Icon::new(icon).size(self.size).color(icon_color)
     }
 }

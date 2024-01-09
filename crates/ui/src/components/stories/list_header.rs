@@ -13,11 +13,11 @@ impl Render for ListHeaderStory {
             .child(Story::label("Default"))
             .child(ListHeader::new("Section 1"))
             .child(Story::label("With left icon"))
-            .child(ListHeader::new("Section 2").start_slot(IconElement::new(IconName::Bell)))
+            .child(ListHeader::new("Section 2").start_slot(Icon::new(IconName::Bell)))
             .child(Story::label("With left icon and meta"))
             .child(
                 ListHeader::new("Section 3")
-                    .start_slot(IconElement::new(IconName::BellOff))
+                    .start_slot(Icon::new(IconName::BellOff))
                     .end_slot(IconButton::new("action_1", IconName::Bolt)),
             )
             .child(Story::label("With multiple meta"))

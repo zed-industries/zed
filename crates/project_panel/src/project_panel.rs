@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_stack, ContextMenu, IconElement, KeyBinding, Label, ListItem};
+use ui::{prelude::*, v_stack, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1403,7 +1403,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(IconElement::from_path(icon.to_string()).color(Color::Muted))
+                        div().child(Icon::from_path(icon.to_string()).color(Color::Muted))
                     } else {
                         div().size(IconSize::default().rems()).invisible()
                     })
@@ -1590,7 +1590,7 @@ impl Render for DraggedProjectEntryView {
                     .indent_level(self.details.depth)
                     .indent_step_size(px(settings.indent_size))
                     .child(if let Some(icon) = &self.details.icon {
-                        div().child(IconElement::from_path(icon.to_string()))
+                        div().child(Icon::from_path(icon.to_string()))
                     } else {
                         div()
                     })

@@ -14,8 +14,8 @@ use rpc::proto;
 use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
-    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu,
-    IconButton, IconElement, IconName, TintColor, Tooltip,
+    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
+    IconButton, IconName, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -573,7 +573,7 @@ impl CollabTitlebarItem {
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")
-                    .child(IconElement::new(IconName::Disconnected).size(IconSize::Small))
+                    .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
                     .tooltip(|cx| Tooltip::text("Disconnected", cx))
                     .into_any_element(),
             ),
@@ -643,7 +643,7 @@ impl CollabTitlebarItem {
                             h_stack()
                                 .gap_0p5()
                                 .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(IconElement::new(IconName::ChevronDown).color(Color::Muted)),
+                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
@@ -665,7 +665,7 @@ impl CollabTitlebarItem {
                         .child(
                             h_stack()
                                 .gap_0p5()
-                                .child(IconElement::new(IconName::ChevronDown).color(Color::Muted)),
+                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),

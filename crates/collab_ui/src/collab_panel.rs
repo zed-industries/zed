@@ -31,8 +31,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    prelude::*, Avatar, Button, Color, ContextMenu, IconButton, IconElement, IconName, IconSize,
-    Label, ListHeader, ListItem, Tooltip,
+    prelude::*, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconName, IconSize, Label,
+    ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2150,7 +2150,7 @@ impl CollabPanel {
                     .child(h_stack().children(controls)),
             )
             .start_slot(
-                IconElement::new(IconName::Hash)
+                Icon::new(IconName::Hash)
                     .size(IconSize::Small)
                     .color(Color::Muted),
             )
@@ -2162,7 +2162,7 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> ListItem {
         ListItem::new("contact-placeholder")
-            .child(IconElement::new(IconName::Plus))
+            .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))
             .selected(is_selected)
             .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
@@ -2315,7 +2315,7 @@ impl CollabPanel {
                         },
                     ))
                     .start_slot(
-                        IconElement::new(if is_public {
+                        Icon::new(if is_public {
                             IconName::Public
                         } else {
                             IconName::Hash
@@ -2390,7 +2390,7 @@ impl CollabPanel {
             .indent_level(depth + 1)
             .indent_step_size(px(20.))
             .start_slot(
-                IconElement::new(IconName::Hash)
+                Icon::new(IconName::Hash)
                     .size(IconSize::Small)
                     .color(Color::Muted),
             );
@@ -2650,7 +2650,7 @@ impl Render for DraggedChannelView {
             .p_1()
             .gap_1()
             .child(
-                IconElement::new(
+                Icon::new(
                     if self.channel.visibility == proto::ChannelVisibility::Public {
                         IconName::Public
                     } else {

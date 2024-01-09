@@ -205,13 +205,13 @@ impl IconName {
 }
 
 #[derive(IntoElement)]
-pub struct IconElement {
+pub struct Icon {
     path: SharedString,
     color: Color,
     size: IconSize,
 }
 
-impl RenderOnce for IconElement {
+impl RenderOnce for Icon {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         svg()
             .size(self.size.rems())
@@ -221,7 +221,7 @@ impl RenderOnce for IconElement {
     }
 }
 
-impl IconElement {
+impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
             path: icon.path().into(),

@@ -168,7 +168,7 @@ impl Render for ChannelModal {
                             .w_px()
                             .flex_1()
                             .gap_1()
-                            .child(IconElement::new(IconName::Hash).size(IconSize::Medium))
+                            .child(Icon::new(IconName::Hash).size(IconSize::Medium))
                             .child(Label::new(channel_name)),
                     )
                     .child(

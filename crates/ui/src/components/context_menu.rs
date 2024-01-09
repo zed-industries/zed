@@ -1,6 +1,6 @@
 use crate::{
-    h_stack, prelude::*, v_stack, IconElement, IconName, KeyBinding, Label, List, ListItem,
-    ListSeparator, ListSubHeader,
+    h_stack, prelude::*, v_stack, Icon, IconName, KeyBinding, Label, List, ListItem, ListSeparator,
+    ListSubHeader,
 };
 use gpui::{
     px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -280,7 +280,7 @@ impl Render for ContextMenu {
                                 h_stack()
                                     .gap_1()
                                     .child(Label::new(label.clone()))
-                                    .child(IconElement::new(*icon))
+                                    .child(Icon::new(*icon))
                                     .into_any_element()
                             } else {
                                 Label::new(label.clone()).into_any_element()

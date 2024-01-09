@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_stack, prelude::*, v_stack, Avatar, Button, IconButton, IconElement, IconName, Label};
+use ui::{h_stack, prelude::*, v_stack, Avatar, Button, Icon, IconButton, IconName, Label};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -553,7 +553,7 @@ impl Render for NotificationPanel {
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(Label::new("Notifications"))
-                    .child(IconElement::new(IconName::Envelope)),
+                    .child(Icon::new(IconName::Envelope)),
             )
             .map(|this| {
                 if self.client.user_id().is_none() {

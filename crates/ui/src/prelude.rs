@@ -15,6 +15,6 @@ pub use crate::{h_stack, v_stack};
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color, StyledExt};
 pub use crate::{Headline, HeadlineSize};
-pub use crate::{IconElement, IconName, IconPosition, IconSize};
+pub use crate::{Icon, IconName, IconPosition, IconSize};
 pub use crate::{Label, LabelCommon, LabelSize, LineHeightStyle};
 pub use theme::ActiveTheme;

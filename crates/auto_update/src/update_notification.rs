@@ -4,7 +4,7 @@ use gpui::{
 };
 use menu::Cancel;
 use util::channel::ReleaseChannel;
-use workspace::ui::{h_stack, v_stack, IconElement, IconName, Label, StyledExt};
+use workspace::ui::{h_stack, v_stack, Icon, IconName, Label, StyledExt};
 
 pub struct UpdateNotification {
     version: SemanticVersion,
@@ -30,7 +30,7 @@ impl Render for UpdateNotification {
                     .child(
                         div()
                             .id("cancel")
-                            .child(IconElement::new(IconName::Close))
+                            .child(Icon::new(IconName::Close))
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
                     ),

@@ -2349,7 +2349,7 @@ impl ConversationEditor {
                                             div()
                                                 .id("error")
                                                 .tooltip(move |cx| Tooltip::text(error.clone(), cx))
-                                                .child(IconElement::new(IconName::XCircle)),
+                                                .child(Icon::new(IconName::XCircle)),
                                         )
                                     } else {
                                         None
@@ -2682,7 +2682,7 @@ impl Render for InlineAssistant {
                             div()
                                 .id("error")
                                 .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                .child(IconElement::new(IconName::XCircle).color(Color::Error)),
+                                .child(Icon::new(IconName::XCircle).color(Color::Error)),
                         )
                     } else {
                         None
@@ -2957,7 +2957,7 @@ impl InlineAssistant {
                 div()
                     .id("error")
                     .tooltip(|cx| Tooltip::text("Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.", cx))
-                    .child(IconElement::new(IconName::XCircle))
+                    .child(Icon::new(IconName::XCircle))
                     .into_any_element()
             ),
 
@@ -2965,7 +2965,7 @@ impl InlineAssistant {
                 div()
                     .id("error")
                     .tooltip(|cx| Tooltip::text("Not Indexed", cx))
-                    .child(IconElement::new(IconName::XCircle))
+                    .child(Icon::new(IconName::XCircle))
                     .into_any_element()
             ),
 
@@ -2996,7 +2996,7 @@ impl InlineAssistant {
                     div()
                         .id("update")
                         .tooltip(move |cx| Tooltip::text(status_text.clone(), cx))
-                        .child(IconElement::new(IconName::Update).color(Color::Info))
+                        .child(Icon::new(IconName::Update).color(Color::Info))
                         .into_any_element()
                 )
             }
@@ -3005,7 +3005,7 @@ impl InlineAssistant {
                 div()
                     .id("check")
                     .tooltip(|cx| Tooltip::text("Index up to date", cx))
-                    .child(IconElement::new(IconName::Check).color(Color::Success))
+                    .child(Icon::new(IconName::Check).color(Color::Success))
                     .into_any_element()
             ),
         }

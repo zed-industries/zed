@@ -38,7 +38,7 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    h_stack, prelude::*, v_stack, IconButton, IconElement, IconName, Label, LabelCommon, LabelSize,
+    h_stack, prelude::*, v_stack, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
     Selectable, ToggleButton, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
@@ -432,13 +432,11 @@ impl Item for ProjectSearchView {
             .unwrap_or_else(|| "Project search".into());
         h_stack()
             .gap_2()
-            .child(
-                IconElement::new(IconName::MagnifyingGlass).color(if selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }),
-            )
+            .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
+                Color::Default
+            } else {
+                Color::Muted
+            }))
             .child(Label::new(tab_name).color(if selected {
                 Color::Default
             } else {
@@ -1618,7 +1616,7 @@ impl Render for ProjectSearchBar {
                 .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
-                .child(IconElement::new(IconName::MagnifyingGlass))
+                .child(Icon::new(IconName::MagnifyingGlass))
                 .child(self.render_text_input(&search.query_editor, cx))
                 .child(
                     h_stack()
@@ -1757,7 +1755,7 @@ impl Render for ProjectSearchBar {
                 .border_1()
                 .border_color(cx.theme().colors().border)
                 .rounded_lg()
-                .child(IconElement::new(IconName::Replace).size(ui::IconSize::Small))
+                .child(Icon::new(IconName::Replace).size(ui::IconSize::Small))
                 .child(self.render_text_input(&search.replacement_editor, cx))
         } else {
             // Fill out the space if we don't have a replacement editor.

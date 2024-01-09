@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, IconElement, IconName, IconSize};
+use crate::{h_stack, prelude::*, Icon, IconName, IconSize};
 use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
@@ -126,7 +126,7 @@ pub struct KeyIcon {
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div().w(rems(14. / 16.)).child(
-            IconElement::new(self.icon)
+            Icon::new(self.icon)
                 .size(IconSize::Small)
                 .color(Color::Muted),
         )

@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, prelude::*, IconElement, IconName, Label};
+use ui::{h_stack, prelude::*, Icon, IconName, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -660,7 +660,7 @@ impl Item for ProjectDiagnosticsEditor {
                     then.child(
                         h_stack()
                             .gap_1()
-                            .child(IconElement::new(IconName::XCircle).color(Color::Error))
+                            .child(Icon::new(IconName::XCircle).color(Color::Error))
                             .child(Label::new(self.summary.error_count.to_string()).color(
                                 if selected {
                                     Color::Default
@@ -674,10 +674,7 @@ impl Item for ProjectDiagnosticsEditor {
                     then.child(
                         h_stack()
                             .gap_1()
-                            .child(
-                                IconElement::new(IconName::ExclamationTriangle)
-                                    .color(Color::Warning),
-                            )
+                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
                             .child(Label::new(self.summary.warning_count.to_string()).color(
                                 if selected {
                                     Color::Default

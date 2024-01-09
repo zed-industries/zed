@@ -21,7 +21,7 @@ use settings::Settings;
 use std::{any::Any, sync::Arc};
 use theme::ThemeSettings;
 
-use ui::{h_stack, prelude::*, IconButton, IconElement, IconName, ToggleButton, Tooltip};
+use ui::{h_stack, prelude::*, Icon, IconButton, IconName, ToggleButton, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -225,7 +225,7 @@ impl Render for BufferSearchBar {
                     .border_color(editor_border)
                     .min_w(rems(384. / 16.))
                     .rounded_lg()
-                    .child(IconElement::new(IconName::MagnifyingGlass))
+                    .child(Icon::new(IconName::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx))
                     .children(supported_options.case.then(|| {
                         self.render_search_option_button(
