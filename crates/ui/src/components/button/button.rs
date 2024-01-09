@@ -7,6 +7,63 @@ use crate::{
 
 use super::button_icon::ButtonIcon;
 
+/// [Button] can be use to create a button with a label and an optional icon.
+///
+/// Common buttons:
+/// - Label, Icon + Label: [Button] (this component)
+/// - Icon only: [IconButton]
+/// - Custom: [ButtonLike]
+///
+/// To create a more complex button than what the [Button] or [IconButton] components provide, use
+/// [ButtonLike] directly.
+///
+/// # Examples
+///
+/// A button with a label only:
+///
+/// ```
+/// Button::new("button_id", "Click me!")
+///     .on_click(|event, cx| {
+///         // Handle click event
+///     });
+/// ```
+///
+/// **A toggleable button**, is typically used in scenarios such as a toolbar,
+/// where the button's state indicates whether a feature is enabled or not, or
+/// a trigger for a popover menu, where clicking the button toggles the visibility of the menu.
+///
+/// ```
+/// Button::new("button_id", "Click me!")
+///     .icon(IconName::Check)
+///     .selected(some_bool)
+///     .on_click(|event, cx| {
+///         // Handle click event
+///     });
+/// ```
+///
+/// To change the style of the button when it is selected use the [selected_style][Button::selected_style] method.
+///
+/// ```
+/// Button::new("button_id", "Click me!")
+///     .selected(some_bool)
+///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+///     .on_click(|event, cx| {
+///         // Handle click event
+///     });
+/// ```
+/// This will create a button with a blue tinted background when selected.
+///
+/// **A full-width button**, is typically used in scenarios such as the bottom of a modal or form, where it occupies the entire width of its container.
+/// The button's content, including text and icons, is centered by default.
+///
+/// ```
+/// let button = Button::new("button_id", "Click me!")
+///     .full_width()
+///     .on_click(|event, cx| {
+///         // Handle click event
+///     });
+/// ```
+///
 #[derive(IntoElement)]
 pub struct Button {
     base: ButtonLike,
@@ -23,6 +80,12 @@ pub struct Button {
 }
 
 impl Button {
+    /// Creates a new [Button] with a specified identifier and label.
+    ///
+    /// This is the primary constructor for a `Button` component. It initializes
+    /// the button with the provided identifier and label text, setting all other
+    /// properties to their default values, which can be customized using the
+    /// builder pattern methods provided by this struct.
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
             base: ButtonLike::new(id),
@@ -39,46 +102,55 @@ impl Button {
         }
     }
 
+    /// Sets the color of the button's label.
     pub fn color(mut self, label_color: impl Into<Option<Color>>) -> Self {
         self.label_color = label_color.into();
         self
     }
 
+    /// Defines the size of the button's label.
     pub fn label_size(mut self, label_size: impl Into<Option<LabelSize>>) -> Self {
         self.label_size = label_size.into();
         self
     }
 
+    /// Sets the label used when the button is in a selected state.
     pub fn selected_label<L: Into<SharedString>>(mut self, label: impl Into<Option<L>>) -> Self {
         self.selected_label = label.into().map(Into::into);
         self
     }
 
+    /// Assigns an icon to the button.
     pub fn icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.icon = icon.into();
         self
     }
 
+    /// Sets the position of the icon relative to the label.
     pub fn icon_position(mut self, icon_position: impl Into<Option<IconPosition>>) -> Self {
         self.icon_position = icon_position.into();
         self
     }
 
+    /// Specifies the size of the button's icon.
     pub fn icon_size(mut self, icon_size: impl Into<Option<IconSize>>) -> Self {
         self.icon_size = icon_size.into();
         self
     }
 
+    /// Sets the color of the button's icon.
     pub fn icon_color(mut self, icon_color: impl Into<Option<Color>>) -> Self {
         self.icon_color = icon_color.into();
         self
     }
 
+    /// Chooses an icon to display when the button is in a selected state.
     pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
         self
     }
 
+    /// Binds a key combination to the button for keyboard shortcuts.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
         self
@@ -86,6 +158,22 @@ impl Button {
 }
 
 impl Selectable for Button {
+    /// Sets the selected state of the button.
+    ///
+    /// This method allows the selection state of the button to be specified.
+    /// It modifies the button's appearance to reflect its selected state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Button::new("button_id", "Click me!")
+    ///     .selected(true)
+    ///     .on_click(|event, cx| {
+    ///         // Handle click event
+    ///     });
+    /// ```
+    ///
+    /// Use [selected_style](Button::selected_style) to change the style of the button when it is selected.
     fn selected(mut self, selected: bool) -> Self {
         self.base = self.base.selected(selected);
         self
@@ -93,6 +181,19 @@ impl Selectable for Button {
 }
 
 impl SelectableButton for Button {
+    /// Sets the style for the button when selected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Button::new("button_id", "Click me!")
+    ///     .selected(true)
+    ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+    ///     .on_click(|event, cx| {
+    ///         // Handle click event
+    ///     });
+    /// ```
+    /// This results in a button with a blue tinted background when selected.
     fn selected_style(mut self, style: ButtonStyle) -> Self {
         self.base = self.base.selected_style(style);
         self
@@ -100,6 +201,22 @@ impl SelectableButton for Button {
 }
 
 impl Disableable for Button {
+    /// Disables the button.
+    ///
+    /// This method allows the button to be disabled. When a button is disabled,
+    /// it doesn't react to user interactions and its appearance is updated to reflect this.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Button::new("button_id", "Click me!")
+    ///     .disabled(true)
+    ///     .on_click(|event, cx| {
+    ///         // Handle click event
+    ///     });
+    /// ```
+    ///
+    /// This results in a button that is disabled and does not respond to click events.
     fn disabled(mut self, disabled: bool) -> Self {
         self.base = self.base.disabled(disabled);
         self
@@ -107,6 +224,7 @@ impl Disableable for Button {
 }
 
 impl Clickable for Button {
+    /// Sets the click event handler for the button.
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
@@ -117,11 +235,40 @@ impl Clickable for Button {
 }
 
 impl FixedWidth for Button {
+    /// Sets a fixed width for the button.
+    ///
+    /// This function allows a button to have a fixed width instead of automatically growing or shrinking.
+    /// Sets a fixed width for the button.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Button::new("button_id", "Click me!")
+    ///     .width(DefiniteLength::Pixels(100))
+    ///     .on_click(|event, cx| {
+    ///         // Handle click event
+    ///     });
+    /// ```
+    ///
+    /// This sets the button's width to be exactly 100 pixels.
     fn width(mut self, width: DefiniteLength) -> Self {
         self.base = self.base.width(width);
         self
     }
 
+    /// Sets the button to occupy the full width of its container.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Button::new("button_id", "Click me!")
+    ///     .full_width()
+    ///     .on_click(|event, cx| {
+    ///         // Handle click event
+    ///     });
+    /// ```
+    ///
+    /// This stretches the button to the full width of its container.
     fn full_width(mut self) -> Self {
         self.base = self.base.full_width();
         self
@@ -129,20 +276,42 @@ impl FixedWidth for Button {
 }
 
 impl ButtonCommon for Button {
+    /// Sets the button's id.
     fn id(&self) -> &ElementId {
         self.base.id()
     }
 
+    /// Sets the visual style of the button using a [ButtonStyle].
     fn style(mut self, style: ButtonStyle) -> Self {
         self.base = self.base.style(style);
         self
     }
 
+    /// Sets the button's size using a [ButtonSize].
     fn size(mut self, size: ButtonSize) -> Self {
         self.base = self.base.size(size);
         self
     }
 
+    /// Sets a tooltip for the button.
+    ///
+    /// This method allows a tooltip to be set for the button. The tooltip is a function that
+    /// takes a mutable reference to a [WindowContext] and returns an [AnyView]. The tooltip
+    /// is displayed when the user hovers over the button.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Button::new("button_id", "Click me!")
+    ///     .tooltip(|cx| {
+    ///         Text::new("This is a tooltip").into()
+    ///     })
+    ///     .on_click(|event, cx| {
+    ///         // Handle click event
+    ///     });
+    /// ```
+    ///
+    /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
     fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
