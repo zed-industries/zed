@@ -98,6 +98,8 @@ thread_local! {
 
 lazy_static! {
     pub(crate) static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
+    /// A shared grammar for plain text, exposed for reuse by downstream crates.
+    #[doc(hidden)]
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
@@ -382,7 +384,7 @@ pub struct LanguageConfig {
     pub grammar_name: Option<Arc<str>>,
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     pub path_suffixes: Vec<String>,
-    /// List of
+    /// List of bracket types in a language.
     pub brackets: BracketPairConfig,
     /// A regex pattern that determines whether the language should be assigned to a file or not.
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -522,6 +524,7 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
     }
 }
 
+#[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLspAdapter {
     pub name: &'static str,
@@ -533,6 +536,10 @@ pub struct FakeLspAdapter {
     pub prettier_plugins: Vec<&'static str>,
 }
 
+/// Configuration of handling bracket pairs for a given language.
+///
+/// This struct includes settings for defining which pairs of characters are considered brackets and
+/// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
 #[derive(Clone, Debug, Default)]
 pub struct BracketPairConfig {
     /// A list of character pairs that should be treated as brackets in the context of a given language.
@@ -570,11 +577,18 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
     }
 }
 
+/// Describes a single bracket pair and how an editor should react to e.g. inserting
+/// an opening bracket or to a newline character insertion inbetween `start` and `end` characters.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct BracketPair {
+    /// Starting substring for a bracket.
     pub start: String,
+    /// Ending substring for a bracket.
     pub end: String,
+    /// True if `end` should be automatically inserted right after `start` characters.
     pub close: bool,
+    /// True if an extra newline should be inserted while the cursor is in the middle
+    /// of that bracket pair.
     pub newline: bool,
 }
 
