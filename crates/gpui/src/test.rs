@@ -39,7 +39,6 @@ pub fn run_test(
     max_retries: usize,
     test_fn: &mut (dyn RefUnwindSafe + Fn(TestDispatcher, u64)),
     on_fail_fn: Option<fn()>,
-    _fn_name: String, // todo!("re-enable fn_name")
 ) {
     let starting_seed = env::var("SEED")
         .map(|seed| seed.parse().expect("invalid SEED variable"))

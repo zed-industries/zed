@@ -165,7 +165,8 @@ impl Default for TextStyle {
     fn default() -> Self {
         TextStyle {
             color: black(),
-            font_family: "Helvetica".into(), // todo!("Get a font we know exists on the system")
+            // Helvetica is a web safe font, so it should be available
+            font_family: "Helvetica".into(),
             font_features: FontFeatures::default(),
             font_size: rems(1.).into(),
             line_height: phi(),
