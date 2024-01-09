@@ -211,16 +211,6 @@ pub struct Icon {
     size: IconSize,
 }
 
-impl RenderOnce for Icon {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        svg()
-            .size(self.size.rems())
-            .flex_none()
-            .path(self.path)
-            .text_color(self.color.color(cx))
-    }
-}
-
 impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
@@ -246,5 +236,15 @@ impl Icon {
     pub fn size(mut self, size: IconSize) -> Self {
         self.size = size;
         self
+    }
+}
+
+impl RenderOnce for Icon {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        svg()
+            .size(self.size.rems())
+            .flex_none()
+            .path(self.path)
+            .text_color(self.color.color(cx))
     }
 }
