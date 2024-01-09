@@ -3383,6 +3383,10 @@ impl Workspace {
         div
     }
 
+    pub fn has_active_modal(&self, cx: &WindowContext<'_>) -> bool {
+        self.modal_layer.read(cx).has_active_modal()
+    }
+
     pub fn active_modal<V: ManagedView + 'static>(
         &mut self,
         cx: &ViewContext<Self>,

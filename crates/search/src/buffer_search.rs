@@ -43,7 +43,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|editor: &mut Workspace, _| BufferSearchBar::register(editor))
+    cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
         .detach();
 }
 
@@ -479,6 +479,11 @@ impl SearchActionsRegistrar for Workspace {
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     ) {
         self.register_action(move |workspace, action: &A, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+
             let pane = workspace.active_pane();
             pane.update(cx, move |this, cx| {
                 this.toolbar().update(cx, move |this, cx| {
@@ -539,11 +544,11 @@ impl BufferSearchBar {
             this.select_all_matches(action, cx);
         });
         registrar.register_handler(|this, _: &editor::Cancel, cx| {
-            if !this.dismissed {
+            if this.dismissed {
+                cx.propagate();
+            } else {
                 this.dismiss(&Dismiss, cx);
-                return;
             }
-            cx.propagate();
         });
         registrar.register_handler(|this, deploy, cx| {
             this.deploy(deploy, cx);
