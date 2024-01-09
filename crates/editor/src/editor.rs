@@ -99,8 +99,8 @@ use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_stack, prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, ListItem, Popover,
-    Tooltip,
+    h_stack, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem,
+    Popover, Tooltip,
 };
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
@@ -4223,7 +4223,7 @@ impl Editor {
     ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
             Some(
-                IconButton::new("code_actions_indicator", ui::Icon::Bolt)
+                IconButton::new("code_actions_indicator", ui::IconName::Bolt)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .selected(is_active)
@@ -4257,7 +4257,7 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            IconButton::new(ix as usize, ui::Icon::ChevronDown)
+                            IconButton::new(ix as usize, ui::IconName::ChevronDown)
                                 .on_click(cx.listener(move |editor, _e, cx| match fold_status {
                                     FoldStatus::Folded => {
                                         editor.unfold_at(&UnfoldAt { buffer_row }, cx);
@@ -4269,7 +4269,7 @@ impl Editor {
                                 .icon_color(ui::Color::Muted)
                                 .icon_size(ui::IconSize::Small)
                                 .selected(fold_status == FoldStatus::Folded)
-                                .selected_icon(ui::Icon::ChevronRight)
+                                .selected_icon(ui::IconName::ChevronRight)
                                 .size(ui::ButtonSize::None)
                         })
                     })
@@ -9739,7 +9739,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
                 ),
             )
             .child(
-                IconButton::new(("copy-block", cx.block_id), Icon::Copy)
+                IconButton::new(("copy-block", cx.block_id), IconName::Copy)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::Compact)
                     .style(ButtonStyle::Transparent)

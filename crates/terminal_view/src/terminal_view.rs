@@ -20,7 +20,7 @@ use terminal::{
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
 };
 use terminal_element::TerminalElement;
-use ui::{h_stack, prelude::*, ContextMenu, Icon, IconElement, Label};
+use ui::{h_stack, prelude::*, ContextMenu, Icon, IconName, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
@@ -690,7 +690,7 @@ impl Item for TerminalView {
         let title = self.terminal().read(cx).title(true);
         h_stack()
             .gap_2()
-            .child(IconElement::new(Icon::Terminal))
+            .child(Icon::new(IconName::Terminal))
             .child(Label::new(title).color(if selected {
                 Color::Default
             } else {
