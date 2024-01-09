@@ -7,7 +7,7 @@ use crate::{
 
 use super::button_icon::ButtonIcon;
 
-/// [Button] can be use to create a button with a label and an optional icon.
+/// An element that creates a button with a label and an optional icon.
 ///
 /// Common buttons:
 /// - Label, Icon + Label: [Button] (this component)
@@ -19,7 +19,8 @@ use super::button_icon::ButtonIcon;
 ///
 /// # Examples
 ///
-/// A button with a label only:
+/// **A button with a label**, is typically used in scenarios such as a form, where the button's label
+/// indicates what action will be performed when the button is clicked.
 ///
 /// ```
 /// Button::new("button_id", "Click me!")
