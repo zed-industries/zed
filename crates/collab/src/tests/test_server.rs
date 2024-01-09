@@ -2,7 +2,7 @@ use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    AppState,
+    AppState, Config,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
@@ -13,9 +13,10 @@ use client::{
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHandle};
+use gpui::{BackgroundExecutor, Context, Model, TestAppContext, View, VisualTestContext};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
+
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
@@ -46,17 +47,17 @@ pub struct TestServer {
 pub struct TestClient {
     pub username: String,
     pub app_state: Arc<workspace::AppState>,
-    channel_store: ModelHandle<ChannelStore>,
-    notification_store: ModelHandle<NotificationStore>,
+    channel_store: Model<ChannelStore>,
+    notification_store: Model<NotificationStore>,
     state: RefCell<TestClientState>,
 }
 
 #[derive(Default)]
 struct TestClientState {
-    local_projects: Vec<ModelHandle<Project>>,
-    remote_projects: Vec<ModelHandle<Project>>,
-    buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
-    channel_buffers: HashSet<ModelHandle<ChannelBuffer>>,
+    local_projects: Vec<Model<Project>>,
+    remote_projects: Vec<Model<Project>>,
+    buffers: HashMap<Model<Project>, HashSet<Model<language::Buffer>>>,
+    channel_buffers: HashSet<Model<ChannelBuffer>>,
 }
 
 pub struct ContactsSummary {
@@ -66,22 +67,22 @@ pub struct ContactsSummary {
 }
 
 impl TestServer {
-    pub async fn start(deterministic: &Arc<Deterministic>) -> Self {
+    pub async fn start(deterministic: BackgroundExecutor) -> Self {
         static NEXT_LIVE_KIT_SERVER_ID: AtomicUsize = AtomicUsize::new(0);
 
         let use_postgres = env::var("USE_POSTGRES").ok();
         let use_postgres = use_postgres.as_deref();
         let test_db = if use_postgres == Some("true") || use_postgres == Some("1") {
-            TestDb::postgres(deterministic.build_background())
+            TestDb::postgres(deterministic.clone())
         } else {
-            TestDb::sqlite(deterministic.build_background())
+            TestDb::sqlite(deterministic.clone())
         };
         let live_kit_server_id = NEXT_LIVE_KIT_SERVER_ID.fetch_add(1, SeqCst);
         let live_kit_server = live_kit_client::TestServer::create(
             format!("http://livekit.{}.test", live_kit_server_id),
             format!("devkey-{}", live_kit_server_id),
             format!("secret-{}", live_kit_server_id),
-            deterministic.build_background(),
+            deterministic.clone(),
         )
         .unwrap();
         let app_state = Self::build_app_state(&test_db, &live_kit_server).await;
@@ -93,7 +94,7 @@ impl TestServer {
         let server = Server::new(
             epoch,
             app_state.clone(),
-            Executor::Deterministic(deterministic.build_background()),
+            Executor::Deterministic(deterministic.clone()),
         );
         server.start().await.unwrap();
         // Advance clock to ensure the server's cleanup task is finished.
@@ -124,8 +125,8 @@ impl TestServer {
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
             }
-
-            cx.set_global(SettingsStore::test(cx));
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
         });
 
         let http = FakeHttpClient::with_404_response();
@@ -148,7 +149,7 @@ impl TestServer {
                 .user_id
         };
         let client_name = name.to_string();
-        let mut client = cx.read(|cx| Client::new(http.clone(), cx));
+        let mut client = cx.update(|cx| Client::new(http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();
@@ -182,20 +183,20 @@ impl TestServer {
                         )))
                     } else {
                         let (client_conn, server_conn, killed) =
-                            Connection::in_memory(cx.background());
+                            Connection::in_memory(cx.background_executor().clone());
                         let (connection_id_tx, connection_id_rx) = oneshot::channel();
                         let user = db
                             .get_user_by_id(user_id)
                             .await
                             .expect("retrieving user failed")
                             .unwrap();
-                        cx.background()
+                        cx.background_executor()
                             .spawn(server.handle_connection(
                                 server_conn,
                                 client_name,
                                 user,
                                 Some(connection_id_tx),
-                                Executor::Deterministic(cx.background()),
+                                Executor::Deterministic(cx.background_executor().clone()),
                             ))
                             .detach();
                         let connection_id = connection_id_rx.await.unwrap();
@@ -207,11 +208,11 @@ impl TestServer {
                 })
             });
 
-        let fs = FakeFs::new(cx.background());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-        let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let fs = FakeFs::new(cx.executor());
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let mut language_registry = LanguageRegistry::test();
-        language_registry.set_executor(cx.background());
+        language_registry.set_executor(cx.executor());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -219,13 +220,11 @@ impl TestServer {
             languages: Arc::new(language_registry),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
-            background_actions: || &[],
             node_runtime: FakeNodeRuntime::new(),
         });
 
         cx.update(|cx| {
-            theme::init((), cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
             client::init(&client, cx);
             language::init(cx);
@@ -264,7 +263,7 @@ impl TestServer {
     pub fn simulate_long_connection_interruption(
         &self,
         peer_id: PeerId,
-        deterministic: &Arc<Deterministic>,
+        deterministic: BackgroundExecutor,
     ) {
         self.forbid_connections();
         self.disconnect_client(peer_id);
@@ -295,7 +294,7 @@ impl TestServer {
                     })
                     .await
                     .unwrap();
-                cx_a.foreground().run_until_parked();
+                cx_a.executor().run_until_parked();
                 client_b
                     .app_state
                     .user_store
@@ -338,7 +337,7 @@ impl TestServer {
                 .await
                 .unwrap();
 
-            admin_cx.foreground().run_until_parked();
+            admin_cx.executor().run_until_parked();
 
             member_cx
                 .read(ChannelStore::global)
@@ -399,7 +398,7 @@ impl TestServer {
                 .await
                 .unwrap();
 
-            cx_b.foreground().run_until_parked();
+            cx_b.executor().run_until_parked();
             let active_call_b = cx_b.read(ActiveCall::global);
             active_call_b
                 .update(*cx_b, |call, cx| call.accept_incoming(cx))
@@ -415,7 +414,19 @@ impl TestServer {
         Arc::new(AppState {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
-            config: Default::default(),
+            config: Config {
+                http_port: 0,
+                database_url: "".into(),
+                database_max_connections: 0,
+                api_token: "".into(),
+                invite_link_prefix: "".into(),
+                live_kit_server: None,
+                live_kit_key: None,
+                live_kit_secret: None,
+                rust_log: None,
+                log_json: None,
+                zed_environment: "test".into(),
+            },
         })
     }
 }
@@ -448,15 +459,15 @@ impl TestClient {
         self.app_state.fs.as_fake()
     }
 
-    pub fn channel_store(&self) -> &ModelHandle<ChannelStore> {
+    pub fn channel_store(&self) -> &Model<ChannelStore> {
         &self.channel_store
     }
 
-    pub fn notification_store(&self) -> &ModelHandle<NotificationStore> {
+    pub fn notification_store(&self) -> &Model<NotificationStore> {
         &self.notification_store
     }
 
-    pub fn user_store(&self) -> &ModelHandle<UserStore> {
+    pub fn user_store(&self) -> &Model<UserStore> {
         &self.app_state.user_store
     }
 
@@ -491,30 +502,26 @@ impl TestClient {
             .await;
     }
 
-    pub fn local_projects<'a>(&'a self) -> impl Deref<Target = Vec<ModelHandle<Project>>> + 'a {
+    pub fn local_projects<'a>(&'a self) -> impl Deref<Target = Vec<Model<Project>>> + 'a {
         Ref::map(self.state.borrow(), |state| &state.local_projects)
     }
 
-    pub fn remote_projects<'a>(&'a self) -> impl Deref<Target = Vec<ModelHandle<Project>>> + 'a {
+    pub fn remote_projects<'a>(&'a self) -> impl Deref<Target = Vec<Model<Project>>> + 'a {
         Ref::map(self.state.borrow(), |state| &state.remote_projects)
     }
 
-    pub fn local_projects_mut<'a>(
-        &'a self,
-    ) -> impl DerefMut<Target = Vec<ModelHandle<Project>>> + 'a {
+    pub fn local_projects_mut<'a>(&'a self) -> impl DerefMut<Target = Vec<Model<Project>>> + 'a {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.local_projects)
     }
 
-    pub fn remote_projects_mut<'a>(
-        &'a self,
-    ) -> impl DerefMut<Target = Vec<ModelHandle<Project>>> + 'a {
+    pub fn remote_projects_mut<'a>(&'a self) -> impl DerefMut<Target = Vec<Model<Project>>> + 'a {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.remote_projects)
     }
 
     pub fn buffers_for_project<'a>(
         &'a self,
-        project: &ModelHandle<Project>,
-    ) -> impl DerefMut<Target = HashSet<ModelHandle<language::Buffer>>> + 'a {
+        project: &Model<Project>,
+    ) -> impl DerefMut<Target = HashSet<Model<language::Buffer>>> + 'a {
         RefMut::map(self.state.borrow_mut(), |state| {
             state.buffers.entry(project.clone()).or_default()
         })
@@ -522,14 +529,14 @@ impl TestClient {
 
     pub fn buffers<'a>(
         &'a self,
-    ) -> impl DerefMut<Target = HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>> + 'a
+    ) -> impl DerefMut<Target = HashMap<Model<Project>, HashSet<Model<language::Buffer>>>> + 'a
     {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.buffers)
     }
 
     pub fn channel_buffers<'a>(
         &'a self,
-    ) -> impl DerefMut<Target = HashSet<ModelHandle<ChannelBuffer>>> + 'a {
+    ) -> impl DerefMut<Target = HashSet<Model<ChannelBuffer>>> + 'a {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.channel_buffers)
     }
 
@@ -559,7 +566,7 @@ impl TestClient {
         &self,
         root_path: impl AsRef<Path>,
         cx: &mut TestAppContext,
-    ) -> (ModelHandle<Project>, WorktreeId) {
+    ) -> (Model<Project>, WorktreeId) {
         let project = self.build_empty_local_project(cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
@@ -573,7 +580,7 @@ impl TestClient {
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
-    pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> ModelHandle<Project> {
+    pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> Model<Project> {
         cx.update(|cx| {
             Project::local(
                 self.client().clone(),
@@ -590,7 +597,7 @@ impl TestClient {
         &self,
         host_project_id: u64,
         guest_cx: &mut TestAppContext,
-    ) -> ModelHandle<Project> {
+    ) -> Model<Project> {
         let active_call = guest_cx.read(ActiveCall::global);
         let room = active_call.read_with(guest_cx, |call, _| call.room().unwrap().clone());
         room.update(guest_cx, |room, cx| {
@@ -605,12 +612,12 @@ impl TestClient {
         .unwrap()
     }
 
-    pub fn build_workspace(
-        &self,
-        project: &ModelHandle<Project>,
-        cx: &mut TestAppContext,
-    ) -> WindowHandle<Workspace> {
-        cx.add_window(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
+    pub fn build_workspace<'a>(
+        &'a self,
+        project: &Model<Project>,
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        cx.add_window_view(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
     }
 }
 

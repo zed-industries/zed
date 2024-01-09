@@ -1,354 +1,316 @@
-use super::{Element, SizeConstraint};
 use crate::{
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    json::{self, json},
-    platform::ScrollWheelEvent,
-    AnyElement, MouseRegion, ViewContext,
+    point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Element,
+    ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
+    Pixels, Point, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
-use json::ToJson;
+use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
+use taffy::style::Overflow;
 
-#[derive(Clone, Default)]
-pub struct UniformListState(Rc<RefCell<StateInner>>);
+/// uniform_list provides lazy rendering for a set of items that are of uniform height.
+/// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
+/// uniform_list will only render the visible subset of items.
+#[track_caller]
+pub fn uniform_list<I, R, V>(
+    view: View<V>,
+    id: I,
+    item_count: usize,
+    f: impl 'static + Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> Vec<R>,
+) -> UniformList
+where
+    I: Into<ElementId>,
+    R: IntoElement,
+    V: Render,
+{
+    let id = id.into();
+    let mut base_style = StyleRefinement::default();
+    base_style.overflow.y = Some(Overflow::Scroll);
 
-#[derive(Debug)]
-pub enum ScrollTarget {
-    Show(usize),
-    Center(usize),
+    let render_range = move |range, cx: &mut WindowContext| {
+        view.update(cx, |this, cx| {
+            f(this, range, cx)
+                .into_iter()
+                .map(|component| component.into_any_element())
+                .collect()
+        })
+    };
+
+    UniformList {
+        id: id.clone(),
+        item_count,
+        item_to_measure_index: 0,
+        render_items: Box::new(render_range),
+        interactivity: Interactivity {
+            element_id: Some(id),
+            base_style: Box::new(base_style),
+
+            #[cfg(debug_assertions)]
+            location: Some(*core::panic::Location::caller()),
+
+            ..Default::default()
+        },
+        scroll_handle: None,
+    }
 }
 
-impl UniformListState {
-    pub fn scroll_to(&self, scroll_to: ScrollTarget) {
-        self.0.borrow_mut().scroll_to = Some(scroll_to);
+pub struct UniformList {
+    id: ElementId,
+    item_count: usize,
+    item_to_measure_index: usize,
+    render_items:
+        Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
+    interactivity: Interactivity,
+    scroll_handle: Option<UniformListScrollHandle>,
+}
+
+#[derive(Clone, Default)]
+pub struct UniformListScrollHandle(Rc<RefCell<Option<ScrollHandleState>>>);
+
+#[derive(Clone, Debug)]
+struct ScrollHandleState {
+    item_height: Pixels,
+    list_height: Pixels,
+    scroll_offset: Rc<RefCell<Point<Pixels>>>,
+}
+
+impl UniformListScrollHandle {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(None)))
     }
 
-    pub fn scroll_top(&self) -> f32 {
-        self.0.borrow().scroll_top
+    pub fn scroll_to_item(&self, ix: usize) {
+        if let Some(state) = &*self.0.borrow() {
+            let mut scroll_offset = state.scroll_offset.borrow_mut();
+            let item_top = state.item_height * ix;
+            let item_bottom = item_top + state.item_height;
+            let scroll_top = -scroll_offset.y;
+            if item_top < scroll_top {
+                scroll_offset.y = -item_top;
+            } else if item_bottom > scroll_top + state.list_height {
+                scroll_offset.y = -(item_bottom - state.list_height);
+            }
+        }
+    }
+
+    pub fn scroll_top(&self) -> Pixels {
+        if let Some(state) = &*self.0.borrow() {
+            -state.scroll_offset.borrow().y
+        } else {
+            Pixels::ZERO
+        }
+    }
+}
+
+impl Styled for UniformList {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.interactivity.base_style
     }
 }
 
 #[derive(Default)]
-struct StateInner {
-    scroll_top: f32,
-    scroll_to: Option<ScrollTarget>,
+pub struct UniformListState {
+    interactive: InteractiveElementState,
+    item_size: Size<Pixels>,
 }
 
-pub struct UniformListLayoutState<V> {
-    scroll_max: f32,
-    item_height: f32,
-    items: Vec<AnyElement<V>>,
-}
+impl Element for UniformList {
+    type State = UniformListState;
 
-pub struct UniformList<V> {
-    state: UniformListState,
-    item_count: usize,
-    #[allow(clippy::type_complexity)]
-    append_items: Box<dyn Fn(&mut V, Range<usize>, &mut Vec<AnyElement<V>>, &mut ViewContext<V>)>,
-    padding_top: f32,
-    padding_bottom: f32,
-    get_width_from_item: Option<usize>,
-    view_id: usize,
-}
-
-impl<V: 'static> UniformList<V> {
-    pub fn new<F>(
-        state: UniformListState,
-        item_count: usize,
-        cx: &mut ViewContext<V>,
-        append_items: F,
-    ) -> Self
-    where
-        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<AnyElement<V>>, &mut ViewContext<V>),
-    {
-        Self {
-            state,
-            item_count,
-            append_items: Box::new(append_items),
-            padding_top: 0.,
-            padding_bottom: 0.,
-            get_width_from_item: None,
-            view_id: cx.handle().id(),
-        }
-    }
-
-    pub fn with_width_from_item(mut self, item_ix: Option<usize>) -> Self {
-        self.get_width_from_item = item_ix;
-        self
-    }
-
-    pub fn with_padding_top(mut self, padding: f32) -> Self {
-        self.padding_top = padding;
-        self
-    }
-
-    pub fn with_padding_bottom(mut self, padding: f32) -> Self {
-        self.padding_bottom = padding;
-        self
-    }
-
-    fn scroll(
-        state: UniformListState,
-        _: Vector2F,
-        mut delta: Vector2F,
-        precise: bool,
-        scroll_max: f32,
-        cx: &mut ViewContext<V>,
-    ) -> bool {
-        if !precise {
-            delta *= 20.;
-        }
-
-        let mut state = state.0.borrow_mut();
-        state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
-        cx.notify();
-
-        true
-    }
-
-    fn autoscroll(&mut self, scroll_max: f32, list_height: f32, item_height: f32) {
-        let mut state = self.state.0.borrow_mut();
-
-        if let Some(scroll_to) = state.scroll_to.take() {
-            let item_ix;
-            let center;
-            match scroll_to {
-                ScrollTarget::Show(ix) => {
-                    item_ix = ix;
-                    center = false;
-                }
-                ScrollTarget::Center(ix) => {
-                    item_ix = ix;
-                    center = true;
-                }
-            }
-
-            let item_top = self.padding_top + item_ix as f32 * item_height;
-            let item_bottom = item_top + item_height;
-            if center {
-                let item_center = item_top + item_height / 2.;
-                state.scroll_top = (item_center - list_height / 2.).max(0.);
-            } else {
-                let scroll_bottom = state.scroll_top + list_height;
-                if item_top < state.scroll_top {
-                    state.scroll_top = item_top;
-                } else if item_bottom > scroll_bottom {
-                    state.scroll_top = item_bottom - list_height;
-                }
-            }
-        }
-
-        if state.scroll_top > scroll_max {
-            state.scroll_top = scroll_max;
-        }
-    }
-
-    fn scroll_top(&self) -> f32 {
-        self.state.0.borrow().scroll_top
-    }
-}
-
-impl<V: 'static> Element<V> for UniformList<V> {
-    type LayoutState = UniformListLayoutState<V>;
-    type PaintState = ();
-
-    fn layout(
+    fn request_layout(
         &mut self,
-        constraint: SizeConstraint,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> (Vector2F, Self::LayoutState) {
-        if constraint.max.y().is_infinite() {
-            unimplemented!(
-                "UniformList does not support being rendered with an unconstrained height"
-            );
-        }
+        state: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::State) {
+        let max_items = self.item_count;
+        let item_size = state
+            .as_ref()
+            .map(|s| s.item_size)
+            .unwrap_or_else(|| self.measure_item(None, cx));
 
-        let no_items = (
-            constraint.min,
-            UniformListLayoutState {
-                item_height: 0.,
-                scroll_max: 0.,
-                items: Default::default(),
-            },
-        );
+        let (layout_id, interactive) =
+            self.interactivity
+                .layout(state.map(|s| s.interactive), cx, |style, cx| {
+                    cx.request_measured_layout(
+                        style,
+                        move |known_dimensions, available_space, _cx| {
+                            let desired_height = item_size.height * max_items;
+                            let width =
+                                known_dimensions
+                                    .width
+                                    .unwrap_or(match available_space.width {
+                                        AvailableSpace::Definite(x) => x,
+                                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                            item_size.width
+                                        }
+                                    });
 
-        if self.item_count == 0 {
-            return no_items;
-        }
+                            let height = match available_space.height {
+                                AvailableSpace::Definite(height) => desired_height.min(height),
+                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                    desired_height
+                                }
+                            };
+                            size(width, height)
+                        },
+                    )
+                });
 
-        let mut items = Vec::new();
-        let mut size = constraint.max;
-        let mut item_size;
-        let sample_item_ix;
-        let sample_item;
-        if let Some(sample_ix) = self.get_width_from_item {
-            (self.append_items)(view, sample_ix..sample_ix + 1, &mut items, cx);
-            sample_item_ix = sample_ix;
-
-            if let Some(mut item) = items.pop() {
-                item_size = item.layout(constraint, view, cx);
-                size.set_x(item_size.x());
-                sample_item = item;
-            } else {
-                return no_items;
-            }
-        } else {
-            (self.append_items)(view, 0..1, &mut items, cx);
-            sample_item_ix = 0;
-            if let Some(mut item) = items.pop() {
-                item_size = item.layout(
-                    SizeConstraint::new(
-                        vec2f(constraint.max.x(), 0.0),
-                        vec2f(constraint.max.x(), f32::INFINITY),
-                    ),
-                    view,
-                    cx,
-                );
-                item_size.set_x(size.x());
-                sample_item = item
-            } else {
-                return no_items;
-            }
-        }
-
-        let item_constraint = SizeConstraint {
-            min: item_size,
-            max: vec2f(constraint.max.x(), item_size.y()),
+        let element_state = UniformListState {
+            interactive,
+            item_size,
         };
-        let item_height = item_size.y();
 
-        let scroll_height = self.item_count as f32 * item_height;
-        if scroll_height < size.y() {
-            size.set_y(size.y().min(scroll_height).max(constraint.min.y()));
-        }
-
-        let scroll_height =
-            item_height * self.item_count as f32 + self.padding_top + self.padding_bottom;
-        let scroll_max = (scroll_height - size.y()).max(0.);
-        self.autoscroll(scroll_max, size.y(), item_height);
-
-        let start = cmp::min(
-            ((self.scroll_top() - self.padding_top) / item_height.max(1.)) as usize,
-            self.item_count,
-        );
-        let end = cmp::min(
-            self.item_count,
-            start + (size.y() / item_height.max(1.)).ceil() as usize + 1,
-        );
-
-        if (start..end).contains(&sample_item_ix) {
-            if sample_item_ix > start {
-                (self.append_items)(view, start..sample_item_ix, &mut items, cx);
-            }
-
-            items.push(sample_item);
-
-            if sample_item_ix < end {
-                (self.append_items)(view, sample_item_ix + 1..end, &mut items, cx);
-            }
-        } else {
-            (self.append_items)(view, start..end, &mut items, cx);
-        }
-
-        for item in &mut items {
-            let item_size = item.layout(item_constraint, view, cx);
-            if item_size.x() > size.x() {
-                size.set_x(item_size.x());
-            }
-        }
-
-        (
-            size,
-            UniformListLayoutState {
-                item_height,
-                scroll_max,
-                items,
-            },
-        )
+        (layout_id, element_state)
     }
 
     fn paint(
         &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> Self::PaintState {
-        let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
+        bounds: Bounds<crate::Pixels>,
+        element_state: &mut Self::State,
+        cx: &mut WindowContext,
+    ) {
+        let style =
+            self.interactivity
+                .compute_style(Some(bounds), &mut element_state.interactive, cx);
+        let border = style.border_widths.to_pixels(cx.rem_size());
+        let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
 
-        cx.scene().push_layer(Some(visible_bounds));
-
-        cx.scene().push_mouse_region(
-            MouseRegion::new::<Self>(self.view_id, 0, visible_bounds).on_scroll({
-                let scroll_max = layout.scroll_max;
-                let state = self.state.clone();
-                move |event, _, cx| {
-                    let ScrollWheelEvent {
-                        position, delta, ..
-                    } = event.platform_event;
-                    if !Self::scroll(
-                        state.clone(),
-                        position,
-                        *delta.raw(),
-                        delta.precise(),
-                        scroll_max,
-                        cx,
-                    ) {
-                        cx.propagate_event();
-                    }
-                }
-            }),
+        let padded_bounds = Bounds::from_corners(
+            bounds.origin + point(border.left + padding.left, border.top + padding.top),
+            bounds.lower_right()
+                - point(border.right + padding.right, border.bottom + padding.bottom),
         );
 
-        let mut item_origin = bounds.origin()
-            - vec2f(
-                0.,
-                (self.state.scroll_top() - self.padding_top) % layout.item_height,
-            );
+        let item_size = element_state.item_size;
+        let content_size = Size {
+            width: padded_bounds.size.width,
+            height: item_size.height * self.item_count + padding.top + padding.bottom,
+        };
 
-        for item in &mut layout.items {
-            item.paint(item_origin, visible_bounds, view, cx);
-            item_origin += vec2f(0.0, layout.item_height);
+        let shared_scroll_offset = element_state
+            .interactive
+            .scroll_offset
+            .get_or_insert_with(|| {
+                if let Some(scroll_handle) = self.scroll_handle.as_ref() {
+                    if let Some(scroll_handle) = scroll_handle.0.borrow().as_ref() {
+                        return scroll_handle.scroll_offset.clone();
+                    }
+                }
+
+                Rc::default()
+            })
+            .clone();
+
+        let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
+
+        self.interactivity.paint(
+            bounds,
+            content_size,
+            &mut element_state.interactive,
+            cx,
+            |style, mut scroll_offset, cx| {
+                let border = style.border_widths.to_pixels(cx.rem_size());
+                let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
+
+                let padded_bounds = Bounds::from_corners(
+                    bounds.origin + point(border.left + padding.left, border.top),
+                    bounds.lower_right() - point(border.right + padding.right, border.bottom),
+                );
+
+                if self.item_count > 0 {
+                    let content_height =
+                        item_height * self.item_count + padding.top + padding.bottom;
+                    let min_scroll_offset = padded_bounds.size.height - content_height;
+                    let is_scrolled = scroll_offset.y != px(0.);
+
+                    if is_scrolled && scroll_offset.y < min_scroll_offset {
+                        shared_scroll_offset.borrow_mut().y = min_scroll_offset;
+                        scroll_offset.y = min_scroll_offset;
+                    }
+
+                    if let Some(scroll_handle) = self.scroll_handle.clone() {
+                        scroll_handle.0.borrow_mut().replace(ScrollHandleState {
+                            item_height,
+                            list_height: padded_bounds.size.height,
+                            scroll_offset: shared_scroll_offset,
+                        });
+                    }
+
+                    let first_visible_element_ix =
+                        (-(scroll_offset.y + padding.top) / item_height).floor() as usize;
+                    let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
+                        / item_height)
+                        .ceil() as usize;
+                    let visible_range = first_visible_element_ix
+                        ..cmp::min(last_visible_element_ix, self.item_count);
+
+                    let mut items = (self.render_items)(visible_range.clone(), cx);
+                    cx.with_z_index(1, |cx| {
+                        let content_mask = ContentMask { bounds };
+                        cx.with_content_mask(Some(content_mask), |cx| {
+                            for (item, ix) in items.iter_mut().zip(visible_range) {
+                                let item_origin = padded_bounds.origin
+                                    + point(
+                                        px(0.),
+                                        item_height * ix + scroll_offset.y + padding.top,
+                                    );
+                                let available_space = size(
+                                    AvailableSpace::Definite(padded_bounds.size.width),
+                                    AvailableSpace::Definite(item_height),
+                                );
+                                item.draw(item_origin, available_space, cx);
+                            }
+                        });
+                    });
+                }
+            },
+        )
+    }
+}
+
+impl IntoElement for UniformList {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl UniformList {
+    pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
+        self.item_to_measure_index = item_index.unwrap_or(0);
+        self
+    }
+
+    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut WindowContext) -> Size<Pixels> {
+        if self.item_count == 0 {
+            return Size::default();
         }
 
-        cx.scene().pop_layer();
+        let item_ix = cmp::min(self.item_to_measure_index, self.item_count - 1);
+        let mut items = (self.render_items)(item_ix..item_ix + 1, cx);
+        let mut item_to_measure = items.pop().unwrap();
+        let available_space = size(
+            list_width.map_or(AvailableSpace::MinContent, |width| {
+                AvailableSpace::Definite(width)
+            }),
+            AvailableSpace::MinContent,
+        );
+        item_to_measure.measure(available_space, cx)
     }
 
-    fn rect_for_text_range(
-        &self,
-        range: Range<usize>,
-        _: RectF,
-        _: RectF,
-        layout: &Self::LayoutState,
-        _: &Self::PaintState,
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> Option<RectF> {
-        layout
-            .items
-            .iter()
-            .find_map(|child| child.rect_for_text_range(range.clone(), view, cx))
+    pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
+        self.scroll_handle = Some(handle);
+        self
     }
+}
 
-    fn debug(
-        &self,
-        bounds: RectF,
-        layout: &Self::LayoutState,
-        _: &Self::PaintState,
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> json::Value {
-        json!({
-            "type": "UniformList",
-            "bounds": bounds.to_json(),
-            "scroll_max": layout.scroll_max,
-            "item_height": layout.item_height,
-            "items": layout.items.iter().map(|item| item.debug(view, cx)).collect::<Vec<json::Value>>()
-
-        })
+impl InteractiveElement for UniformList {
+    fn interactivity(&mut self) -> &mut crate::Interactivity {
+        &mut self.interactivity
     }
 }

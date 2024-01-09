@@ -1,85 +1,54 @@
-use std::marker::PhantomData;
+use refineable::Refineable as _;
 
-use super::Element;
-use crate::{
-    json::{self, json},
-    ViewContext,
-};
-use json::ToJson;
-use pathfinder_geometry::{
-    rect::RectF,
-    vector::{vec2f, Vector2F},
-};
+use crate::{Bounds, Element, IntoElement, Pixels, Style, StyleRefinement, Styled, WindowContext};
 
-pub struct Canvas<V, F>(F, PhantomData<V>);
-
-impl<V, F> Canvas<V, F>
-where
-    F: FnMut(RectF, RectF, &mut V, &mut ViewContext<V>),
-{
-    pub fn new(f: F) -> Self {
-        Self(f, PhantomData)
+pub fn canvas(callback: impl 'static + FnOnce(&Bounds<Pixels>, &mut WindowContext)) -> Canvas {
+    Canvas {
+        paint_callback: Some(Box::new(callback)),
+        style: StyleRefinement::default(),
     }
 }
 
-impl<V: 'static, F> Element<V> for Canvas<V, F>
-where
-    F: 'static + FnMut(RectF, RectF, &mut V, &mut ViewContext<V>),
-{
-    type LayoutState = ();
-    type PaintState = ();
+pub struct Canvas {
+    paint_callback: Option<Box<dyn FnOnce(&Bounds<Pixels>, &mut WindowContext)>>,
+    style: StyleRefinement,
+}
 
-    fn layout(
-        &mut self,
-        constraint: crate::SizeConstraint,
-        _: &mut V,
-        _: &mut crate::ViewContext<V>,
-    ) -> (Vector2F, Self::LayoutState) {
-        let x = if constraint.max.x().is_finite() {
-            constraint.max.x()
-        } else {
-            constraint.min.x()
-        };
-        let y = if constraint.max.y().is_finite() {
-            constraint.max.y()
-        } else {
-            constraint.min.y()
-        };
-        (vec2f(x, y), ())
-    }
+impl IntoElement for Canvas {
+    type Element = Self;
 
-    fn paint(
-        &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        _: &mut Self::LayoutState,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> Self::PaintState {
-        self.0(bounds, visible_bounds, view, cx)
-    }
-
-    fn rect_for_text_range(
-        &self,
-        _: std::ops::Range<usize>,
-        _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &V,
-        _: &ViewContext<V>,
-    ) -> Option<RectF> {
+    fn element_id(&self) -> Option<crate::ElementId> {
         None
     }
 
-    fn debug(
-        &self,
-        bounds: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &V,
-        _: &ViewContext<V>,
-    ) -> json::Value {
-        json!({"type": "Canvas", "bounds": bounds.to_json()})
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for Canvas {
+    type State = Style;
+
+    fn request_layout(
+        &mut self,
+        _: Option<Self::State>,
+        cx: &mut WindowContext,
+    ) -> (crate::LayoutId, Self::State) {
+        let mut style = Style::default();
+        style.refine(&self.style);
+        let layout_id = cx.request_layout(&style, []);
+        (layout_id, style)
+    }
+
+    fn paint(&mut self, bounds: Bounds<Pixels>, style: &mut Style, cx: &mut WindowContext) {
+        style.paint(bounds, cx, |cx| {
+            (self.paint_callback.take().unwrap())(&bounds, cx)
+        });
+    }
+}
+
+impl Styled for Canvas {
+    fn style(&mut self) -> &mut crate::StyleRefinement {
+        &mut self.style
     }
 }

@@ -8,10 +8,11 @@ use schemars::{
     JsonSchema,
 };
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
 pub fn init(cx: &mut AppContext) {
-    settings::register::<AllLanguageSettings>(cx);
+    AllLanguageSettings::register(cx);
 }
 
 pub fn language_settings<'a>(
@@ -28,7 +29,7 @@ pub fn all_language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| (f.worktree_id(), f.path().as_ref()));
-    settings::get_local(location, cx)
+    AllLanguageSettings::get(location, cx)
 }
 
 #[derive(Debug, Clone)]
@@ -78,36 +79,90 @@ pub struct AllLanguageSettingsContent {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
+    /// How many columns a tab should occupy.
+    ///
+    /// Default: 4
     #[serde(default)]
     pub tab_size: Option<NonZeroU32>,
+    /// Whether to indent lines using tab characters, as opposed to multiple
+    /// spaces.
+    ///
+    /// Default: false
     #[serde(default)]
     pub hard_tabs: Option<bool>,
+    /// How to soft-wrap long lines of text.
+    ///
+    /// Default: none
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
+    /// The column at which to soft-wrap lines, for buffers where soft-wrap
+    /// is enabled.
+    ///
+    /// Default: 80
     #[serde(default)]
     pub preferred_line_length: Option<u32>,
+    /// Whether to show wrap guides in the editor. Setting this to true will
+    /// show a guide at the 'preferred_line_length' value if softwrap is set to
+    /// 'preferred_line_length', and will show any additional guides as specified
+    /// by the 'wrap_guides' setting.
+    ///
+    /// Default: true
     #[serde(default)]
     pub show_wrap_guides: Option<bool>,
+    /// Character counts at which to show wrap guides in the editor.
+    ///
+    /// Default: []
     #[serde(default)]
     pub wrap_guides: Option<Vec<usize>>,
+    /// Whether or not to perform a buffer format before saving.
+    ///
+    /// Default: on
     #[serde(default)]
     pub format_on_save: Option<FormatOnSave>,
+    /// Whether or not to remove any trailing whitespace from lines of a buffer
+    /// before saving it.
+    ///
+    /// Default: true
     #[serde(default)]
     pub remove_trailing_whitespace_on_save: Option<bool>,
+    /// Whether or not to ensure there's a single newline at the end of a buffer
+    /// when saving it.
+    ///
+    /// Default: true
     #[serde(default)]
     pub ensure_final_newline_on_save: Option<bool>,
+    /// How to perform a buffer format.
+    ///
+    /// Default: auto
     #[serde(default)]
     pub formatter: Option<Formatter>,
+    /// Zed's Prettier integration settings.
+    /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+    /// project has no other Prettier installed.
+    ///
+    /// Default: {}
     #[serde(default)]
     pub prettier: Option<HashMap<String, serde_json::Value>>,
+    /// Whether to use language servers to provide code intelligence.
+    ///
+    /// Default: true
     #[serde(default)]
     pub enable_language_server: Option<bool>,
+    /// Controls whether copilot provides suggestion immediately (true)
+    /// or waits for a `copilot::Toggle` (false).
+    ///
+    /// Default: true
     #[serde(default)]
     pub show_copilot_suggestions: Option<bool>,
+    /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
+    /// Whether to start a new line with a comment when a previous line is a comment as well.
+    ///
+    /// Default: true
     #[serde(default)]
     pub extend_comment_on_newline: Option<bool>,
+    /// Inlay hint related settings.
     #[serde(default)]
     pub inlay_hints: Option<InlayHintSettings>,
 }
@@ -127,8 +182,11 @@ pub struct FeaturesContent {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
+    /// Do not soft wrap.
     None,
+    /// Soft wrap lines that overflow the editor
     EditorWidth,
+    /// Soft wrap lines at the preferred line length
     PreferredLineLength,
 }
 
@@ -147,18 +205,26 @@ pub enum FormatOnSave {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
+    /// Draw tabs and spaces only for the selected text.
     Selection,
+    /// Do not draw any tabs or spaces
     None,
+    /// Draw all invisible symbols
     All,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
+    /// Format files using Zed's Prettier integration (if applicable),
+    /// or falling back to formatting via language server.
     #[default]
     Auto,
+    /// Format code using the current language server.
     LanguageServer,
+    /// Format code using Zed's Prettier integration.
     Prettier,
+    /// Format code using an external command.
     External {
         command: Arc<str>,
         arguments: Arc<[String]>,
@@ -167,6 +233,9 @@ pub enum Formatter {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct InlayHintSettings {
+    /// Global switch to toggle hints on and off.
+    ///
+    /// Default: false
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_true")]
@@ -254,7 +323,7 @@ impl InlayHintKind {
     }
 }
 
-impl settings::Setting for AllLanguageSettings {
+impl settings::Settings for AllLanguageSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = AllLanguageSettingsContent;
@@ -262,7 +331,7 @@ impl settings::Setting for AllLanguageSettings {
     fn load(
         default_value: &Self::FileContent,
         user_settings: &[&Self::FileContent],
-        _: &AppContext,
+        _: &mut AppContext,
     ) -> Result<Self> {
         // A default is provided for all settings.
         let mut defaults: LanguageSettings =

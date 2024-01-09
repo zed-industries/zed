@@ -6,19 +6,23 @@ pub struct ProjectDiagnosticsSettings {
     pub include_warnings: bool,
 }
 
+/// Diagnostics configuration.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectDiagnosticsSettingsContent {
+    /// Whether to show warnings or not by default.
+    ///
+    /// Default: true
     include_warnings: Option<bool>,
 }
 
-impl settings::Setting for ProjectDiagnosticsSettings {
+impl settings::Settings for ProjectDiagnosticsSettings {
     const KEY: Option<&'static str> = Some("diagnostics");
     type FileContent = ProjectDiagnosticsSettingsContent;
 
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _cx: &gpui::AppContext,
+        _cx: &mut gpui::AppContext,
     ) -> anyhow::Result<Self>
     where
         Self: Sized,

@@ -6,12 +6,12 @@ use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use git::diff::DiffHunk;
-use gpui::{AppContext, Entity, ModelContext, ModelHandle};
+use gpui::{AppContext, EventEmitter, Model, ModelContext};
 pub use language::Completion;
 use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
-    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
+    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, Capability, CharKind, Chunk, CursorShape,
     DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
     Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
@@ -38,6 +38,9 @@ use text::{
 use theme::SyntaxTheme;
 use util::post_inc;
 
+#[cfg(any(test, feature = "test-support"))]
+use gpui::Context;
+
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -52,12 +55,13 @@ pub struct MultiBuffer {
     replica_id: ReplicaId,
     history: History,
     title: Option<String>,
+    capability: Capability,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ExcerptsAdded {
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         predecessor: ExcerptId,
         excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
     },
@@ -119,7 +123,7 @@ pub trait ToPointUtf16: 'static + fmt::Debug {
 }
 
 struct BufferState {
-    buffer: ModelHandle<Buffer>,
+    buffer: Model<Buffer>,
     last_version: clock::Global,
     last_parse_count: usize,
     last_selections_update_count: usize,
@@ -222,13 +226,14 @@ struct ExcerptBytes<'a> {
 }
 
 impl MultiBuffer {
-    pub fn new(replica_id: ReplicaId) -> Self {
+    pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
             next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: false,
+            capability,
             replica_id,
             history: History {
                 next_transaction_id: Default::default(),
@@ -268,6 +273,7 @@ impl MultiBuffer {
             next_excerpt_id: 1,
             subscriptions: Default::default(),
             singleton: self.singleton,
+            capability: self.capability,
             replica_id: self.replica_id,
             history: self.history.clone(),
             title: self.title.clone(),
@@ -279,8 +285,12 @@ impl MultiBuffer {
         self
     }
 
-    pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
-        let mut this = Self::new(buffer.read(cx).replica_id());
+    pub fn read_only(&self) -> bool {
+        self.capability == Capability::ReadOnly
+    }
+
+    pub fn singleton(buffer: Model<Buffer>, cx: &mut ModelContext<Self>) -> Self {
+        let mut this = Self::new(buffer.read(cx).replica_id(), buffer.read(cx).capability());
         this.singleton = true;
         this.push_excerpts(
             buffer,
@@ -308,7 +318,7 @@ impl MultiBuffer {
         self.snapshot.borrow()
     }
 
-    pub fn as_singleton(&self) -> Option<ModelHandle<Buffer>> {
+    pub fn as_singleton(&self) -> Option<Model<Buffer>> {
         if self.singleton {
             return Some(
                 self.buffers
@@ -681,7 +691,7 @@ impl MultiBuffer {
 
     pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &mut ModelContext<Self>)
     where
-        T: IntoIterator<Item = (&'a ModelHandle<Buffer>, &'a language::Transaction)>,
+        T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
         self.history
             .push_transaction(buffer_transactions, Instant::now(), cx);
@@ -863,19 +873,19 @@ impl MultiBuffer {
 
     pub fn stream_excerpts_with_context_lines(
         &mut self,
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         ranges: Vec<Range<text::Anchor>>,
         context_line_count: u32,
         cx: &mut ModelContext<Self>,
     ) -> mpsc::Receiver<Range<Anchor>> {
-        let (mut tx, rx) = mpsc::channel(256);
-        cx.spawn(|this, mut cx| async move {
-            let (buffer_id, buffer_snapshot) =
-                buffer.read_with(&cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
+        let (buffer_id, buffer_snapshot) =
+            buffer.update(cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
 
+        let (mut tx, rx) = mpsc::channel(256);
+        cx.spawn(move |this, mut cx| async move {
             let mut excerpt_ranges = Vec::new();
             let mut range_counts = Vec::new();
-            cx.background()
+            cx.background_executor()
                 .scoped(|scope| {
                     scope.spawn(async {
                         let (ranges, counts) =
@@ -889,9 +899,12 @@ impl MultiBuffer {
             let mut ranges = ranges.into_iter();
             let mut range_counts = range_counts.into_iter();
             for excerpt_ranges in excerpt_ranges.chunks(100) {
-                let excerpt_ids = this.update(&mut cx, |this, cx| {
+                let excerpt_ids = match this.update(&mut cx, |this, cx| {
                     this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
-                });
+                }) {
+                    Ok(excerpt_ids) => excerpt_ids,
+                    Err(_) => return,
+                };
 
                 for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.by_ref())
                 {
@@ -920,7 +933,7 @@ impl MultiBuffer {
 
     pub fn push_excerpts<O>(
         &mut self,
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         ranges: impl IntoIterator<Item = ExcerptRange<O>>,
         cx: &mut ModelContext<Self>,
     ) -> Vec<ExcerptId>
@@ -932,7 +945,7 @@ impl MultiBuffer {
 
     pub fn push_excerpts_with_context_lines<O>(
         &mut self,
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         ranges: Vec<Range<O>>,
         context_line_count: u32,
         cx: &mut ModelContext<Self>,
@@ -970,7 +983,7 @@ impl MultiBuffer {
     pub fn insert_excerpts_after<O>(
         &mut self,
         prev_excerpt_id: ExcerptId,
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         ranges: impl IntoIterator<Item = ExcerptRange<O>>,
         cx: &mut ModelContext<Self>,
     ) -> Vec<ExcerptId>
@@ -995,7 +1008,7 @@ impl MultiBuffer {
     pub fn insert_excerpts_with_ids_after<O>(
         &mut self,
         prev_excerpt_id: ExcerptId,
-        buffer: ModelHandle<Buffer>,
+        buffer: Model<Buffer>,
         ranges: impl IntoIterator<Item = (ExcerptId, ExcerptRange<O>)>,
         cx: &mut ModelContext<Self>,
     ) where
@@ -1132,7 +1145,7 @@ impl MultiBuffer {
 
     pub fn excerpts_for_buffer(
         &self,
-        buffer: &ModelHandle<Buffer>,
+        buffer: &Model<Buffer>,
         cx: &AppContext,
     ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
         let mut excerpts = Vec::new();
@@ -1169,7 +1182,7 @@ impl MultiBuffer {
         &self,
         position: impl ToOffset,
         cx: &AppContext,
-    ) -> Option<(ExcerptId, ModelHandle<Buffer>, Range<text::Anchor>)> {
+    ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
         let snapshot = self.read(cx);
         let position = position.to_offset(&snapshot);
 
@@ -1197,7 +1210,7 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &AppContext,
-    ) -> Option<(ModelHandle<Buffer>, usize, ExcerptId)> {
+    ) -> Option<(Model<Buffer>, usize, ExcerptId)> {
         let snapshot = self.read(cx);
         let offset = point.to_offset(&snapshot);
         let mut cursor = snapshot.excerpts.cursor::<usize>();
@@ -1219,7 +1232,7 @@ impl MultiBuffer {
         &self,
         range: Range<T>,
         cx: &AppContext,
-    ) -> Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)> {
+    ) -> Vec<(Model<Buffer>, Range<usize>, ExcerptId)> {
         let snapshot = self.read(cx);
         let start = range.start.to_offset(&snapshot);
         let end = range.end.to_offset(&snapshot);
@@ -1377,7 +1390,7 @@ impl MultiBuffer {
         &self,
         position: T,
         cx: &AppContext,
-    ) -> Option<(ModelHandle<Buffer>, language::Anchor)> {
+    ) -> Option<(Model<Buffer>, language::Anchor)> {
         let snapshot = self.read(cx);
         let anchor = snapshot.anchor_before(position);
         let buffer = self
@@ -1391,7 +1404,7 @@ impl MultiBuffer {
 
     fn on_buffer_event(
         &mut self,
-        _: ModelHandle<Buffer>,
+        _: Model<Buffer>,
         event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1414,7 +1427,7 @@ impl MultiBuffer {
         });
     }
 
-    pub fn all_buffers(&self) -> HashSet<ModelHandle<Buffer>> {
+    pub fn all_buffers(&self) -> HashSet<Model<Buffer>> {
         self.buffers
             .borrow()
             .values()
@@ -1422,7 +1435,7 @@ impl MultiBuffer {
             .collect()
     }
 
-    pub fn buffer(&self, buffer_id: u64) -> Option<ModelHandle<Buffer>> {
+    pub fn buffer(&self, buffer_id: u64) -> Option<Model<Buffer>> {
         self.buffers
             .borrow()
             .get(&buffer_id)
@@ -1487,7 +1500,7 @@ impl MultiBuffer {
         language_settings(language.as_ref(), file, cx)
     }
 
-    pub fn for_each_buffer(&self, mut f: impl FnMut(&ModelHandle<Buffer>)) {
+    pub fn for_each_buffer(&self, mut f: impl FnMut(&Model<Buffer>)) {
         self.buffers
             .borrow()
             .values()
@@ -1642,18 +1655,18 @@ impl MultiBuffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBuffer {
-    pub fn build_simple(text: &str, cx: &mut gpui::AppContext) -> ModelHandle<Self> {
-        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text));
-        cx.add_model(|cx| Self::singleton(buffer, cx))
+    pub fn build_simple(text: &str, cx: &mut gpui::AppContext) -> Model<Self> {
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
+        cx.new_model(|cx| Self::singleton(buffer, cx))
     }
 
     pub fn build_multi<const COUNT: usize>(
         excerpts: [(&str, Vec<Range<Point>>); COUNT],
         cx: &mut gpui::AppContext,
-    ) -> ModelHandle<Self> {
-        let multi = cx.add_model(|_| Self::new(0));
+    ) -> Model<Self> {
+        let multi = cx.new_model(|_| Self::new(0, Capability::ReadWrite));
         for (text, ranges) in excerpts {
-            let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text));
+            let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
             let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
                 context: range,
                 primary: None,
@@ -1666,16 +1679,13 @@ impl MultiBuffer {
         multi
     }
 
-    pub fn build_from_buffer(
-        buffer: ModelHandle<Buffer>,
-        cx: &mut gpui::AppContext,
-    ) -> ModelHandle<Self> {
-        cx.add_model(|cx| Self::singleton(buffer, cx))
+    pub fn build_from_buffer(buffer: Model<Buffer>, cx: &mut gpui::AppContext) -> Model<Self> {
+        cx.new_model(|cx| Self::singleton(buffer, cx))
     }
 
-    pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::AppContext) -> ModelHandle<Self> {
-        cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
+    pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::AppContext) -> Model<Self> {
+        cx.new_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
             let mutation_count = rng.gen_range(1..=5);
             multibuffer.randomly_edit_excerpts(rng, mutation_count, cx);
             multibuffer
@@ -1745,7 +1755,7 @@ impl MultiBuffer {
             if excerpt_ids.is_empty() || (rng.gen() && excerpt_ids.len() < max_excerpts) {
                 let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
-                    buffers.push(cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text)));
+                    buffers.push(cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text)));
                     let buffer = buffers.last().unwrap().read(cx);
                     log::info!(
                         "Creating new buffer {} with text: {:?}",
@@ -1868,9 +1878,7 @@ impl MultiBuffer {
     }
 }
 
-impl Entity for MultiBuffer {
-    type Event = Event;
-}
+impl EventEmitter<Event> for MultiBuffer {}
 
 impl MultiBufferSnapshot {
     pub fn text(&self) -> String {
@@ -3405,7 +3413,7 @@ impl History {
         now: Instant,
         cx: &mut ModelContext<MultiBuffer>,
     ) where
-        T: IntoIterator<Item = (&'a ModelHandle<Buffer>, &'a language::Transaction)>,
+        T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
         assert_eq!(self.transaction_depth, 0);
         let transaction = Transaction {
@@ -4131,18 +4139,19 @@ where
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, Context, TestAppContext};
     use language::{Buffer, Rope};
+    use parking_lot::RwLock;
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{env, rc::Rc};
+    use std::env;
     use util::test::sample_text;
 
     #[gpui::test]
     fn test_singleton(cx: &mut AppContext) {
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(6, 6, 'a')));
-        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(6, 6, 'a')));
+        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), buffer.read(cx).text());
@@ -4168,13 +4177,13 @@ mod tests {
 
     #[gpui::test]
     fn test_remote(cx: &mut AppContext) {
-        let host_buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "a"));
-        let guest_buffer = cx.add_model(|cx| {
+        let host_buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "a"));
+        let guest_buffer = cx.new_model(|cx| {
             let state = host_buffer.read(cx).to_proto();
             let ops = cx
-                .background()
+                .background_executor()
                 .block(host_buffer.read(cx).serialize_ops(None, cx));
-            let mut buffer = Buffer::from_proto(1, state, None).unwrap();
+            let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
             buffer
                 .apply_ops(
                     ops.into_iter()
@@ -4184,7 +4193,7 @@ mod tests {
                 .unwrap();
             buffer
         });
-        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));
+        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "a");
 
@@ -4200,17 +4209,17 @@ mod tests {
     #[gpui::test]
     fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
         let buffer_1 =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(6, 6, 'a')));
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(6, 6, 'a')));
         let buffer_2 =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(6, 6, 'g')));
-        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(6, 6, 'g')));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
-        let events = Rc::new(RefCell::new(Vec::<Event>::new()));
+        let events = Arc::new(RwLock::new(Vec::<Event>::new()));
         multibuffer.update(cx, |_, cx| {
             let events = events.clone();
             cx.subscribe(&multibuffer, move |_, _, event, _| {
                 if let Event::Edited { .. } = event {
-                    events.borrow_mut().push(event.clone())
+                    events.write().push(event.clone())
                 }
             })
             .detach();
@@ -4263,7 +4272,7 @@ mod tests {
 
         // Adding excerpts emits an edited event.
         assert_eq!(
-            events.borrow().as_slice(),
+            events.read().as_slice(),
             &[
                 Event::Edited {
                     sigleton_buffer_edited: false
@@ -4436,13 +4445,13 @@ mod tests {
     #[gpui::test]
     fn test_excerpt_events(cx: &mut AppContext) {
         let buffer_1 =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(10, 3, 'a')));
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(10, 3, 'a')));
         let buffer_2 =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(10, 3, 'm')));
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(10, 3, 'm')));
 
-        let leader_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
-        let follower_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
-        let follower_edit_event_count = Rc::new(RefCell::new(0));
+        let leader_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let follower_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let follower_edit_event_count = Arc::new(RwLock::new(0));
 
         follower_multibuffer.update(cx, |_, cx| {
             let follower_edit_event_count = follower_edit_event_count.clone();
@@ -4456,7 +4465,7 @@ mod tests {
                     } => follower.insert_excerpts_with_ids_after(predecessor, buffer, excerpts, cx),
                     Event::ExcerptsRemoved { ids } => follower.remove_excerpts(ids, cx),
                     Event::Edited { .. } => {
-                        *follower_edit_event_count.borrow_mut() += 1;
+                        *follower_edit_event_count.write() += 1;
                     }
                     _ => {}
                 },
@@ -4499,7 +4508,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
-        assert_eq!(*follower_edit_event_count.borrow(), 2);
+        assert_eq!(*follower_edit_event_count.read(), 2);
 
         leader_multibuffer.update(cx, |leader, cx| {
             let excerpt_ids = leader.excerpt_ids();
@@ -4509,7 +4518,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
-        assert_eq!(*follower_edit_event_count.borrow(), 3);
+        assert_eq!(*follower_edit_event_count.read(), 3);
 
         // Removing an empty set of excerpts is a noop.
         leader_multibuffer.update(cx, |leader, cx| {
@@ -4519,7 +4528,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
-        assert_eq!(*follower_edit_event_count.borrow(), 3);
+        assert_eq!(*follower_edit_event_count.read(), 3);
 
         // Adding an empty set of excerpts is a noop.
         leader_multibuffer.update(cx, |leader, cx| {
@@ -4529,7 +4538,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
-        assert_eq!(*follower_edit_event_count.borrow(), 3);
+        assert_eq!(*follower_edit_event_count.read(), 3);
 
         leader_multibuffer.update(cx, |leader, cx| {
             leader.clear(cx);
@@ -4538,14 +4547,14 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
-        assert_eq!(*follower_edit_event_count.borrow(), 4);
+        assert_eq!(*follower_edit_event_count.read(), 4);
     }
 
     #[gpui::test]
     fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(20, 3, 'a')));
-        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(20, 3, 'a')));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts_with_context_lines(
                 buffer.clone(),
@@ -4581,8 +4590,8 @@ mod tests {
     #[gpui::test]
     async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(20, 3, 'a')));
-        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), sample_text(20, 3, 'a')));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = buffer.read(cx);
             let ranges = vec![
@@ -4596,7 +4605,7 @@ mod tests {
 
         let anchor_ranges = anchor_ranges.collect::<Vec<_>>().await;
 
-        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         assert_eq!(
             snapshot.text(),
             "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\nrrr\n"
@@ -4617,7 +4626,7 @@ mod tests {
 
     #[gpui::test]
     fn test_empty_multibuffer(cx: &mut AppContext) {
-        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "");
@@ -4627,8 +4636,8 @@ mod tests {
 
     #[gpui::test]
     fn test_singleton_multibuffer_anchors(cx: &mut AppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abcd"));
-        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
+        let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "X")], None, cx);
@@ -4647,10 +4656,10 @@ mod tests {
 
     #[gpui::test]
     fn test_multibuffer_anchors(cx: &mut AppContext) {
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abcd"));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "efghi"));
-        let multibuffer = cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
+        let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
+        let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "efghi"));
+        let multibuffer = cx.new_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [ExcerptRange {
@@ -4705,9 +4714,10 @@ mod tests {
 
     #[gpui::test]
     fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abcd"));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "ABCDEFGHIJKLMNOP"));
-        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcd"));
+        let buffer_2 =
+            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "ABCDEFGHIJKLMNOP"));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
         // Add an excerpt from buffer 1 that spans this new insertion.
@@ -4840,10 +4850,10 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
-        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let mut buffers: Vec<Model<Buffer>> = Vec::new();
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let mut excerpt_ids = Vec::<ExcerptId>::new();
-        let mut expected_excerpts = Vec::<(ModelHandle<Buffer>, Range<text::Anchor>)>::new();
+        let mut expected_excerpts = Vec::<(Model<Buffer>, Range<text::Anchor>)>::new();
         let mut anchors = Vec::new();
         let mut old_versions = Vec::new();
 
@@ -4918,7 +4928,7 @@ mod tests {
                             .take(10)
                             .collect::<String>();
                         buffers.push(
-                            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, base_text)),
+                            cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), base_text)),
                         );
                         buffers.last().unwrap()
                     } else {
@@ -5258,11 +5268,12 @@ mod tests {
 
     #[gpui::test]
     fn test_history(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let test_settings = SettingsStore::test(cx);
+        cx.set_global(test_settings);
 
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "1234"));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "5678"));
-        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "1234"));
+        let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "5678"));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let group_interval = multibuffer.read(cx).history.group_interval;
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(

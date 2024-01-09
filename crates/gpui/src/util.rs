@@ -1,13 +1,15 @@
+#[cfg(any(test, feature = "test-support"))]
+use std::time::Duration;
+
+#[cfg(any(test, feature = "test-support"))]
+use futures::Future;
+
+#[cfg(any(test, feature = "test-support"))]
 use smol::future::FutureExt;
-use std::{future::Future, time::Duration};
+
 pub use util::*;
 
-pub fn post_inc(value: &mut usize) -> usize {
-    let prev = *value;
-    *value += 1;
-    prev
-}
-
+#[cfg(any(test, feature = "test-support"))]
 pub async fn timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
 where
     F: Future<Output = T>,

@@ -1,108 +1,77 @@
+use editor::Editor;
 use gpui::{
-    elements::*, platform::MouseButton, AppContext, Entity, Subscription, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    Element, EventEmitter, IntoElement, ParentElement, Render, StyledText, Subscription,
+    ViewContext,
 };
 use itertools::Itertools;
-use search::ProjectSearchView;
+use theme::ActiveTheme;
+use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
 use workspace::{
     item::{ItemEvent, ItemHandle},
-    ToolbarItemLocation, ToolbarItemView, Workspace,
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
-
-pub enum Event {
-    UpdateLocation,
-}
 
 pub struct Breadcrumbs {
     pane_focused: bool,
     active_item: Option<Box<dyn ItemHandle>>,
-    project_search: Option<ViewHandle<ProjectSearchView>>,
     subscription: Option<Subscription>,
-    workspace: WeakViewHandle<Workspace>,
 }
 
 impl Breadcrumbs {
-    pub fn new(workspace: &Workspace) -> Self {
+    pub fn new() -> Self {
         Self {
             pane_focused: false,
             active_item: Default::default(),
             subscription: Default::default(),
-            project_search: Default::default(),
-            workspace: workspace.weak_handle(),
         }
     }
 }
 
-impl Entity for Breadcrumbs {
-    type Event = Event;
-}
+impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
-impl View for Breadcrumbs {
-    fn ui_name() -> &'static str {
-        "Breadcrumbs"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let active_item = match &self.active_item {
-            Some(active_item) => active_item,
-            None => return Empty::new().into_any(),
+impl Render for Breadcrumbs {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let element = h_stack().text_ui();
+        let Some(active_item) = self.active_item.as_ref() else {
+            return element;
         };
-        let not_editor = active_item.downcast::<editor::Editor>().is_none();
+        let Some(segments) = active_item.breadcrumbs(cx.theme(), cx) else {
+            return element;
+        };
 
-        let theme = theme::current(cx).clone();
-        let style = &theme.workspace.toolbar.breadcrumbs;
+        let highlighted_segments = segments.into_iter().map(|segment| {
+            let mut text_style = cx.text_style();
+            text_style.color = Color::Muted.color(cx);
 
-        let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {
-            Some(breadcrumbs) => breadcrumbs,
-            None => return Empty::new().into_any(),
-        }
-        .into_iter()
-        .map(|breadcrumb| {
-            Text::new(
-                breadcrumb.text,
-                theme.workspace.toolbar.breadcrumbs.default.text.clone(),
-            )
-            .with_highlights(breadcrumb.highlights.unwrap_or_default())
-            .into_any()
+            StyledText::new(segment.text)
+                .with_highlights(&text_style, segment.highlights.unwrap_or_default())
+                .into_any()
+        });
+        let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
+            Label::new("›").color(Color::Muted).into_any_element()
         });
 
-        let crumbs = Flex::row()
-            .with_children(Itertools::intersperse_with(breadcrumbs, || {
-                Label::new(" › ", style.default.text.clone()).into_any()
-            }))
-            .constrained()
-            .with_height(theme.workspace.toolbar.breadcrumb_height)
-            .contained();
-
-        if not_editor || !self.pane_focused {
-            return crumbs
-                .with_style(style.default.container)
-                .aligned()
-                .left()
-                .into_any();
+        let breadcrumbs_stack = h_stack().gap_1().children(breadcrumbs);
+        match active_item
+            .downcast::<Editor>()
+            .map(|editor| editor.downgrade())
+        {
+            Some(editor) => element.child(
+                ButtonLike::new("toggle outline view")
+                    .child(breadcrumbs_stack)
+                    .style(ButtonStyle::Subtle)
+                    .on_click(move |_, cx| {
+                        if let Some(editor) = editor.upgrade() {
+                            outline::toggle(editor, &outline::Toggle, cx)
+                        }
+                    })
+                    .tooltip(|cx| Tooltip::for_action("Show symbol outline", &outline::Toggle, cx)),
+            ),
+            None => element
+                // Match the height of the `ButtonLike` in the other arm.
+                .h(rems(22. / 16.))
+                .child(breadcrumbs_stack),
         }
-
-        MouseEventHandler::new::<Breadcrumbs, _>(0, cx, |state, _| {
-            let style = style.style_for(state);
-            crumbs.with_style(style.container)
-        })
-        .on_click(MouseButton::Left, |_, this, cx| {
-            if let Some(workspace) = this.workspace.upgrade(cx) {
-                workspace.update(cx, |workspace, cx| {
-                    outline::toggle(workspace, &Default::default(), cx)
-                })
-            }
-        })
-        .with_tooltip::<Breadcrumbs>(
-            0,
-            "Show symbol outline".to_owned(),
-            Some(Box::new(outline::Toggle)),
-            theme.tooltip.clone(),
-            cx,
-        )
-        .aligned()
-        .left()
-        .into_any()
     }
 }
 
@@ -114,19 +83,21 @@ impl ToolbarItemView for Breadcrumbs {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
-        self.project_search = None;
         if let Some(item) = active_pane_item {
-            let this = cx.weak_handle();
+            let this = cx.view().downgrade();
             self.subscription = Some(item.subscribe_to_item_events(
                 cx,
                 Box::new(move |event, cx| {
-                    if let Some(this) = this.upgrade(cx) {
-                        if let ItemEvent::UpdateBreadcrumbs = event {
-                            this.update(cx, |_, cx| {
-                                cx.emit(Event::UpdateLocation);
-                                cx.notify();
-                            });
-                        }
+                    if let ItemEvent::UpdateBreadcrumbs = event {
+                        this.update(cx, |this, cx| {
+                            cx.notify();
+                            if let Some(active_item) = this.active_item.as_ref() {
+                                cx.emit(ToolbarItemEvent::ChangeLocation(
+                                    active_item.breadcrumb_location(cx),
+                                ))
+                            }
+                        })
+                        .ok();
                     }
                 }),
             ));
@@ -134,19 +105,6 @@ impl ToolbarItemView for Breadcrumbs {
             item.breadcrumb_location(cx)
         } else {
             ToolbarItemLocation::Hidden
-        }
-    }
-
-    fn location_for_event(
-        &self,
-        _: &Event,
-        current_location: ToolbarItemLocation,
-        cx: &AppContext,
-    ) -> ToolbarItemLocation {
-        if let Some(active_item) = self.active_item.as_ref() {
-            active_item.breadcrumb_location(cx)
-        } else {
-            current_location
         }
     }
 

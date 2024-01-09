@@ -16,6 +16,7 @@ test-support = [
     "settings/test-support",
     "text/test-support",
     "prettier/test-support",
+    "gpui/test-support",
 ]
 
 [dependencies]
@@ -27,7 +28,7 @@ collections = { path = "../collections" }
 db = { path = "../db" }
 fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
-fuzzy = { path = "../fuzzy" }
+fuzzy = {  path = "../fuzzy" }
 git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }

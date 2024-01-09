@@ -17,12 +17,14 @@ language = { path = "../language" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 gpui = { path = "../gpui" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 lsp = { path = "../lsp" }
 futures.workspace = true
 serde.workspace = true
 anyhow.workspace = true
 tree-sitter.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

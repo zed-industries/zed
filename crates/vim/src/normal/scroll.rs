@@ -4,29 +4,29 @@ use editor::{
     scroll::{scroll_amount::ScrollAmount, VERTICAL_SCROLL_MARGIN},
     DisplayPoint, Editor,
 };
-use gpui::{actions, AppContext, ViewContext};
+use gpui::{actions, ViewContext};
 use language::Bias;
 use workspace::Workspace;
 
 actions!(
     vim,
-    [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown,]
+    [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
 );
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(|_: &mut Workspace, _: &LineDown, cx| {
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &LineDown, cx| {
         scroll(cx, false, |c| ScrollAmount::Line(c.unwrap_or(1.)))
     });
-    cx.add_action(|_: &mut Workspace, _: &LineUp, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &LineUp, cx| {
         scroll(cx, false, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
     });
-    cx.add_action(|_: &mut Workspace, _: &PageDown, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &PageDown, cx| {
         scroll(cx, false, |c| ScrollAmount::Page(c.unwrap_or(1.)))
     });
-    cx.add_action(|_: &mut Workspace, _: &PageUp, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &PageUp, cx| {
         scroll(cx, false, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
     });
-    cx.add_action(|_: &mut Workspace, _: &ScrollDown, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &ScrollDown, cx| {
         scroll(cx, true, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(c)
@@ -35,7 +35,7 @@ pub fn init(cx: &mut AppContext) {
             }
         })
     });
-    cx.add_action(|_: &mut Workspace, _: &ScrollUp, cx| {
+    workspace.register_action(|_: &mut Workspace, _: &ScrollUp, cx| {
         scroll(cx, true, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(-c)
@@ -114,7 +114,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use gpui::geometry::vector::vec2f;
+    use gpui::{point, px, size, Context};
     use indoc::indoc;
     use language::Point;
 
@@ -122,10 +122,27 @@ mod test {
     async fn test_scroll(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
+        let (line_height, visible_line_count) = cx.editor(|editor, cx| {
+            (
+                editor
+                    .style()
+                    .unwrap()
+                    .text
+                    .line_height_in_pixels(cx.rem_size()),
+                editor.visible_line_count().unwrap(),
+            )
+        });
+
         let window = cx.window;
-        let line_height =
-            cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
-        window.simulate_resize(vec2f(1000., 8.0 * line_height - 1.0), &mut cx);
+        let margin = cx
+            .update_window(window, |_, cx| {
+                cx.viewport_size().height - line_height * visible_line_count
+            })
+            .unwrap();
+        cx.simulate_window_resize(
+            cx.window,
+            size(px(1000.), margin + 8. * line_height - px(1.0)),
+        );
 
         cx.set_state(
             indoc!(
@@ -147,29 +164,29 @@ mod test {
         );
 
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
         });
         cx.simulate_keystrokes(["ctrl-e"]);
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 1.))
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 1.))
         });
         cx.simulate_keystrokes(["2", "ctrl-e"]);
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.))
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.))
         });
         cx.simulate_keystrokes(["ctrl-y"]);
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.))
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 2.))
         });
 
         // does not select in normal mode
         cx.simulate_keystrokes(["g", "g"]);
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
         });
         cx.simulate_keystrokes(["ctrl-d"]);
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.0));
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
             assert_eq!(
                 editor.selections.newest(cx).range(),
                 Point::new(6, 0)..Point::new(6, 0)
@@ -179,11 +196,11 @@ mod test {
         // does select in visual mode
         cx.simulate_keystrokes(["g", "g"]);
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 0.))
         });
         cx.simulate_keystrokes(["v", "ctrl-d"]);
         cx.update_editor(|editor, cx| {
-            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.0));
+            assert_eq!(editor.snapshot(cx).scroll_position(), point(0., 3.0));
             assert_eq!(
                 editor.selections.newest(cx).range(),
                 Point::new(0, 0)..Point::new(6, 1)

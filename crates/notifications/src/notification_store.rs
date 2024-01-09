@@ -1,25 +1,25 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task};
 use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
 use util::ResultExt;
 
-pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
-    let notification_store = cx.add_model(|cx| NotificationStore::new(client, user_store, cx));
+pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
+    let notification_store = cx.new_model(|cx| NotificationStore::new(client, user_store, cx));
     cx.set_global(notification_store);
 }
 
 pub struct NotificationStore {
     client: Arc<Client>,
-    user_store: ModelHandle<UserStore>,
+    user_store: Model<UserStore>,
     channel_messages: HashMap<u64, ChannelMessage>,
-    channel_store: ModelHandle<ChannelStore>,
+    channel_store: Model<ChannelStore>,
     notifications: SumTree<NotificationEntry>,
     loaded_all_notifications: bool,
     _watch_connection_status: Task<Option<()>>,
@@ -69,27 +69,31 @@ struct UnreadCount(usize);
 struct NotificationId(u64);
 
 impl NotificationStore {
-    pub fn global(cx: &AppContext) -> ModelHandle<Self> {
-        cx.global::<ModelHandle<Self>>().clone()
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        cx.global::<Model<Self>>().clone()
     }
 
     pub fn new(
         client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
+        user_store: Model<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut connection_status = client.status();
-        let watch_connection_status = cx.spawn_weak(|this, mut cx| async move {
+        let watch_connection_status = cx.spawn(|this, mut cx| async move {
             while let Some(status) = connection_status.next().await {
-                let this = this.upgrade(&cx)?;
+                let this = this.upgrade()?;
                 match status {
                     client::Status::Connected { .. } => {
-                        if let Some(task) = this.update(&mut cx, |this, cx| this.handle_connect(cx))
+                        if let Some(task) = this
+                            .update(&mut cx, |this, cx| this.handle_connect(cx))
+                            .log_err()?
                         {
                             task.await.log_err()?;
                         }
                     }
-                    _ => this.update(&mut cx, |this, cx| this.handle_disconnect(cx)),
+                    _ => this
+                        .update(&mut cx, |this, cx| this.handle_disconnect(cx))
+                        .log_err()?,
                 }
             }
             Some(())
@@ -102,8 +106,8 @@ impl NotificationStore {
             channel_messages: Default::default(),
             _watch_connection_status: watch_connection_status,
             _subscriptions: vec![
-                client.add_message_handler(cx.handle(), Self::handle_new_notification),
-                client.add_message_handler(cx.handle(), Self::handle_delete_notification),
+                client.add_message_handler(cx.weak_model(), Self::handle_new_notification),
+                client.add_message_handler(cx.weak_model(), Self::handle_delete_notification),
             ],
             user_store,
             client,
@@ -161,10 +165,14 @@ impl NotificationStore {
         };
         let request = self.client.request(proto::GetNotifications { before_id });
         Some(cx.spawn(|this, mut cx| async move {
+            let this = this
+                .upgrade()
+                .context("Notification store was dropped while loading notifications")?;
+
             let response = request.await?;
             this.update(&mut cx, |this, _| {
                 this.loaded_all_notifications = response.done
-            });
+            })?;
             Self::add_notifications(
                 this,
                 response.notifications,
@@ -192,7 +200,7 @@ impl NotificationStore {
     }
 
     async fn handle_new_notification(
-        this: ModelHandle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::AddNotification>,
         _: Arc<Client>,
         cx: AsyncAppContext,
@@ -211,7 +219,7 @@ impl NotificationStore {
     }
 
     async fn handle_delete_notification(
-        this: ModelHandle<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::DeleteNotification>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -219,11 +227,11 @@ impl NotificationStore {
         this.update(&mut cx, |this, cx| {
             this.splice_notifications([(envelope.payload.notification_id, None)], false, cx);
             Ok(())
-        })
+        })?
     }
 
     async fn add_notifications(
-        this: ModelHandle<Self>,
+        this: Model<Self>,
         notifications: Vec<proto::Notification>,
         options: AddNotificationsOptions,
         mut cx: AsyncAppContext,
@@ -276,15 +284,15 @@ impl NotificationStore {
 
         let (user_store, channel_store) = this.read_with(&cx, |this, _| {
             (this.user_store.clone(), this.channel_store.clone())
-        });
+        })?;
 
         user_store
-            .update(&mut cx, |store, cx| store.get_users(user_ids, cx))
+            .update(&mut cx, |store, cx| store.get_users(user_ids, cx))?
             .await?;
         let messages = channel_store
             .update(&mut cx, |store, cx| {
                 store.fetch_channel_messages(message_ids, cx)
-            })
+            })?
             .await?;
         this.update(&mut cx, |this, cx| {
             if options.clear_old {
@@ -317,7 +325,8 @@ impl NotificationStore {
                 options.is_new,
                 cx,
             );
-        });
+        })
+        .log_err();
 
         Ok(())
     }
@@ -407,9 +416,7 @@ impl NotificationStore {
     }
 }
 
-impl Entity for NotificationStore {
-    type Event = NotificationEvent;
-}
+impl EventEmitter<NotificationEvent> for NotificationStore {}
 
 impl sum_tree::Item for NotificationEntry {
     type Summary = NotificationSummary;

@@ -1,155 +1,152 @@
-use assistant::{assistant_panel::InlineAssist, AssistantPanel};
+use assistant::{AssistantPanel, InlineAssist};
 use editor::Editor;
+
 use gpui::{
-    elements::{Empty, Flex, MouseEventHandler, ParentElement, Svg},
-    platform::{CursorStyle, MouseButton},
-    Action, AnyElement, Element, Entity, EventContext, Subscription, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    Action, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Styled,
+    Subscription, View, ViewContext, WeakView,
+};
+use search::{buffer_search, BufferSearchBar};
+use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
+use workspace::{
+    item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
-use search::{buffer_search, BufferSearchBar};
-use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView, Workspace};
-
 pub struct QuickActionBar {
-    buffer_search_bar: ViewHandle<BufferSearchBar>,
+    buffer_search_bar: View<BufferSearchBar>,
     active_item: Option<Box<dyn ItemHandle>>,
-    inlay_hints_enabled_subscription: Option<Subscription>,
-    workspace: WeakViewHandle<Workspace>,
+    _inlay_hints_enabled_subscription: Option<Subscription>,
+    workspace: WeakView<Workspace>,
 }
 
 impl QuickActionBar {
-    pub fn new(buffer_search_bar: ViewHandle<BufferSearchBar>, workspace: &Workspace) -> Self {
+    pub fn new(buffer_search_bar: View<BufferSearchBar>, workspace: &Workspace) -> Self {
         Self {
             buffer_search_bar,
             active_item: None,
-            inlay_hints_enabled_subscription: None,
+            _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
         }
     }
 
-    fn active_editor(&self) -> Option<ViewHandle<Editor>> {
+    fn active_editor(&self) -> Option<View<Editor>> {
         self.active_item
             .as_ref()
             .and_then(|item| item.downcast::<Editor>())
     }
 }
 
-impl Entity for QuickActionBar {
-    type Event = ();
-}
-
-impl View for QuickActionBar {
-    fn ui_name() -> &'static str {
-        "QuickActionsBar"
-    }
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
+impl Render for QuickActionBar {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
-            return Empty::new().into_any();
+            return div().id("empty quick action bar");
         };
 
-        let mut bar = Flex::row();
-        if editor.read(cx).supports_inlay_hints(cx) {
-            bar = bar.with_child(render_quick_action_bar_button(
-                0,
-                "icons/inlay_hint.svg",
-                editor.read(cx).inlay_hints_enabled(),
-                (
-                    "Toggle Inlay Hints".to_string(),
-                    Some(Box::new(editor::ToggleInlayHints)),
-                ),
-                cx,
-                |this, cx| {
-                    if let Some(editor) = this.active_editor() {
-                        editor.update(cx, |editor, cx| {
-                            editor.toggle_inlay_hints(&editor::ToggleInlayHints, cx);
-                        });
-                    }
-                },
-            ));
-        }
-
-        if editor.read(cx).buffer().read(cx).is_singleton() {
-            let search_bar_shown = !self.buffer_search_bar.read(cx).is_dismissed();
-            let search_action = buffer_search::Deploy { focus: true };
-
-            bar = bar.with_child(render_quick_action_bar_button(
-                1,
-                "icons/magnifying_glass.svg",
-                search_bar_shown,
-                (
-                    "Buffer Search".to_string(),
-                    Some(Box::new(search_action.clone())),
-                ),
-                cx,
-                move |this, cx| {
-                    this.buffer_search_bar.update(cx, |buffer_search_bar, cx| {
-                        if search_bar_shown {
-                            buffer_search_bar.dismiss(&buffer_search::Dismiss, cx);
-                        } else {
-                            buffer_search_bar.deploy(&search_action, cx);
-                        }
-                    });
-                },
-            ));
-        }
-
-        bar.add_child(render_quick_action_bar_button(
-            2,
-            "icons/magic-wand.svg",
-            false,
-            ("Inline Assist".into(), Some(Box::new(InlineAssist))),
-            cx,
-            move |this, cx| {
-                if let Some(workspace) = this.workspace.upgrade(cx) {
-                    workspace.update(cx, |workspace, cx| {
-                        AssistantPanel::inline_assist(workspace, &Default::default(), cx);
+        let inlay_hints_button = Some(QuickActionBarButton::new(
+            "toggle inlay hints",
+            IconName::InlayHint,
+            editor.read(cx).inlay_hints_enabled(),
+            Box::new(editor::ToggleInlayHints),
+            "Toggle Inlay Hints",
+            {
+                let editor = editor.clone();
+                move |_, cx| {
+                    editor.update(cx, |editor, cx| {
+                        editor.toggle_inlay_hints(&editor::ToggleInlayHints, cx);
                     });
                 }
             },
-        ));
+        ))
+        .filter(|_| editor.read(cx).supports_inlay_hints(cx));
 
-        bar.into_any()
+        let search_button = Some(QuickActionBarButton::new(
+            "toggle buffer search",
+            IconName::MagnifyingGlass,
+            !self.buffer_search_bar.read(cx).is_dismissed(),
+            Box::new(buffer_search::Deploy { focus: false }),
+            "Buffer Search",
+            {
+                let buffer_search_bar = self.buffer_search_bar.clone();
+                move |_, cx| {
+                    buffer_search_bar.update(cx, |search_bar, cx| {
+                        search_bar.toggle(&buffer_search::Deploy { focus: true }, cx)
+                    });
+                }
+            },
+        ))
+        .filter(|_| editor.is_singleton(cx));
+
+        let assistant_button = QuickActionBarButton::new(
+            "toggle inline assistant",
+            IconName::MagicWand,
+            false,
+            Box::new(InlineAssist),
+            "Inline Assist",
+            {
+                let workspace = self.workspace.clone();
+                move |_, cx| {
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            AssistantPanel::inline_assist(workspace, &InlineAssist, cx);
+                        });
+                    }
+                }
+            },
+        );
+
+        h_stack()
+            .id("quick action bar")
+            .gap_2()
+            .children(inlay_hints_button)
+            .children(search_button)
+            .child(assistant_button)
     }
 }
 
-fn render_quick_action_bar_button<
-    F: 'static + Fn(&mut QuickActionBar, &mut EventContext<QuickActionBar>),
->(
-    index: usize,
-    icon: &'static str,
+impl EventEmitter<ToolbarItemEvent> for QuickActionBar {}
+
+#[derive(IntoElement)]
+struct QuickActionBarButton {
+    id: ElementId,
+    icon: IconName,
     toggled: bool,
-    tooltip: (String, Option<Box<dyn Action>>),
-    cx: &mut ViewContext<QuickActionBar>,
-    on_click: F,
-) -> AnyElement<QuickActionBar> {
-    enum QuickActionBarButton {}
+    action: Box<dyn Action>,
+    tooltip: SharedString,
+    on_click: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
+}
 
-    let theme = theme::current(cx);
-    let (tooltip_text, action) = tooltip;
+impl QuickActionBarButton {
+    fn new(
+        id: impl Into<ElementId>,
+        icon: IconName,
+        toggled: bool,
+        action: Box<dyn Action>,
+        tooltip: impl Into<SharedString>,
+        on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            icon,
+            toggled,
+            action,
+            tooltip: tooltip.into(),
+            on_click: Box::new(on_click),
+        }
+    }
+}
 
-    MouseEventHandler::new::<QuickActionBarButton, _>(index, cx, |mouse_state, _| {
-        let style = theme
-            .workspace
-            .toolbar
-            .toggleable_tool
-            .in_state(toggled)
-            .style_for(mouse_state);
-        Svg::new(icon)
-            .with_color(style.color)
-            .constrained()
-            .with_width(style.icon_width)
-            .aligned()
-            .constrained()
-            .with_width(style.button_width)
-            .with_height(style.button_width)
-            .contained()
-            .with_style(style.container)
-    })
-    .with_cursor_style(CursorStyle::PointingHand)
-    .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx))
-    .with_tooltip::<QuickActionBarButton>(index, tooltip_text, action, theme.tooltip.clone(), cx)
-    .into_any_named("quick action bar button")
+impl RenderOnce for QuickActionBarButton {
+    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+        let tooltip = self.tooltip.clone();
+        let action = self.action.boxed_clone();
+
+        IconButton::new(self.id.clone(), self.icon)
+            .size(ButtonSize::Compact)
+            .icon_size(IconSize::Small)
+            .style(ButtonStyle::Subtle)
+            .selected(self.toggled)
+            .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+            .on_click(move |event, cx| (self.on_click)(event, cx))
+    }
 }
 
 impl ToolbarItemView for QuickActionBar {
@@ -161,12 +158,12 @@ impl ToolbarItemView for QuickActionBar {
         match active_pane_item {
             Some(active_item) => {
                 self.active_item = Some(active_item.boxed_clone());
-                self.inlay_hints_enabled_subscription.take();
+                self._inlay_hints_enabled_subscription.take();
 
                 if let Some(editor) = active_item.downcast::<Editor>() {
                     let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                     let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
-                    self.inlay_hints_enabled_subscription =
+                    self._inlay_hints_enabled_subscription =
                         Some(cx.observe(&editor, move |_, editor, cx| {
                             let editor = editor.read(cx);
                             let new_inlay_hints_enabled = editor.inlay_hints_enabled();
@@ -179,7 +176,7 @@ impl ToolbarItemView for QuickActionBar {
                                 cx.notify()
                             }
                         }));
-                    ToolbarItemLocation::PrimaryRight { flex: None }
+                    ToolbarItemLocation::PrimaryRight
                 } else {
                     ToolbarItemLocation::Hidden
                 }

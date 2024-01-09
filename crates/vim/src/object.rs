@@ -6,7 +6,7 @@ use editor::{
     movement::{self, FindRange},
     Bias, CharKind, DisplayPoint,
 };
-use gpui::{actions, impl_actions, AppContext, WindowContext};
+use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::Selection;
 use serde::Deserialize;
 use workspace::Workspace;
@@ -34,6 +34,8 @@ struct Word {
     ignore_punctuation: bool,
 }
 
+impl_actions!(vim, [Word]);
+
 actions!(
     vim,
     [
@@ -48,25 +50,36 @@ actions!(
         AngleBrackets
     ]
 );
-impl_actions!(vim, [Word]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(
+pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(
         |_: &mut Workspace, &Word { ignore_punctuation }: &Word, cx: _| {
             object(Object::Word { ignore_punctuation }, cx)
         },
     );
-    cx.add_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
-    cx.add_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
-    cx.add_action(|_: &mut Workspace, _: &BackQuotes, cx: _| object(Object::BackQuotes, cx));
-    cx.add_action(|_: &mut Workspace, _: &DoubleQuotes, cx: _| object(Object::DoubleQuotes, cx));
-    cx.add_action(|_: &mut Workspace, _: &Parentheses, cx: _| object(Object::Parentheses, cx));
-    cx.add_action(|_: &mut Workspace, _: &SquareBrackets, cx: _| {
+    workspace
+        .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
+    workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
+    workspace
+        .register_action(|_: &mut Workspace, _: &BackQuotes, cx: _| object(Object::BackQuotes, cx));
+    workspace.register_action(|_: &mut Workspace, _: &DoubleQuotes, cx: _| {
+        object(Object::DoubleQuotes, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &Parentheses, cx: _| {
+        object(Object::Parentheses, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &SquareBrackets, cx: _| {
         object(Object::SquareBrackets, cx)
     });
-    cx.add_action(|_: &mut Workspace, _: &CurlyBrackets, cx: _| object(Object::CurlyBrackets, cx));
-    cx.add_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| object(Object::AngleBrackets, cx));
-    cx.add_action(|_: &mut Workspace, _: &VerticalBars, cx: _| object(Object::VerticalBars, cx));
+    workspace.register_action(|_: &mut Workspace, _: &CurlyBrackets, cx: _| {
+        object(Object::CurlyBrackets, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| {
+        object(Object::AngleBrackets, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, _: &VerticalBars, cx: _| {
+        object(Object::VerticalBars, cx)
+    });
 }
 
 fn object(object: Object, cx: &mut WindowContext) {

@@ -1,7 +1,12 @@
+use std::fmt::{Display, Formatter};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
+use settings::Settings;
 
+/// Base key bindings scheme. Base keymaps can be overriden with user keymaps.
+///
+/// Default: VSCode
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub enum BaseKeymap {
     #[default]
@@ -10,6 +15,18 @@ pub enum BaseKeymap {
     SublimeText,
     Atom,
     TextMate,
+}
+
+impl Display for BaseKeymap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BaseKeymap::VSCode => write!(f, "VSCode"),
+            BaseKeymap::JetBrains => write!(f, "JetBrains"),
+            BaseKeymap::SublimeText => write!(f, "Sublime Text"),
+            BaseKeymap::Atom => write!(f, "Atom"),
+            BaseKeymap::TextMate => write!(f, "TextMate"),
+        }
+    }
 }
 
 impl BaseKeymap {
@@ -44,7 +61,7 @@ impl BaseKeymap {
     }
 }
 
-impl Setting for BaseKeymap {
+impl Settings for BaseKeymap {
     const KEY: Option<&'static str> = Some("base_keymap");
 
     type FileContent = Option<Self>;
@@ -52,7 +69,7 @@ impl Setting for BaseKeymap {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self>
     where
         Self: Sized,

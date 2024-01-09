@@ -4,7 +4,7 @@ use editor::{
     display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, ClipboardSelection,
     DisplayPoint,
 };
-use gpui::{impl_actions, AppContext, ViewContext};
+use gpui::{impl_actions, ViewContext};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -22,8 +22,8 @@ struct Paste {
 
 impl_actions!(vim, [Paste]);
 
-pub(crate) fn init(cx: &mut AppContext) {
-    cx.add_action(paste);
+pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+    workspace.register_action(paste);
 }
 
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {

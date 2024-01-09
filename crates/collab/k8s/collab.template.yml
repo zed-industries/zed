@@ -1,0 +1,122 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ZED_KUBE_NAMESPACE}
+
+---
+kind: Service
+apiVersion: v1
+metadata:
+  namespace: ${ZED_KUBE_NAMESPACE}
+  name: collab
+  annotations:
+    service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ZED_DO_CERTIFICATE_ID}
+    service.beta.kubernetes.io/do-loadbalancer-disable-lets-encrypt-dns-records: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: collab
+  ports:
+    - name: web
+      protocol: TCP
+      port: 443
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: ${ZED_KUBE_NAMESPACE}
+  name: collab
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collab
+  template:
+    metadata:
+      labels:
+        app: collab
+      annotations:
+        ad.datadoghq.com/collab.check_names: |
+          ["openmetrics"]
+        ad.datadoghq.com/collab.init_configs: |
+          [{}]
+        ad.datadoghq.com/collab.instances: |
+          [
+              {
+              "openmetrics_endpoint": "http://%%host%%:%%port%%/metrics",
+              "namespace": "collab_${ZED_KUBE_NAMESPACE}",
+              "metrics": [".*"]
+              }
+          ]
+    spec:
+      containers:
+        - name: collab
+          image: "${ZED_IMAGE_ID}"
+          args:
+            - serve
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 1
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database
+                  key: url
+            - name: DATABASE_MAX_CONNECTIONS
+              value: "${DATABASE_MAX_CONNECTIONS}"
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: api
+                  key: token
+            - name: LIVE_KIT_SERVER
+              valueFrom:
+                secretKeyRef:
+                  name: livekit
+                  key: server
+            - name: LIVE_KIT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit
+                  key: key
+            - name: LIVE_KIT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: livekit
+                  key: secret
+            - name: INVITE_LINK_PREFIX
+              value: ${INVITE_LINK_PREFIX}
+            - name: RUST_BACKTRACE
+              value: "1"
+            - name: RUST_LOG
+              value: ${RUST_LOG}
+            - name: LOG_JSON
+              value: "true"
+            - name: ZED_ENVIRONMENT
+              value: ${ZED_ENVIRONMENT}
+          securityContext:
+            capabilities:
+              # FIXME - Switch to the more restrictive `PERFMON` capability.
+              # This capability isn't yet available in a stable version of Debian.
+              add: ["SYS_ADMIN"]

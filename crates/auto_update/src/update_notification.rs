@@ -1,106 +1,56 @@
-use crate::ViewReleaseNotes;
 use gpui::{
-    elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
-    platform::{AppVersion, CursorStyle, MouseButton},
-    Element, Entity, View, ViewContext,
+    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
+    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext,
 };
 use menu::Cancel;
 use util::channel::ReleaseChannel;
-use workspace::notifications::Notification;
+use workspace::ui::{h_stack, v_stack, Icon, IconName, Label, StyledExt};
 
 pub struct UpdateNotification {
-    version: AppVersion,
+    version: SemanticVersion,
 }
 
-pub enum Event {
-    Dismiss,
-}
+impl EventEmitter<DismissEvent> for UpdateNotification {}
 
-impl Entity for UpdateNotification {
-    type Event = Event;
-}
-
-impl View for UpdateNotification {
-    fn ui_name() -> &'static str {
-        "UpdateNotification"
-    }
-
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
-        let theme = theme::current(cx).clone();
-        let theme = &theme.update_notification;
-
+impl Render for UpdateNotification {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let app_name = cx.global::<ReleaseChannel>().display_name();
 
-        MouseEventHandler::new::<ViewReleaseNotes, _>(0, cx, |state, cx| {
-            Flex::column()
-                .with_child(
-                    Flex::row()
-                        .with_child(
-                            Text::new(
-                                format!("Updated to {app_name} {}", self.version),
-                                theme.message.text.clone(),
-                            )
-                            .contained()
-                            .with_style(theme.message.container)
-                            .aligned()
-                            .top()
-                            .left()
-                            .flex(1., true),
-                        )
-                        .with_child(
-                            MouseEventHandler::new::<Cancel, _>(0, cx, |state, _| {
-                                let style = theme.dismiss_button.style_for(state);
-                                Svg::new("icons/x.svg")
-                                    .with_color(style.color)
-                                    .constrained()
-                                    .with_width(style.icon_width)
-                                    .aligned()
-                                    .contained()
-                                    .with_style(style.container)
-                                    .constrained()
-                                    .with_width(style.button_width)
-                                    .with_height(style.button_width)
-                            })
-                            .with_padding(Padding::uniform(5.))
-                            .on_click(MouseButton::Left, move |_, this, cx| {
-                                this.dismiss(&Default::default(), cx)
-                            })
-                            .aligned()
-                            .constrained()
-                            .with_height(cx.font_cache().line_height(theme.message.text.font_size))
-                            .aligned()
-                            .top()
-                            .flex_float(),
-                        ),
-                )
-                .with_child({
-                    let style = theme.action_message.style_for(state);
-                    Text::new("View the release notes", style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                })
-                .contained()
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, _, cx| {
-            crate::view_release_notes(&Default::default(), cx)
-        })
-        .into_any_named("update notification")
-    }
-}
-
-impl Notification for UpdateNotification {
-    fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool {
-        matches!(event, Event::Dismiss)
+        v_stack()
+            .on_action(cx.listener(UpdateNotification::dismiss))
+            .elevation_3(cx)
+            .p_4()
+            .child(
+                h_stack()
+                    .justify_between()
+                    .child(Label::new(format!(
+                        "Updated to {app_name} {}",
+                        self.version
+                    )))
+                    .child(
+                        div()
+                            .id("cancel")
+                            .child(Icon::new(IconName::Close))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .id("notes")
+                    .child(Label::new("View the release notes"))
+                    .cursor_pointer()
+                    .on_click(|_, cx| crate::view_release_notes(&Default::default(), cx)),
+            )
     }
 }
 
 impl UpdateNotification {
-    pub fn new(version: AppVersion) -> Self {
+    pub fn new(version: SemanticVersion) -> Self {
         Self { version }
     }
 
     pub fn dismiss(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismiss);
+        cx.emit(DismissEvent);
     }
 }

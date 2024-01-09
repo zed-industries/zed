@@ -1,5 +1,6 @@
 use crate::Project;
-use gpui::{AnyWindowHandle, ModelContext, ModelHandle, WeakModelHandle};
+use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
+use settings::Settings;
 use std::path::{Path, PathBuf};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettingsContent},
@@ -10,7 +11,7 @@ use terminal::{
 use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
-    pub(crate) local_handles: Vec<WeakModelHandle<terminal::Terminal>>,
+    pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,
 }
 
 impl Project {
@@ -19,13 +20,13 @@ impl Project {
         working_directory: Option<PathBuf>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
-    ) -> anyhow::Result<ModelHandle<Terminal>> {
+    ) -> anyhow::Result<Model<Terminal>> {
         if self.is_remote() {
             return Err(anyhow::anyhow!(
                 "creating terminals as a guest is not supported yet"
             ));
         } else {
-            let settings = settings::get::<TerminalSettings>(cx);
+            let settings = TerminalSettings::get_global(cx);
             let python_settings = settings.detect_venv.clone();
             let shell = settings.shell.clone();
 
@@ -38,17 +39,20 @@ impl Project {
                 window,
             )
             .map(|builder| {
-                let terminal_handle = cx.add_model(|cx| builder.subscribe(cx));
+                let terminal_handle = cx.new_model(|cx| builder.subscribe(cx));
 
                 self.terminals
                     .local_handles
                     .push(terminal_handle.downgrade());
 
-                let id = terminal_handle.id();
+                let id = terminal_handle.entity_id();
                 cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
                     let handles = &mut project.terminals.local_handles;
 
-                    if let Some(index) = handles.iter().position(|terminal| terminal.id() == id) {
+                    if let Some(index) = handles
+                        .iter()
+                        .position(|terminal| terminal.entity_id() == id)
+                    {
                         handles.remove(index);
                         cx.notify();
                     }
@@ -103,7 +107,7 @@ impl Project {
     fn activate_python_virtual_environment(
         &mut self,
         activate_script: Option<PathBuf>,
-        terminal_handle: &ModelHandle<Terminal>,
+        terminal_handle: &Model<Terminal>,
         cx: &mut ModelContext<Project>,
     ) {
         if let Some(activate_script) = activate_script {
@@ -116,7 +120,7 @@ impl Project {
         }
     }
 
-    pub fn local_terminal_handles(&self) -> &Vec<WeakModelHandle<terminal::Terminal>> {
+    pub fn local_terminal_handles(&self) -> &Vec<WeakModel<terminal::Terminal>> {
         &self.terminals.local_handles
     }
 }

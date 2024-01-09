@@ -1,5 +1,5 @@
-use super::{run_randomized_test, RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
-use crate::db::UserId;
+use super::{RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
+use crate::{db::UserId, tests::run_randomized_test};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use call::ActiveCall;
@@ -7,7 +7,7 @@ use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{repository::GitFileStatus, FakeFs, Fs as _};
 use futures::StreamExt;
-use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
+use gpui::{BackgroundExecutor, Model, TestAppContext};
 use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
@@ -18,7 +18,7 @@ use rand::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    ops::Range,
+    ops::{Deref, Range},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -31,10 +31,10 @@ use util::ResultExt;
 )]
 async fn test_random_project_collaboration(
     cx: &mut TestAppContext,
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     rng: StdRng,
 ) {
-    run_randomized_test::<ProjectCollaborationTest>(cx, deterministic, rng).await;
+    run_randomized_test::<ProjectCollaborationTest>(cx, executor, rng).await;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -295,7 +295,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let is_local = project.read_with(cx, |project, _| project.is_local());
                             let worktree = project.read_with(cx, |project, cx| {
                                 project
-                                    .worktrees(cx)
+                                    .worktrees()
                                     .filter(|worktree| {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
@@ -417,7 +417,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         81.. => {
                             let worktree = project.read_with(cx, |project, cx| {
                                 project
-                                    .worktrees(cx)
+                                    .worktrees()
                                     .filter(|worktree| {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
@@ -624,7 +624,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             room.join_project(
                                 project_id,
                                 client.language_registry().clone(),
-                                FakeFs::new(cx.background().clone()),
+                                FakeFs::new(cx.background_executor().clone()),
                                 cx,
                             )
                         }))
@@ -782,6 +782,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         .map_err(|err| anyhow!("save request failed: {:?}", err))?;
                     assert!(buffer
                         .read_with(&cx, |buffer, _| { buffer.saved_version().to_owned() })
+                        .expect("App should not be dropped")
                         .observed_all(&requested_version));
                     anyhow::Ok(())
                 });
@@ -817,30 +818,30 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 use futures::{FutureExt as _, TryFutureExt as _};
                 let offset = buffer.read_with(cx, |b, _| b.clip_offset(offset, Bias::Left));
-                let request = cx.foreground().spawn(project.update(cx, |project, cx| {
-                    match kind {
-                        LspRequestKind::Rename => project
-                            .prepare_rename(buffer, offset, cx)
-                            .map_ok(|_| ())
-                            .boxed(),
-                        LspRequestKind::Completion => project
-                            .completions(&buffer, offset, cx)
-                            .map_ok(|_| ())
-                            .boxed(),
-                        LspRequestKind::CodeAction => project
-                            .code_actions(&buffer, offset..offset, cx)
-                            .map_ok(|_| ())
-                            .boxed(),
-                        LspRequestKind::Definition => project
-                            .definition(&buffer, offset, cx)
-                            .map_ok(|_| ())
-                            .boxed(),
-                        LspRequestKind::Highlights => project
-                            .document_highlights(&buffer, offset, cx)
-                            .map_ok(|_| ())
-                            .boxed(),
-                    }
-                }));
+
+                let process_lsp_request = project.update(cx, |project, cx| match kind {
+                    LspRequestKind::Rename => project
+                        .prepare_rename(buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::Completion => project
+                        .completions(&buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::CodeAction => project
+                        .code_actions(&buffer, offset..offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::Definition => project
+                        .definition(&buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                    LspRequestKind::Highlights => project
+                        .document_highlights(&buffer, offset, cx)
+                        .map_ok(|_| ())
+                        .boxed(),
+                });
+                let request = cx.foreground_executor().spawn(process_lsp_request);
                 if detach {
                     request.detach();
                 } else {
@@ -874,7 +875,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     )
                 });
                 drop(project);
-                let search = cx.background().spawn(async move {
+                let search = cx.executor().spawn(async move {
                     let mut results = HashMap::default();
                     while let Some((buffer, ranges)) = search.next().await {
                         results.entry(buffer).or_insert(ranges);
@@ -1075,12 +1076,12 @@ impl RandomizedTest for ProjectCollaborationTest {
                         fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
                             let fs = fs.clone();
                             move |_, cx| {
-                                let background = cx.background();
+                                let background = cx.background_executor();
                                 let mut rng = background.rng();
                                 let count = rng.gen_range::<usize, _>(1..3);
                                 let files = fs.as_fake().files();
                                 let files = (0..count)
-                                    .map(|_| files.choose(&mut *rng).unwrap().clone())
+                                    .map(|_| files.choose(&mut rng).unwrap().clone())
                                     .collect::<Vec<_>>();
                                 async move {
                                     log::info!("LSP: Returning definitions in files {:?}", &files);
@@ -1100,7 +1101,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
                             move |_, cx| {
                                 let mut highlights = Vec::new();
-                                let background = cx.background();
+                                let background = cx.background_executor();
                                 let mut rng = background.rng();
 
                                 let highlight_count = rng.gen_range(1..=5);
@@ -1148,12 +1149,12 @@ impl RandomizedTest for ProjectCollaborationTest {
                             Some((project, cx))
                         });
 
-                        if !guest_project.is_read_only() {
+                        if !guest_project.is_disconnected() {
                             if let Some((host_project, host_cx)) = host_project {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
                                         host_project
-                                            .worktrees(cx)
+                                            .worktrees()
                                             .map(|worktree| {
                                                 let worktree = worktree.read(cx);
                                                 (worktree.id(), worktree.snapshot())
@@ -1161,7 +1162,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                             .collect::<BTreeMap<_, _>>()
                                     });
                                 let guest_worktree_snapshots = guest_project
-                                    .worktrees(cx)
+                                    .worktrees()
                                     .map(|worktree| {
                                         let worktree = worktree.read(cx);
                                         (worktree.id(), worktree.snapshot())
@@ -1218,7 +1219,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             }
                         }
 
-                        for buffer in guest_project.opened_buffers(cx) {
+                        for buffer in guest_project.opened_buffers() {
                             let buffer = buffer.read(cx);
                             assert_eq!(
                                 buffer.deferred_ops_len(),
@@ -1235,7 +1236,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             let buffers = client.buffers().clone();
             for (guest_project, guest_buffers) in &buffers {
                 let project_id = if guest_project.read_with(client_cx, |project, _| {
-                    project.is_local() || project.is_read_only()
+                    project.is_local() || project.is_disconnected()
                 }) {
                     continue;
                 } else {
@@ -1268,8 +1269,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                 for guest_buffer in guest_buffers {
                     let buffer_id =
                         guest_buffer.read_with(client_cx, |buffer, _| buffer.remote_id());
-                    let host_buffer = host_project.read_with(host_cx, |project, cx| {
-                        project.buffer_for_id(buffer_id, cx).unwrap_or_else(|| {
+                    let host_buffer = host_project.read_with(host_cx, |project, _| {
+                        project.buffer_for_id(buffer_id).unwrap_or_else(|| {
                             panic!(
                                 "host does not have buffer for guest:{}, peer:{:?}, id:{}",
                                 client.username,
@@ -1457,10 +1458,10 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
 fn buffer_for_full_path(
     client: &TestClient,
-    project: &ModelHandle<Project>,
+    project: &Model<Project>,
     full_path: &PathBuf,
     cx: &TestAppContext,
-) -> Option<ModelHandle<language::Buffer>> {
+) -> Option<Model<language::Buffer>> {
     client
         .buffers_for_project(project)
         .iter()
@@ -1476,18 +1477,18 @@ fn project_for_root_name(
     client: &TestClient,
     root_name: &str,
     cx: &TestAppContext,
-) -> Option<ModelHandle<Project>> {
-    if let Some(ix) = project_ix_for_root_name(&*client.local_projects(), root_name, cx) {
+) -> Option<Model<Project>> {
+    if let Some(ix) = project_ix_for_root_name(&*client.local_projects().deref(), root_name, cx) {
         return Some(client.local_projects()[ix].clone());
     }
-    if let Some(ix) = project_ix_for_root_name(&*client.remote_projects(), root_name, cx) {
+    if let Some(ix) = project_ix_for_root_name(&*client.remote_projects().deref(), root_name, cx) {
         return Some(client.remote_projects()[ix].clone());
     }
     None
 }
 
 fn project_ix_for_root_name(
-    projects: &[ModelHandle<Project>],
+    projects: &[Model<Project>],
     root_name: &str,
     cx: &TestAppContext,
 ) -> Option<usize> {
@@ -1499,7 +1500,7 @@ fn project_ix_for_root_name(
     })
 }
 
-fn root_name_for_project(project: &ModelHandle<Project>, cx: &TestAppContext) -> String {
+fn root_name_for_project(project: &Model<Project>, cx: &TestAppContext) -> String {
     project.read_with(cx, |project, cx| {
         project
             .visible_worktrees(cx)
@@ -1512,7 +1513,7 @@ fn root_name_for_project(project: &ModelHandle<Project>, cx: &TestAppContext) ->
 }
 
 fn project_path_for_full_path(
-    project: &ModelHandle<Project>,
+    project: &Model<Project>,
     full_path: &Path,
     cx: &TestAppContext,
 ) -> Option<ProjectPath> {
@@ -1520,7 +1521,7 @@ fn project_path_for_full_path(
     let root_name = components.next().unwrap().as_os_str().to_str().unwrap();
     let path = components.as_path().into();
     let worktree_id = project.read_with(cx, |project, cx| {
-        project.worktrees(cx).find_map(|worktree| {
+        project.worktrees().find_map(|worktree| {
             let worktree = worktree.read(cx);
             if worktree.root_name() == root_name {
                 Some(worktree.id())
@@ -1533,7 +1534,7 @@ fn project_path_for_full_path(
 }
 
 async fn ensure_project_shared(
-    project: &ModelHandle<Project>,
+    project: &Model<Project>,
     client: &TestClient,
     cx: &mut TestAppContext,
 ) {
@@ -1566,9 +1567,10 @@ async fn ensure_project_shared(
     }
 }
 
-fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<ModelHandle<Project>> {
+fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Model<Project>> {
     client
         .local_projects()
+        .deref()
         .iter()
         .chain(client.remote_projects().iter())
         .choose(rng)

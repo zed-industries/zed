@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
-use gpui::fonts::{self, HighlightStyle, Weight};
+use gpui::{px, FontStyle, FontWeight, HighlightStyle, UnderlineStyle};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 #[derive(Debug, Clone)]
@@ -26,18 +26,18 @@ impl MarkdownHighlight {
                 let mut highlight = HighlightStyle::default();
 
                 if style.italic {
-                    highlight.italic = Some(true);
+                    highlight.font_style = Some(FontStyle::Italic);
                 }
 
                 if style.underline {
-                    highlight.underline = Some(fonts::Underline {
-                        thickness: 1.0.into(),
+                    highlight.underline = Some(UnderlineStyle {
+                        thickness: px(1.),
                         ..Default::default()
                     });
                 }
 
-                if style.weight != fonts::Weight::default() {
-                    highlight.weight = Some(style.weight);
+                if style.weight != FontWeight::default() {
+                    highlight.font_weight = Some(style.weight);
                 }
 
                 Some(highlight)
@@ -52,7 +52,7 @@ impl MarkdownHighlight {
 pub struct MarkdownHighlightStyle {
     pub italic: bool,
     pub underline: bool,
-    pub weight: Weight,
+    pub weight: FontWeight,
 }
 
 #[derive(Debug, Clone)]
@@ -138,7 +138,7 @@ pub async fn parse_markdown_block(
                     let mut style = MarkdownHighlightStyle::default();
 
                     if bold_depth > 0 {
-                        style.weight = Weight::BOLD;
+                        style.weight = FontWeight::BOLD;
                     }
 
                     if italic_depth > 0 {

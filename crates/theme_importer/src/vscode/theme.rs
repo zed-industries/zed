@@ -156,6 +156,13 @@ pub struct VsCodeColors {
 
     #[serde(
         default,
+        rename = "textLink.activeForeground",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub text_link_active_foreground: Option<String>,
+
+    #[serde(
+        default,
         rename = "focusBorder",
         deserialize_with = "empty_string_as_none"
     )]

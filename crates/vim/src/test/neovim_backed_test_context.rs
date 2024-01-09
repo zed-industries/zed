@@ -1,4 +1,5 @@
-use editor::scroll::VERTICAL_SCROLL_MARGIN;
+use editor::{scroll::VERTICAL_SCROLL_MARGIN, test::editor_test_context::ContextHandle};
+use gpui::{px, size, Context};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -7,7 +8,6 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use gpui::{geometry::vector::vec2f, ContextHandle};
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
@@ -47,8 +47,8 @@ impl ExemptionFeatures {
     }
 }
 
-pub struct NeovimBackedTestContext<'a> {
-    cx: VimTestContext<'a>,
+pub struct NeovimBackedTestContext {
+    cx: VimTestContext,
     // Lookup for exempted assertions. Keyed by the insertion text, and with a value indicating which
     // bindings are exempted. If None, all bindings are ignored for that insertion text.
     exemptions: HashMap<String, Option<HashSet<String>>>,
@@ -60,8 +60,8 @@ pub struct NeovimBackedTestContext<'a> {
     is_dirty: bool,
 }
 
-impl<'a> NeovimBackedTestContext<'a> {
-    pub async fn new(cx: &'a mut gpui::TestAppContext) -> NeovimBackedTestContext<'a> {
+impl NeovimBackedTestContext {
+    pub async fn new(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
         // rust stores the name of the test on the current thread.
         // We use this to automatically name a file that will store
         // the neovim connection's requests/responses so that we can
@@ -158,11 +158,28 @@ impl<'a> NeovimBackedTestContext<'a> {
             .await;
         // +2 to account for the vim command UI at the bottom.
         self.neovim.set_option(&format!("lines={}", rows + 2)).await;
-        let window = self.window;
-        let line_height =
-            self.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+        let (line_height, visible_line_count) = self.editor(|editor, cx| {
+            (
+                editor
+                    .style()
+                    .unwrap()
+                    .text
+                    .line_height_in_pixels(cx.rem_size()),
+                editor.visible_line_count().unwrap(),
+            )
+        });
 
-        window.simulate_resize(vec2f(1000., (rows as f32) * line_height), &mut self.cx);
+        let window = self.window;
+        let margin = self
+            .update_window(window, |_, cx| {
+                cx.viewport_size().height - line_height * visible_line_count
+            })
+            .unwrap();
+
+        self.simulate_window_resize(
+            self.window,
+            size(px(1000.), margin + (rows as f32) * line_height),
+        );
     }
 
     pub async fn set_neovim_option(&mut self, option: &str) {
@@ -211,12 +228,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
     pub async fn assert_shared_clipboard(&mut self, text: &str) {
         let neovim = self.neovim.read_register('"').await;
-        let editor = self
-            .platform()
-            .read_from_clipboard()
-            .unwrap()
-            .text()
-            .clone();
+        let editor = self.read_from_clipboard().unwrap().text().clone();
 
         if text == neovim && text == editor {
             return;
@@ -381,20 +393,20 @@ impl<'a> NeovimBackedTestContext<'a> {
     pub fn binding<const COUNT: usize>(
         self,
         keystrokes: [&'static str; COUNT],
-    ) -> NeovimBackedBindingTestContext<'a, COUNT> {
+    ) -> NeovimBackedBindingTestContext<COUNT> {
         NeovimBackedBindingTestContext::new(keystrokes, self)
     }
 }
 
-impl<'a> Deref for NeovimBackedTestContext<'a> {
-    type Target = VimTestContext<'a>;
+impl Deref for NeovimBackedTestContext {
+    type Target = VimTestContext;
 
     fn deref(&self) -> &Self::Target {
         &self.cx
     }
 }
 
-impl<'a> DerefMut for NeovimBackedTestContext<'a> {
+impl DerefMut for NeovimBackedTestContext {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }
@@ -403,7 +415,7 @@ impl<'a> DerefMut for NeovimBackedTestContext<'a> {
 // a common mistake in tests is to call set_shared_state when
 // you mean asswert_shared_state. This notices that and lets
 // you know.
-impl<'a> Drop for NeovimBackedTestContext<'a> {
+impl Drop for NeovimBackedTestContext {
     fn drop(&mut self) {
         if self.is_dirty {
             panic!("Test context was dropped after set_shared_state before assert_shared_state")
@@ -413,9 +425,8 @@ impl<'a> Drop for NeovimBackedTestContext<'a> {
 
 #[cfg(test)]
 mod test {
-    use gpui::TestAppContext;
-
     use crate::test::NeovimBackedTestContext;
+    use gpui::TestAppContext;
 
     #[gpui::test]
     async fn neovim_backed_test_context_works(cx: &mut TestAppContext) {

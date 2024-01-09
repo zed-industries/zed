@@ -7,7 +7,7 @@ use anyhow::Result;
 use client::Client;
 use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
-use gpui::{executor::Deterministic, ModelContext, Task, TestAppContext};
+use gpui::{ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -26,7 +26,7 @@ use util::{http::FakeHttpClient, test::temp_tree, ResultExt};
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -82,7 +82,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_descendent_entries(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -188,9 +188,9 @@ async fn test_descendent_entries(cx: &mut TestAppContext) {
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
+async fn test_circular_symlinks(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -247,7 +247,7 @@ async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppCo
     )
     .await
     .unwrap();
-    executor.run_until_parked();
+    cx.executor().run_until_parked();
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(false)
@@ -270,7 +270,7 @@ async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppCo
 #[gpui::test]
 async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -446,7 +446,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -597,7 +597,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     fs.create_dir("/root/one/node_modules/c/lib".as_ref())
         .await
         .unwrap();
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     assert_eq!(
         fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count,
         0
@@ -607,7 +607,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -693,7 +693,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     fs.save("/root/.gitignore".as_ref(), &"e".into(), Default::default())
         .await
         .unwrap();
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
 
     // All of the directories that are no longer ignored are now loaded.
     tree.read_with(cx, |tree, _| {
@@ -732,13 +732,13 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
-        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions = Some(Vec::new());
             });
         });
     });
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -818,7 +818,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     cx.read(|cx| {
         let tree = tree.read(cx);
         assert!(
@@ -844,6 +844,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_write_file(cx: &mut TestAppContext) {
     init_test(cx);
+    cx.executor().allow_parking();
     let dir = temp_tree(json!({
         ".git": {},
         ".gitignore": "ignored-dir\n",
@@ -897,6 +898,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
+    cx.executor().allow_parking();
     let dir = temp_tree(json!({
         ".gitignore": "**/target\n/node_modules\n",
         "target": {
@@ -922,7 +924,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         ".DS_Store": "",
     }));
     cx.update(|cx| {
-        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions =
                     Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
@@ -959,7 +961,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     });
 
     cx.update(|cx| {
-        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions =
                     Some(vec!["**/node_modules/**".to_string()]);
@@ -967,7 +969,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         });
     });
     tree.flush_fs_events(cx).await;
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     tree.read_with(cx, |tree, _| {
         check_worktree_entries(
             tree,
@@ -993,6 +995,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
+    cx.executor().allow_parking();
     let dir = temp_tree(json!({
         ".git": {
             "HEAD": "ref: refs/heads/main\n",
@@ -1022,7 +1025,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         ".DS_Store": "",
     }));
     cx.update(|cx| {
-        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
                 project_settings.file_scan_exclusions = Some(vec![
                     "**/.git".to_string(),
@@ -1134,7 +1137,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
 #[gpui::test(iterations = 30)]
 async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -1180,7 +1183,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         .unwrap();
     assert!(entry.is_dir());
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     tree.read_with(cx, |tree, _| {
         assert_eq!(tree.entry_for_path("a/e").unwrap().kind, EntryKind::Dir);
     });
@@ -1195,9 +1198,10 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     init_test(cx);
-    let client_fake = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+    cx.executor().allow_parking();
+    let client_fake = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
 
-    let fs_fake = FakeFs::new(cx.background());
+    let fs_fake = FakeFs::new(cx.background_executor.clone());
     fs_fake
         .insert_tree(
             "/root",
@@ -1229,14 +1233,14 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .unwrap();
     assert!(entry.is_file());
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     tree_fake.read_with(cx, |tree, _| {
         assert!(tree.entry_for_path("a/b/c/d.txt").unwrap().is_file());
         assert!(tree.entry_for_path("a/b/c/").unwrap().is_dir());
         assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
     });
 
-    let client_real = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+    let client_real = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
 
     let fs_real = Arc::new(RealFs);
     let temp_root = temp_tree(json!({
@@ -1265,7 +1269,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .unwrap();
     assert!(entry.is_file());
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     tree_real.read_with(cx, |tree, _| {
         assert!(tree.entry_for_path("a/b/c/d.txt").unwrap().is_file());
         assert!(tree.entry_for_path("a/b/c/").unwrap().is_dir());
@@ -1284,7 +1288,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .unwrap();
     assert!(entry.is_file());
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     tree_real.read_with(cx, |tree, _| {
         assert!(tree.entry_for_path("a/b/c/e.txt").unwrap().is_file());
     });
@@ -1301,7 +1305,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .unwrap();
     assert!(entry.is_file());
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     tree_real.read_with(cx, |tree, _| {
         assert!(tree.entry_for_path("d/e/f/g.txt").unwrap().is_file());
         assert!(tree.entry_for_path("d/e/f").unwrap().is_dir());
@@ -1324,7 +1328,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         .unwrap_or(20);
 
     let root_dir = Path::new("/test");
-    let fs = FakeFs::new(cx.background()) as Arc<dyn Fs>;
+    let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
         randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
@@ -1376,7 +1380,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
         .await;
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
 
     let final_snapshot = worktree.read_with(cx, |tree, _| {
         let tree = tree.as_local().unwrap();
@@ -1414,7 +1418,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         .unwrap_or(20);
 
     let root_dir = Path::new("/test");
-    let fs = FakeFs::new(cx.background()) as Arc<dyn Fs>;
+    let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
         randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
@@ -1474,7 +1478,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             mutations_len -= 1;
         }
 
-        cx.foreground().run_until_parked();
+        cx.executor().run_until_parked();
         if rng.gen_bool(0.2) {
             log::info!("storing snapshot {}", snapshots.len());
             let snapshot = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
@@ -1484,7 +1488,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
     log::info!("quiescing");
     fs.as_fake().flush_events(usize::MAX);
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
 
     let snapshot = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
     snapshot.check_invariants(true);
@@ -1624,7 +1628,7 @@ fn randomly_mutate_worktree(
                 new_path
             );
             let task = worktree.rename_entry(entry.id, new_path, cx);
-            cx.foreground().spawn(async move {
+            cx.background_executor().spawn(async move {
                 task.await?.unwrap();
                 Ok(())
             })
@@ -1639,7 +1643,7 @@ fn randomly_mutate_worktree(
                     child_path,
                 );
                 let task = worktree.create_entry(child_path, is_dir, cx);
-                cx.foreground().spawn(async move {
+                cx.background_executor().spawn(async move {
                     task.await?;
                     Ok(())
                 })
@@ -1647,7 +1651,7 @@ fn randomly_mutate_worktree(
                 log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
                 let task =
                     worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
-                cx.foreground().spawn(async move {
+                cx.background_executor().spawn(async move {
                     task.await?;
                     Ok(())
                 })
@@ -1826,6 +1830,7 @@ fn random_filename(rng: &mut impl Rng) -> String {
 #[gpui::test]
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
     init_test(cx);
+    cx.executor().allow_parking();
     let root = temp_tree(json!({
         "projects": {
             "project1": {
@@ -1897,6 +1902,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     init_test(cx);
+    cx.executor().allow_parking();
     let root = temp_tree(json!({
         "c.txt": "",
         "dir1": {
@@ -2016,16 +2022,9 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+async fn test_git_status(cx: &mut TestAppContext) {
     init_test(cx);
-    cx.update(|cx| {
-        cx.update_global::<SettingsStore, _, _>(|store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions =
-                    Some(vec!["**/.git".to_string(), "**/.gitignore".to_string()]);
-            });
-        });
-    });
+    cx.executor().allow_parking();
     const IGNORE_RULE: &'static str = "**/target";
 
     let root = temp_tree(json!({
@@ -2077,7 +2076,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
-    deterministic.run_until_parked();
+    cx.executor().run_until_parked();
 
     // Check that the right git state is observed on startup
     tree.read_with(cx, |tree, _cx| {
@@ -2099,7 +2098,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     // Modify a file in the working copy.
     std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
     tree.flush_fs_events(cx).await;
-    deterministic.run_until_parked();
+    cx.executor().run_until_parked();
 
     // The worktree detects that the file's git status has changed.
     tree.read_with(cx, |tree, _cx| {
@@ -2115,7 +2114,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     git_add(B_TXT, &repo);
     git_commit("Committing modified and added", &repo);
     tree.flush_fs_events(cx).await;
-    deterministic.run_until_parked();
+    cx.executor().run_until_parked();
 
     // The worktree detects that the files' git status have changed.
     tree.read_with(cx, |tree, _cx| {
@@ -2135,7 +2134,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
     std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
     tree.flush_fs_events(cx).await;
-    deterministic.run_until_parked();
+    cx.executor().run_until_parked();
 
     // Check that more complex repo changes are tracked
     tree.read_with(cx, |tree, _cx| {
@@ -2164,7 +2163,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     git_commit("Committing modified git ignore", &repo);
 
     tree.flush_fs_events(cx).await;
-    deterministic.run_until_parked();
+    cx.executor().run_until_parked();
 
     let mut renamed_dir_name = "first_directory/second_directory";
     const RENAMED_FILE: &'static str = "rf.txt";
@@ -2177,7 +2176,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     .unwrap();
 
     tree.flush_fs_events(cx).await;
-    deterministic.run_until_parked();
+    cx.executor().run_until_parked();
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
@@ -2196,7 +2195,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
     .unwrap();
 
     tree.flush_fs_events(cx).await;
-    deterministic.run_until_parked();
+    cx.executor().run_until_parked();
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
@@ -2215,7 +2214,7 @@ async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppCont
 #[gpui::test]
 async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     init_test(cx);
-    let fs = FakeFs::new(cx.background());
+    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
         "/root",
         json!({
@@ -2266,7 +2265,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    cx.foreground().run_until_parked();
+    cx.executor().run_until_parked();
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
     check_propagated_statuses(
@@ -2334,7 +2333,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
 
 fn build_client(cx: &mut TestAppContext) -> Arc<Client> {
     let http_client = FakeHttpClient::with_404_response();
-    cx.read(|cx| Client::new(http_client, cx))
+    cx.update(|cx| Client::new(http_client, cx))
 }
 
 #[track_caller]
@@ -2456,7 +2455,8 @@ fn check_worktree_entries(
 
 fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
-        cx.set_global(SettingsStore::test(cx));
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         Project::init_settings(cx);
     });
 }

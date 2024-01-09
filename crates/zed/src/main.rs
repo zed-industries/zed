@@ -1,59 +1,63 @@
 // Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{
-    self, Client, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
-};
+use client::{Client, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
+use fs::RealFs;
 use futures::StreamExt;
-use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task};
-use isahc::{config::Configurable, Request};
+use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
+use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
+
+use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
-use project::Fs;
 use serde::{Deserialize, Serialize};
-use settings::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
+use settings::{
+    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
+};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
     env,
     ffi::OsStr,
     fs::OpenOptions,
-    io::{IsTerminal, Write as _},
+    io::{IsTerminal, Write},
     panic,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Weak,
     },
     thread,
 };
+use theme::ActiveTheme;
 use util::{
-    channel::{parse_zed_link, ReleaseChannel},
+    async_maybe,
+    channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
+    paths, ResultExt,
 };
 use uuid::Uuid;
-use welcome::{show_welcome_experience, FIRST_OPEN};
-
-use fs::RealFs;
-use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
+use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
-    assets::Assets,
-    build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
-    only_instance::{ensure_only_instance, IsOnlyInstance},
-    open_listener::{handle_cli_connection, OpenListener, OpenRequest},
+    app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
+    handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
+    OpenRequest,
 };
 
 fn main() {
+    menu::init();
+    zed_actions::init();
+
     let http = http::client();
     init_paths();
     init_logger();
@@ -63,47 +67,60 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
-    let mut app = gpui::App::new(Assets).unwrap();
+    let app = App::production(Arc::new(Assets));
 
-    let (installation_id, existing_installation_id_found) =
-        app.background().block(installation_id()).ok().unzip();
+    let (installation_id, existing_installation_id_found) = app
+        .background_executor()
+        .block(installation_id())
+        .ok()
+        .unzip();
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
-    load_embedded_fonts(&app);
-
     let fs = Arc::new(RealFs);
-    let user_settings_file_rx =
-        watch_config_file(app.background(), fs.clone(), paths::SETTINGS.clone());
-    let user_keymap_file_rx =
-        watch_config_file(app.background(), fs.clone(), paths::KEYMAP.clone());
+    let user_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::SETTINGS.clone(),
+    );
+    let user_keymap_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::KEYMAP.clone(),
+    );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
     } else {
-        app.background().spawn(async {
+        app.background_executor().spawn(async {
             load_login_shell_environment().await.log_err();
         })
     };
 
     let (listener, mut open_rx) = OpenListener::new();
     let listener = Arc::new(listener);
-    let callback_listener = listener.clone();
-    app.on_open_urls(move |urls, _| callback_listener.open_urls(urls))
-        .on_reopen(move |cx| {
-            if cx.has_global::<Weak<AppState>>() {
-                if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-                    workspace::open_new(&app_state, cx, |workspace, cx| {
-                        Editor::new_file(workspace, &Default::default(), cx)
-                    })
-                    .detach();
-                }
+    let open_listener = listener.clone();
+    app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
+    app.on_reopen(move |cx| {
+        if cx.has_global::<Weak<AppState>>() {
+            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+                workspace::open_new(&app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
             }
-        });
+        }
+    });
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
+            cx.set_global(AppCommitSha(build_sha.into()))
+        }
+
         cx.set_global(listener.clone());
+
+        load_embedded_fonts(cx);
 
         let mut store = SettingsStore::default();
         store
@@ -116,35 +133,26 @@ fn main() {
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
-        languages.set_executor(cx.background().clone());
+        languages.set_executor(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
+        language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
 
-        theme::init(Assets, cx);
-        context_menu::init(cx);
+        zed::init(cx);
+        theme::init(theme::LoadThemes::All, cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);
         language::init(cx);
         editor::init(cx);
-        go_to_line::init(cx);
-        file_finder::init(cx);
-        outline::init(cx);
-        project_symbols::init(cx);
-        project_panel::init(Assets, cx);
-        channel::init(&client, user_store.clone(), cx);
         diagnostics::init(cx);
-        search::init(cx);
-        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
-        vim::init(cx);
-        terminal_view::init(cx);
         copilot::init(
             copilot_language_server_id,
             http.clone(),
@@ -152,38 +160,34 @@ fn main() {
             cx,
         );
         assistant::init(cx);
-        component_test::init(cx);
 
-        cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
         watch_file_types(fs.clone(), cx);
 
-        languages.set_theme(theme::current(cx).clone());
-        cx.observe_global::<SettingsStore, _>({
+        languages.set_theme(cx.theme().clone());
+        cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
-            move |cx| languages.set_theme(theme::current(cx).clone())
+            move |cx| languages.set_theme(cx.theme().clone())
         })
         .detach();
 
-        client.telemetry().start(installation_id, session_id, cx);
-        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-        let event_operation = match existing_installation_id_found {
+        let telemetry = client.telemetry();
+        telemetry.start(installation_id, session_id, cx);
+        telemetry.report_setting_event("theme", cx.theme().name.to_string());
+        telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
+        telemetry.report_app_event(match existing_installation_id_found {
             Some(false) => "first open",
             _ => "open",
-        };
-        client
-            .telemetry()
-            .report_app_event(telemetry_settings, event_operation);
+        });
+        telemetry.flush_events();
 
         let app_state = Arc::new(AppState {
-            languages,
+            languages: languages.clone(),
             client: client.clone(),
-            user_store,
-            fs,
+            user_store: user_store.clone(),
+            fs: fs.clone(),
             build_window_options,
-            initialize_workspace,
-            background_actions,
             workspace_store,
             node_runtime,
         });
@@ -195,25 +199,35 @@ fn main() {
         workspace::init(app_state.clone(), cx);
         recent_projects::init(cx);
 
+        go_to_line::init(cx);
+        file_finder::init(cx);
+        outline::init(cx);
+        project_symbols::init(cx);
+        project_panel::init(Assets, cx);
+        channel::init(&client, user_store.clone(), cx);
+        search::init(cx);
+        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
+        vim::init(cx);
+        terminal_view::init(cx);
+
         journal::init(app_state.clone(), cx);
         language_selector::init(cx);
         theme_selector::init(cx);
-        activity_indicator::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
         welcome::init(cx);
-        zed::init(&app_state, cx);
 
-        cx.set_menus(menus::menus());
+        cx.set_menus(app_menus());
+        initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
-            cx.platform().activate(true);
+            cx.activate(true);
             let urls = collect_url_args();
             if !urls.is_empty() {
-                listener.open_urls(urls)
+                listener.open_urls(&urls)
             }
         } else {
             upload_previous_panics(http.clone(), cx);
@@ -223,32 +237,51 @@ fn main() {
             if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
                 && !listener.triggered.load(Ordering::Acquire)
             {
-                listener.open_urls(collect_url_args())
+                listener.open_urls(&collect_url_args())
             }
         }
 
         let mut triggered_authentication = false;
 
+        fn open_paths_and_log_errs(
+            paths: &[PathBuf],
+            app_state: &Arc<AppState>,
+            cx: &mut AppContext,
+        ) {
+            let task = workspace::open_paths(&paths, &app_state, None, cx);
+            cx.spawn(|_| async move {
+                if let Some((_window, results)) = task.await.log_err() {
+                    for result in results {
+                        if let Some(Err(e)) = result {
+                            log::error!("Error opening path: {}", e);
+                        }
+                    }
+                }
+            })
+            .detach();
+        }
+
         match open_rx.try_next() {
             Ok(Some(OpenRequest::Paths { paths })) => {
-                cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                    .detach();
+                open_paths_and_log_errs(&paths, &app_state, cx)
             }
             Ok(Some(OpenRequest::CliConnection { connection })) => {
-                cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                let app_state = app_state.clone();
+                cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
                     .detach();
             }
             Ok(Some(OpenRequest::JoinChannel { channel_id })) => {
                 triggered_authentication = true;
                 let app_state = app_state.clone();
                 let client = client.clone();
-                cx.spawn(|mut cx| async move {
+                cx.spawn(|cx| async move {
                     // ignore errors here, we'll show a generic "not signed in"
                     let _ = authenticate(client, &cx).await;
-                    cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))
-                        .await
+                    cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))?
+                        .await?;
+                    anyhow::Ok(())
                 })
-                .detach_and_log_err(cx)
+                .detach_and_log_err(cx);
             }
             Ok(Some(OpenRequest::OpenChannelNotes { channel_id })) => {
                 triggered_authentication = true;
@@ -257,12 +290,16 @@ fn main() {
                 cx.spawn(|mut cx| async move {
                     // ignore errors here, we'll show a generic "not signed in"
                     let _ = authenticate(client, &cx).await;
-                    let workspace =
+                    let workspace_window =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                    cx.update(|cx| ChannelView::open(channel_id, workspace, cx))
-                        .await
+                    let _ = workspace_window
+                        .update(&mut cx, |_, cx| {
+                            ChannelView::open(channel_id, cx.view().clone(), cx)
+                        })?
+                        .await?;
+                    anyhow::Ok(())
                 })
-                .detach_and_log_err(cx)
+                .detach_and_log_err(cx);
             }
             Ok(None) | Err(_) => cx
                 .spawn({
@@ -272,36 +309,49 @@ fn main() {
                 .detach(),
         }
 
-        cx.spawn(|mut cx| {
-            let app_state = app_state.clone();
-            async move {
-                while let Some(request) = open_rx.next().await {
-                    match request {
-                        OpenRequest::Paths { paths } => {
-                            cx.update(|cx| {
-                                workspace::open_paths(&paths, &app_state.clone(), None, cx)
-                            })
-                            .detach();
-                        }
-                        OpenRequest::CliConnection { connection } => {
-                            cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
-                                .detach();
-                        }
-                        OpenRequest::JoinChannel { channel_id } => cx
-                            .update(|cx| {
-                                workspace::join_channel(channel_id, app_state.clone(), None, cx)
-                            })
-                            .detach(),
-                        OpenRequest::OpenChannelNotes { channel_id } => {
-                            let app_state = app_state.clone();
-                            if let Ok(workspace) =
-                                workspace::get_any_active_workspace(app_state, cx.clone()).await
-                            {
+        let app_state = app_state.clone();
+        cx.spawn(move |cx| async move {
+            while let Some(request) = open_rx.next().await {
+                match request {
+                    OpenRequest::Paths { paths } => {
+                        cx.update(|cx| open_paths_and_log_errs(&paths, &app_state, cx))
+                            .ok();
+                    }
+                    OpenRequest::CliConnection { connection } => {
+                        let app_state = app_state.clone();
+                        cx.spawn(move |cx| {
+                            handle_cli_connection(connection, app_state.clone(), cx)
+                        })
+                        .detach();
+                    }
+                    OpenRequest::JoinChannel { channel_id } => {
+                        let app_state = app_state.clone();
+                        cx.update(|mut cx| {
+                            cx.spawn(|cx| async move {
                                 cx.update(|cx| {
-                                    ChannelView::open(channel_id, workspace, cx).detach();
-                                })
-                            }
-                        }
+                                    workspace::join_channel(channel_id, app_state, None, cx)
+                                })?
+                                .await?;
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(&mut cx);
+                        })
+                        .log_err();
+                    }
+                    OpenRequest::OpenChannelNotes { channel_id } => {
+                        let app_state = app_state.clone();
+                        let open_notes_task = cx.spawn(|mut cx| async move {
+                            let workspace_window =
+                                workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                            let _ = workspace_window
+                                .update(&mut cx, |_, cx| {
+                                    ChannelView::open(channel_id, cx.view().clone(), cx)
+                                })?
+                                .await?;
+                            anyhow::Ok(())
+                        });
+                        cx.update(|cx| open_notes_task.detach_and_log_err(cx))
+                            .log_err();
                     }
                 }
             }
@@ -327,36 +377,51 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
 }
 
 async fn installation_id() -> Result<(String, bool)> {
-    let legacy_key_name = "device_id";
+    let legacy_key_name = "device_id".to_string();
+    let key_name = "installation_id".to_string();
 
-    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(legacy_key_name) {
-        Ok((installation_id, true))
-    } else {
-        let installation_id = Uuid::new_v4().to_string();
-
+    // Migrate legacy key to new key
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&legacy_key_name) {
         KEY_VALUE_STORE
-            .write_kvp(legacy_key_name.to_string(), installation_id.clone())
+            .write_kvp(key_name, installation_id.clone())
             .await?;
-
-        Ok((installation_id, false))
+        KEY_VALUE_STORE.delete_kvp(legacy_key_name).await?;
+        return Ok((installation_id, true));
     }
+
+    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&key_name) {
+        return Ok((installation_id, true));
+    }
+
+    let installation_id = Uuid::new_v4().to_string();
+
+    KEY_VALUE_STORE
+        .write_kvp(key_name, installation_id.clone())
+        .await?;
+
+    Ok((installation_id, false))
 }
 
-async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
-    if let Some(location) = workspace::last_opened_workspace_paths().await {
-        cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))
-            .await
-            .log_err();
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_welcome_experience(app_state, cx));
-    } else {
-        cx.update(|cx| {
-            workspace::open_new(app_state, cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
-            })
-            .detach();
-        });
-    }
+async fn restore_or_create_workspace(app_state: &Arc<AppState>, cx: AsyncAppContext) {
+    async_maybe!({
+        if let Some(location) = workspace::last_opened_workspace_paths().await {
+            cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))?
+                .await
+                .log_err();
+        } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+            cx.update(|cx| show_welcome_view(app_state, cx)).log_err();
+        } else {
+            cx.update(|cx| {
+                workspace::open_new(app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            })?;
+        }
+        anyhow::Ok(())
+    })
+    .await
+    .log_err();
 }
 
 fn init_paths() {
@@ -429,7 +494,7 @@ static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
     let is_pty = stdout_is_a_pty();
-    let platform = app.platform();
+    let app_metadata = app.metadata();
 
     panic::set_hook(Box::new(move |info| {
         let prior_panic_count = PANIC_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -465,8 +530,8 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             std::process::exit(-1);
         }
 
-        let app_version = ZED_APP_VERSION
-            .or_else(|| platform.app_version().ok())
+        let app_version = client::ZED_APP_VERSION
+            .or(app_metadata.app_version)
             .map_or("dev".to_string(), |v| v.to_string());
 
         let backtrace = Backtrace::new();
@@ -493,11 +558,11 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             }),
             app_version: app_version.clone(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
-            os_name: platform.os_name().into(),
-            os_version: platform
-                .os_version()
-                .ok()
-                .map(|os_version| os_version.to_string()),
+            os_name: app_metadata.os_name.into(),
+            os_version: app_metadata
+                .os_version
+                .as_ref()
+                .map(SemanticVersion::to_string),
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
@@ -530,83 +595,76 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+    let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
-    cx.background()
-        .spawn({
-            async move {
-                let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-                let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
-                while let Some(child) = children.next().await {
-                    let child = child?;
-                    let child_path = child.path();
+    cx.background_executor()
+        .spawn(async move {
+            let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+            let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+            while let Some(child) = children.next().await {
+                let child = child?;
+                let child_path = child.path();
 
-                    if child_path.extension() != Some(OsStr::new("panic")) {
-                        continue;
-                    }
-                    let filename = if let Some(filename) = child_path.file_name() {
-                        filename.to_string_lossy()
-                    } else {
-                        continue;
-                    };
+                if child_path.extension() != Some(OsStr::new("panic")) {
+                    continue;
+                }
+                let filename = if let Some(filename) = child_path.file_name() {
+                    filename.to_string_lossy()
+                } else {
+                    continue;
+                };
 
-                    if !filename.starts_with("zed") {
-                        continue;
-                    }
+                if !filename.starts_with("zed") {
+                    continue;
+                }
 
-                    if telemetry_settings.diagnostics {
-                        let panic_file_content = smol::fs::read_to_string(&child_path)
-                            .await
-                            .context("error reading panic file")?;
+                if telemetry_settings.diagnostics {
+                    let panic_file_content = smol::fs::read_to_string(&child_path)
+                        .await
+                        .context("error reading panic file")?;
 
-                        let panic = serde_json::from_str(&panic_file_content)
-                            .ok()
-                            .or_else(|| {
+                    let panic = serde_json::from_str(&panic_file_content)
+                        .ok()
+                        .or_else(|| {
+                            panic_file_content
+                                .lines()
+                                .next()
+                                .and_then(|line| serde_json::from_str(line).ok())
+                        })
+                        .unwrap_or_else(|| {
+                            log::error!(
+                                "failed to deserialize panic file {:?}",
                                 panic_file_content
-                                    .lines()
-                                    .next()
-                                    .and_then(|line| serde_json::from_str(line).ok())
-                            })
-                            .unwrap_or_else(|| {
-                                log::error!(
-                                    "failed to deserialize panic file {:?}",
-                                    panic_file_content
-                                );
-                                None
-                            });
+                            );
+                            None
+                        });
 
-                        if let Some(panic) = panic {
-                            let body = serde_json::to_string(&PanicRequest {
-                                panic,
-                                token: ZED_SECRET_CLIENT_TOKEN.into(),
-                            })
-                            .unwrap();
+                    if let Some(panic) = panic {
+                        let body = serde_json::to_string(&PanicRequest {
+                            panic,
+                            token: client::ZED_SECRET_CLIENT_TOKEN.into(),
+                        })
+                        .unwrap();
 
-                            let request = Request::post(&panic_report_url)
-                                .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                                .header("Content-Type", "application/json")
-                                .body(body.into())?;
-                            let response =
-                                http.send(request).await.context("error sending panic")?;
-                            if !response.status().is_success() {
-                                log::error!(
-                                    "Error uploading panic to server: {}",
-                                    response.status()
-                                );
-                            }
+                        let request = Request::post(&panic_report_url)
+                            .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                            .header("Content-Type", "application/json")
+                            .body(body.into())?;
+                        let response = http.send(request).await.context("error sending panic")?;
+                        if !response.status().is_success() {
+                            log::error!("Error uploading panic to server: {}", response.status());
                         }
                     }
-
-                    // We've done what we can, delete the file
-                    std::fs::remove_file(child_path)
-                        .context("error removing panic")
-                        .log_err();
                 }
-                Ok::<_, anyhow::Error>(())
+
+                // We've done what we can, delete the file
+                std::fs::remove_file(child_path)
+                    .context("error removing panic")
+                    .log_err();
             }
-            .log_err()
+            Ok::<_, anyhow::Error>(())
         })
-        .detach();
+        .detach_and_log_err(cx);
 }
 
 async fn load_login_shell_environment() -> Result<()> {
@@ -665,58 +723,38 @@ fn collect_url_args() -> Vec<String> {
         .collect()
 }
 
-fn load_embedded_fonts(app: &App) {
-    let font_paths = Assets.list("fonts");
+fn load_embedded_fonts(cx: &AppContext) {
+    let asset_source = cx.asset_source();
+    let font_paths = asset_source.list("fonts").unwrap();
     let embedded_fonts = Mutex::new(Vec::new());
-    smol::block_on(app.background().scoped(|scope| {
+    let executor = cx.background_executor();
+
+    executor.block(executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;
             }
 
             scope.spawn(async {
-                let font_path = &*font_path;
-                let font_bytes = Assets.load(font_path).unwrap().to_vec();
+                let font_bytes = asset_source.load(font_path).unwrap().to_vec();
                 embedded_fonts.lock().push(Arc::from(font_bytes));
             });
         }
     }));
-    app.platform()
-        .fonts()
+
+    cx.text_system()
         .add_fonts(&embedded_fonts.into_inner())
         .unwrap();
 }
 
 #[cfg(debug_assertions)]
-async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
-    let mut events = fs
-        .watch("styles/src".as_ref(), std::time::Duration::from_millis(100))
-        .await;
-    while (events.next().await).is_some() {
-        let output = Command::new("npm")
-            .current_dir("styles")
-            .args(["run", "build"])
-            .output()
-            .await
-            .log_err()?;
-        if output.status.success() {
-            cx.update(|cx| theme_selector::reload(cx))
-        } else {
-            eprintln!(
-                "build script failed {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-    }
-    Some(())
-}
+async fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>) -> Option<()> {
+    use std::time::Duration;
 
-#[cfg(debug_assertions)]
-async fn watch_languages(fs: Arc<dyn Fs>, languages: Arc<LanguageRegistry>) -> Option<()> {
     let mut events = fs
         .watch(
             "crates/zed/src/languages".as_ref(),
-            std::time::Duration::from_millis(100),
+            Duration::from_millis(100),
         )
         .await;
     while (events.next().await).is_some() {
@@ -726,12 +764,14 @@ async fn watch_languages(fs: Arc<dyn Fs>, languages: Arc<LanguageRegistry>) -> O
 }
 
 #[cfg(debug_assertions)]
-fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    cx.spawn(|mut cx| async move {
+fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+    use std::time::Duration;
+
+    cx.spawn(|cx| async move {
         let mut events = fs
             .watch(
                 "assets/icons/file_icons/file_types.json".as_ref(),
-                std::time::Duration::from_millis(100),
+                Duration::from_millis(100),
             )
             .await;
         while (events.next().await).is_some() {
@@ -740,29 +780,16 @@ fn watch_file_types(fs: Arc<dyn Fs>, cx: &mut AppContext) {
                     *file_types = project_panel::file_associations::FileAssociations::new(Assets);
                 });
             })
+            .ok();
         }
     })
     .detach()
 }
 
 #[cfg(not(debug_assertions))]
-async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
+async fn watch_languages(_: Arc<dyn fs::Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
     None
 }
 
 #[cfg(not(debug_assertions))]
-async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
-    None
-}
-
-#[cfg(not(debug_assertions))]
-fn watch_file_types(_fs: Arc<dyn Fs>, _cx: &mut AppContext) {}
-
-pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
-    &[
-        ("Go to file", &file_finder::Toggle),
-        ("Open command palette", &command_palette::Toggle),
-        ("Open recent projects", &recent_projects::OpenRecent),
-        ("Change your settings", &zed_actions::OpenSettings),
-    ]
-}
+fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}

@@ -6,7 +6,7 @@ pub use language::*;
 use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::Setting;
+use settings::Settings;
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -46,7 +46,7 @@ pub struct ElixirSettingsContent {
     lsp: Option<ElixirLspSetting>,
 }
 
-impl Setting for ElixirSettings {
+impl Settings for ElixirSettings {
     const KEY: Option<&'static str> = Some("elixir");
 
     type FileContent = ElixirSettingsContent;
@@ -54,7 +54,7 @@ impl Setting for ElixirSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut gpui::AppContext,
     ) -> Result<Self>
     where
         Self: Sized,
@@ -85,7 +85,7 @@ impl LspAdapter for ElixirLspAdapter {
         const NOTIFICATION_MESSAGE: &str = "Could not run the elixir language server, `elixir-ls`, because `elixir` was not found.";
 
         let delegate = delegate.clone();
-        Some(cx.spawn(|mut cx| async move {
+        Some(cx.spawn(|cx| async move {
             let elixir_output = smol::process::Command::new("elixir")
                 .args(["--version"])
                 .output()
@@ -97,7 +97,7 @@ impl LspAdapter for ElixirLspAdapter {
                 {
                     cx.update(|cx| {
                         delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                    })
+                    })?
                 }
                 return Err(anyhow!("cannot run elixir-ls"));
             }

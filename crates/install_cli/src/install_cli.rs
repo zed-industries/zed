@@ -1,13 +1,12 @@
-use std::path::Path;
-
 use anyhow::{anyhow, Result};
 use gpui::{actions, AsyncAppContext};
+use std::path::Path;
 use util::ResultExt;
 
 actions!(cli, [Install]);
 
 pub async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
-    let cli_path = cx.platform().path_for_auxiliary_executable("cli")?;
+    let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
     let link_path = Path::new("/usr/local/bin/zed");
     let bin_dir_path = link_path.parent().unwrap();
 

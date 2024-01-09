@@ -6,7 +6,7 @@ use crate::{
     DisplayPoint, Editor, EditorMode, MultiBuffer,
 };
 
-use gpui::{ModelHandle, ViewContext};
+use gpui::{Context, Model, Pixels, ViewContext};
 
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
@@ -26,19 +26,11 @@ pub fn marked_display_snapshot(
 ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
     let (unmarked_text, markers) = marked_text_offsets(text);
 
-    let family_id = cx
-        .font_cache()
-        .load_family(&["Helvetica"], &Default::default())
-        .unwrap();
-    let font_id = cx
-        .font_cache()
-        .select_font(family_id, &Default::default())
-        .unwrap();
-    let font_size = 14.0;
+    let font = cx.text_style().font();
+    let font_size: Pixels = 14usize.into();
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
-    let display_map =
-        cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, None, 1, 1, cx));
+    let display_map = cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
     let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
     let markers = markers
         .into_iter()
@@ -67,17 +59,14 @@ pub fn assert_text_with_selections(
 // RA thinks this is dead code even though it is used in a whole lot of tests
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn build_editor(
-    buffer: ModelHandle<MultiBuffer>,
-    cx: &mut ViewContext<Editor>,
-) -> Editor {
-    Editor::new(EditorMode::Full, buffer, None, None, cx)
+pub(crate) fn build_editor(buffer: Model<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
+    Editor::new(EditorMode::Full, buffer, None, cx)
 }
 
 pub(crate) fn build_editor_with_project(
-    project: ModelHandle<Project>,
-    buffer: ModelHandle<MultiBuffer>,
+    project: Model<Project>,
+    buffer: Model<MultiBuffer>,
     cx: &mut ViewContext<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, Some(project), None, cx)
+    Editor::new(EditorMode::Full, buffer, Some(project), cx)
 }

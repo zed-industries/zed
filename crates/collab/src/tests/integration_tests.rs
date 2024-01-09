@@ -5,18 +5,13 @@ use crate::{
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
-use editor::{
-    test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
-    ConfirmRename, Editor, Redo, Rename, ToggleCodeActions, Undo,
-};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
-use gpui::{executor::Deterministic, test::EmptyView, AppContext, ModelHandle, TestAppContext};
-use indoc::indoc;
+use gpui::{AppContext, BackgroundExecutor, Model, TestAppContext};
 use language::{
-    language_settings::{AllLanguageSettings, Formatter, InlayHintSettings},
-    tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
+    language_settings::{AllLanguageSettings, Formatter},
+    tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
+    LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
@@ -24,6 +19,7 @@ use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
+use rpc::proto::ChannelRole;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -32,12 +28,11 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{self, AtomicBool, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
 };
 use unindent::Unindent as _;
-use workspace::Workspace;
 
 #[ctor::ctor]
 fn init_logger() {
@@ -48,14 +43,13 @@ fn init_logger() {
 
 #[gpui::test(iterations = 10)]
 async fn test_basic_calls(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_b2: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -76,7 +70,7 @@ async fn test_basic_calls(
         .await
         .unwrap();
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -86,6 +80,7 @@ async fn test_basic_calls(
     );
 
     // User B receives the call.
+
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
     assert_eq!(call_b.calling_user.github_login, "user_a");
@@ -93,8 +88,9 @@ async fn test_basic_calls(
     // User B connects via another client and also receives a ring on the newly-connected client.
     let _client_b2 = server.create_client(cx_b2, "user_b").await;
     let active_call_b2 = cx_b2.read(ActiveCall::global);
+
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     let call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
     assert_eq!(call_b2.calling_user.github_login, "user_a");
 
@@ -103,10 +99,11 @@ async fn test_basic_calls(
         .update(cx_b, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
     assert!(incoming_call_b.next().await.unwrap().is_none());
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -123,6 +120,7 @@ async fn test_basic_calls(
     );
 
     // Call user C from client B.
+
     let mut incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
     active_call_b
         .update(cx_b, |call, cx| {
@@ -131,7 +129,7 @@ async fn test_basic_calls(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -153,7 +151,7 @@ async fn test_basic_calls(
     active_call_c.update(cx_c, |call, cx| call.decline_incoming(cx).unwrap());
     assert!(incoming_call_c.next().await.unwrap().is_none());
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -177,7 +175,7 @@ async fn test_basic_calls(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -201,9 +199,10 @@ async fn test_basic_calls(
         .await
         .unwrap();
     assert!(incoming_call_c.next().await.unwrap().is_none());
+
     let room_c = active_call_c.read_with(cx_c, |call, _| call.room().unwrap().clone());
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -240,13 +239,14 @@ async fn test_basic_calls(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // User B observes the remote screen sharing track.
     assert_eq!(events_b.borrow().len(), 1);
     let event_b = events_b.borrow().first().unwrap().clone();
     if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_b {
         assert_eq!(participant_id, client_a.peer_id().unwrap());
+
         room_b.read_with(cx_b, |room, _| {
             assert_eq!(
                 room.remote_participants()[&client_a.user_id().unwrap()]
@@ -264,6 +264,7 @@ async fn test_basic_calls(
     let event_c = events_c.borrow().first().unwrap().clone();
     if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_c {
         assert_eq!(participant_id, client_a.peer_id().unwrap());
+
         room_c.read_with(cx_c, |room, _| {
             assert_eq!(
                 room.remote_participants()[&client_a.user_id().unwrap()]
@@ -285,7 +286,7 @@ async fn test_basic_calls(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -315,8 +316,10 @@ async fn test_basic_calls(
         .test_live_kit_server
         .disconnect_client(client_b.user_id().unwrap().to_string())
         .await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     active_call_b.read_with(cx_b, |call, _| assert!(call.room().is_none()));
+
     active_call_c.read_with(cx_c, |call, _| assert!(call.room().is_none()));
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -343,14 +346,13 @@ async fn test_basic_calls(
 
 #[gpui::test(iterations = 10)]
 async fn test_calling_multiple_users_simultaneously(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
     cx_d: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -381,7 +383,7 @@ async fn test_calling_multiple_users_simultaneously(
     c_invite.await.unwrap();
 
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -397,7 +399,7 @@ async fn test_calling_multiple_users_simultaneously(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -418,10 +420,12 @@ async fn test_calling_multiple_users_simultaneously(
     accept_c.await.unwrap();
     accept_d.await.unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+
     let room_c = active_call_c.read_with(cx_c, |call, _| call.room().unwrap().clone());
+
     let room_d = active_call_d.read_with(cx_d, |call, _| call.room().unwrap().clone());
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -471,13 +475,12 @@ async fn test_calling_multiple_users_simultaneously(
 
 #[gpui::test(iterations = 10)]
 async fn test_joining_channels_and_calling_multiple_users_simultaneously(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -515,7 +518,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
     join_channel_2.await.unwrap();
 
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     assert_eq!(channel_id(&room_a, cx_a), Some(channel_2));
 
@@ -543,7 +546,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
     join_channel.await.unwrap();
 
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -579,20 +582,19 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
     c_invite.await.unwrap();
 
     active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_room_uniqueness(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_a2: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_b2: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let _client_a2 = server.create_client(cx_a2, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -623,9 +625,11 @@ async fn test_room_uniqueness(
         })
         .await
         .unwrap_err();
+
     active_call_a2.read_with(cx_a2, |call, _| assert!(call.room().is_none()));
 
     // User B receives the call from user A.
+
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
     assert_eq!(call_b1.calling_user.github_login, "user_a");
@@ -651,6 +655,7 @@ async fn test_room_uniqueness(
         })
         .await
         .unwrap_err();
+
     active_call_b2.read_with(cx_b2, |call, _| assert!(call.room().is_none()));
 
     // User B joins the room and calling them after they've joined still fails.
@@ -672,6 +677,7 @@ async fn test_room_uniqueness(
         })
         .await
         .unwrap_err();
+
     active_call_b2.read_with(cx_b2, |call, _| assert!(call.room().is_none()));
 
     // Client C can successfully call client B after client B leaves the room.
@@ -679,26 +685,25 @@ async fn test_room_uniqueness(
         .update(cx_b, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     active_call_c
         .update(cx_c, |call, cx| {
             call.invite(client_b.user_id().unwrap(), None, cx)
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
     assert_eq!(call_b2.calling_user.github_login, "user_c");
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_client_disconnecting_from_room(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -715,17 +720,20 @@ async fn test_client_disconnecting_from_room(
         })
         .await
         .unwrap();
+
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
 
     // User B receives the call and joins the room.
+
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     incoming_call_b.next().await.unwrap().unwrap();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -743,8 +751,8 @@ async fn test_client_disconnecting_from_room(
 
     // User A automatically reconnects to the room upon disconnection.
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
-    deterministic.run_until_parked();
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -763,8 +771,10 @@ async fn test_client_disconnecting_from_room(
     // When user A disconnects, both client A and B clear their room on the active call.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
+
     active_call_b.read_with(cx_b, |call, _| assert!(call.room().is_none()));
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -783,7 +793,7 @@ async fn test_client_disconnecting_from_room(
 
     // Allow user A to reconnect to the server.
     server.allow_connections();
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT);
 
     // Call user B again from client A.
     active_call_a
@@ -792,17 +802,20 @@ async fn test_client_disconnecting_from_room(
         })
         .await
         .unwrap();
+
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
 
     // User B receives the call and joins the room.
+
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     incoming_call_b.next().await.unwrap().unwrap();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -824,7 +837,7 @@ async fn test_client_disconnecting_from_room(
         .test_live_kit_server
         .disconnect_client(client_b.user_id().unwrap().to_string())
         .await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     active_call_a.update(cx_a, |call, _| assert!(call.room().is_none()));
     active_call_b.update(cx_b, |call, _| assert!(call.room().is_none()));
     assert_eq!(
@@ -845,14 +858,13 @@ async fn test_client_disconnecting_from_room(
 
 #[gpui::test(iterations = 10)]
 async fn test_server_restarts(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
     cx_d: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     client_a
         .fs()
@@ -898,31 +910,37 @@ async fn test_server_restarts(
         })
         .await
         .unwrap();
+
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
 
     // User B receives the call and joins the room.
+
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     assert!(incoming_call_b.next().await.unwrap().is_some());
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
 
     // User C receives the call and joins the room.
+
     let mut incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
     assert!(incoming_call_c.next().await.unwrap().is_some());
     active_call_c
         .update(cx_c, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+
     let room_c = active_call_c.read_with(cx_c, |call, _| call.room().unwrap().clone());
 
     // User D receives the call but doesn't join the room yet.
+
     let mut incoming_call_d = active_call_d.read_with(cx_d, |call, _| call.incoming());
     assert!(incoming_call_d.next().await.unwrap().is_some());
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -950,7 +968,7 @@ async fn test_server_restarts(
 
     // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    executor.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -979,7 +997,8 @@ async fn test_server_restarts(
         .update(cx_d, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     let room_d = active_call_d.read_with(cx_d, |call, _| call.room().unwrap().clone());
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -1024,7 +1043,7 @@ async fn test_server_restarts(
 
     // The server finishes restarting, cleaning up stale connections.
     server.start().await.unwrap();
-    deterministic.advance_clock(CLEANUP_TIMEOUT);
+    executor.advance_clock(CLEANUP_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -1059,7 +1078,7 @@ async fn test_server_restarts(
         .update(cx_d, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -1098,9 +1117,10 @@ async fn test_server_restarts(
         .unwrap();
 
     // User D receives the call but doesn't join the room yet.
+
     let mut incoming_call_d = active_call_d.read_with(cx_d, |call, _| call.incoming());
     assert!(incoming_call_d.next().await.unwrap().is_some());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -1123,7 +1143,7 @@ async fn test_server_restarts(
     client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
     client_b.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    executor.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -1145,19 +1165,18 @@ async fn test_server_restarts(
     // The server finishes restarting, cleaning up stale connections and canceling the
     // call to user D because the room has become empty.
     server.start().await.unwrap();
-    deterministic.advance_clock(CLEANUP_TIMEOUT);
+    executor.advance_clock(CLEANUP_TIMEOUT);
     assert!(incoming_call_d.next().await.unwrap().is_none());
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_calls_on_multiple_connections(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b1: &mut TestAppContext,
     cx_b2: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b1 = server.create_client(cx_b1, "user_b").await;
     let client_b2 = server.create_client(cx_b2, "user_b").await;
@@ -1168,7 +1187,9 @@ async fn test_calls_on_multiple_connections(
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b1 = cx_b1.read(ActiveCall::global);
     let active_call_b2 = cx_b2.read(ActiveCall::global);
+
     let mut incoming_call_b1 = active_call_b1.read_with(cx_b1, |call, _| call.incoming());
+
     let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
@@ -1180,14 +1201,14 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
     // User B declines the call on one of the two connections, causing both connections
     // to stop ringing.
     active_call_b2.update(cx_b2, |call, cx| call.decline_incoming(cx).unwrap());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
@@ -1198,7 +1219,7 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
@@ -1208,13 +1229,13 @@ async fn test_calls_on_multiple_connections(
         .update(cx_b2, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
     // User B disconnects the client that is not on the call. Everything should be fine.
     client_b1.disconnect(&cx_b1.to_async());
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT);
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
         .await
@@ -1225,14 +1246,14 @@ async fn test_calls_on_multiple_connections(
         .update(cx_b2, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     active_call_a
         .update(cx_a, |call, cx| {
             call.invite(client_b1.user_id().unwrap(), None, cx)
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
@@ -1243,7 +1264,7 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
@@ -1254,7 +1275,7 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
@@ -1263,7 +1284,7 @@ async fn test_calls_on_multiple_connections(
         .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
@@ -1274,27 +1295,27 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
     // User A disconnects, causing both connections to stop ringing.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
     // User A reconnects automatically, then calls user B again.
     server.allow_connections();
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT);
     active_call_a
         .update(cx_a, |call, cx| {
             call.invite(client_b1.user_id().unwrap(), None, cx)
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
@@ -1302,187 +1323,19 @@ async fn test_calls_on_multiple_connections(
     server.forbid_connections();
     server.disconnect_client(client_b1.peer_id().unwrap());
     server.disconnect_client(client_b2.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+
     active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_share_project(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-    cx_c: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    let client_c = server.create_client(cx_c, "user_c").await;
-    server
-        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let active_call_c = cx_c.read(ActiveCall::global);
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                ".gitignore": "ignored-dir",
-                "a.txt": "a-contents",
-                "b.txt": "b-contents",
-                "ignored-dir": {
-                    "c.txt": "",
-                    "d.txt": "",
-                }
-            }),
-        )
-        .await;
-
-    // Invite client B to collaborate on a project
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    active_call_a
-        .update(cx_a, |call, cx| {
-            call.invite(client_b.user_id().unwrap(), Some(project_a.clone()), cx)
-        })
-        .await
-        .unwrap();
-
-    // Join that project as client B
-    let incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
-    deterministic.run_until_parked();
-    let call = incoming_call_b.borrow().clone().unwrap();
-    assert_eq!(call.calling_user.github_login, "user_a");
-    let initial_project = call.initial_project.unwrap();
-    active_call_b
-        .update(cx_b, |call, cx| call.accept_incoming(cx))
-        .await
-        .unwrap();
-    let client_b_peer_id = client_b.peer_id().unwrap();
-    let project_b = client_b
-        .build_remote_project(initial_project.id, cx_b)
-        .await;
-    let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
-
-    deterministic.run_until_parked();
-    project_a.read_with(cx_a, |project, _| {
-        let client_b_collaborator = project.collaborators().get(&client_b_peer_id).unwrap();
-        assert_eq!(client_b_collaborator.replica_id, replica_id_b);
-    });
-    project_b.read_with(cx_b, |project, cx| {
-        let worktree = project.worktrees(cx).next().unwrap().read(cx);
-        assert_eq!(
-            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
-            [
-                Path::new(".gitignore"),
-                Path::new("a.txt"),
-                Path::new("b.txt"),
-                Path::new("ignored-dir"),
-            ]
-        );
-    });
-
-    project_b
-        .update(cx_b, |project, cx| {
-            let worktree = project.worktrees(cx).next().unwrap();
-            let entry = worktree.read(cx).entry_for_path("ignored-dir").unwrap();
-            project.expand_entry(worktree_id, entry.id, cx).unwrap()
-        })
-        .await
-        .unwrap();
-    project_b.read_with(cx_b, |project, cx| {
-        let worktree = project.worktrees(cx).next().unwrap().read(cx);
-        assert_eq!(
-            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
-            [
-                Path::new(".gitignore"),
-                Path::new("a.txt"),
-                Path::new("b.txt"),
-                Path::new("ignored-dir"),
-                Path::new("ignored-dir/c.txt"),
-                Path::new("ignored-dir/d.txt"),
-            ]
-        );
-    });
-
-    // Open the same file as client B and client A.
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
-        .await
-        .unwrap();
-    buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "b-contents"));
-    project_a.read_with(cx_a, |project, cx| {
-        assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
-    });
-    let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
-        .await
-        .unwrap();
-
-    let editor_b = window_b.add_view(cx_b, |cx| Editor::for_buffer(buffer_b, None, cx));
-
-    // Client A sees client B's selection
-    deterministic.run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        buffer
-            .snapshot()
-            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
-            .count()
-            == 1
-    });
-
-    // Edit the buffer as client B and see that edit as client A.
-    editor_b.update(cx_b, |editor, cx| editor.handle_input("ok, ", cx));
-    deterministic.run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.text(), "ok, b-contents")
-    });
-
-    // Client B can invite client C on a project shared by client A.
-    active_call_b
-        .update(cx_b, |call, cx| {
-            call.invite(client_c.user_id().unwrap(), Some(project_b.clone()), cx)
-        })
-        .await
-        .unwrap();
-
-    let incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
-    deterministic.run_until_parked();
-    let call = incoming_call_c.borrow().clone().unwrap();
-    assert_eq!(call.calling_user.github_login, "user_b");
-    let initial_project = call.initial_project.unwrap();
-    active_call_c
-        .update(cx_c, |call, cx| call.accept_incoming(cx))
-        .await
-        .unwrap();
-    let _project_c = client_c
-        .build_remote_project(initial_project.id, cx_c)
-        .await;
-
-    // Client B closes the editor, and client A sees client B's selections removed.
-    cx_b.update(move |_| drop(editor_b));
-    deterministic.run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        buffer
-            .snapshot()
-            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
-            .count()
-            == 0
-    });
-}
-
-#[gpui::test(iterations = 10)]
 async fn test_unshare_project(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -1509,9 +1362,11 @@ async fn test_unshare_project(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+
+    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
     project_b
@@ -1524,8 +1379,9 @@ async fn test_unshare_project(
         .update(cx_b, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
-    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+    executor.run_until_parked();
+
+    assert!(project_b.read_with(cx_b, |project, _| project.is_disconnected()));
 
     // Client C opens the project.
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
@@ -1534,9 +1390,11 @@ async fn test_unshare_project(
     project_a
         .update(cx_a, |project, cx| project.unshare(cx))
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
-    assert!(project_c.read_with(cx_c, |project, _| project.is_read_only()));
+
+    assert!(project_c.read_with(cx_c, |project, _| project.is_disconnected()));
 
     // Client C can open the project again after client A re-shares.
     let project_id = active_call_a
@@ -1544,7 +1402,8 @@ async fn test_unshare_project(
         .await
         .unwrap();
     let project_c2 = client_c.build_remote_project(project_id, cx_c).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
     project_c2
         .update(cx_c, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -1556,130 +1415,23 @@ async fn test_unshare_project(
         .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
+
     project_c2.read_with(cx_c, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
         assert!(project.collaborators().is_empty());
     });
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_host_disconnect(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-    cx_c: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    let client_c = server.create_client(cx_c, "user_c").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
-        .await;
-
-    cx_b.update(editor::init);
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                "a.txt": "a-contents",
-                "b.txt": "b-contents",
-            }),
-        )
-        .await;
-
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    deterministic.run_until_parked();
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
-
-    let window_b =
-        cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
-    let workspace_b = window_b.root(cx_b);
-    let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "b.txt"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-    assert!(window_b.read_with(cx_b, |cx| editor_b.is_focused(cx)));
-    editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
-    assert!(window_b.is_edited(cx_b));
-
-    // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
-    server.forbid_connections();
-    server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    project_a.read_with(cx_a, |project, _| project.collaborators().is_empty());
-    project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
-    project_b.read_with(cx_b, |project, _| project.is_read_only());
-    assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
-
-    // Ensure client B's edited state is reset and that the whole window is blurred.
-    window_b.read_with(cx_b, |cx| {
-        assert_eq!(cx.focused_view_id(), None);
-    });
-    assert!(!window_b.is_edited(cx_b));
-
-    // Ensure client B is not prompted to save edits when closing window after disconnecting.
-    let can_close = workspace_b
-        .update(cx_b, |workspace, cx| workspace.prepare_to_close(true, cx))
-        .await
-        .unwrap();
-    assert!(can_close);
-
-    // Allow client A to reconnect to the server.
-    server.allow_connections();
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
-
-    // Client B calls client A again after they reconnected.
-    let active_call_b = cx_b.read(ActiveCall::global);
-    active_call_b
-        .update(cx_b, |call, cx| {
-            call.invite(client_a.user_id().unwrap(), None, cx)
-        })
-        .await
-        .unwrap();
-    deterministic.run_until_parked();
-    active_call_a
-        .update(cx_a, |call, cx| call.accept_incoming(cx))
-        .await
-        .unwrap();
-
-    active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-
-    // Drop client A's connection again. We should still unshare it successfully.
-    server.forbid_connections();
-    server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
-}
-
-#[gpui::test(iterations = 10)]
 async fn test_project_reconnect(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -1739,8 +1491,7 @@ async fn test_project_reconnect(
     let (project_a1, _) = client_a.build_local_project("/root-1/dir1", cx_a).await;
     let (project_a2, _) = client_a.build_local_project("/root-2", cx_a).await;
     let (project_a3, _) = client_a.build_local_project("/root-3", cx_a).await;
-    let worktree_a1 =
-        project_a1.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_a1 = project_a1.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
     let project1_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a1.clone(), cx))
         .await
@@ -1757,7 +1508,7 @@ async fn test_project_reconnect(
     let project_b1 = client_b.build_remote_project(project1_id, cx_b).await;
     let project_b2 = client_b.build_remote_project(project2_id, cx_b).await;
     let project_b3 = client_b.build_remote_project(project3_id, cx_b).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     let worktree1_id = worktree_a1.read_with(cx_a, |worktree, _| {
         assert!(worktree.as_local().unwrap().is_shared());
@@ -1769,12 +1520,14 @@ async fn test_project_reconnect(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared());
         tree.id()
     });
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_b1.read_with(cx_b, |project, cx| {
         assert!(project.worktree_for_id(worktree2_id, cx).is_some())
     });
@@ -1791,15 +1544,18 @@ async fn test_project_reconnect(
     // Drop client A's connection.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT);
+
     project_a1.read_with(cx_a, |project, _| {
         assert!(project.is_shared());
         assert_eq!(project.collaborators().len(), 1);
     });
+
     project_b1.read_with(cx_b, |project, _| {
-        assert!(!project.is_read_only());
+        assert!(!project.is_disconnected());
         assert_eq!(project.collaborators().len(), 1);
     });
+
     worktree_a1.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared())
     });
@@ -1842,11 +1598,12 @@ async fn test_project_reconnect(
     worktree_a3
         .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
+
     let worktree3_id = worktree_a3.read_with(cx_a, |tree, _| {
         assert!(!tree.as_local().unwrap().is_shared());
         tree.id()
     });
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // While client A is disconnected, close project 2
     cx_a.update(|_| drop(project_a2));
@@ -1854,7 +1611,7 @@ async fn test_project_reconnect(
     // While client A is disconnected, mutate a buffer on both the host and the guest.
     buffer_a1.update(cx_a, |buf, cx| buf.edit([(0..0, "W")], None, cx));
     buffer_b1.update(cx_b, |buf, cx| buf.edit([(1..1, "Z")], None, cx));
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Client A reconnects. Their project is re-shared, and client B re-joins it.
     server.allow_connections();
@@ -1862,7 +1619,8 @@ async fn test_project_reconnect(
         .authenticate_and_connect(false, &cx_a.to_async())
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_a1.read_with(cx_a, |project, cx| {
         assert!(project.is_shared());
         assert!(worktree_a1.read(cx).as_local().unwrap().is_shared());
@@ -1894,8 +1652,9 @@ async fn test_project_reconnect(
             vec!["w.txt", "x.txt", "y.txt"]
         );
     });
+
     project_b1.read_with(cx_b, |project, cx| {
-        assert!(!project.is_read_only());
+        assert!(!project.is_disconnected());
         assert_eq!(
             project
                 .worktree_for_id(worktree1_id, cx)
@@ -1928,15 +1687,19 @@ async fn test_project_reconnect(
             vec!["w.txt", "x.txt", "y.txt"]
         );
     });
-    project_b2.read_with(cx_b, |project, _| assert!(project.is_read_only()));
-    project_b3.read_with(cx_b, |project, _| assert!(!project.is_read_only()));
+
+    project_b2.read_with(cx_b, |project, _| assert!(project.is_disconnected()));
+
+    project_b3.read_with(cx_b, |project, _| assert!(!project.is_disconnected()));
+
     buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WaZ"));
+
     buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "WaZ"));
 
     // Drop client B's connection.
     server.forbid_connections();
     server.disconnect_client(client_b.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT);
 
     // While client B is disconnected, add and remove files from client A's project
     client_a
@@ -1956,7 +1719,8 @@ async fn test_project_reconnect(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     let worktree4_id = worktree_a4.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared());
         tree.id()
@@ -1964,12 +1728,12 @@ async fn test_project_reconnect(
     project_a1.update(cx_a, |project, cx| {
         project.remove_worktree(worktree3_id, cx)
     });
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // While client B is disconnected, mutate a buffer on both the host and the guest.
     buffer_a1.update(cx_a, |buf, cx| buf.edit([(1..1, "X")], None, cx));
     buffer_b1.update(cx_b, |buf, cx| buf.edit([(2..2, "Y")], None, cx));
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // While disconnected, close project 3
     cx_a.update(|_| drop(project_a3));
@@ -1980,9 +1744,10 @@ async fn test_project_reconnect(
         .authenticate_and_connect(false, &cx_b.to_async())
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_b1.read_with(cx_b, |project, cx| {
-        assert!(!project.is_read_only());
+        assert!(!project.is_disconnected());
         assert_eq!(
             project
                 .worktree_for_id(worktree1_id, cx)
@@ -2015,19 +1780,21 @@ async fn test_project_reconnect(
             vec!["z.txt"]
         );
     });
-    project_b3.read_with(cx_b, |project, _| assert!(project.is_read_only()));
+
+    project_b3.read_with(cx_b, |project, _| assert!(project.is_disconnected()));
+
     buffer_a1.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "WXaYZ"));
+
     buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "WXaYZ"));
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_active_call_events(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     client_a.fs().insert_tree("/a", json!({})).await;
@@ -2049,7 +1816,7 @@ async fn test_active_call_events(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
     assert_eq!(
         mem::take(&mut *events_b.borrow_mut()),
@@ -2057,7 +1824,7 @@ async fn test_active_call_events(
             owner: Arc::new(User {
                 id: client_a.user_id().unwrap(),
                 github_login: "user_a".to_string(),
-                avatar: None,
+                avatar_uri: "avatar_a".into(),
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -2068,14 +1835,14 @@ async fn test_active_call_events(
         .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         mem::take(&mut *events_a.borrow_mut()),
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
                 id: client_b.user_id().unwrap(),
                 github_login: "user_b".to_string(),
-                avatar: None,
+                avatar_uri: "avatar_b".into(),
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]
@@ -2089,7 +1856,7 @@ async fn test_active_call_events(
         .await
         .unwrap();
     assert_eq!(project_b_id_2, project_b_id);
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
     assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
 }
@@ -2111,12 +1878,11 @@ fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> 
 
 #[gpui::test(iterations = 10)]
 async fn test_room_location(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     client_a.fs().insert_tree("/a", json!({})).await;
@@ -2153,9 +1919,11 @@ async fn test_room_location(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(a_notified.take());
     assert_eq!(
         participant_locations(&room_a, cx_a),
@@ -2171,7 +1939,7 @@ async fn test_room_location(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(a_notified.take());
     assert_eq!(
         participant_locations(&room_a, cx_a),
@@ -2192,7 +1960,7 @@ async fn test_room_location(
         .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(a_notified.take());
     assert_eq!(
         participant_locations(&room_a, cx_a),
@@ -2213,7 +1981,7 @@ async fn test_room_location(
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(a_notified.take());
     assert_eq!(
         participant_locations(&room_a, cx_a),
@@ -2239,7 +2007,7 @@ async fn test_room_location(
         .update(cx_b, |call, cx| call.set_location(None, cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(a_notified.take());
     assert_eq!(
         participant_locations(&room_a, cx_a),
@@ -2257,7 +2025,7 @@ async fn test_room_location(
     );
 
     fn participant_locations(
-        room: &ModelHandle<Room>,
+        room: &Model<Room>,
         cx: &TestAppContext,
     ) -> Vec<(String, ParticipantLocation)> {
         room.read_with(cx, |room, _| {
@@ -2276,13 +2044,12 @@ async fn test_room_location(
 
 #[gpui::test(iterations = 10)]
 async fn test_propagate_saves_and_fs_changes(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -2324,7 +2091,8 @@ async fn test_propagate_saves_and_fs_changes(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
+
+    let worktree_a = project_a.read_with(cx_a, |p, _| p.worktrees().next().unwrap());
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -2333,8 +2101,10 @@ async fn test_propagate_saves_and_fs_changes(
     // Join that worktree as clients B and C.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
-    let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
-    let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
+
+    let worktree_b = project_b.read_with(cx_b, |p, _| p.worktrees().next().unwrap());
+
+    let worktree_c = project_c.read_with(cx_c, |p, _| p.worktrees().next().unwrap());
 
     // Open and edit a buffer as both guests B and C.
     let buffer_b = project_b
@@ -2345,9 +2115,11 @@ async fn test_propagate_saves_and_fs_changes(
         .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1.rs"), cx))
         .await
         .unwrap();
+
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(&*buffer.language().unwrap().name(), "Rust");
     });
+
     buffer_c.read_with(cx_c, |buffer, _| {
         assert_eq!(&*buffer.language().unwrap().name(), "Rust");
     });
@@ -2360,19 +2132,23 @@ async fn test_propagate_saves_and_fs_changes(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     buffer_a.read_with(cx_a, |buf, _| assert_eq!(buf.text(), "i-am-c, i-am-b, "));
     buffer_a.update(cx_a, |buf, cx| {
         buf.edit([(buf.len()..buf.len(), "i-am-a")], None, cx)
     });
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     buffer_a.read_with(cx_a, |buf, _| {
         assert_eq!(buf.text(), "i-am-c, i-am-b, i-am-a");
     });
+
     buffer_b.read_with(cx_b, |buf, _| {
         assert_eq!(buf.text(), "i-am-c, i-am-b, i-am-a");
     });
+
     buffer_c.read_with(cx_c, |buf, _| {
         assert_eq!(buf.text(), "i-am-c, i-am-b, i-am-a");
     });
@@ -2388,9 +2164,12 @@ async fn test_propagate_saves_and_fs_changes(
         "hi-a, i-am-c, i-am-b, i-am-a"
     );
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     buffer_a.read_with(cx_a, |buf, _| assert!(!buf.is_dirty()));
+
     buffer_b.read_with(cx_b, |buf, _| assert!(!buf.is_dirty()));
+
     buffer_c.read_with(cx_c, |buf, _| assert!(!buf.is_dirty()));
 
     // Make changes on host's file system, see those changes on guest worktrees.
@@ -2409,7 +2188,7 @@ async fn test_propagate_saves_and_fs_changes(
         .await
         .unwrap();
     client_a.fs().insert_file("/a/file4", "4".into()).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     worktree_a.read_with(cx_a, |tree, _| {
         assert_eq!(
@@ -2419,6 +2198,7 @@ async fn test_propagate_saves_and_fs_changes(
             ["file1.js", "file3", "file4"]
         )
     });
+
     worktree_b.read_with(cx_b, |tree, _| {
         assert_eq!(
             tree.paths()
@@ -2427,6 +2207,7 @@ async fn test_propagate_saves_and_fs_changes(
             ["file1.js", "file3", "file4"]
         )
     });
+
     worktree_c.read_with(cx_c, |tree, _| {
         assert_eq!(
             tree.paths()
@@ -2437,14 +2218,17 @@ async fn test_propagate_saves_and_fs_changes(
     });
 
     // Ensure buffer files are updated as well.
+
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
         assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
     });
+
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
         assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
     });
+
     buffer_c.read_with(cx_c, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
         assert_eq!(&*buffer.language().unwrap().name(), "JavaScript");
@@ -2453,11 +2237,13 @@ async fn test_propagate_saves_and_fs_changes(
     let new_buffer_a = project_a
         .update(cx_a, |p, cx| p.create_buffer("", None, cx))
         .unwrap();
+
     let new_buffer_id = new_buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());
     let new_buffer_b = project_b
         .update(cx_b, |p, cx| p.open_buffer_by_id(new_buffer_id, cx))
         .await
         .unwrap();
+
     new_buffer_b.read_with(cx_b, |buffer, _| {
         assert!(buffer.file().is_none());
     });
@@ -2472,7 +2258,8 @@ async fn test_propagate_saves_and_fs_changes(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     new_buffer_b.read_with(cx_b, |buffer_b, _| {
         assert_eq!(
             buffer_b.file().unwrap().path().as_ref(),
@@ -2488,12 +2275,11 @@ async fn test_propagate_saves_and_fs_changes(
 
 #[gpui::test(iterations = 10)]
 async fn test_git_diff_base_change(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2558,9 +2344,10 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait for it to catch up to the new diff
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test diffing
+
     buffer_local_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
@@ -2578,9 +2365,10 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait remote buffer to catch up to the new diff
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test diffing
+
     buffer_remote_a.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
@@ -2597,9 +2385,10 @@ async fn test_git_diff_base_change(
     );
 
     // Wait for buffer_local_a to receive it
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test new diffing
+
     buffer_local_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
 
@@ -2612,6 +2401,7 @@ async fn test_git_diff_base_change(
     });
 
     // Smoke test B
+
     buffer_remote_a.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
@@ -2648,9 +2438,10 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait for it to catch up to the new diff
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test diffing
+
     buffer_local_b.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
@@ -2668,9 +2459,10 @@ async fn test_git_diff_base_change(
         .unwrap();
 
     // Wait remote buffer to catch up to the new diff
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test diffing
+
     buffer_remote_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
@@ -2687,9 +2479,10 @@ async fn test_git_diff_base_change(
     );
 
     // Wait for buffer_local_b to receive it
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test new diffing
+
     buffer_local_b.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         println!("{:?}", buffer.as_rope().to_string());
@@ -2711,6 +2504,7 @@ async fn test_git_diff_base_change(
     });
 
     // Smoke test B
+
     buffer_remote_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
@@ -2724,13 +2518,12 @@ async fn test_git_diff_base_change(
 
 #[gpui::test]
 async fn test_git_branch_name(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -2763,7 +2556,7 @@ async fn test_git_branch_name(
         .set_branch_name(Path::new("/dir/.git"), Some("branch-1"));
 
     // Wait for it to catch up to the new branch
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     #[track_caller]
     fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &AppContext) {
@@ -2776,9 +2569,11 @@ async fn test_git_branch_name(
     }
 
     // Smoke test branch reading
+
     project_local.read_with(cx_a, |project, cx| {
         assert_branch(Some("branch-1"), project, cx)
     });
+
     project_remote.read_with(cx_b, |project, cx| {
         assert_branch(Some("branch-1"), project, cx)
     });
@@ -2788,18 +2583,21 @@ async fn test_git_branch_name(
         .set_branch_name(Path::new("/dir/.git"), Some("branch-2"));
 
     // Wait for buffer_local_a to receive it
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test branch reading
+
     project_local.read_with(cx_a, |project, cx| {
         assert_branch(Some("branch-2"), project, cx)
     });
+
     project_remote.read_with(cx_b, |project, cx| {
         assert_branch(Some("branch-2"), project, cx)
     });
 
     let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_remote_c.read_with(cx_c, |project, cx| {
         assert_branch(Some("branch-2"), project, cx)
     });
@@ -2807,13 +2605,12 @@ async fn test_git_branch_name(
 
 #[gpui::test]
 async fn test_git_status_sync(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -2856,7 +2653,7 @@ async fn test_git_status_sync(
     let project_remote = client_b.build_remote_project(project_id, cx_b).await;
 
     // Wait for it to catch up to the new status
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     #[track_caller]
     fn assert_status(
@@ -2874,10 +2671,12 @@ async fn test_git_status_sync(
     }
 
     // Smoke test status reading
+
     project_local.read_with(cx_a, |project, cx| {
         assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
         assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
+
     project_remote.read_with(cx_b, |project, cx| {
         assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
         assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
@@ -2892,9 +2691,10 @@ async fn test_git_status_sync(
     );
 
     // Wait for buffer_local_a to receive it
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Smoke test status reading
+
     project_local.read_with(cx_a, |project, cx| {
         assert_status(
             &Path::new(A_TXT),
@@ -2909,6 +2709,7 @@ async fn test_git_status_sync(
             cx,
         );
     });
+
     project_remote.read_with(cx_b, |project, cx| {
         assert_status(
             &Path::new(A_TXT),
@@ -2926,7 +2727,7 @@ async fn test_git_status_sync(
 
     // And synchronization while joining
     let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     project_remote_c.read_with(cx_c, |project, cx| {
         assert_status(
@@ -2946,12 +2747,11 @@ async fn test_git_status_sync(
 
 #[gpui::test(iterations = 10)]
 async fn test_fs_operations(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -2976,8 +2776,9 @@ async fn test_fs_operations(
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
+
+    let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
 
     let entry = project_b
         .update(cx_b, |project, cx| {
@@ -2986,6 +2787,7 @@ async fn test_fs_operations(
         .await
         .unwrap()
         .unwrap();
+
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
             worktree
@@ -2995,6 +2797,7 @@ async fn test_fs_operations(
             ["a.txt", "b.txt", "c.txt"]
         );
     });
+
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
             worktree
@@ -3010,7 +2813,9 @@ async fn test_fs_operations(
             project.rename_entry(entry.id, Path::new("d.txt"), cx)
         })
         .await
+        .unwrap()
         .unwrap();
+
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
             worktree
@@ -3020,6 +2825,7 @@ async fn test_fs_operations(
             ["a.txt", "b.txt", "d.txt"]
         );
     });
+
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
             worktree
@@ -3037,6 +2843,7 @@ async fn test_fs_operations(
         .await
         .unwrap()
         .unwrap();
+
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
             worktree
@@ -3046,6 +2853,7 @@ async fn test_fs_operations(
             ["DIR", "a.txt", "b.txt", "d.txt"]
         );
     });
+
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
             worktree
@@ -3061,19 +2869,23 @@ async fn test_fs_operations(
             project.create_entry((worktree_id, "DIR/e.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     project_b
         .update(cx_b, |project, cx| {
             project.create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
         })
         .await
+        .unwrap()
         .unwrap();
     project_b
         .update(cx_b, |project, cx| {
             project.create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
         })
         .await
+        .unwrap()
         .unwrap();
+
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
             worktree
@@ -3091,6 +2903,7 @@ async fn test_fs_operations(
             ]
         );
     });
+
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
             worktree
@@ -3114,7 +2927,9 @@ async fn test_fs_operations(
             project.copy_entry(entry.id, Path::new("f.txt"), cx)
         })
         .await
+        .unwrap()
         .unwrap();
+
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
             worktree
@@ -3133,6 +2948,7 @@ async fn test_fs_operations(
             ]
         );
     });
+
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
             worktree
@@ -3158,7 +2974,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
@@ -3169,6 +2985,7 @@ async fn test_fs_operations(
             ["a.txt", "b.txt", "d.txt", "f.txt"]
         );
     });
+
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
             worktree
@@ -3185,6 +3002,7 @@ async fn test_fs_operations(
         })
         .await
         .unwrap();
+
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
             worktree
@@ -3194,6 +3012,7 @@ async fn test_fs_operations(
             ["a.txt", "b.txt", "f.txt"]
         );
     });
+
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
             worktree
@@ -3207,12 +3026,11 @@ async fn test_fs_operations(
 
 #[gpui::test(iterations = 10)]
 async fn test_local_settings(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3242,7 +3060,7 @@ async fn test_local_settings(
         )
         .await;
     let (project_a, _) = client_a.build_local_project("/dir", cx_a).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -3250,12 +3068,15 @@ async fn test_local_settings(
 
     // As client B, join that project and observe the local settings.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
-    deterministic.run_until_parked();
+
+    let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
+    executor.run_until_parked();
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
         assert_eq!(
-            store.local_settings(worktree_b.id()).collect::<Vec<_>>(),
+            store
+                .local_settings(worktree_b.read(cx).id().to_usize())
+                .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{"tab_size":2}"#.to_string()),
                 (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
@@ -3268,11 +3089,13 @@ async fn test_local_settings(
         .fs()
         .insert_file("/dir/.zed/settings.json", r#"{}"#.into())
         .await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
         assert_eq!(
-            store.local_settings(worktree_b.id()).collect::<Vec<_>>(),
+            store
+                .local_settings(worktree_b.read(cx).id().to_usize())
+                .collect::<Vec<_>>(),
             &[
                 (Path::new("").into(), r#"{}"#.to_string()),
                 (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
@@ -3295,11 +3118,13 @@ async fn test_local_settings(
         .fs()
         .insert_file("/dir/b/.zed/settings.json", r#"{"tab_size": 4}"#.into())
         .await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
         assert_eq!(
-            store.local_settings(worktree_b.id()).collect::<Vec<_>>(),
+            store
+                .local_settings(worktree_b.read(cx).id().to_usize())
+                .collect::<Vec<_>>(),
             &[
                 (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
                 (Path::new("b").into(), r#"{"tab_size":4}"#.to_string()),
@@ -3321,15 +3146,17 @@ async fn test_local_settings(
         .remove_file("/dir/b/.zed/settings.json".as_ref(), Default::default())
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // As client B, reconnect and see the changed settings.
     server.allow_connections();
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT);
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
         assert_eq!(
-            store.local_settings(worktree_b.id()).collect::<Vec<_>>(),
+            store
+                .local_settings(worktree_b.read(cx).id().to_usize())
+                .collect::<Vec<_>>(),
             &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
         )
     });
@@ -3337,12 +3164,11 @@ async fn test_local_settings(
 
 #[gpui::test(iterations = 10)]
 async fn test_buffer_conflict_after_save(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3373,6 +3199,7 @@ async fn test_buffer_conflict_after_save(
         .unwrap();
 
     buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "world ")], None, cx));
+
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(buf.is_dirty());
         assert!(!buf.has_conflict());
@@ -3384,13 +3211,15 @@ async fn test_buffer_conflict_after_save(
         })
         .await
         .unwrap();
-    cx_a.foreground().forbid_parking();
+
     buffer_b.read_with(cx_b, |buffer_b, _| assert!(!buffer_b.is_dirty()));
+
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(!buf.has_conflict());
     });
 
     buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "hello ")], None, cx));
+
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(buf.is_dirty());
         assert!(!buf.has_conflict());
@@ -3399,12 +3228,11 @@ async fn test_buffer_conflict_after_save(
 
 #[gpui::test(iterations = 10)]
 async fn test_buffer_reloading(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3433,6 +3261,7 @@ async fn test_buffer_reloading(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
+
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(!buf.is_dirty());
         assert!(!buf.has_conflict());
@@ -3445,7 +3274,9 @@ async fn test_buffer_reloading(
         .save("/dir/a.txt".as_ref(), &new_contents, LineEnding::Windows)
         .await
         .unwrap();
-    cx_a.foreground().run_until_parked();
+
+    executor.run_until_parked();
+
     buffer_b.read_with(cx_b, |buf, _| {
         assert_eq!(buf.text(), new_contents.to_string());
         assert!(!buf.is_dirty());
@@ -3456,12 +3287,11 @@ async fn test_buffer_reloading(
 
 #[gpui::test(iterations = 10)]
 async fn test_editing_while_guest_opens_buffer(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3487,124 +3317,29 @@ async fn test_editing_while_guest_opens_buffer(
         .unwrap();
 
     // Start opening the same buffer as client B
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer);
 
     // Edit the buffer as client A while client B is still opening it.
-    cx_b.background().simulate_random_delay().await;
+    cx_b.executor().simulate_random_delay().await;
     buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "X")], None, cx));
-    cx_b.background().simulate_random_delay().await;
+    cx_b.executor().simulate_random_delay().await;
     buffer_a.update(cx_a, |buf, cx| buf.edit([(1..1, "Y")], None, cx));
 
     let text = buffer_a.read_with(cx_a, |buf, _| buf.text());
     let buffer_b = buffer_b.await.unwrap();
-    cx_a.foreground().run_until_parked();
+    executor.run_until_parked();
+
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), text));
-}
-
-#[gpui::test]
-async fn test_newline_above_or_below_does_not_move_guest_cursor(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    client_a
-        .fs()
-        .insert_tree("/dir", json!({ "a.txt": "Some text\n" }))
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-
-    // Open a buffer as client A
-    let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
-        .await
-        .unwrap();
-    let window_a = cx_a.add_window(|_| EmptyView);
-    let editor_a = window_a.add_view(cx_a, |cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
-    let mut editor_cx_a = EditorTestContext {
-        cx: cx_a,
-        window: window_a.into(),
-        editor: editor_a,
-    };
-
-    // Open a buffer as client B
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
-        .await
-        .unwrap();
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let editor_b = window_b.add_view(cx_b, |cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
-    let mut editor_cx_b = EditorTestContext {
-        cx: cx_b,
-        window: window_b.into(),
-        editor: editor_b,
-    };
-
-    // Test newline above
-    editor_cx_a.set_selections_state(indoc! {"
-        Some textˇ
-    "});
-    editor_cx_b.set_selections_state(indoc! {"
-        Some textˇ
-    "});
-    editor_cx_a.update_editor(|editor, cx| editor.newline_above(&editor::NewlineAbove, cx));
-    deterministic.run_until_parked();
-    editor_cx_a.assert_editor_state(indoc! {"
-        ˇ
-        Some text
-    "});
-    editor_cx_b.assert_editor_state(indoc! {"
-
-        Some textˇ
-    "});
-
-    // Test newline below
-    editor_cx_a.set_selections_state(indoc! {"
-
-        Some textˇ
-    "});
-    editor_cx_b.set_selections_state(indoc! {"
-
-        Some textˇ
-    "});
-    editor_cx_a.update_editor(|editor, cx| editor.newline_below(&editor::NewlineBelow, cx));
-    deterministic.run_until_parked();
-    editor_cx_a.assert_editor_state(indoc! {"
-
-        Some text
-        ˇ
-    "});
-    editor_cx_b.assert_editor_state(indoc! {"
-
-        Some textˇ
-
-    "});
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_leaving_worktree_while_opening_buffer(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3624,30 +3359,29 @@ async fn test_leaving_worktree_while_opening_buffer(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // See that a guest has joined as client A.
-    cx_a.foreground().run_until_parked();
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |p, _| assert_eq!(p.collaborators().len(), 1));
 
     // Begin opening a buffer as client B, but leave the project before the open completes.
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer);
     cx_b.update(|_| drop(project_b));
     drop(buffer_b);
 
     // See that the guest has left.
-    cx_a.foreground().run_until_parked();
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |p, _| assert!(p.collaborators().is_empty()));
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_canceling_buffer_opening(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -3680,7 +3414,7 @@ async fn test_canceling_buffer_opening(
     let buffer_b = project_b.update(cx_b, |p, cx| {
         p.open_buffer_by_id(buffer_a.read_with(cx_a, |a, _| a.remote_id()), cx)
     });
-    deterministic.simulate_random_delay().await;
+    executor.simulate_random_delay().await;
     drop(buffer_b);
 
     // Try opening the same buffer again as client B, and ensure we can
@@ -3691,18 +3425,18 @@ async fn test_canceling_buffer_opening(
         })
         .await
         .unwrap();
+
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "abc"));
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_leaving_project(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -3730,13 +3464,16 @@ async fn test_leaving_project(
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
 
     // Client A sees that a guest has joined.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
+
     project_b1.read_with(cx_b, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
+
     project_c.read_with(cx_c, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
@@ -3744,54 +3481,64 @@ async fn test_leaving_project(
     // Client B opens a buffer.
     let buffer_b1 = project_b1
         .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
             project.open_buffer((worktree_id, "a.txt"), cx)
         })
         .await
         .unwrap();
+
     buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
 
     // Drop client B's project and ensure client A and client C observe client B leaving.
     cx_b.update(|_| drop(project_b1));
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
     });
+
     project_c.read_with(cx_c, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
     });
 
     // Client B re-joins the project and can open buffers as before.
     let project_b2 = client_b.build_remote_project(project_id, cx_b).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
+
     project_b2.read_with(cx_b, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
+
     project_c.read_with(cx_c, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
     });
 
     let buffer_b2 = project_b2
         .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
             project.open_buffer((worktree_id, "a.txt"), cx)
         })
         .await
         .unwrap();
+
     buffer_b2.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
 
     // Drop client B's connection and ensure client A and client C observe client B leaving.
     client_b.disconnect(&cx_b.to_async());
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    executor.advance_clock(RECONNECT_TIMEOUT);
+
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
     });
+
     project_b2.read_with(cx_b, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
     });
+
     project_c.read_with(cx_c, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
     });
@@ -3803,7 +3550,8 @@ async fn test_leaving_project(
             client_b.app_state.client.clone(),
             client_b.user_store().clone(),
             client_b.language_registry().clone(),
-            FakeFs::new(cx.background()),
+            FakeFs::new(cx.background_executor().clone()),
+            ChannelRole::Member,
             cx,
         )
     })
@@ -3814,28 +3562,30 @@ async fn test_leaving_project(
     client_c.wait_for_current_user(cx_c).await;
     server.forbid_connections();
     server.disconnect_client(client_c.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    deterministic.run_until_parked();
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 0);
     });
+
     project_b2.read_with(cx_b, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
     });
+
     project_c.read_with(cx_c, |project, _| {
-        assert!(project.is_read_only());
+        assert!(project.is_disconnected());
     });
 }
 
 #[gpui::test(iterations = 10)]
 async fn test_collaborating_with_diagnostics(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -3925,9 +3675,10 @@ async fn test_collaborating_with_diagnostics(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Wait for server to see the diagnostics update.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // Ensure client B observes the new diagnostics.
+
     project_b.read_with(cx_b, |project, cx| {
         assert_eq!(
             project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
@@ -3964,7 +3715,7 @@ async fn test_collaborating_with_diagnostics(
         .detach();
     });
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         project_c_diagnostic_summaries.borrow().as_slice(),
         &[(
@@ -4004,7 +3755,8 @@ async fn test_collaborating_with_diagnostics(
     );
 
     // Clients B and C get the updated summaries
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_b.read_with(cx_b, |project, cx| {
         assert_eq!(
             project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
@@ -4021,6 +3773,7 @@ async fn test_collaborating_with_diagnostics(
             )]
         );
     });
+
     project_c.read_with(cx_c, |project, cx| {
         assert_eq!(
             project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
@@ -4039,11 +3792,8 @@ async fn test_collaborating_with_diagnostics(
     });
 
     // Open the file with the errors on client B. They should be present.
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(
@@ -4084,19 +3834,22 @@ async fn test_collaborating_with_diagnostics(
             diagnostics: vec![],
         },
     );
-    deterministic.run_until_parked();
+    executor.run_until_parked();
+
     project_a.read_with(cx_a, |project, cx| {
         assert_eq!(
             project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
             []
         )
     });
+
     project_b.read_with(cx_b, |project, cx| {
         assert_eq!(
             project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
             []
         )
     });
+
     project_c.read_with(cx_c, |project, cx| {
         assert_eq!(
             project.diagnostic_summaries(false, cx).collect::<Vec<_>>(),
@@ -4107,12 +3860,11 @@ async fn test_collaborating_with_diagnostics(
 
 #[gpui::test(iterations = 10)]
 async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4236,200 +3988,17 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         }
     });
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert!(disk_based_diagnostics_finished.load(SeqCst));
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_collaborating_with_completion(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                completion_provider: Some(lsp::CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string()]),
-                    resolve_provider: Some(true),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                "main.rs": "fn main() { a }",
-                "other.rs": "",
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-
-    // Open a file in an editor as the guest.
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
-        .await
-        .unwrap();
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let editor_b = window_b.add_view(cx_b, |cx| {
-        Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
-    });
-
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    cx_a.foreground().run_until_parked();
-    buffer_b.read_with(cx_b, |buffer, _| {
-        assert!(!buffer.completion_triggers().is_empty())
-    });
-
-    // Type a completion trigger character as the guest.
-    editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-        editor.handle_input(".", cx);
-        cx.focus(&editor_b);
-    });
-
-    // Receive a completion request as the host's language server.
-    // Return some completions from the host's language server.
-    cx_a.foreground().start_waiting();
-    fake_language_server
-        .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 14),
-            );
-
-            Ok(Some(lsp::CompletionResponse::Array(vec![
-                lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "second_method(…)".into(),
-                    detail: Some("fn(&mut self, C) -> D<E>".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "second_method()".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-            ])))
-        })
-        .next()
-        .await
-        .unwrap();
-    cx_a.foreground().finish_waiting();
-
-    // Open the buffer on the host.
-    let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
-        .await
-        .unwrap();
-    cx_a.foreground().run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { a. }")
-    });
-
-    // Confirm a completion on the guest.
-    editor_b.read_with(cx_b, |editor, _| assert!(editor.context_menu_visible()));
-    editor_b.update(cx_b, |editor, cx| {
-        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
-        assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
-    });
-
-    // Return a resolved completion from the host's language server.
-    // The resolved completion has an additional text edit.
-    fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _, _>(
-        |params, _| async move {
-            assert_eq!(params.label, "first_method(…)");
-            Ok(lsp::CompletionItem {
-                label: "first_method(…)".into(),
-                detail: Some("fn(&mut self, B) -> C".into()),
-                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                    new_text: "first_method($1)".to_string(),
-                    range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
-                })),
-                additional_text_edits: Some(vec![lsp::TextEdit {
-                    new_text: "use d::SomeTrait;\n".to_string(),
-                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                }]),
-                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                ..Default::default()
-            })
-        },
-    );
-
-    // The additional edit is applied.
-    cx_a.foreground().run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(
-            buffer.text(),
-            "use d::SomeTrait;\nfn main() { a.first_method() }"
-        );
-    });
-    buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(
-            buffer.text(),
-            "use d::SomeTrait;\nfn main() { a.first_method() }"
-        );
-    });
-}
-
-#[gpui::test(iterations = 10)]
 async fn test_reloading_buffer_manually(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4453,11 +4022,8 @@ async fn test_reloading_buffer_manually(
 
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
     buffer_b.update(cx_b, |buffer, cx| {
         buffer.edit([(4..7, "six")], None, cx);
         buffer.edit([(10..11, "6")], None, cx);
@@ -4465,7 +4031,8 @@ async fn test_reloading_buffer_manually(
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
-    cx_a.foreground().run_until_parked();
+    executor.run_until_parked();
+
     buffer_a.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "let six = 6;"));
 
     client_a
@@ -4477,8 +4044,10 @@ async fn test_reloading_buffer_manually(
         )
         .await
         .unwrap();
-    cx_a.foreground().run_until_parked();
+    executor.run_until_parked();
+
     buffer_a.read_with(cx_a, |buffer, _| assert!(buffer.has_conflict()));
+
     buffer_b.read_with(cx_b, |buffer, _| assert!(buffer.has_conflict()));
 
     project_b
@@ -4487,11 +4056,13 @@ async fn test_reloading_buffer_manually(
         })
         .await
         .unwrap();
+
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.text(), "let seven = 7;");
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
+
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.text(), "let seven = 7;");
         assert!(!buffer.is_dirty());
@@ -4516,11 +4087,12 @@ async fn test_reloading_buffer_manually(
 
 #[gpui::test(iterations = 10)]
 async fn test_formatting_buffer(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    let mut server = TestServer::start(&deterministic).await;
+    executor.allow_parking();
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4555,11 +4127,8 @@ async fn test_formatting_buffer(
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
@@ -4624,11 +4193,11 @@ async fn test_formatting_buffer(
 
 #[gpui::test(iterations = 10)]
 async fn test_prettier_formatting_buffer(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4667,22 +4236,16 @@ async fn test_prettier_formatting_buffer(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
-    let buffer_a = cx_a
-        .background()
-        .spawn(project_a.update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_a.update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let buffer_a = cx_a.executor().spawn(open_buffer).await.unwrap();
 
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     cx_a.update(|cx| {
         cx.update_global(|store: &mut SettingsStore, cx| {
@@ -4716,8 +4279,8 @@ async fn test_prettier_formatting_buffer(
         })
         .await
         .unwrap();
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    executor.run_until_parked();
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
         buffer_text.to_string() + "\n" + prettier_format_suffix,
@@ -4735,8 +4298,8 @@ async fn test_prettier_formatting_buffer(
         })
         .await
         .unwrap();
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    executor.run_until_parked();
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
         buffer_text.to_string() + "\n" + prettier_format_suffix + "\n" + prettier_format_suffix,
@@ -4746,12 +4309,11 @@ async fn test_prettier_formatting_buffer(
 
 #[gpui::test(iterations = 10)]
 async fn test_definition(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4794,11 +4356,8 @@ async fn test_definition(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     // Request the definition of a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
@@ -4817,7 +4376,7 @@ async fn test_definition(
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_1.len(), 1);
-        assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
+        assert_eq!(project_b.read(cx).worktrees().count(), 2);
         let target_buffer = definitions_1[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
@@ -4846,7 +4405,7 @@ async fn test_definition(
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_2.len(), 1);
-        assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
+        assert_eq!(project_b.read(cx).worktrees().count(), 2);
         let target_buffer = definitions_2[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
@@ -4894,12 +4453,11 @@ async fn test_definition(
 
 #[gpui::test(iterations = 10)]
 async fn test_references(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -4942,11 +4500,8 @@ async fn test_references(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     // Request references to a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
@@ -4977,7 +4532,7 @@ async fn test_references(
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(references.len(), 3);
-        assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
+        assert_eq!(project_b.read(cx).worktrees().count(), 2);
 
         let two_buffer = references[0].buffer.read(cx);
         let three_buffer = references[2].buffer.read(cx);
@@ -4999,12 +4554,11 @@ async fn test_references(
 
 #[gpui::test(iterations = 10)]
 async fn test_project_search(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5086,12 +4640,11 @@ async fn test_project_search(
 
 #[gpui::test(iterations = 10)]
 async fn test_document_highlights(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5129,11 +4682,8 @@ async fn test_document_highlights(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx)))
-        .await
-        .unwrap();
+    let open_b = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_b).await.unwrap();
 
     // Request document highlights as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
@@ -5172,6 +4722,7 @@ async fn test_document_highlights(
         .update(cx_b, |p, cx| p.document_highlights(&buffer_b, 34, cx))
         .await
         .unwrap();
+
     buffer_b.read_with(cx_b, |buffer, _| {
         let snapshot = buffer.snapshot();
 
@@ -5192,12 +4743,11 @@ async fn test_document_highlights(
 
 #[gpui::test(iterations = 10)]
 async fn test_lsp_hover(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5235,11 +4785,8 @@ async fn test_lsp_hover(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file as the guest
-    let buffer_b = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx));
+    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     // Request hover information as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
@@ -5278,6 +4825,7 @@ async fn test_lsp_hover(
         .await
         .unwrap()
         .unwrap();
+
     buffer_b.read_with(cx_b, |buffer, _| {
         let snapshot = buffer.snapshot();
         assert_eq!(hover_info.range.unwrap().to_offset(&snapshot), 22..29);
@@ -5301,12 +4849,11 @@ async fn test_lsp_hover(
 
 #[gpui::test(iterations = 10)]
 async fn test_project_symbols(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5351,11 +4898,9 @@ async fn test_project_symbols(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Cause the language server to start.
-    let _buffer = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer_task =
+        project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx));
+    let _buffer = cx_b.executor().spawn(open_buffer_task).await.unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
@@ -5390,10 +4935,11 @@ async fn test_project_symbols(
         })
         .await
         .unwrap();
-    buffer_b_2.read_with(cx_b, |buffer, _| {
+
+    buffer_b_2.read_with(cx_b, |buffer, cx| {
         assert_eq!(
-            buffer.file().unwrap().path().as_ref(),
-            Path::new("../crate-2/two.rs")
+            buffer.file().unwrap().full_path(cx),
+            Path::new("/code/crate-2/two.rs")
         );
     });
 
@@ -5411,13 +4957,12 @@ async fn test_project_symbols(
 
 #[gpui::test(iterations = 10)]
 async fn test_open_buffer_while_getting_definition_pointing_to_it(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     mut rng: StdRng,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
@@ -5454,11 +4999,8 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let buffer_b1 = cx_b
-        .background()
-        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
-        .await
-        .unwrap();
+    let open_buffer_task = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let buffer_b1 = cx_b.executor().spawn(open_buffer_task).await.unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
@@ -5487,539 +5029,14 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_collaborating_with_code_actions(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    //
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    cx_b.update(editor::init);
-
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry().add(Arc::new(language));
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
-                "other.rs": "pub fn foo() -> usize { 4 }",
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-
-    // Join the project as client B.
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let window_b =
-        cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
-    let workspace_b = window_b.root(cx_b);
-    let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-
-    let mut fake_language_server = fake_language_servers.next().await.unwrap();
-    let mut requests = fake_language_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(params.range.start, lsp::Position::new(0, 0));
-            assert_eq!(params.range.end, lsp::Position::new(0, 0));
-            Ok(None)
-        });
-    deterministic.advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
-    requests.next().await;
-
-    // Move cursor to a location that contains code actions.
-    editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |s| {
-            s.select_ranges([Point::new(1, 31)..Point::new(1, 31)])
-        });
-        cx.focus(&editor_b);
-    });
-
-    let mut requests = fake_language_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(params.range.start, lsp::Position::new(1, 31));
-            assert_eq!(params.range.end, lsp::Position::new(1, 31));
-
-            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                lsp::CodeAction {
-                    title: "Inline into all callers".to_string(),
-                    edit: Some(lsp::WorkspaceEdit {
-                        changes: Some(
-                            [
-                                (
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(1, 22),
-                                            lsp::Position::new(1, 34),
-                                        ),
-                                        "4".to_string(),
-                                    )],
-                                ),
-                                (
-                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(0, 0),
-                                            lsp::Position::new(0, 27),
-                                        ),
-                                        "".to_string(),
-                                    )],
-                                ),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        ),
-                        ..Default::default()
-                    }),
-                    data: Some(json!({
-                        "codeActionParams": {
-                            "range": {
-                                "start": {"line": 1, "column": 31},
-                                "end": {"line": 1, "column": 31},
-                            }
-                        }
-                    })),
-                    ..Default::default()
-                },
-            )]))
-        });
-    deterministic.advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
-    requests.next().await;
-
-    // Toggle code actions and wait for them to display.
-    editor_b.update(cx_b, |editor, cx| {
-        editor.toggle_code_actions(
-            &ToggleCodeActions {
-                deployed_from_indicator: false,
-            },
-            cx,
-        );
-    });
-    cx_a.foreground().run_until_parked();
-    editor_b.read_with(cx_b, |editor, _| assert!(editor.context_menu_visible()));
-
-    fake_language_server.remove_request_handler::<lsp::request::CodeActionRequest>();
-
-    // Confirming the code action will trigger a resolve request.
-    let confirm_action = workspace_b
-        .update(cx_b, |workspace, cx| {
-            Editor::confirm_code_action(workspace, &ConfirmCodeAction { item_ix: Some(0) }, cx)
-        })
-        .unwrap();
-    fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
-        |_, _| async move {
-            Ok(lsp::CodeAction {
-                title: "Inline into all callers".to_string(),
-                edit: Some(lsp::WorkspaceEdit {
-                    changes: Some(
-                        [
-                            (
-                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                                vec![lsp::TextEdit::new(
-                                    lsp::Range::new(
-                                        lsp::Position::new(1, 22),
-                                        lsp::Position::new(1, 34),
-                                    ),
-                                    "4".to_string(),
-                                )],
-                            ),
-                            (
-                                lsp::Url::from_file_path("/a/other.rs").unwrap(),
-                                vec![lsp::TextEdit::new(
-                                    lsp::Range::new(
-                                        lsp::Position::new(0, 0),
-                                        lsp::Position::new(0, 27),
-                                    ),
-                                    "".to_string(),
-                                )],
-                            ),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    ),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-        },
-    );
-
-    // After the action is confirmed, an editor containing both modified files is opened.
-    confirm_action.await.unwrap();
-    let code_action_editor = workspace_b.read_with(cx_b, |workspace, cx| {
-        workspace
-            .active_item(cx)
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap()
-    });
-    code_action_editor.update(cx_b, |editor, cx| {
-        assert_eq!(editor.text(cx), "mod other;\nfn main() { let foo = 4; }\n");
-        editor.undo(&Undo, cx);
-        assert_eq!(
-            editor.text(cx),
-            "mod other;\nfn main() { let foo = other::foo(); }\npub fn foo() -> usize { 4 }"
-        );
-        editor.redo(&Redo, cx);
-        assert_eq!(editor.text(cx), "mod other;\nfn main() { let foo = 4; }\n");
-    });
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_collaborating_with_renames(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    cx_b.update(editor::init);
-
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
-                    prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
-                })),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/dir",
-            json!({
-                "one.rs": "const ONE: usize = 1;",
-                "two.rs": "const TWO: usize = one::ONE + one::ONE;"
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-
-    let window_b =
-        cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
-    let workspace_b = window_b.root(cx_b);
-    let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "one.rs"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-
-    // Move cursor to a location that can be renamed.
-    let prepare_rename = editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([7..7]));
-        editor.rename(&Rename, cx).unwrap()
-    });
-
-    fake_language_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
-            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
-            assert_eq!(params.position, lsp::Position::new(0, 7));
-            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                lsp::Position::new(0, 6),
-                lsp::Position::new(0, 9),
-            ))))
-        })
-        .next()
-        .await
-        .unwrap();
-    prepare_rename.await.unwrap();
-    editor_b.update(cx_b, |editor, cx| {
-        use editor::ToOffset;
-        let rename = editor.pending_rename().unwrap();
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        assert_eq!(
-            rename.range.start.to_offset(&buffer)..rename.range.end.to_offset(&buffer),
-            6..9
-        );
-        rename.editor.update(cx, |rename_editor, cx| {
-            rename_editor.buffer().update(cx, |rename_buffer, cx| {
-                rename_buffer.edit([(0..3, "THREE")], None, cx);
-            });
-        });
-    });
-
-    let confirm_rename = workspace_b.update(cx_b, |workspace, cx| {
-        Editor::confirm_rename(workspace, &ConfirmRename, cx).unwrap()
-    });
-    fake_language_server
-        .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri.as_str(),
-                "file:///dir/one.rs"
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 6)
-            );
-            assert_eq!(params.new_name, "THREE");
-            Ok(Some(lsp::WorkspaceEdit {
-                changes: Some(
-                    [
-                        (
-                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
-                            vec![lsp::TextEdit::new(
-                                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-                                "THREE".to_string(),
-                            )],
-                        ),
-                        (
-                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
-                            vec![
-                                lsp::TextEdit::new(
-                                    lsp::Range::new(
-                                        lsp::Position::new(0, 24),
-                                        lsp::Position::new(0, 27),
-                                    ),
-                                    "THREE".to_string(),
-                                ),
-                                lsp::TextEdit::new(
-                                    lsp::Range::new(
-                                        lsp::Position::new(0, 35),
-                                        lsp::Position::new(0, 38),
-                                    ),
-                                    "THREE".to_string(),
-                                ),
-                            ],
-                        ),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
-                ..Default::default()
-            }))
-        })
-        .next()
-        .await
-        .unwrap();
-    confirm_rename.await.unwrap();
-
-    let rename_editor = workspace_b.read_with(cx_b, |workspace, cx| {
-        workspace
-            .active_item(cx)
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap()
-    });
-    rename_editor.update(cx_b, |editor, cx| {
-        assert_eq!(
-            editor.text(cx),
-            "const THREE: usize = 1;\nconst TWO: usize = one::THREE + one::THREE;"
-        );
-        editor.undo(&Undo, cx);
-        assert_eq!(
-            editor.text(cx),
-            "const ONE: usize = 1;\nconst TWO: usize = one::ONE + one::ONE;"
-        );
-        editor.redo(&Redo, cx);
-        assert_eq!(
-            editor.text(cx),
-            "const THREE: usize = 1;\nconst TWO: usize = one::THREE + one::THREE;"
-        );
-    });
-
-    // Ensure temporary rename edits cannot be undone/redone.
-    editor_b.update(cx_b, |editor, cx| {
-        editor.undo(&Undo, cx);
-        assert_eq!(editor.text(cx), "const ONE: usize = 1;");
-        editor.undo(&Undo, cx);
-        assert_eq!(editor.text(cx), "const ONE: usize = 1;");
-        editor.redo(&Redo, cx);
-        assert_eq!(editor.text(cx), "const THREE: usize = 1;");
-    })
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_language_server_statuses(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    cx_b.update(editor::init);
-
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            name: "the-language-server",
-            ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/dir",
-            json!({
-                "main.rs": "const ONE: usize = 1;",
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-
-    let _buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
-        .await
-        .unwrap();
-
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.start_progress("the-token").await;
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-        token: lsp::NumberOrString::String("the-token".to_string()),
-        value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
-            lsp::WorkDoneProgressReport {
-                message: Some("the-message".to_string()),
-                ..Default::default()
-            },
-        )),
-    });
-    deterministic.run_until_parked();
-    project_a.read_with(cx_a, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
-        assert_eq!(status.name, "the-language-server");
-        assert_eq!(status.pending_work.len(), 1);
-        assert_eq!(
-            status.pending_work["the-token"].message.as_ref().unwrap(),
-            "the-message"
-        );
-    });
-
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-    deterministic.run_until_parked();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
-        assert_eq!(status.name, "the-language-server");
-    });
-
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
-        token: lsp::NumberOrString::String("the-token".to_string()),
-        value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
-            lsp::WorkDoneProgressReport {
-                message: Some("the-message-2".to_string()),
-                ..Default::default()
-            },
-        )),
-    });
-    deterministic.run_until_parked();
-    project_a.read_with(cx_a, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
-        assert_eq!(status.name, "the-language-server");
-        assert_eq!(status.pending_work.len(), 1);
-        assert_eq!(
-            status.pending_work["the-token"].message.as_ref().unwrap(),
-            "the-message-2"
-        );
-    });
-    project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap();
-        assert_eq!(status.name, "the-language-server");
-        assert_eq!(status.pending_work.len(), 1);
-        assert_eq!(
-            status.pending_work["the-token"].message.as_ref().unwrap(),
-            "the-message-2"
-        );
-    });
-}
-
-#[gpui::test(iterations = 10)]
 async fn test_contacts(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
     cx_d: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -6032,7 +5049,7 @@ async fn test_contacts(
     let active_call_c = cx_c.read(ActiveCall::global);
     let _active_call_d = cx_d.read(ActiveCall::global);
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6058,7 +5075,7 @@ async fn test_contacts(
 
     server.disconnect_client(client_c.peer_id().unwrap());
     server.forbid_connections();
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6082,7 +5099,7 @@ async fn test_contacts(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6112,7 +5129,7 @@ async fn test_contacts(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6140,7 +5157,7 @@ async fn test_contacts(
     server
         .make_contacts(&mut [(&client_b, cx_b), (&client_d, cx_d)])
         .await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6169,7 +5186,7 @@ async fn test_contacts(
     );
 
     active_call_b.update(cx_b, |call, cx| call.decline_incoming(cx).unwrap());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6203,7 +5220,7 @@ async fn test_contacts(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6235,7 +5252,7 @@ async fn test_contacts(
         .update(cx_a, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6269,7 +5286,7 @@ async fn test_contacts(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6301,7 +5318,7 @@ async fn test_contacts(
         .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6335,7 +5352,7 @@ async fn test_contacts(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
         [
@@ -6365,7 +5382,7 @@ async fn test_contacts(
 
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
     assert_eq!(contacts(&client_a, cx_a), []);
     assert_eq!(
         contacts(&client_b, cx_b),
@@ -6395,7 +5412,7 @@ async fn test_contacts(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         contacts(&client_b, cx_b),
         [
@@ -6430,7 +5447,7 @@ async fn test_contacts(
 
 #[gpui::test(iterations = 10)]
 async fn test_contact_requests(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_a2: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -6438,10 +5455,8 @@ async fn test_contact_requests(
     cx_c: &mut TestAppContext,
     cx_c2: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-
     // Connect to a server as 3 clients.
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_a2 = server.create_client(cx_a2, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -6468,7 +5483,7 @@ async fn test_contact_requests(
         })
         .await
         .unwrap();
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // All users see the pending request appear in all their clients.
     assert_eq!(
@@ -6500,7 +5515,7 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_a, cx_a).await;
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         client_a.summarize_contacts(cx_a).outgoing_requests,
         &["user_b"]
@@ -6523,7 +5538,7 @@ async fn test_contact_requests(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // User B sees user A as their contact now in all client, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
@@ -6545,7 +5560,7 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_a, cx_a).await;
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert_eq!(
@@ -6567,7 +5582,7 @@ async fn test_contact_requests(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     // User B doesn't see user C as their contact, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
@@ -6589,7 +5604,7 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_a, cx_a).await;
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert!(client_b
@@ -6614,12 +5629,11 @@ async fn test_contact_requests(
 
 #[gpui::test(iterations = 10)]
 async fn test_join_call_after_screen_was_shared(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
 
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -6637,8 +5651,9 @@ async fn test_join_call_after_screen_was_shared(
         })
         .await
         .unwrap();
+
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -6648,6 +5663,7 @@ async fn test_join_call_after_screen_was_shared(
     );
 
     // User B receives the call.
+
     let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
     assert_eq!(call_b.calling_user.github_login, "user_a");
@@ -6673,10 +5689,11 @@ async fn test_join_call_after_screen_was_shared(
         .update(cx_b, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+
     let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
     assert!(incoming_call_b.next().await.unwrap().is_none());
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -6693,6 +5710,7 @@ async fn test_join_call_after_screen_was_shared(
     );
 
     // Ensure User B sees User A's screenshare.
+
     room_b.read_with(cx_b, |room, _| {
         assert_eq!(
             room.remote_participants()
@@ -6703,755 +5721,4 @@ async fn test_join_call_after_screen_was_shared(
             1
         );
     });
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_on_input_format_from_host_to_guest(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
-                    first_trigger_character: ":".to_string(),
-                    more_trigger_character: Some(vec![">".to_string()]),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                "main.rs": "fn main() { a }",
-                "other.rs": "// Test file",
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-
-    // Open a file in an editor as the host.
-    let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
-        .await
-        .unwrap();
-    let window_a = cx_a.add_window(|_| EmptyView);
-    let editor_a = window_a.add_view(cx_a, |cx| {
-        Editor::for_buffer(buffer_a, Some(project_a.clone()), cx)
-    });
-
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    cx_b.foreground().run_until_parked();
-
-    // Receive an OnTypeFormatting request as the host's language server.
-    // Return some formattings from the host's language server.
-    fake_language_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(
-        |params, _| async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 14),
-            );
-
-            Ok(Some(vec![lsp::TextEdit {
-                new_text: "~<".to_string(),
-                range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
-            }]))
-        },
-    );
-
-    // Open the buffer on the guest and see that the formattings worked
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
-        .await
-        .unwrap();
-
-    // Type a on type formatting trigger character as the guest.
-    editor_a.update(cx_a, |editor, cx| {
-        cx.focus(&editor_a);
-        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-        editor.handle_input(">", cx);
-    });
-
-    cx_b.foreground().run_until_parked();
-
-    buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { a>~< }")
-    });
-
-    // Undo should remove LSP edits first
-    editor_a.update(cx_a, |editor, cx| {
-        assert_eq!(editor.text(cx), "fn main() { a>~< }");
-        editor.undo(&Undo, cx);
-        assert_eq!(editor.text(cx), "fn main() { a> }");
-    });
-    cx_b.foreground().run_until_parked();
-    buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { a> }")
-    });
-
-    editor_a.update(cx_a, |editor, cx| {
-        assert_eq!(editor.text(cx), "fn main() { a> }");
-        editor.undo(&Undo, cx);
-        assert_eq!(editor.text(cx), "fn main() { a }");
-    });
-    cx_b.foreground().run_until_parked();
-    buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { a }")
-    });
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_on_input_format_from_guest_to_host(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    // Set up a fake language server.
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
-                    first_trigger_character: ":".to_string(),
-                    more_trigger_character: Some(vec![">".to_string()]),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
-    client_a.language_registry().add(Arc::new(language));
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                "main.rs": "fn main() { a }",
-                "other.rs": "// Test file",
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-
-    // Open a file in an editor as the guest.
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
-        .await
-        .unwrap();
-    let window_b = cx_b.add_window(|_| EmptyView);
-    let editor_b = window_b.add_view(cx_b, |cx| {
-        Editor::for_buffer(buffer_b, Some(project_b.clone()), cx)
-    });
-
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    cx_a.foreground().run_until_parked();
-    // Type a on type formatting trigger character as the guest.
-    editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-        editor.handle_input(":", cx);
-        cx.focus(&editor_b);
-    });
-
-    // Receive an OnTypeFormatting request as the host's language server.
-    // Return some formattings from the host's language server.
-    cx_a.foreground().start_waiting();
-    fake_language_server
-        .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 14),
-            );
-
-            Ok(Some(vec![lsp::TextEdit {
-                new_text: "~:".to_string(),
-                range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
-            }]))
-        })
-        .next()
-        .await
-        .unwrap();
-    cx_a.foreground().finish_waiting();
-
-    // Open the buffer on the host and see that the formattings worked
-    let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
-        .await
-        .unwrap();
-    cx_a.foreground().run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { a:~: }")
-    });
-
-    // Undo should remove LSP edits first
-    editor_b.update(cx_b, |editor, cx| {
-        assert_eq!(editor.text(cx), "fn main() { a:~: }");
-        editor.undo(&Undo, cx);
-        assert_eq!(editor.text(cx), "fn main() { a: }");
-    });
-    cx_a.foreground().run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { a: }")
-    });
-
-    editor_b.update(cx_b, |editor, cx| {
-        assert_eq!(editor.text(cx), "fn main() { a: }");
-        editor.undo(&Undo, cx);
-        assert_eq!(editor.text(cx), "fn main() { a }");
-    });
-    cx_a.foreground().run_until_parked();
-    buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { a }")
-    });
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_mutual_editor_inlay_hint_cache_update(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
-
-    cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    enabled: true,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                })
-            });
-        });
-    });
-    cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    enabled: true,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                })
-            });
-        });
-    });
-
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
-    let language = Arc::new(language);
-    client_a.language_registry().add(Arc::clone(&language));
-    client_b.language_registry().add(language);
-
-    // Client A opens a project.
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
-                "other.rs": "// Test file",
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    active_call_a
-        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
-        .await
-        .unwrap();
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-
-    // Client B joins the project
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    active_call_b
-        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
-        .await
-        .unwrap();
-
-    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-    cx_a.foreground().start_waiting();
-
-    // The host opens a rust file.
-    let _buffer_a = project_a
-        .update(cx_a, |project, cx| {
-            project.open_local_buffer("/a/main.rs", cx)
-        })
-        .await
-        .unwrap();
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    let editor_a = workspace_a
-        .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-
-    // Set up the language server to return an additional inlay hint on each request.
-    let edits_made = Arc::new(AtomicUsize::new(0));
-    let closure_edits_made = Arc::clone(&edits_made);
-    fake_language_server
-        .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_edits_made = Arc::clone(&closure_edits_made);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                );
-                let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
-                Ok(Some(vec![lsp::InlayHint {
-                    position: lsp::Position::new(0, edits_made as u32),
-                    label: lsp::InlayHintLabel::String(edits_made.to_string()),
-                    kind: None,
-                    text_edits: None,
-                    tooltip: None,
-                    padding_left: None,
-                    padding_right: None,
-                    data: None,
-                }]))
-            }
-        })
-        .next()
-        .await
-        .unwrap();
-
-    deterministic.run_until_parked();
-
-    let initial_edit = edits_made.load(atomic::Ordering::Acquire);
-    editor_a.update(cx_a, |editor, _| {
-        assert_eq!(
-            vec![initial_edit.to_string()],
-            extract_hint_labels(editor),
-            "Host should get its first hints when opens an editor"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            1,
-            "Host editor update the cache version after every cache/view change",
-        );
-    });
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-    let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-
-    deterministic.run_until_parked();
-    editor_b.update(cx_b, |editor, _| {
-        assert_eq!(
-            vec![initial_edit.to_string()],
-            extract_hint_labels(editor),
-            "Client should get its first hints when opens an editor"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            1,
-            "Guest editor update the cache version after every cache/view change"
-        );
-    });
-
-    let after_client_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
-    editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([13..13].clone()));
-        editor.handle_input(":", cx);
-        cx.focus(&editor_b);
-    });
-
-    deterministic.run_until_parked();
-    editor_a.update(cx_a, |editor, _| {
-        assert_eq!(
-            vec![after_client_edit.to_string()],
-            extract_hint_labels(editor),
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), 2);
-    });
-    editor_b.update(cx_b, |editor, _| {
-        assert_eq!(
-            vec![after_client_edit.to_string()],
-            extract_hint_labels(editor),
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), 2);
-    });
-
-    let after_host_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
-    editor_a.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-        editor.handle_input("a change to increment both buffers' versions", cx);
-        cx.focus(&editor_a);
-    });
-
-    deterministic.run_until_parked();
-    editor_a.update(cx_a, |editor, _| {
-        assert_eq!(
-            vec![after_host_edit.to_string()],
-            extract_hint_labels(editor),
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), 3);
-    });
-    editor_b.update(cx_b, |editor, _| {
-        assert_eq!(
-            vec![after_host_edit.to_string()],
-            extract_hint_labels(editor),
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), 3);
-    });
-
-    let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
-    fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
-        .await
-        .expect("inlay refresh request failed");
-
-    deterministic.run_until_parked();
-    editor_a.update(cx_a, |editor, _| {
-        assert_eq!(
-            vec![after_special_edit_for_refresh.to_string()],
-            extract_hint_labels(editor),
-            "Host should react to /refresh LSP request"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            4,
-            "Host should accepted all edits and bump its cache version every time"
-        );
-    });
-    editor_b.update(cx_b, |editor, _| {
-        assert_eq!(
-            vec![after_special_edit_for_refresh.to_string()],
-            extract_hint_labels(editor),
-            "Guest should get a /refresh LSP request propagated by host"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            4,
-            "Guest should accepted all edits and bump its cache version every time"
-        );
-    });
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_inlay_hint_refresh_is_forwarded(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
-
-    cx_a.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    enabled: false,
-                    show_type_hints: false,
-                    show_parameter_hints: false,
-                    show_other_hints: false,
-                })
-            });
-        });
-    });
-    cx_b.update(|cx| {
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    enabled: true,
-                    show_type_hints: true,
-                    show_parameter_hints: true,
-                    show_other_hints: true,
-                })
-            });
-        });
-    });
-
-    let mut language = Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    );
-    let mut fake_language_servers = language
-        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-        .await;
-    let language = Arc::new(language);
-    client_a.language_registry().add(Arc::clone(&language));
-    client_b.language_registry().add(language);
-
-    client_a
-        .fs()
-        .insert_tree(
-            "/a",
-            json!({
-                "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
-                "other.rs": "// Test file",
-            }),
-        )
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    active_call_a
-        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
-        .await
-        .unwrap();
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    active_call_b
-        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
-        .await
-        .unwrap();
-
-    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-    cx_a.foreground().start_waiting();
-    cx_b.foreground().start_waiting();
-
-    let editor_a = workspace_a
-        .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-
-    let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
-
-    let other_hints = Arc::new(AtomicBool::new(false));
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    let closure_other_hints = Arc::clone(&other_hints);
-    fake_language_server
-        .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_other_hints = Arc::clone(&closure_other_hints);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                );
-                let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
-                let character = if other_hints { 0 } else { 2 };
-                let label = if other_hints {
-                    "other hint"
-                } else {
-                    "initial hint"
-                };
-                Ok(Some(vec![lsp::InlayHint {
-                    position: lsp::Position::new(0, character),
-                    label: lsp::InlayHintLabel::String(label.to_string()),
-                    kind: None,
-                    text_edits: None,
-                    tooltip: None,
-                    padding_left: None,
-                    padding_right: None,
-                    data: None,
-                }]))
-            }
-        })
-        .next()
-        .await
-        .unwrap();
-    cx_a.foreground().finish_waiting();
-    cx_b.foreground().finish_waiting();
-
-    cx_a.foreground().run_until_parked();
-    editor_a.update(cx_a, |editor, _| {
-        assert!(
-            extract_hint_labels(editor).is_empty(),
-            "Host should get no hints due to them turned off"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            0,
-            "Turned off hints should not generate version updates"
-        );
-    });
-
-    cx_b.foreground().run_until_parked();
-    editor_b.update(cx_b, |editor, _| {
-        assert_eq!(
-            vec!["initial hint".to_string()],
-            extract_hint_labels(editor),
-            "Client should get its first hints when opens an editor"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            1,
-            "Should update cache verison after first hints"
-        );
-    });
-
-    other_hints.fetch_or(true, atomic::Ordering::Release);
-    fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
-        .await
-        .expect("inlay refresh request failed");
-    cx_a.foreground().run_until_parked();
-    editor_a.update(cx_a, |editor, _| {
-        assert!(
-            extract_hint_labels(editor).is_empty(),
-            "Host should get nop hints due to them turned off, even after the /refresh"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            0,
-            "Turned off hints should not generate version updates, again"
-        );
-    });
-
-    cx_b.foreground().run_until_parked();
-    editor_b.update(cx_b, |editor, _| {
-        assert_eq!(
-            vec!["other hint".to_string()],
-            extract_hint_labels(editor),
-            "Guest should get a /refresh LSP request propagated by host despite host hints are off"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(
-            inlay_cache.version(),
-            2,
-            "Guest should accepted all edits and bump its cache version every time"
-        );
-    });
-}
-
-fn extract_hint_labels(editor: &Editor) -> Vec<String> {
-    let mut labels = Vec::new();
-    for hint in editor.inlay_hint_cache().hints() {
-        match hint.label {
-            project::InlayHintLabel::String(s) => labels.push(s),
-            _ => unreachable!(),
-        }
-    }
-    labels
 }

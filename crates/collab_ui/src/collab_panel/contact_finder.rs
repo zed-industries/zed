@@ -1,42 +1,30 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    elements::*, AppContext, Entity, ModelHandle, MouseState, Task, View, ViewContext, ViewHandle,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ParentElement as _,
+    Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
-use picker::{Picker, PickerDelegate, PickerEvent};
+use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use util::TryFutureExt;
-use workspace::Modal;
-
-pub fn init(cx: &mut AppContext) {
-    Picker::<ContactFinderDelegate>::init(cx);
-    cx.add_action(ContactFinder::dismiss)
-}
+use theme::ActiveTheme as _;
+use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
+use util::{ResultExt as _, TryFutureExt};
+use workspace::ModalView;
 
 pub struct ContactFinder {
-    picker: ViewHandle<Picker<ContactFinderDelegate>>,
-    has_focus: bool,
+    picker: View<Picker<ContactFinderDelegate>>,
 }
 
 impl ContactFinder {
-    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.add_view(|cx| {
-            Picker::new(
-                ContactFinderDelegate {
-                    user_store,
-                    potential_contacts: Arc::from([]),
-                    selected_index: 0,
-                },
-                cx,
-            )
-            .with_theme(|theme| theme.collab_panel.tabbed_modal.picker.clone())
-        });
+    pub fn new(user_store: Model<UserStore>, cx: &mut ViewContext<Self>) -> Self {
+        let delegate = ContactFinderDelegate {
+            parent: cx.view().downgrade(),
+            user_store,
+            potential_contacts: Arc::from([]),
+            selected_index: 0,
+        };
+        let picker = cx.new_view(|cx| Picker::new(delegate, cx).modal(false));
 
-        cx.subscribe(&picker, |_, _, e, cx| cx.emit(*e)).detach();
-
-        Self {
-            picker,
-            has_focus: false,
-        }
+        Self { picker }
     }
 
     pub fn set_query(&mut self, query: String, cx: &mut ViewContext<Self>) {
@@ -44,101 +32,45 @@ impl ContactFinder {
             picker.set_query(query, cx);
         });
     }
-
-    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(PickerEvent::Dismiss);
-    }
 }
 
-impl Entity for ContactFinder {
-    type Event = PickerEvent;
-}
-
-impl View for ContactFinder {
-    fn ui_name() -> &'static str {
-        "ContactFinder"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let full_theme = &theme::current(cx);
-        let theme = &full_theme.collab_panel.tabbed_modal;
-
-        fn render_mode_button(
-            text: &'static str,
-            theme: &theme::TabbedModal,
-            _cx: &mut ViewContext<ContactFinder>,
-        ) -> AnyElement<ContactFinder> {
-            let contained_text = &theme.tab_button.active_state().default;
-            Label::new(text, contained_text.text.clone())
-                .contained()
-                .with_style(contained_text.container.clone())
-                .into_any()
-        }
-
-        Flex::column()
-            .with_child(
-                Flex::column()
-                    .with_child(
-                        Label::new("Contacts", theme.title.text.clone())
-                            .contained()
-                            .with_style(theme.title.container.clone()),
-                    )
-                    .with_child(Flex::row().with_children([render_mode_button(
-                        "Invite new contacts",
-                        &theme,
-                        cx,
-                    )]))
-                    .expanded()
-                    .contained()
-                    .with_style(theme.header),
+impl Render for ContactFinder {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_stack()
+            .elevation_3(cx)
+            .child(
+                v_stack()
+                    .px_2()
+                    .py_1()
+                    .bg(cx.theme().colors().element_background)
+                    // HACK: Prevent the background color from overflowing the parent container.
+                    .rounded_t(px(8.))
+                    .child(Label::new("Contacts"))
+                    .child(h_stack().child(Label::new("Invite new contacts"))),
             )
-            .with_child(
-                ChildView::new(&self.picker, cx)
-                    .contained()
-                    .with_style(theme.body),
-            )
-            .constrained()
-            .with_max_height(theme.max_height)
-            .with_max_width(theme.max_width)
-            .contained()
-            .with_style(theme.modal)
-            .into_any()
-    }
-
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.has_focus = true;
-        if cx.is_self_focused() {
-            cx.focus(&self.picker)
-        }
-    }
-
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
-        self.has_focus = false;
-    }
-}
-
-impl Modal for ContactFinder {
-    fn has_focus(&self) -> bool {
-        self.has_focus
-    }
-
-    fn dismiss_on_event(event: &Self::Event) -> bool {
-        match event {
-            PickerEvent::Dismiss => true,
-        }
+            .child(self.picker.clone())
+            .w(rems(34.))
     }
 }
 
 pub struct ContactFinderDelegate {
+    parent: WeakView<ContactFinder>,
     potential_contacts: Arc<[Arc<User>]>,
-    user_store: ModelHandle<UserStore>,
+    user_store: Model<UserStore>,
     selected_index: usize,
 }
 
-impl PickerDelegate for ContactFinderDelegate {
-    fn placeholder_text(&self) -> Arc<str> {
-        "Search collaborator by username...".into()
+impl EventEmitter<DismissEvent> for ContactFinder {}
+impl ModalView for ContactFinder {}
+
+impl FocusableView for ContactFinder {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
     }
+}
+
+impl PickerDelegate for ContactFinderDelegate {
+    type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
         self.potential_contacts.len()
@@ -152,6 +84,10 @@ impl PickerDelegate for ContactFinderDelegate {
         self.selected_index = ix;
     }
 
+    fn placeholder_text(&self) -> Arc<str> {
+        "Search collaborator by username...".into()
+    }
+
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let search_users = self
             .user_store
@@ -161,7 +97,7 @@ impl PickerDelegate for ContactFinderDelegate {
             async {
                 let potential_contacts = search_users.await?;
                 picker.update(&mut cx, |picker, cx| {
-                    picker.delegate_mut().potential_contacts = potential_contacts.into();
+                    picker.delegate.potential_contacts = potential_contacts.into();
                     cx.notify();
                 })?;
                 anyhow::Ok(())
@@ -191,19 +127,17 @@ impl PickerDelegate for ContactFinderDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        cx.emit(PickerEvent::Dismiss);
+        self.parent
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
     }
 
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &mut MouseState,
         selected: bool,
-        cx: &gpui::AppContext,
-    ) -> AnyElement<Picker<Self>> {
-        let full_theme = &theme::current(cx);
-        let theme = &full_theme.collab_panel.contact_finder;
-        let tabbed_modal = &full_theme.collab_panel.tabbed_modal;
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);
 
@@ -214,48 +148,14 @@ impl PickerDelegate for ContactFinderDelegate {
             ContactRequestStatus::RequestSent => Some("icons/x.svg"),
             ContactRequestStatus::RequestAccepted => None,
         };
-        let button_style = if self.user_store.read(cx).is_contact_request_pending(user) {
-            &theme.disabled_contact_button
-        } else {
-            &theme.contact_button
-        };
-        let style = tabbed_modal
-            .picker
-            .item
-            .in_state(selected)
-            .style_for(mouse_state);
-        Flex::row()
-            .with_children(user.avatar.clone().map(|avatar| {
-                Image::from_data(avatar)
-                    .with_style(theme.contact_avatar)
-                    .aligned()
-                    .left()
-            }))
-            .with_child(
-                Label::new(user.github_login.clone(), style.label.clone())
-                    .contained()
-                    .with_style(theme.contact_username)
-                    .aligned()
-                    .left(),
-            )
-            .with_children(icon_path.map(|icon_path| {
-                Svg::new(icon_path)
-                    .with_color(button_style.color)
-                    .constrained()
-                    .with_width(button_style.icon_width)
-                    .aligned()
-                    .contained()
-                    .with_style(button_style.container)
-                    .constrained()
-                    .with_width(button_style.button_width)
-                    .with_height(button_style.button_width)
-                    .aligned()
-                    .flex_float()
-            }))
-            .contained()
-            .with_style(style.container)
-            .constrained()
-            .with_height(tabbed_modal.row_height)
-            .into_any()
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .selected(selected)
+                .start_slot(Avatar::new(user.avatar_uri.clone()))
+                .child(Label::new(user.github_login.clone()))
+                .end_slot::<Icon>(icon_path.map(|icon_path| Icon::from_path(icon_path))),
+        )
     }
 }

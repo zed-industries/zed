@@ -20,7 +20,7 @@ test-support = [
 
 [dependencies]
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
+# context_menu = { path = "../context_menu" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }

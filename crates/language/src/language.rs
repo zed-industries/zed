@@ -2,13 +2,13 @@ mod buffer;
 mod diagnostic_set;
 mod highlight_map;
 pub mod language_settings;
-pub mod markdown;
 mod outline;
 pub mod proto;
 mod syntax_map;
 
 #[cfg(test)]
 mod buffer_tests;
+pub mod markdown;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -18,7 +18,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt as _,
 };
-use gpui::{executor::Background, AppContext, AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
@@ -84,7 +84,9 @@ impl LspBinaryStatusSender {
 }
 
 thread_local! {
-    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+    static PARSER: RefCell<Parser> = {
+        RefCell::new(Parser::new())
+    };
 }
 
 lazy_static! {
@@ -357,6 +359,7 @@ pub struct CodeLabel {
 #[derive(Clone, Deserialize)]
 pub struct LanguageConfig {
     pub name: Arc<str>,
+    pub grammar_name: Option<Arc<str>>,
     pub path_suffixes: Vec<String>,
     pub brackets: BracketPairConfig,
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -443,6 +446,7 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
+            grammar_name: None,
             path_suffixes: Default::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
@@ -617,12 +621,23 @@ type AvailableLanguageId = usize;
 #[derive(Clone)]
 struct AvailableLanguage {
     id: AvailableLanguageId,
-    path: &'static str,
     config: LanguageConfig,
-    grammar: tree_sitter::Language,
+    grammar: AvailableGrammar,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
-    get_queries: fn(&str) -> LanguageQueries,
     loaded: bool,
+}
+
+#[derive(Clone)]
+enum AvailableGrammar {
+    Native {
+        grammar: tree_sitter::Language,
+        asset_dir: &'static str,
+        get_queries: fn(&str) -> LanguageQueries,
+    },
+    Wasm {
+        _grammar_name: Arc<str>,
+        _path: Arc<Path>,
+    },
 }
 
 pub struct LanguageRegistry {
@@ -633,7 +648,7 @@ pub struct LanguageRegistry {
     lsp_binary_paths: Mutex<
         HashMap<LanguageServerName, Shared<Task<Result<LanguageServerBinary, Arc<anyhow::Error>>>>>,
     >,
-    executor: Option<Arc<Background>>,
+    executor: Option<BackgroundExecutor>,
     lsp_binary_status_tx: LspBinaryStatusSender,
 }
 
@@ -682,7 +697,7 @@ impl LanguageRegistry {
         Self::new(Task::ready(()))
     }
 
-    pub fn set_executor(&mut self, executor: Arc<Background>) {
+    pub fn set_executor(&mut self, executor: BackgroundExecutor) {
         self.executor = Some(executor);
     }
 
@@ -696,7 +711,7 @@ impl LanguageRegistry {
 
     pub fn register(
         &self,
-        path: &'static str,
+        asset_dir: &'static str,
         config: LanguageConfig,
         grammar: tree_sitter::Language,
         lsp_adapters: Vec<Arc<dyn LspAdapter>>,
@@ -705,11 +720,27 @@ impl LanguageRegistry {
         let state = &mut *self.state.write();
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
-            path,
             config,
-            grammar,
+            grammar: AvailableGrammar::Native {
+                grammar,
+                get_queries,
+                asset_dir,
+            },
             lsp_adapters,
-            get_queries,
+            loaded: false,
+        });
+    }
+
+    pub fn register_wasm(&self, path: Arc<Path>, grammar_name: Arc<str>, config: LanguageConfig) {
+        let state = &mut *self.state.write();
+        state.available_languages.push(AvailableLanguage {
+            id: post_inc(&mut state.next_available_language_id),
+            config,
+            grammar: AvailableGrammar::Wasm {
+                _grammar_name: grammar_name,
+                _path: path,
+            },
+            lsp_adapters: Vec::new(),
             loaded: false,
         });
     }
@@ -749,7 +780,7 @@ impl LanguageRegistry {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            language.set_theme(&theme.editor.syntax);
+            language.set_theme(&theme.syntax());
         }
     }
 
@@ -834,13 +865,26 @@ impl LanguageRegistry {
                         executor
                             .spawn(async move {
                                 let id = language.id;
-                                let queries = (language.get_queries)(&language.path);
-                                let language =
-                                    Language::new(language.config, Some(language.grammar))
+                                let name = language.config.name.clone();
+                                let language = async {
+                                    let (grammar, queries) = match language.grammar {
+                                        AvailableGrammar::Native {
+                                            grammar,
+                                            asset_dir,
+                                            get_queries,
+                                        } => (grammar, (get_queries)(asset_dir)),
+                                        AvailableGrammar::Wasm { .. } => {
+                                            Err(anyhow!("not supported"))?
+                                        }
+                                    };
+                                    Language::new(language.config, Some(grammar))
                                         .with_lsp_adapters(language.lsp_adapters)
-                                        .await;
-                                let name = language.name();
-                                match language.with_queries(queries) {
+                                        .await
+                                        .with_queries(queries)
+                                }
+                                .await;
+
+                                match language {
                                     Ok(language) => {
                                         let language = Arc::new(language);
                                         let mut state = this.state.write();
@@ -918,7 +962,7 @@ impl LanguageRegistry {
                 }
 
                 let servers_tx = servers_tx.clone();
-                cx.background()
+                cx.background_executor()
                     .spawn(async move {
                         if fake_server
                             .try_receive_notification::<lsp::notification::Initialized>()
@@ -955,18 +999,22 @@ impl LanguageRegistry {
 
         let task = {
             let container_dir = container_dir.clone();
-            cx.spawn(|mut cx| async move {
+            cx.spawn(move |mut cx| async move {
                 login_shell_env_loaded.await;
 
-                let mut lock = this.lsp_binary_paths.lock();
-                let entry = lock
+                let entry = this
+                    .lsp_binary_paths
+                    .lock()
                     .entry(adapter.name.clone())
                     .or_insert_with(|| {
+                        let adapter = adapter.clone();
+                        let language = language.clone();
+                        let delegate = delegate.clone();
                         cx.spawn(|cx| {
                             get_binary(
-                                adapter.clone(),
-                                language.clone(),
-                                delegate.clone(),
+                                adapter,
+                                language,
+                                delegate,
                                 container_dir,
                                 lsp_binary_statuses,
                                 cx,
@@ -976,9 +1024,8 @@ impl LanguageRegistry {
                         .shared()
                     })
                     .clone();
-                drop(lock);
 
-                let binary = match entry.clone().await {
+                let binary = match entry.await {
                     Ok(binary) => binary,
                     Err(err) => anyhow::bail!("{err}"),
                 };
@@ -1047,7 +1094,7 @@ impl LanguageRegistryState {
 
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
-            language.set_theme(&theme.editor.syntax);
+            language.set_theme(&theme.syntax());
         }
         self.languages.push(language);
         self.version += 1;
@@ -1169,7 +1216,7 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
-                    error_query: Query::new(ts_language, "(ERROR) @error").unwrap(),
+                    error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1230,13 +1277,13 @@ impl Language {
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        grammar.highlights_query = Some(Query::new(grammar.ts_language, source)?);
+        grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
@@ -1264,7 +1311,7 @@ impl Language {
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
@@ -1295,7 +1342,7 @@ impl Language {
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
         get_capture_indices(
@@ -1317,7 +1364,7 @@ impl Language {
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
@@ -1345,7 +1392,7 @@ impl Language {
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        let query = Query::new(grammar.ts_language, source)?;
+        let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut content_capture_ix = None;
         get_capture_indices(
@@ -1384,12 +1431,12 @@ impl Language {
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = Query::new(self.grammar_mut().ts_language, source)?;
+        let query = Query::new(&self.grammar_mut().ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
-        for (ix, name) in query.capture_names().iter().copied().enumerate() {
+        for (ix, name) in query.capture_names().iter().enumerate() {
             if !name.starts_with('_') {
-                let value = self.config.overrides.remove(name).unwrap_or_default();
+                let value = self.config.overrides.remove(*name).unwrap_or_default();
                 for server_name in &value.opt_into_language_servers {
                     if !self
                         .config
@@ -1400,7 +1447,7 @@ impl Language {
                     }
                 }
 
-                override_configs_by_id.insert(ix as u32, (name.into(), value));
+                override_configs_by_id.insert(ix as u32, (name.to_string(), value));
             }
         }
 
@@ -1695,7 +1742,7 @@ impl Grammar {
         PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
             parser
-                .set_language(self.ts_language)
+                .set_language(&self.ts_language)
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
             parser
@@ -1855,7 +1902,8 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_first_line_pattern(cx: &mut TestAppContext) {
         let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.background());
+
+        languages.set_executor(cx.executor());
         let languages = Arc::new(languages);
         languages.register(
             "/javascript",
@@ -1892,7 +1940,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
         let mut languages = LanguageRegistry::test();
-        languages.set_executor(cx.background());
+        languages.set_executor(cx.executor());
         let languages = Arc::new(languages);
         languages.register(
             "/JSON",

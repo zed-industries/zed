@@ -12,13 +12,14 @@ doctest = false
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+ui = { path = "../ui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
-workspace = { path = "../workspace" }
+workspace = {path = "../workspace" }
 
 log.workspace = true
 anyhow.workspace = true
@@ -35,7 +36,7 @@ editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }
+workspace = {path = "../workspace", features = ["test-support"] }
 theme = { path = "../theme", features = ["test-support"] }
 
 serde_json.workspace = true

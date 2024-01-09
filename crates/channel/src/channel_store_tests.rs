@@ -2,7 +2,7 @@ use crate::channel_chat::ChannelChatEvent;
 
 use super::*;
 use client::{test::FakeServer, Client, UserStore};
-use gpui::{AppContext, ModelHandle, TestAppContext};
+use gpui::{AppContext, Context, Model, TestAppContext};
 use rpc::proto::{self};
 use settings::SettingsStore;
 use util::http::FakeHttpClient;
@@ -147,7 +147,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     let user_id = 5;
     let channel_id = 5;
     let channel_store = cx.update(init_test);
-    let client = channel_store.read_with(cx, |s, _| s.client());
+    let client = channel_store.update(cx, |s, _| s.client());
     let server = FakeServer::for_client(user_id, &client, cx).await;
 
     // Get the available channels.
@@ -161,8 +161,8 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
         }],
         ..Default::default()
     });
-    cx.foreground().run_until_parked();
-    cx.read(|cx| {
+    cx.executor().run_until_parked();
+    cx.update(|cx| {
         assert_channels(
             &channel_store,
             &[(0, "the-channel".to_string(), proto::ChannelRole::Member)],
@@ -214,7 +214,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
         },
     );
 
-    cx.foreground().start_waiting();
+    cx.executor().start_waiting();
 
     // Client requests all users for the received messages
     let mut get_users = server.receive::<proto::GetUsers>().await.unwrap();
@@ -232,7 +232,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     );
 
     let channel = channel.await.unwrap();
-    channel.read_with(cx, |channel, _| {
+    channel.update(cx, |channel, _| {
         assert_eq!(
             channel
                 .messages_in_range(0..2)
@@ -273,13 +273,13 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        channel.next_event(cx).await,
+        channel.next_event(cx),
         ChannelChatEvent::MessagesUpdated {
             old_range: 2..2,
             new_count: 1,
         }
     );
-    channel.read_with(cx, |channel, _| {
+    channel.update(cx, |channel, _| {
         assert_eq!(
             channel
                 .messages_in_range(2..3)
@@ -322,13 +322,13 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        channel.next_event(cx).await,
+        channel.next_event(cx),
         ChannelChatEvent::MessagesUpdated {
             old_range: 0..0,
             new_count: 2,
         }
     );
-    channel.read_with(cx, |channel, _| {
+    channel.update(cx, |channel, _| {
         assert_eq!(
             channel
                 .messages_in_range(0..2)
@@ -342,13 +342,14 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     });
 }
 
-fn init_test(cx: &mut AppContext) -> ModelHandle<ChannelStore> {
+fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
+    let settings_store = SettingsStore::test(cx);
+    cx.set_global(settings_store);
+
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(http.clone(), cx);
-    let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+    let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
 
-    cx.foreground().forbid_parking();
-    cx.set_global(SettingsStore::test(cx));
     client::init(&client, cx);
     crate::init(&client, user_store, cx);
 
@@ -356,7 +357,7 @@ fn init_test(cx: &mut AppContext) -> ModelHandle<ChannelStore> {
 }
 
 fn update_channels(
-    channel_store: &ModelHandle<ChannelStore>,
+    channel_store: &Model<ChannelStore>,
     message: proto::UpdateChannels,
     cx: &mut AppContext,
 ) {
@@ -366,11 +367,11 @@ fn update_channels(
 
 #[track_caller]
 fn assert_channels(
-    channel_store: &ModelHandle<ChannelStore>,
+    channel_store: &Model<ChannelStore>,
     expected_channels: &[(usize, String, proto::ChannelRole)],
-    cx: &AppContext,
+    cx: &mut AppContext,
 ) {
-    let actual = channel_store.read_with(cx, |store, _| {
+    let actual = channel_store.update(cx, |store, _| {
         store
             .ordered_channels()
             .map(|(depth, channel)| (depth, channel.name.to_string(), channel.role))

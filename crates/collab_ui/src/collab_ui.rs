@@ -7,27 +7,22 @@ pub mod notification_panel;
 pub mod notifications;
 mod panel_settings;
 
+use std::{rc::Rc, sync::Arc};
+
 use call::{report_call_event_for_room, ActiveCall, Room};
+pub use collab_panel::CollabPanel;
+pub use collab_titlebar_item::CollabTitlebarItem;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use gpui::{
-    actions,
-    elements::{ContainerStyle, Empty, Image},
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    platform::{Screen, WindowBounds, WindowKind, WindowOptions},
-    AnyElement, AppContext, Element, ImageData, Task,
+    actions, point, AppContext, GlobalPixels, Pixels, PlatformDisplay, Size, Task, WindowBounds,
+    WindowKind, WindowOptions,
 };
-use std::{rc::Rc, sync::Arc};
-use theme::AvatarStyle;
-use util::ResultExt;
-use workspace::AppState;
-
-pub use collab_titlebar_item::CollabTitlebarItem;
 pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
+use settings::Settings;
+use util::ResultExt;
+use workspace::AppState;
 
 actions!(
     collab,
@@ -35,19 +30,21 @@ actions!(
 );
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
-    settings::register::<CollaborationPanelSettings>(cx);
-    settings::register::<ChatPanelSettings>(cx);
-    settings::register::<NotificationPanelSettings>(cx);
+    CollaborationPanelSettings::register(cx);
+    ChatPanelSettings::register(cx);
+    NotificationPanelSettings::register(cx);
 
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
     collab_panel::init(cx);
+    channel_view::init(cx);
     chat_panel::init(cx);
+    notification_panel::init(cx);
     notifications::init(&app_state, cx);
 
-    cx.add_global_action(toggle_screen_sharing);
-    cx.add_global_action(toggle_mute);
-    cx.add_global_action(toggle_deafen);
+    // cx.add_global_action(toggle_screen_sharing);
+    // cx.add_global_action(toggle_mute);
+    // cx.add_global_action(toggle_deafen);
 }
 
 pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
@@ -61,7 +58,6 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
                     room.id(),
                     room.channel_id(),
                     &client,
-                    cx,
                 );
                 Task::ready(room.unshare_screen(cx))
             } else {
@@ -70,7 +66,6 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
                     room.id(),
                     room.channel_id(),
                     &client,
-                    cx,
                 );
                 room.share_screen(cx)
             }
@@ -89,7 +84,7 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
             } else {
                 "disable microphone"
             };
-            report_call_event_for_room(operation, room.id(), room.channel_id(), &client, cx);
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &client);
 
             room.toggle_mute(cx)
         })
@@ -107,58 +102,63 @@ pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
 }
 
 fn notification_window_options(
-    screen: Rc<dyn Screen>,
-    window_size: Vector2F,
-) -> WindowOptions<'static> {
-    const NOTIFICATION_PADDING: f32 = 16.;
+    screen: Rc<dyn PlatformDisplay>,
+    window_size: Size<Pixels>,
+) -> WindowOptions {
+    let notification_margin_width = GlobalPixels::from(16.);
+    let notification_margin_height = GlobalPixels::from(-0.) - GlobalPixels::from(48.);
 
-    let screen_bounds = screen.content_bounds();
+    let screen_bounds = screen.bounds();
+    let size: Size<GlobalPixels> = window_size.into();
+
+    // todo!() use content bounds instead of screen.bounds and get rid of magics in point's 2nd argument.
+    let bounds = gpui::Bounds::<GlobalPixels> {
+        origin: screen_bounds.upper_right()
+            - point(
+                size.width + notification_margin_width,
+                notification_margin_height,
+            ),
+        size: window_size.into(),
+    };
     WindowOptions {
-        bounds: WindowBounds::Fixed(RectF::new(
-            screen_bounds.upper_right()
-                + vec2f(
-                    -NOTIFICATION_PADDING - window_size.x(),
-                    NOTIFICATION_PADDING,
-                ),
-            window_size,
-        )),
+        bounds: WindowBounds::Fixed(bounds),
         titlebar: None,
         center: false,
         focus: false,
         show: true,
         kind: WindowKind::PopUp,
         is_movable: false,
-        screen: Some(screen),
+        display_id: Some(screen.id()),
     }
 }
 
-fn render_avatar<T: 'static>(
-    avatar: Option<Arc<ImageData>>,
-    avatar_style: &AvatarStyle,
-    container: ContainerStyle,
-) -> AnyElement<T> {
-    avatar
-        .map(|avatar| {
-            Image::from_data(avatar)
-                .with_style(avatar_style.image)
-                .aligned()
-                .contained()
-                .with_corner_radius(avatar_style.outer_corner_radius)
-                .constrained()
-                .with_width(avatar_style.outer_width)
-                .with_height(avatar_style.outer_width)
-                .into_any()
-        })
-        .unwrap_or_else(|| {
-            Empty::new()
-                .constrained()
-                .with_width(avatar_style.outer_width)
-                .into_any()
-        })
-        .contained()
-        .with_style(container)
-        .into_any()
-}
+// fn render_avatar<T: 'static>(
+//     avatar: Option<Arc<ImageData>>,
+//     avatar_style: &AvatarStyle,
+//     container: ContainerStyle,
+// ) -> AnyElement<T> {
+//     avatar
+//         .map(|avatar| {
+//             Image::from_data(avatar)
+//                 .with_style(avatar_style.image)
+//                 .aligned()
+//                 .contained()
+//                 .with_corner_radius(avatar_style.outer_corner_radius)
+//                 .constrained()
+//                 .with_width(avatar_style.outer_width)
+//                 .with_height(avatar_style.outer_width)
+//                 .into_any()
+//         })
+//         .unwrap_or_else(|| {
+//             Empty::new()
+//                 .constrained()
+//                 .with_width(avatar_style.outer_width)
+//                 .into_any()
+//         })
+//         .contained()
+//         .with_style(container)
+//         .into_any()
+// }
 
 fn is_channels_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
     cx.is_staff() || cx.has_flag::<ChannelsAlpha>()

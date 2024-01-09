@@ -1,7 +1,8 @@
 use anyhow;
+use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Setting;
+use settings::Settings;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum OpenAIModel {
@@ -51,21 +52,37 @@ pub enum AssistantDockPosition {
 pub struct AssistantSettings {
     pub button: bool,
     pub dock: AssistantDockPosition,
-    pub default_width: f32,
-    pub default_height: f32,
+    pub default_width: Pixels,
+    pub default_height: Pixels,
     pub default_open_ai_model: OpenAIModel,
 }
 
+/// Assistant panel settings
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AssistantSettingsContent {
+    /// Whether to show the assistant panel button in the status bar.
+    ///
+    /// Default: true
     pub button: Option<bool>,
+    /// Where to dock the assistant.
+    ///
+    /// Default: right
     pub dock: Option<AssistantDockPosition>,
+    /// Default width in pixels when the assistant is docked to the left or right.
+    ///
+    /// Default: 640
     pub default_width: Option<f32>,
+    /// Default height in pixels when the assistant is docked to the bottom.
+    ///
+    /// Default: 320
     pub default_height: Option<f32>,
+    /// The default OpenAI model to use when starting new conversations.
+    ///
+    /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAIModel>,
 }
 
-impl Setting for AssistantSettings {
+impl Settings for AssistantSettings {
     const KEY: Option<&'static str> = Some("assistant");
 
     type FileContent = AssistantSettingsContent;
@@ -73,7 +90,7 @@ impl Setting for AssistantSettings {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        _: &gpui::AppContext,
+        _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }

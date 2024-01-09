@@ -5,11 +5,12 @@ use std::{
 };
 
 use anyhow::Result;
+use serde_json::json;
 
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{json, ViewContext, ViewHandle};
+use gpui::{View, ViewContext, VisualTestContext};
 use indoc::indoc;
 use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageQueries};
 use lsp::{notification, request};
@@ -18,23 +19,21 @@ use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};
 
-use super::editor_test_context::EditorTestContext;
+use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
-pub struct EditorLspTestContext<'a> {
-    pub cx: EditorTestContext<'a>,
+pub struct EditorLspTestContext {
+    pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
-    pub workspace: ViewHandle<Workspace>,
+    pub workspace: View<Workspace>,
     pub buffer_lsp_url: lsp::Url,
 }
 
-impl<'a> EditorLspTestContext<'a> {
+impl EditorLspTestContext {
     pub async fn new(
         mut language: Language,
         capabilities: lsp::ServerCapabilities,
-        cx: &'a mut gpui::TestAppContext,
-    ) -> EditorLspTestContext<'a> {
-        use json::json;
-
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
@@ -60,6 +59,7 @@ impl<'a> EditorLspTestContext<'a> {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
+
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         app_state
@@ -69,37 +69,38 @@ impl<'a> EditorLspTestContext<'a> {
             .await;
 
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let workspace = window.root(cx);
+
+        let workspace = window.root_view(cx).unwrap();
+
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project
-            .update(cx, |project, cx| {
+            .update(&mut cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", true, cx)
             })
             .await
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
-            .update(cx, |workspace, cx| {
+            .update(&mut cx, |workspace, cx| {
                 workspace.open_path(file, None, true, cx)
             })
             .await
             .expect("Could not open test file");
-
         let editor = cx.update(|cx| {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update(cx, |_, cx| cx.focus_self());
+        editor.update(&mut cx, |editor, cx| editor.focus(cx));
 
         let lsp = fake_servers.next().await.unwrap();
-
         Self {
             cx: EditorTestContext {
                 cx,
                 window: window.into(),
                 editor,
+                assertion_cx: AssertionContextManager::new(),
             },
             lsp,
             workspace,
@@ -109,8 +110,8 @@ impl<'a> EditorLspTestContext<'a> {
 
     pub async fn new_rust(
         capabilities: lsp::ServerCapabilities,
-        cx: &'a mut gpui::TestAppContext,
-    ) -> EditorLspTestContext<'a> {
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -151,8 +152,8 @@ impl<'a> EditorLspTestContext<'a> {
 
     pub async fn new_typescript(
         capabilities: lsp::ServerCapabilities,
-        cx: &'a mut gpui::TestAppContext,
-    ) -> EditorLspTestContext<'a> {
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let mut word_characters: HashSet<char> = Default::default();
         word_characters.insert('$');
         word_characters.insert('#');
@@ -257,7 +258,7 @@ impl<'a> EditorLspTestContext<'a> {
     where
         F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
-        self.workspace.update(self.cx.cx, update)
+        self.workspace.update(&mut self.cx.cx, update)
     }
 
     pub fn handle_request<T, F, Fut>(
@@ -282,15 +283,15 @@ impl<'a> EditorLspTestContext<'a> {
     }
 }
 
-impl<'a> Deref for EditorLspTestContext<'a> {
-    type Target = EditorTestContext<'a>;
+impl Deref for EditorLspTestContext {
+    type Target = EditorTestContext;
 
     fn deref(&self) -> &Self::Target {
         &self.cx
     }
 }
 
-impl<'a> DerefMut for EditorLspTestContext<'a> {
+impl DerefMut for EditorLspTestContext {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }

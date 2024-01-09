@@ -4,15 +4,14 @@ use super::{
     Highlights,
 };
 use crate::MultiBufferSnapshot;
-use gpui::{
-    fonts::FontId, text_layout::LineWrapper, AppContext, Entity, ModelContext, ModelHandle, Task,
-};
+use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
+use util::ResultExt;
 
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<u32>;
@@ -22,13 +21,9 @@ pub struct WrapMap {
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
     interpolated_edits: Patch<u32>,
     edits_since_sync: Patch<u32>,
-    wrap_width: Option<f32>,
+    wrap_width: Option<Pixels>,
     background_task: Option<Task<()>>,
-    font: (FontId, f32),
-}
-
-impl Entity for WrapMap {
-    type Event = ();
+    font_with_size: (Font, Pixels),
 }
 
 #[derive(Clone)]
@@ -74,14 +69,14 @@ pub struct WrapBufferRows<'a> {
 impl WrapMap {
     pub fn new(
         tab_snapshot: TabSnapshot,
-        font_id: FontId,
-        font_size: f32,
-        wrap_width: Option<f32>,
+        font: Font,
+        font_size: Pixels,
+        wrap_width: Option<Pixels>,
         cx: &mut AppContext,
-    ) -> (ModelHandle<Self>, WrapSnapshot) {
-        let handle = cx.add_model(|cx| {
+    ) -> (Model<Self>, WrapSnapshot) {
+        let handle = cx.new_model(|cx| {
             let mut this = Self {
-                font: (font_id, font_size),
+                font_with_size: (font, font_size),
                 wrap_width: None,
                 pending_edits: Default::default(),
                 interpolated_edits: Default::default(),
@@ -121,14 +116,16 @@ impl WrapMap {
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
-    pub fn set_font(
+    pub fn set_font_with_size(
         &mut self,
-        font_id: FontId,
-        font_size: f32,
+        font: Font,
+        font_size: Pixels,
         cx: &mut ModelContext<Self>,
     ) -> bool {
-        if (font_id, font_size) != self.font {
-            self.font = (font_id, font_size);
+        let font_with_size = (font, font_size);
+
+        if font_with_size != self.font_with_size {
+            self.font_with_size = font_with_size;
             self.rewrap(cx);
             true
         } else {
@@ -136,7 +133,11 @@ impl WrapMap {
         }
     }
 
-    pub fn set_wrap_width(&mut self, wrap_width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_wrap_width(
+        &mut self,
+        wrap_width: Option<Pixels>,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         if wrap_width == self.wrap_width {
             return false;
         }
@@ -153,34 +154,36 @@ impl WrapMap {
 
         if let Some(wrap_width) = self.wrap_width {
             let mut new_snapshot = self.snapshot.clone();
-            let font_cache = cx.font_cache().clone();
-            let (font_id, font_size) = self.font;
-            let task = cx.background().spawn(async move {
-                let mut line_wrapper = font_cache.line_wrapper(font_id, font_size);
-                let tab_snapshot = new_snapshot.tab_snapshot.clone();
-                let range = TabPoint::zero()..tab_snapshot.max_point();
-                let edits = new_snapshot
-                    .update(
-                        tab_snapshot,
-                        &[TabEdit {
-                            old: range.clone(),
-                            new: range.clone(),
-                        }],
-                        wrap_width,
-                        &mut line_wrapper,
-                    )
-                    .await;
+            let mut edits = Patch::default();
+            let text_system = cx.text_system().clone();
+            let (font, font_size) = self.font_with_size.clone();
+            let task = cx.background_executor().spawn(async move {
+                if let Some(mut line_wrapper) = text_system.line_wrapper(font, font_size).log_err()
+                {
+                    let tab_snapshot = new_snapshot.tab_snapshot.clone();
+                    let range = TabPoint::zero()..tab_snapshot.max_point();
+                    edits = new_snapshot
+                        .update(
+                            tab_snapshot,
+                            &[TabEdit {
+                                old: range.clone(),
+                                new: range.clone(),
+                            }],
+                            wrap_width,
+                            &mut line_wrapper,
+                        )
+                        .await;
+                }
                 (new_snapshot, edits)
             });
 
             match cx
-                .background()
+                .background_executor()
                 .block_with_timeout(Duration::from_millis(5), task)
             {
                 Ok((snapshot, edits)) => {
                     self.snapshot = snapshot;
                     self.edits_since_sync = self.edits_since_sync.compose(&edits);
-                    cx.notify();
                 }
                 Err(wrap_task) => {
                     self.background_task = Some(cx.spawn(|this, mut cx| async move {
@@ -194,7 +197,8 @@ impl WrapMap {
                             this.background_task = None;
                             this.flush_edits(cx);
                             cx.notify();
-                        });
+                        })
+                        .ok();
                     }));
                 }
             }
@@ -237,23 +241,25 @@ impl WrapMap {
             if self.background_task.is_none() {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
-                let font_cache = cx.font_cache().clone();
-                let (font_id, font_size) = self.font;
-                let update_task = cx.background().spawn(async move {
-                    let mut line_wrapper = font_cache.line_wrapper(font_id, font_size);
-
+                let text_system = cx.text_system().clone();
+                let (font, font_size) = self.font_with_size.clone();
+                let update_task = cx.background_executor().spawn(async move {
                     let mut edits = Patch::default();
-                    for (tab_snapshot, tab_edits) in pending_edits {
-                        let wrap_edits = snapshot
-                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
-                            .await;
-                        edits = edits.compose(&wrap_edits);
+                    if let Some(mut line_wrapper) =
+                        text_system.line_wrapper(font, font_size).log_err()
+                    {
+                        for (tab_snapshot, tab_edits) in pending_edits {
+                            let wrap_edits = snapshot
+                                .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                                .await;
+                            edits = edits.compose(&wrap_edits);
+                        }
                     }
                     (snapshot, edits)
                 });
 
                 match cx
-                    .background()
+                    .background_executor()
                     .block_with_timeout(Duration::from_millis(1), update_task)
                 {
                     Ok((snapshot, output_edits)) => {
@@ -272,7 +278,8 @@ impl WrapMap {
                                 this.background_task = None;
                                 this.flush_edits(cx);
                                 cx.notify();
-                            });
+                            })
+                            .ok();
                         }));
                     }
                 }
@@ -385,7 +392,7 @@ impl WrapSnapshot {
         &mut self,
         new_tab_snapshot: TabSnapshot,
         tab_edits: &[TabEdit],
-        wrap_width: f32,
+        wrap_width: Pixels,
         line_wrapper: &mut LineWrapper,
     ) -> Patch<u32> {
         #[derive(Debug)]
@@ -1026,37 +1033,34 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         MultiBuffer,
     };
-    use gpui::test::observe;
+    use gpui::{font, px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
+    use theme::LoadThemes;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        // todo!() this test is flaky
         init_test(cx);
 
-        cx.foreground().set_block_on_ticks(0..=50);
+        cx.background_executor.set_block_on_ticks(0..=50);
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().fonts();
+        let text_system = cx.read(|cx| cx.text_system().clone());
         let mut wrap_width = if rng.gen_bool(0.1) {
             None
         } else {
-            Some(rng.gen_range(0.0..=1000.0))
+            Some(px(rng.gen_range(0.0..=1000.0)))
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        let family_id = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
+        let font = font("Helvetica");
+        let _font_id = text_system.font_id(&font).unwrap();
+        let font_size = px(14.0);
 
         log::info!("Tab size: {}", tab_size);
         log::info!("Wrap width: {:?}", wrap_width);
@@ -1082,12 +1086,12 @@ mod tests {
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-        let mut line_wrapper = LineWrapper::new(font_id, font_size, font_system);
+        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size).unwrap();
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
         let (wrap_map, _) =
-            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx));
+            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, wrap_width, cx));
         let mut notifications = observe(&wrap_map, cx);
 
         if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
@@ -1118,7 +1122,7 @@ mod tests {
                     wrap_width = if rng.gen_bool(0.2) {
                         None
                     } else {
-                        Some(rng.gen_range(0.0..=1000.0))
+                        Some(px(rng.gen_range(0.0..=1000.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
@@ -1272,16 +1276,16 @@ mod tests {
     }
 
     fn init_test(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
         cx.update(|cx| {
-            cx.set_global(SettingsStore::test(cx));
-            theme::init((), cx);
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme::init(LoadThemes::JustBase, cx);
         });
     }
 
     fn wrap_text(
         unwrapped_text: &str,
-        wrap_width: Option<f32>,
+        wrap_width: Option<Pixels>,
         line_wrapper: &mut LineWrapper,
     ) -> String {
         if let Some(wrap_width) = wrap_width {

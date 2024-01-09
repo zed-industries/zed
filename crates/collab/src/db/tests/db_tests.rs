@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_both_dbs;
-use gpui::executor::{Background, Deterministic};
+use gpui::TestAppContext;
 use pretty_assertions::{assert_eq, assert_ne};
 use std::sync::Arc;
 use tests::TestDb;
@@ -455,7 +455,7 @@ async fn test_project_count(db: &Arc<Database>) {
         .unwrap();
 
     let room_id = RoomId::from_proto(
-        db.create_room(user1.user_id, ConnectionId { owner_id, id: 0 }, "", "dev")
+        db.create_room(user1.user_id, ConnectionId { owner_id, id: 0 }, "", "test")
             .await
             .unwrap()
             .id,
@@ -473,7 +473,7 @@ async fn test_project_count(db: &Arc<Database>) {
         room_id,
         user2.user_id,
         ConnectionId { owner_id, id: 1 },
-        "dev",
+        "test",
     )
     .await
     .unwrap();
@@ -509,8 +509,8 @@ fn test_fuzzy_like_string() {
 }
 
 #[gpui::test]
-async fn test_fuzzy_search_users() {
-    let test_db = TestDb::postgres(build_background_executor());
+async fn test_fuzzy_search_users(cx: &mut TestAppContext) {
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -630,8 +630,4 @@ async fn test_non_matching_release_channels(db: &Arc<Database>) {
         .await;
 
     assert!(result.is_ok())
-}
-
-fn build_background_executor() -> Arc<Background> {
-    Deterministic::new(0).build_background()
 }

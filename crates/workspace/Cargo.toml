@@ -23,19 +23,20 @@ db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }
 collections = { path = "../collections" }
-context_menu = { path = "../context_menu" }
-drag_and_drop = { path = "../drag_and_drop" }
+# context_menu = { path = "../context_menu" }
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 install_cli = { path = "../install_cli" }
 language = { path = "../language" }
-menu = { path = "../menu" }
+#menu = { path = "../menu" }
 node_runtime = { path = "../node_runtime" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+sqlez = { path = "../sqlez" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+ui = { path = "../ui" }
 
 async-recursion = "1.0.0"
 itertools = "0.10"

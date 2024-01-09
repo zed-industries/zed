@@ -169,7 +169,7 @@ impl CodeContextRetriever {
             .embedding_config
             .as_ref()
             .ok_or_else(|| anyhow!("no embedding queries"))?;
-        self.parser.set_language(grammar.ts_language).unwrap();
+        self.parser.set_language(&grammar.ts_language).unwrap();
 
         let tree = self
             .parser

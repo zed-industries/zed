@@ -4,19 +4,15 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
+use crate::EditorStyle;
 use crate::{
     link_go_to_definition::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt,
-    EditorStyle, InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
-use gpui::{
-    color::Color,
-    fonts::{FontId, HighlightStyle, Underline},
-    text_layout::{Line, RunStyle},
-    Entity, ModelContext, ModelHandle,
-};
+use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
@@ -25,6 +21,7 @@ use lsp::DiagnosticSeverity;
 use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
+
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -32,7 +29,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::fold_map::FoldPoint;
+pub use self::fold_map::{Fold, FoldPoint};
 pub use self::inlay_map::{Inlay, InlayOffset, InlayPoint};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -40,6 +37,8 @@ pub enum FoldStatus {
     Folded,
     Foldable,
 }
+
+const UNNECESSARY_CODE_FADE: f32 = 0.3;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
@@ -49,28 +48,24 @@ type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anc
 type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 pub struct DisplayMap {
-    buffer: ModelHandle<MultiBuffer>,
+    buffer: Model<MultiBuffer>,
     buffer_subscription: BufferSubscription,
     fold_map: FoldMap,
     inlay_map: InlayMap,
     tab_map: TabMap,
-    wrap_map: ModelHandle<WrapMap>,
+    wrap_map: Model<WrapMap>,
     block_map: BlockMap,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     pub clip_at_line_ends: bool,
 }
 
-impl Entity for DisplayMap {
-    type Event = ();
-}
-
 impl DisplayMap {
     pub fn new(
-        buffer: ModelHandle<MultiBuffer>,
-        font_id: FontId,
-        font_size: f32,
-        wrap_width: Option<f32>,
+        buffer: Model<MultiBuffer>,
+        font: Font,
+        font_size: Pixels,
+        wrap_width: Option<Pixels>,
         buffer_header_height: u8,
         excerpt_header_height: u8,
         cx: &mut ModelContext<Self>,
@@ -81,7 +76,7 @@ impl DisplayMap {
         let (inlay_map, snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
-        let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
+        let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
@@ -127,7 +122,7 @@ impl DisplayMap {
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
-                .map(|fold| fold.to_offset(&other.buffer_snapshot)),
+                .map(|fold| fold.range.to_offset(&other.buffer_snapshot)),
             cx,
         );
     }
@@ -245,20 +240,20 @@ impl DisplayMap {
     }
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
         let mut cleared = self.text_highlights.remove(&Some(type_id)).is_some();
-        cleared |= self.inlay_highlights.remove(&type_id).is_none();
+        cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
 
-    pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
-            .update(cx, |map, cx| map.set_font(font_id, font_size, cx))
+            .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
     }
 
-    pub fn set_fold_ellipses_color(&mut self, color: Color) -> bool {
+    pub fn set_fold_ellipses_color(&mut self, color: Hsla) -> bool {
         self.fold_map.set_ellipses_color(color)
     }
 
-    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
+    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
@@ -296,7 +291,7 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
+    fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
         let language = buffer
             .read(cx)
             .as_singleton()
@@ -510,18 +505,18 @@ impl DisplaySnapshot {
         &'a self,
         display_rows: Range<u32>,
         language_aware: bool,
-        style: &'a EditorStyle,
+        editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         self.chunks(
             display_rows,
             language_aware,
-            Some(style.theme.hint),
-            Some(style.theme.suggestion),
+            Some(editor_style.inlays_style),
+            Some(editor_style.suggestions_style),
         )
         .map(|chunk| {
             let mut highlight_style = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(&style.syntax));
+                .and_then(|id| id.style(&editor_style.syntax));
 
             if let Some(chunk_highlight) = chunk.highlight_style {
                 if let Some(highlight_style) = highlight_style.as_mut() {
@@ -534,17 +529,18 @@ impl DisplaySnapshot {
             let mut diagnostic_highlight = HighlightStyle::default();
 
             if chunk.is_unnecessary {
-                diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
+                diagnostic_highlight.fade_out = Some(UNNECESSARY_CODE_FADE);
             }
 
             if let Some(severity) = chunk.diagnostic_severity {
                 // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
                 if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                    let diagnostic_style = super::diagnostic_style(severity, true, style);
-                    diagnostic_highlight.underline = Some(Underline {
-                        color: Some(diagnostic_style.message.text.color),
+                    let diagnostic_color =
+                        super::diagnostic_style(severity, true, &editor_style.status);
+                    diagnostic_highlight.underline = Some(UnderlineStyle {
+                        color: Some(diagnostic_color),
                         thickness: 1.0.into(),
-                        squiggly: true,
+                        wavy: true,
                     });
                 }
             }
@@ -563,81 +559,64 @@ impl DisplaySnapshot {
         })
     }
 
-    pub fn lay_out_line_for_row(
+    pub fn layout_row(
         &self,
         display_row: u32,
         TextLayoutDetails {
-            font_cache,
-            text_layout_cache,
+            text_system,
             editor_style,
+            rem_size,
         }: &TextLayoutDetails,
-    ) -> Line {
-        let mut styles = Vec::new();
+    ) -> Arc<LineLayout> {
+        let mut runs = Vec::new();
         let mut line = String::new();
-        let mut ended_in_newline = false;
 
         let range = display_row..display_row + 1;
-        for chunk in self.highlighted_chunks(range, false, editor_style) {
+        for chunk in self.highlighted_chunks(range, false, &editor_style) {
             line.push_str(chunk.chunk);
 
             let text_style = if let Some(style) = chunk.style {
-                editor_style
-                    .text
-                    .clone()
-                    .highlight(style, font_cache)
-                    .map(Cow::Owned)
-                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+                Cow::Owned(editor_style.text.clone().highlight(style))
             } else {
                 Cow::Borrowed(&editor_style.text)
             };
-            ended_in_newline = chunk.chunk.ends_with("\n");
 
-            styles.push((
-                chunk.chunk.len(),
-                RunStyle {
-                    font_id: text_style.font_id,
-                    color: text_style.color,
-                    underline: text_style.underline,
-                },
-            ));
+            runs.push(text_style.to_run(chunk.chunk.len()))
         }
 
-        // our pixel positioning logic assumes each line ends in \n,
-        // this is almost always true except for the last line which
-        // may have no trailing newline.
-        if !ended_in_newline && display_row == self.max_point().row() {
-            line.push_str("\n");
-
-            styles.push((
-                "\n".len(),
-                RunStyle {
-                    font_id: editor_style.text.font_id,
-                    color: editor_style.text_color,
-                    underline: editor_style.text.underline,
-                },
-            ));
+        if line.ends_with('\n') {
+            line.pop();
+            if let Some(last_run) = runs.last_mut() {
+                last_run.len -= 1;
+                if last_run.len == 0 {
+                    runs.pop();
+                }
+            }
         }
 
-        text_layout_cache.layout_str(&line, editor_style.text.font_size, &styles)
+        let font_size = editor_style.text.font_size.to_pixels(*rem_size);
+        text_system
+            .layout_line(&line, font_size, &runs)
+            .expect("we expect the font to be loaded because it's rendered by the editor")
     }
 
-    pub fn x_for_point(
+    pub fn x_for_display_point(
         &self,
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
-    ) -> f32 {
-        let layout_line = self.lay_out_line_for_row(display_point.row(), text_layout_details);
-        layout_line.x_for_index(display_point.column() as usize)
+    ) -> Pixels {
+        let line = self.layout_row(display_point.row(), text_layout_details);
+        line.x_for_index(display_point.column() as usize)
     }
 
-    pub fn column_for_x(
+    pub fn display_column_for_x(
         &self,
         display_row: u32,
-        x_coordinate: f32,
-        text_layout_details: &TextLayoutDetails,
+        x: Pixels,
+        details: &TextLayoutDetails,
     ) -> u32 {
-        let layout_line = self.lay_out_line_for_row(display_row, text_layout_details);
-        layout_line.closest_index_for_x(x_coordinate) as u32
+        let layout_line = self.layout_row(display_row, details);
+        layout_line.closest_index_for_x(x) as u32
     }
 
     pub fn chars_at(
@@ -740,7 +719,7 @@ impl DisplaySnapshot {
         DisplayPoint(point)
     }
 
-    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Range<Anchor>>
+    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
     where
         T: ToOffset,
     {
@@ -1015,7 +994,7 @@ pub mod tests {
         movement,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
-    use gpui::{color::Color, elements::*, test::observe, AppContext};
+    use gpui::{div, font, observe, px, AppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, Language, LanguageConfig, SelectionGoal,
@@ -1025,34 +1004,27 @@ pub mod tests {
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
-    use theme::SyntaxTheme;
+    use theme::{LoadThemes, SyntaxTheme};
     use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_display_map(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
-        cx.foreground().set_block_on_ticks(0..=50);
-        cx.foreground().forbid_parking();
+        cx.background_executor.set_block_on_ticks(0..=50);
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let font_cache = cx.font_cache().clone();
+        let _test_platform = &cx.test_platform;
         let mut tab_size = rng.gen_range(1..=4);
         let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
-        let family_id = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
+        let font_size = px(14.0);
         let max_wrap_width = 300.0;
         let mut wrap_width = if rng.gen_bool(0.1) {
             None
         } else {
-            Some(rng.gen_range(0.0..=max_wrap_width))
+            Some(px(rng.gen_range(0.0..=max_wrap_width)))
         };
 
         log::info!("tab size: {}", tab_size);
@@ -1074,10 +1046,10 @@ pub mod tests {
             }
         });
 
-        let map = cx.add_model(|cx| {
+        let map = cx.new_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
-                font_id,
+                font("Helvetica"),
                 font_size,
                 wrap_width,
                 buffer_start_excerpt_header_height,
@@ -1103,7 +1075,7 @@ pub mod tests {
                     wrap_width = if rng.gen_bool(0.2) {
                         None
                     } else {
-                        Some(rng.gen_range(0.0..=max_wrap_width))
+                        Some(px(rng.gen_range(0.0..=max_wrap_width)))
                     };
                     log::info!("setting wrap width to {:?}", wrap_width);
                     map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
@@ -1114,7 +1086,7 @@ pub mod tests {
                     tab_size = *tab_sizes.choose(&mut rng).unwrap();
                     log::info!("setting tab size to {:?}", tab_size);
                     cx.update(|cx| {
-                        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                        cx.update_global::<SettingsStore, _>(|store, cx| {
                             store.update_user_settings::<AllLanguageSettings>(cx, |s| {
                                 s.defaults.tab_size = NonZeroU32::new(tab_size);
                             });
@@ -1150,7 +1122,7 @@ pub mod tests {
                                         position,
                                         height,
                                         disposition,
-                                        render: Arc::new(|_| Empty::new().into_any()),
+                                        render: Arc::new(|_| div().into_any()),
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1295,7 +1267,8 @@ pub mod tests {
 
     #[gpui::test(retries = 5)]
     async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
-        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
             init_test(cx, |_| {});
         });
@@ -1304,25 +1277,25 @@ pub mod tests {
         let editor = cx.editor.clone();
         let window = cx.window.clone();
 
-        cx.update_window(window, |cx| {
+        _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
-                editor.read_with(cx, |editor, cx| editor.text_layout_details(cx));
+                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
 
-            let font_cache = cx.font_cache().clone();
-
-            let family_id = font_cache
-                .load_family(&["Helvetica"], &Default::default())
-                .unwrap();
-            let font_id = font_cache
-                .select_font(family_id, &Default::default())
-                .unwrap();
-            let font_size = 12.0;
-            let wrap_width = Some(64.);
+            let font_size = px(12.0);
+            let wrap_width = Some(px(64.));
 
             let text = "one two three four five\nsix seven eight";
             let buffer = MultiBuffer::build_simple(text, cx);
-            let map = cx.add_model(|cx| {
-                DisplayMap::new(buffer.clone(), font_id, font_size, wrap_width, 1, 1, cx)
+            let map = cx.new_model(|cx| {
+                DisplayMap::new(
+                    buffer.clone(),
+                    font("Helvetica"),
+                    font_size,
+                    wrap_width,
+                    1,
+                    1,
+                    cx,
+                )
             });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
@@ -1347,7 +1320,7 @@ pub mod tests {
                 DisplayPoint::new(0, 7)
             );
 
-            let x = snapshot.x_for_point(DisplayPoint::new(1, 10), &text_layout_details);
+            let x = snapshot.x_for_display_point(DisplayPoint::new(1, 10), &text_layout_details);
             assert_eq!(
                 movement::up(
                     &snapshot,
@@ -1358,33 +1331,33 @@ pub mod tests {
                 ),
                 (
                     DisplayPoint::new(0, 7),
-                    SelectionGoal::HorizontalPosition(x)
+                    SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(0, 7),
-                    SelectionGoal::HorizontalPosition(x),
+                    SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(1, 10),
-                    SelectionGoal::HorizontalPosition(x)
+                    SelectionGoal::HorizontalPosition(x.0)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(1, 10),
-                    SelectionGoal::HorizontalPosition(x),
+                    SelectionGoal::HorizontalPosition(x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(2, 4),
-                    SelectionGoal::HorizontalPosition(x)
+                    SelectionGoal::HorizontalPosition(x.0)
                 )
             );
 
@@ -1400,7 +1373,9 @@ pub mod tests {
             );
 
             // Re-wrap on font size changes
-            map.update(cx, |map, cx| map.set_font(font_id, font_size + 3., cx));
+            map.update(cx, |map, cx| {
+                map.set_font(font("Helvetica"), px(font_size.0 + 3.), cx)
+            });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             assert_eq!(
@@ -1416,17 +1391,11 @@ pub mod tests {
 
         let text = sample_text(6, 6, 'a');
         let buffer = MultiBuffer::build_simple(&text, cx);
-        let family_id = cx
-            .font_cache()
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
-        let map =
-            cx.add_model(|cx| DisplayMap::new(buffer.clone(), font_id, font_size, None, 1, 1, cx));
+
+        let font_size = px(14.0);
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+        });
 
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
@@ -1470,9 +1439,9 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new(vec![
-            ("mod.body".to_string(), Color::red().into()),
-            ("fn.name".to_string(), Color::blue().into()),
+        let theme = SyntaxTheme::new_test(vec![
+            ("mod.body", Hsla::red().into()),
+            ("fn.name", Hsla::blue().into()),
         ]);
         let language = Arc::new(
             Language::new(
@@ -1495,38 +1464,33 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx
-            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
-        buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+        });
+        cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
-        let font_cache = cx.font_cache();
-        let family_id = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
+        let font_size = px(14.0);
 
-        let map = cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, None, 1, 1, cx));
+        let map = cx
+            .new_model(|cx| DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, cx));
         assert_eq!(
             cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
-                ("outer".to_string(), Some(Color::blue())),
+                ("outer".to_string(), Some(Hsla::blue())),
                 ("() {}\n\nmod module ".to_string(), None),
-                ("{\n    fn ".to_string(), Some(Color::red())),
-                ("inner".to_string(), Some(Color::blue())),
-                ("() {}\n}".to_string(), Some(Color::red())),
+                ("{\n    fn ".to_string(), Some(Hsla::red())),
+                ("inner".to_string(), Some(Hsla::blue())),
+                ("() {}\n}".to_string(), Some(Hsla::red())),
             ]
         );
         assert_eq!(
             cx.update(|cx| syntax_chunks(3..5, &map, &theme, cx)),
             vec![
-                ("    fn ".to_string(), Some(Color::red())),
-                ("inner".to_string(), Some(Color::blue())),
-                ("() {}\n}".to_string(), Some(Color::red())),
+                ("    fn ".to_string(), Some(Hsla::red())),
+                ("inner".to_string(), Some(Hsla::blue())),
+                ("() {}\n}".to_string(), Some(Hsla::red())),
             ]
         );
 
@@ -1537,11 +1501,11 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(0..2, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
-                ("out".to_string(), Some(Color::blue())),
+                ("out".to_string(), Some(Hsla::blue())),
                 ("⋯".to_string(), None),
-                ("  fn ".to_string(), Some(Color::red())),
-                ("inner".to_string(), Some(Color::blue())),
-                ("() {}\n}".to_string(), Some(Color::red())),
+                ("  fn ".to_string(), Some(Hsla::red())),
+                ("inner".to_string(), Some(Hsla::blue())),
+                ("() {}\n}".to_string(), Some(Hsla::red())),
             ]
         );
     }
@@ -1550,7 +1514,8 @@ pub mod tests {
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         use unindent::Unindent as _;
 
-        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
 
         let text = r#"
             fn outer() {}
@@ -1560,9 +1525,9 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new(vec![
-            ("mod.body".to_string(), Color::red().into()),
-            ("fn.name".to_string(), Color::blue().into()),
+        let theme = SyntaxTheme::new_test(vec![
+            ("mod.body", Hsla::red().into()),
+            ("fn.name", Hsla::blue().into()),
         ]);
         let language = Arc::new(
             Language::new(
@@ -1585,28 +1550,22 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx
-            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
-        buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+        });
+        cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
-        let font_cache = cx.font_cache();
+        let font_size = px(16.0);
 
-        let family_id = font_cache
-            .load_family(&["Courier"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 16.0;
-
-        let map =
-            cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, Some(40.0), 1, 1, cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(buffer, font("Courier"), font_size, Some(px(40.0)), 1, 1, cx)
+        });
         assert_eq!(
             cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
-                ("oute\nr".to_string(), Some(Color::blue())),
+                ("oute\nr".to_string(), Some(Hsla::blue())),
                 ("() \n{}\n\n".to_string(), None),
             ]
         );
@@ -1621,10 +1580,10 @@ pub mod tests {
         assert_eq!(
             cx.update(|cx| syntax_chunks(1..4, &map, &theme, cx)),
             [
-                ("out".to_string(), Some(Color::blue())),
+                ("out".to_string(), Some(Hsla::blue())),
                 ("⋯\n".to_string(), None),
-                ("  \nfn ".to_string(), Some(Color::red())),
-                ("i\n".to_string(), Some(Color::blue()))
+                ("  \nfn ".to_string(), Some(Hsla::red())),
+                ("i\n".to_string(), Some(Hsla::blue()))
             ]
         );
     }
@@ -1633,9 +1592,9 @@ pub mod tests {
     async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let theme = SyntaxTheme::new(vec![
-            ("operator".to_string(), Color::red().into()),
-            ("string".to_string(), Color::green().into()),
+        let theme = SyntaxTheme::new_test(vec![
+            ("operator", Hsla::red().into()),
+            ("string", Hsla::green().into()),
         ]);
         let language = Arc::new(
             Language::new(
@@ -1658,27 +1617,22 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx
-            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
-        buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+        });
+        cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
-        let font_cache = cx.font_cache();
-        let family_id = font_cache
-            .load_family(&["Courier"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 16.0;
-        let map = cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, None, 1, 1, cx));
+        let font_size = px(16.0);
+        let map =
+            cx.new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, cx));
 
         enum MyType {}
 
         let style = HighlightStyle {
-            color: Some(Color::blue()),
+            color: Some(Hsla::blue()),
             ..Default::default()
         };
 
@@ -1700,12 +1654,12 @@ pub mod tests {
             cx.update(|cx| chunks(0..10, &map, &theme, cx)),
             [
                 ("const ".to_string(), None, None),
-                ("a".to_string(), None, Some(Color::blue())),
-                (":".to_string(), Some(Color::red()), None),
+                ("a".to_string(), None, Some(Hsla::blue())),
+                (":".to_string(), Some(Hsla::red()), None),
                 (" B = ".to_string(), None, None),
-                ("\"c ".to_string(), Some(Color::green()), None),
-                ("d".to_string(), Some(Color::green()), Some(Color::blue())),
-                ("\"".to_string(), Some(Color::green()), None),
+                ("\"c ".to_string(), Some(Hsla::green()), None),
+                ("d".to_string(), Some(Hsla::green()), Some(Hsla::blue())),
+                ("\"".to_string(), Some(Hsla::green()), None),
             ]
         );
     }
@@ -1785,17 +1739,11 @@ pub mod tests {
 
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = MultiBuffer::build_simple(text, cx);
-        let font_cache = cx.font_cache();
-        let family_id = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
+        let font_size = px(14.0);
 
-        let map =
-            cx.add_model(|cx| DisplayMap::new(buffer.clone(), font_id, font_size, None, 1, 1, cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+        });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
         assert_eq!(
@@ -1846,16 +1794,10 @@ pub mod tests {
         init_test(cx, |_| {});
 
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
-        let font_cache = cx.font_cache();
-        let family_id = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
-        let map =
-            cx.add_model(|cx| DisplayMap::new(buffer.clone(), font_id, font_size, None, 1, 1, cx));
+        let font_size = px(14.0);
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+        });
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
             DisplayPoint::new(1, 11)
@@ -1864,10 +1806,10 @@ pub mod tests {
 
     fn syntax_chunks<'a>(
         rows: Range<u32>,
-        map: &ModelHandle<DisplayMap>,
+        map: &Model<DisplayMap>,
         theme: &'a SyntaxTheme,
         cx: &mut AppContext,
-    ) -> Vec<(String, Option<Color>)> {
+    ) -> Vec<(String, Option<Hsla>)> {
         chunks(rows, map, theme, cx)
             .into_iter()
             .map(|(text, color, _)| (text, color))
@@ -1876,12 +1818,12 @@ pub mod tests {
 
     fn chunks<'a>(
         rows: Range<u32>,
-        map: &ModelHandle<DisplayMap>,
+        map: &Model<DisplayMap>,
         theme: &'a SyntaxTheme,
         cx: &mut AppContext,
-    ) -> Vec<(String, Option<Color>, Option<Color>)> {
+    ) -> Vec<(String, Option<Hsla>, Option<Hsla>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let mut chunks: Vec<(String, Option<Color>, Option<Color>)> = Vec::new();
+        let mut chunks: Vec<(String, Option<Hsla>, Option<Hsla>)> = Vec::new();
         for chunk in snapshot.chunks(rows, true, None, None) {
             let syntax_color = chunk
                 .syntax_highlight_id
@@ -1899,13 +1841,13 @@ pub mod tests {
     }
 
     fn init_test(cx: &mut AppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {
-        cx.foreground().forbid_parking();
-        cx.set_global(SettingsStore::test(cx));
+        let settings = SettingsStore::test(cx);
+        cx.set_global(settings);
         language::init(cx);
         crate::init(cx);
         Project::init_settings(cx);
-        theme::init((), cx);
-        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+        theme::init(LoadThemes::JustBase, cx);
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
         });
     }

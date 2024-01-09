@@ -60,8 +60,8 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     let folds_end = Point::new(hunk.buffer_range.end + 2, 0);
     let folds_range = folds_start..folds_end;
 
-    let containing_fold = snapshot.folds_in_range(folds_range).find(|fold_range| {
-        let fold_point_range = fold_range.to_point(&snapshot.buffer_snapshot);
+    let containing_fold = snapshot.folds_in_range(folds_range).find(|fold| {
+        let fold_point_range = fold.range.to_point(&snapshot.buffer_snapshot);
         let fold_point_range = fold_point_range.start..=fold_point_range.end;
 
         let folded_start = fold_point_range.contains(&hunk_start_point);
@@ -72,7 +72,7 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     });
 
     if let Some(fold) = containing_fold {
-        let row = fold.start.to_display_point(snapshot).row();
+        let row = fold.range.start.to_display_point(snapshot).row();
         DisplayDiffHunk::Folded { display_row: row }
     } else {
         let start = hunk_start_point.to_display_point(snapshot).row();
@@ -88,11 +88,12 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     }
 }
 
-#[cfg(any(test, feature = "test_support"))]
+#[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
     use crate::Point;
-    use gpui::TestAppContext;
+    use gpui::{Context, TestAppContext};
+    use language::Capability::ReadWrite;
     use multi_buffer::{ExcerptRange, MultiBuffer};
     use project::{FakeFs, Project};
     use unindent::Unindent;
@@ -101,7 +102,7 @@ mod tests {
         use git::diff::DiffHunkStatus;
         init_test(cx, |_| {});
 
-        let fs = FakeFs::new(cx.background());
+        let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
 
         // buffer has two modified hunks with two rows each
@@ -180,10 +181,10 @@ mod tests {
             );
         });
 
-        cx.foreground().run_until_parked();
+        cx.background_executor.run_until_parked();
 
-        let multibuffer = cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
+        let multibuffer = cx.new_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0, ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [

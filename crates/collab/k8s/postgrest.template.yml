@@ -1,0 +1,56 @@
+---
+kind: Service
+apiVersion: v1
+metadata:
+  namespace: ${ZED_KUBE_NAMESPACE}
+  name: postgrest
+  annotations:
+    service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ZED_DO_CERTIFICATE_ID}
+    service.beta.kubernetes.io/do-loadbalancer-disable-lets-encrypt-dns-records: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: postgrest
+  ports:
+    - name: web
+      protocol: TCP
+      port: 443
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: ${ZED_KUBE_NAMESPACE}
+  name: postgrest
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgrest
+  template:
+    metadata:
+      labels:
+        app: postgrest
+    spec:
+      containers:
+        - name: postgrest
+          image: "postgrest/postgrest"
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PGRST_SERVER_PORT
+              value: "8080"
+            - name: PGRST_DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: database
+                  key: url
+            - name: PGRST_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: postgrest
+                  key: jwt_secret

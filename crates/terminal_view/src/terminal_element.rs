@@ -1,52 +1,45 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    color::Color,
-    elements::{Empty, Overlay},
-    fonts::{HighlightStyle, Properties, Style::Italic, TextStyle, Underline, Weight},
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
-    platform::{CursorStyle, MouseButton},
-    serde_json::json,
-    text_layout::{Line, RunStyle},
-    AnyElement, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SizeConstraint,
-    TextLayoutCache, ViewContext, WeakModelHandle, WindowContext,
+    div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
+    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveBounds, InteractiveElement,
+    InteractiveElementState, Interactivity, IntoElement, LayoutId, Model, ModelContext,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, PlatformInputHandler, Point,
+    ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle,
+    WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
-use ordered_float::OrderedFloat;
+use settings::Settings;
 use terminal::{
+    alacritty_terminal::ansi::NamedColor,
     alacritty_terminal::{
-        ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
+        ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape},
         grid::Dimensions,
-        index::Point,
+        index::Point as AlacPoint,
         term::{cell::Flags, TermMode},
     },
-    mappings::colors::convert_color,
     terminal_settings::TerminalSettings,
     IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
-use theme::{TerminalStyle, ThemeSettings};
-use util::ResultExt;
+use theme::{ActiveTheme, Theme, ThemeSettings};
+use ui::Tooltip;
 
+use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
-use std::{mem, ops::Range};
-
-use crate::TerminalView;
 
 ///The information generated during layout that is necessary for painting
 pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
-    relative_highlighted_ranges: Vec<(RangeInclusive<Point>, Color)>,
+    relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
     cursor: Option<Cursor>,
-    background_color: Color,
-    size: TerminalSize,
+    background_color: Hsla,
+    dimensions: TerminalSize,
     mode: TermMode,
     display_offset: usize,
-    hyperlink_tooltip: Option<AnyElement<TerminalView>>,
-    gutter: f32,
+    hyperlink_tooltip: Option<AnyElement>,
+    gutter: Pixels,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -56,7 +49,7 @@ struct DisplayCursor {
 }
 
 impl DisplayCursor {
-    fn from(cursor_point: Point, display_offset: usize) -> Self {
+    fn from(cursor_point: AlacPoint, display_offset: usize) -> Self {
         Self {
             line: cursor_point.line.0 + display_offset as i32,
             col: cursor_point.column.0,
@@ -72,47 +65,46 @@ impl DisplayCursor {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct LayoutCell {
-    point: Point<i32, i32>,
-    text: Line,
+    point: AlacPoint<i32, i32>,
+    text: gpui::ShapedLine,
 }
 
 impl LayoutCell {
-    fn new(point: Point<i32, i32>, text: Line) -> LayoutCell {
+    fn new(point: AlacPoint<i32, i32>, text: gpui::ShapedLine) -> LayoutCell {
         LayoutCell { point, text }
     }
 
     fn paint(
         &self,
-        origin: Vector2F,
+        origin: Point<Pixels>,
         layout: &LayoutState,
-        visible_bounds: RectF,
-        _view: &mut TerminalView,
+        _visible_bounds: Bounds<Pixels>,
         cx: &mut WindowContext,
     ) {
         let pos = {
             let point = self.point;
-            vec2f(
-                (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
-                origin.y() + point.line as f32 * layout.size.line_height,
+
+            Point::new(
+                (origin.x + point.column as f32 * layout.dimensions.cell_width).floor(),
+                origin.y + point.line as f32 * layout.dimensions.line_height,
             )
         };
 
-        self.text
-            .paint(pos, visible_bounds, layout.size.line_height, cx);
+        self.text.paint(pos, layout.dimensions.line_height, cx).ok();
     }
 }
 
 #[derive(Clone, Debug, Default)]
 struct LayoutRect {
-    point: Point<i32, i32>,
+    point: AlacPoint<i32, i32>,
     num_of_cells: usize,
-    color: Color,
+    color: Hsla,
 }
 
 impl LayoutRect {
-    fn new(point: Point<i32, i32>, num_of_cells: usize, color: Color) -> LayoutRect {
+    fn new(point: AlacPoint<i32, i32>, num_of_cells: usize, color: Hsla) -> LayoutRect {
         LayoutRect {
             point,
             num_of_cells,
@@ -128,46 +120,47 @@ impl LayoutRect {
         }
     }
 
-    fn paint(
-        &self,
-        origin: Vector2F,
-        layout: &LayoutState,
-        _view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
-    ) {
+    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
         let position = {
-            let point = self.point;
-            vec2f(
-                (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
-                origin.y() + point.line as f32 * layout.size.line_height,
+            let alac_point = self.point;
+            point(
+                (origin.x + alac_point.column as f32 * layout.dimensions.cell_width).floor(),
+                origin.y + alac_point.line as f32 * layout.dimensions.line_height,
             )
         };
-        let size = vec2f(
-            (layout.size.cell_width * self.num_of_cells as f32).ceil(),
-            layout.size.line_height,
-        );
+        let size = point(
+            (layout.dimensions.cell_width * self.num_of_cells as f32).ceil(),
+            layout.dimensions.line_height,
+        )
+        .into();
 
-        cx.scene().push_quad(Quad {
-            bounds: RectF::new(position, size),
-            background: Some(self.color),
-            border: Default::default(),
-            corner_radii: Default::default(),
-        })
+        cx.paint_quad(fill(Bounds::new(position, size), self.color));
     }
 }
 
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
-    terminal: WeakModelHandle<Terminal>,
+    terminal: Model<Terminal>,
+    focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
     can_navigate_to_selected_word: bool,
+    interactivity: Interactivity,
 }
+
+impl InteractiveElement for TerminalElement {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        &mut self.interactivity
+    }
+}
+
+impl StatefulInteractiveElement for TerminalElement {}
 
 impl TerminalElement {
     pub fn new(
-        terminal: WeakModelHandle<Terminal>,
+        terminal: Model<Terminal>,
+        focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
         can_navigate_to_selected_word: bool,
@@ -175,21 +168,26 @@ impl TerminalElement {
         TerminalElement {
             terminal,
             focused,
+            focus: focus.clone(),
             cursor_visible,
             can_navigate_to_selected_word,
+            interactivity: Default::default(),
         }
+        .track_focus(&focus)
+        .element
     }
 
-    //Vec<Range<Point>> -> Clip out the parts of the ranges
+    //Vec<Range<AlacPoint>> -> Clip out the parts of the ranges
 
     fn layout_grid(
         grid: &Vec<IndexedCell>,
         text_style: &TextStyle,
-        terminal_theme: &TerminalStyle,
-        text_layout_cache: &TextLayoutCache,
-        font_cache: &FontCache,
-        hyperlink: Option<(HighlightStyle, &RangeInclusive<Point>)>,
+        // terminal_theme: &TerminalStyle,
+        text_system: &TextSystem,
+        hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
+        cx: &WindowContext<'_>,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
+        let theme = cx.theme();
         let mut cells = vec![];
         let mut rects = vec![];
 
@@ -225,18 +223,21 @@ impl TerminalElement {
                                         rects.push(cur_rect.take().unwrap());
                                     }
                                     cur_rect = Some(LayoutRect::new(
-                                        Point::new(line_index as i32, cell.point.column.0 as i32),
+                                        AlacPoint::new(
+                                            line_index as i32,
+                                            cell.point.column.0 as i32,
+                                        ),
                                         1,
-                                        convert_color(&bg, &terminal_theme),
+                                        convert_color(&bg, theme),
                                     ));
                                 }
                             }
                             None => {
                                 cur_alac_color = Some(bg);
                                 cur_rect = Some(LayoutRect::new(
-                                    Point::new(line_index as i32, cell.point.column.0 as i32),
+                                    AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
                                     1,
-                                    convert_color(&bg, &terminal_theme),
+                                    convert_color(&bg, &theme),
                                 ));
                             }
                         }
@@ -245,25 +246,21 @@ impl TerminalElement {
 
                 //Layout current cell text
                 {
-                    let cell_text = &cell.c.to_string();
+                    let cell_text = cell.c.to_string();
                     if !is_blank(&cell) {
-                        let cell_style = TerminalElement::cell_style(
-                            &cell,
-                            fg,
-                            terminal_theme,
-                            text_style,
-                            font_cache,
-                            hyperlink,
-                        );
+                        let cell_style =
+                            TerminalElement::cell_style(&cell, fg, theme, text_style, hyperlink);
 
-                        let layout_cell = text_layout_cache.layout_str(
-                            cell_text,
-                            text_style.font_size,
-                            &[(cell_text.len(), cell_style)],
-                        );
+                        let layout_cell = text_system
+                            .shape_line(
+                                cell_text.into(),
+                                text_style.font_size.to_pixels(cx.rem_size()),
+                                &[cell_style],
+                            )
+                            .unwrap();
 
                         cells.push(LayoutCell::new(
-                            Point::new(line_index as i32, cell.point.column.0 as i32),
+                            AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
                             layout_cell,
                         ))
                     };
@@ -282,19 +279,19 @@ impl TerminalElement {
     fn shape_cursor(
         cursor_point: DisplayCursor,
         size: TerminalSize,
-        text_fragment: &Line,
-    ) -> Option<(Vector2F, f32)> {
+        text_fragment: &ShapedLine,
+    ) -> Option<(Point<Pixels>, Pixels)> {
         if cursor_point.line() < size.total_lines() as i32 {
-            let cursor_width = if text_fragment.width() == 0. {
+            let cursor_width = if text_fragment.width == Pixels::ZERO {
                 size.cell_width()
             } else {
-                text_fragment.width()
+                text_fragment.width
             };
 
-            //Cursor should always surround as much of the text as possible,
-            //hence when on pixel boundaries round the origin down and the width up
+            // Cursor should always surround as much of the text as possible,
+            // hence when on pixel boundaries round the origin down and the width up
             Some((
-                vec2f(
+                point(
                     (cursor_point.col() as f32 * size.cell_width()).floor(),
                     (cursor_point.line() as f32 * size.line_height()).floor(),
                 ),
@@ -305,55 +302,55 @@ impl TerminalElement {
         }
     }
 
-    ///Convert the Alacritty cell styles to GPUI text styles and background color
+    /// Convert the Alacritty cell styles to GPUI text styles and background color
     fn cell_style(
         indexed: &IndexedCell,
         fg: terminal::alacritty_terminal::ansi::Color,
-        style: &TerminalStyle,
+        // bg: terminal::alacritty_terminal::ansi::Color,
+        colors: &Theme,
         text_style: &TextStyle,
-        font_cache: &FontCache,
-        hyperlink: Option<(HighlightStyle, &RangeInclusive<Point>)>,
-    ) -> RunStyle {
+        hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
+    ) -> TextRun {
         let flags = indexed.cell.flags;
-        let fg = convert_color(&fg, &style);
+        let fg = convert_color(&fg, &colors);
+        // let bg = convert_color(&bg, &colors);
 
-        let mut underline = flags
-            .intersects(Flags::ALL_UNDERLINES)
-            .then(|| Underline {
-                color: Some(fg),
-                squiggly: flags.contains(Flags::UNDERCURL),
-                thickness: OrderedFloat(1.),
-            })
-            .unwrap_or_default();
+        let underline = (flags.intersects(Flags::ALL_UNDERLINES)
+            || indexed.cell.hyperlink().is_some())
+        .then(|| UnderlineStyle {
+            color: Some(fg),
+            thickness: Pixels::from(1.0),
+            wavy: flags.contains(Flags::UNDERCURL),
+        });
 
-        if indexed.cell.hyperlink().is_some() {
-            if underline.thickness == OrderedFloat(0.) {
-                underline.thickness = OrderedFloat(1.);
-            }
-        }
+        let weight = if flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
+            FontWeight::BOLD
+        } else {
+            FontWeight::NORMAL
+        };
 
-        let mut properties = Properties::new();
-        if indexed.flags.intersects(Flags::BOLD | Flags::DIM_BOLD) {
-            properties = *properties.weight(Weight::BOLD);
-        }
-        if indexed.flags.intersects(Flags::ITALIC) {
-            properties = *properties.style(Italic);
-        }
+        let style = if flags.intersects(Flags::ITALIC) {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        };
 
-        let font_id = font_cache
-            .select_font(text_style.font_family_id, &properties)
-            .unwrap_or(text_style.font_id);
-
-        let mut result = RunStyle {
+        let mut result = TextRun {
+            len: indexed.c.len_utf8() as usize,
             color: fg,
-            font_id,
+            background_color: None,
+            font: Font {
+                weight,
+                style,
+                ..text_style.font()
+            },
             underline,
         };
 
         if let Some((style, range)) = hyperlink {
             if range.contains(&indexed.point) {
                 if let Some(underline) = style.underline {
-                    result.underline = underline;
+                    result.underline = Some(underline);
                 }
 
                 if let Some(color) = style.color {
@@ -365,229 +362,86 @@ impl TerminalElement {
         result
     }
 
-    fn generic_button_handler<E>(
-        connection: WeakModelHandle<Terminal>,
-        origin: Vector2F,
-        f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
-    ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
-        move |event, _: &mut TerminalView, cx| {
-            cx.focus_parent();
-            if let Some(conn_handle) = connection.upgrade(cx) {
-                conn_handle.update(cx, |terminal, cx| {
-                    f(terminal, origin, event, cx);
+    fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut WindowContext) -> LayoutState {
+        let settings = ThemeSettings::get_global(cx).clone();
 
-                    cx.notify();
-                })
-            }
-        }
-    }
+        let buffer_font_size = settings.buffer_font_size(cx);
 
-    fn attach_mouse_handlers(
-        &self,
-        origin: Vector2F,
-        visible_bounds: RectF,
-        mode: TermMode,
-        cx: &mut ViewContext<TerminalView>,
-    ) {
-        let connection = self.terminal;
-
-        let mut region = MouseRegion::new::<Self>(cx.view_id(), 0, visible_bounds);
-
-        // Terminal Emulator controlled behavior:
-        region = region
-            // Start selections
-            .on_down(MouseButton::Left, move |event, v: &mut TerminalView, cx| {
-                let terminal_view = cx.handle();
-                cx.focus(&terminal_view);
-                v.context_menu.update(cx, |menu, _cx| menu.delay_cancel());
-                if let Some(conn_handle) = connection.upgrade(cx) {
-                    conn_handle.update(cx, |terminal, cx| {
-                        terminal.mouse_down(&event, origin);
-
-                        cx.notify();
-                    })
-                }
-            })
-            // Update drag selections
-            .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
-                if event.end {
-                    return;
-                }
-
-                if cx.is_self_focused() {
-                    if let Some(conn_handle) = connection.upgrade(cx) {
-                        conn_handle.update(cx, |terminal, cx| {
-                            terminal.mouse_drag(event, origin);
-                            cx.notify();
-                        })
-                    }
-                }
-            })
-            // Copy on up behavior
-            .on_up(
-                MouseButton::Left,
-                TerminalElement::generic_button_handler(
-                    connection,
-                    origin,
-                    move |terminal, origin, e, cx| {
-                        terminal.mouse_up(&e, origin, cx);
-                    },
-                ),
-            )
-            // Context menu
-            .on_click(
-                MouseButton::Right,
-                move |event, view: &mut TerminalView, cx| {
-                    let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx) {
-                        conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(event.shift))
-                    } else {
-                        // If we can't get the model handle, probably can't deploy the context menu
-                        true
-                    };
-                    if !mouse_mode {
-                        view.deploy_context_menu(event.position, cx);
-                    }
-                },
-            )
-            .on_move(move |event, _: &mut TerminalView, cx| {
-                if cx.is_self_focused() {
-                    if let Some(conn_handle) = connection.upgrade(cx) {
-                        conn_handle.update(cx, |terminal, cx| {
-                            terminal.mouse_move(&event, origin);
-                            cx.notify();
-                        })
-                    }
-                }
-            })
-            .on_scroll(move |event, _: &mut TerminalView, cx| {
-                if let Some(conn_handle) = connection.upgrade(cx) {
-                    conn_handle.update(cx, |terminal, cx| {
-                        terminal.scroll_wheel(event, origin);
-                        cx.notify();
-                    })
-                }
-            });
-
-        // Mouse mode handlers:
-        // All mouse modes need the extra click handlers
-        if mode.intersects(TermMode::MOUSE_MODE) {
-            region = region
-                .on_down(
-                    MouseButton::Right,
-                    TerminalElement::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_down(&e, origin);
-                        },
-                    ),
-                )
-                .on_down(
-                    MouseButton::Middle,
-                    TerminalElement::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_down(&e, origin);
-                        },
-                    ),
-                )
-                .on_up(
-                    MouseButton::Right,
-                    TerminalElement::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, cx| {
-                            terminal.mouse_up(&e, origin, cx);
-                        },
-                    ),
-                )
-                .on_up(
-                    MouseButton::Middle,
-                    TerminalElement::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, cx| {
-                            terminal.mouse_up(&e, origin, cx);
-                        },
-                    ),
-                )
-        }
-
-        cx.scene().push_mouse_region(region);
-    }
-}
-
-impl Element<TerminalView> for TerminalElement {
-    type LayoutState = LayoutState;
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: gpui::SizeConstraint,
-        view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
-    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        let settings = settings::get::<ThemeSettings>(cx);
-        let terminal_settings = settings::get::<TerminalSettings>(cx);
-
-        //Setup layout information
-        let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
-        let link_style = settings.theme.editor.link_definition;
-        let tooltip_style = settings.theme.tooltip.clone();
-
-        let font_cache = cx.font_cache();
-        let font_size = terminal_settings
-            .font_size(cx)
-            .unwrap_or(settings.buffer_font_size(cx));
-        let font_family_name = terminal_settings
+        let terminal_settings = TerminalSettings::get_global(cx);
+        let font_family = terminal_settings
             .font_family
             .as_ref()
-            .unwrap_or(&settings.buffer_font_family_name);
+            .map(|string| string.clone().into())
+            .unwrap_or(settings.buffer_font.family);
+
         let font_features = terminal_settings
             .font_features
-            .as_ref()
-            .unwrap_or(&settings.buffer_font_features);
-        let family_id = font_cache
-            .load_family(&[font_family_name], &font_features)
-            .log_err()
-            .unwrap_or(settings.buffer_font_family);
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
+            .clone()
+            .unwrap_or(settings.buffer_font.features.clone());
+
+        let line_height = terminal_settings.line_height.value();
+        let font_size = terminal_settings.font_size.clone();
+
+        let font_size =
+            font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
+
+        let theme = cx.theme().clone();
+
+        let link_style = HighlightStyle {
+            color: Some(theme.colors().link_text_hover),
+            font_weight: None,
+            font_style: None,
+            background_color: None,
+            underline: Some(UnderlineStyle {
+                thickness: px(1.0),
+                color: Some(theme.colors().link_text_hover),
+                wavy: false,
+            }),
+            fade_out: None,
+        };
 
         let text_style = TextStyle {
-            color: settings.theme.editor.text_color,
-            font_family_id: family_id,
-            font_family_name: font_cache.family_name(family_id).unwrap(),
-            font_id,
-            font_size,
-            font_properties: Default::default(),
-            underline: Default::default(),
-            soft_wrap: false,
+            font_family,
+            font_features,
+            font_size: font_size.into(),
+            font_style: FontStyle::Normal,
+            line_height: line_height.into(),
+            background_color: None,
+            white_space: WhiteSpace::Normal,
+            // These are going to be overridden per-cell
+            underline: None,
+            color: theme.colors().text,
+            font_weight: FontWeight::NORMAL,
         };
-        let selection_color = settings.theme.editor.selection.selection;
-        let match_color = settings.theme.search.match_background;
+
+        let text_system = cx.text_system();
+        let selection_color = theme.players().local();
+        let match_color = theme.colors().search_match_background;
         let gutter;
         let dimensions = {
-            let line_height = text_style.font_size * terminal_settings.line_height.value();
-            let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
+            let rem_size = cx.rem_size();
+            let font_pixels = text_style.font_size.to_pixels(rem_size);
+            let line_height = font_pixels * line_height.to_pixels(rem_size);
+            let font_id = cx.text_system().resolve_font(&text_style.font());
+
+            // todo!(do we need to keep this unwrap?)
+            let cell_width = text_system
+                .advance(font_id, font_pixels, 'm')
+                .unwrap()
+                .width;
             gutter = cell_width;
 
-            let size = constraint.max - vec2f(gutter, 0.);
+            let mut size = bounds.size.clone();
+            size.width -= gutter;
+
             TerminalSize::new(line_height, cell_width, size)
         };
 
-        let search_matches = if let Some(terminal_model) = self.terminal.upgrade(cx) {
-            terminal_model.read(cx).matches.clone()
-        } else {
-            Default::default()
-        };
+        let search_matches = self.terminal.read(cx).matches.clone();
 
-        let background_color = terminal_theme.background;
-        let terminal_handle = self.terminal.upgrade(cx).unwrap();
+        let background_color = theme.colors().terminal_background;
 
-        let last_hovered_word = terminal_handle.update(cx, |terminal, cx| {
+        let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
             if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
@@ -597,30 +451,24 @@ impl Element<TerminalView> for TerminalElement {
             }
         });
 
-        let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
-            let mut tooltip = Overlay::new(
-                Empty::new()
-                    .contained()
-                    .constrained()
-                    .with_width(dimensions.width())
-                    .with_height(dimensions.height())
-                    .with_tooltip::<TerminalElement>(
-                        hovered_word.id,
-                        hovered_word.word,
-                        None,
-                        tooltip_style,
-                        cx,
-                    ),
-            )
-            .with_position_mode(gpui::elements::OverlayPositionMode::Local)
-            .into_any();
+        let interactive_text_bounds = InteractiveBounds {
+            bounds,
+            stacking_order: cx.stacking_order().clone(),
+        };
+        if interactive_text_bounds.visibly_contains(&cx.mouse_position(), cx) {
+            if self.can_navigate_to_selected_word && last_hovered_word.is_some() {
+                cx.set_cursor_style(gpui::CursorStyle::PointingHand)
+            } else {
+                cx.set_cursor_style(gpui::CursorStyle::IBeam)
+            }
+        }
 
-            tooltip.layout(
-                SizeConstraint::new(Vector2F::zero(), cx.window_size()),
-                view,
-                cx,
-            );
-            tooltip
+        let hyperlink_tooltip = last_hovered_word.clone().map(|hovered_word| {
+            div()
+                .size_full()
+                .id("terminal-element")
+                .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
+                .into_any_element()
         });
 
         let TerminalContent {
@@ -631,7 +479,7 @@ impl Element<TerminalView> for TerminalElement {
             selection,
             cursor,
             ..
-        } = { &terminal_handle.read(cx).last_content };
+        } = &self.terminal.read(cx).last_content;
 
         // searches, highlights to a single range representations
         let mut relative_highlighted_ranges = Vec::new();
@@ -639,7 +487,8 @@ impl Element<TerminalView> for TerminalElement {
             relative_highlighted_ranges.push((search_match, match_color))
         }
         if let Some(selection) = selection {
-            relative_highlighted_ranges.push((selection.start..=selection.end, selection_color));
+            relative_highlighted_ranges
+                .push((selection.start..=selection.end, selection_color.cursor));
         }
 
         // then have that representation be converted to the appropriate highlight data structure
@@ -647,12 +496,11 @@ impl Element<TerminalView> for TerminalElement {
         let (cells, rects) = TerminalElement::layout_grid(
             cells,
             &text_style,
-            &terminal_theme,
-            cx.text_layout_cache(),
-            cx.font_cache(),
+            &cx.text_system(),
             last_hovered_word
                 .as_ref()
                 .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+            cx,
         );
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
@@ -663,25 +511,21 @@ impl Element<TerminalView> for TerminalElement {
             let cursor_point = DisplayCursor::from(cursor.point, *display_offset);
             let cursor_text = {
                 let str_trxt = cursor_char.to_string();
-
-                let color = if self.focused {
-                    terminal_theme.background
-                } else {
-                    terminal_theme.foreground
-                };
-
-                cx.text_layout_cache().layout_str(
-                    &str_trxt,
-                    text_style.font_size,
-                    &[(
-                        str_trxt.len(),
-                        RunStyle {
-                            font_id: text_style.font_id,
-                            color,
+                let len = str_trxt.len();
+                cx.text_system()
+                    .shape_line(
+                        str_trxt.into(),
+                        text_style.font_size.to_pixels(cx.rem_size()),
+                        &[TextRun {
+                            len,
+                            font: text_style.font(),
+                            color: theme.colors().terminal_background,
+                            background_color: None,
                             underline: Default::default(),
-                        },
-                    )],
-                )
+                        }],
+                    )
+                    //todo!(do we need to keep this unwrap?)
+                    .unwrap()
             };
 
             let focused = self.focused;
@@ -701,7 +545,7 @@ impl Element<TerminalView> for TerminalElement {
                         cursor_position,
                         block_width,
                         dimensions.line_height,
-                        terminal_theme.cursor,
+                        theme.players().local().cursor,
                         shape,
                         text,
                     )
@@ -710,144 +554,357 @@ impl Element<TerminalView> for TerminalElement {
         };
 
         //Done!
-        (
-            constraint.max,
-            LayoutState {
-                cells,
-                cursor,
-                background_color,
-                size: dimensions,
-                rects,
-                relative_highlighted_ranges,
-                mode: *mode,
-                display_offset: *display_offset,
-                hyperlink_tooltip,
-                gutter,
-            },
-        )
+        LayoutState {
+            cells,
+            cursor,
+            background_color,
+            dimensions,
+            rects,
+            relative_highlighted_ranges,
+            mode: *mode,
+            display_offset: *display_offset,
+            hyperlink_tooltip,
+            gutter,
+        }
+    }
+
+    fn generic_button_handler<E>(
+        connection: Model<Terminal>,
+        origin: Point<Pixels>,
+        focus_handle: FocusHandle,
+        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
+    ) -> impl Fn(&E, &mut WindowContext) {
+        move |event, cx| {
+            cx.focus(&focus_handle);
+            connection.update(cx, |terminal, cx| {
+                f(terminal, origin, event, cx);
+
+                cx.notify();
+            })
+        }
+    }
+
+    fn register_key_listeners(&self, cx: &mut WindowContext) {
+        cx.on_key_event({
+            let this = self.terminal.clone();
+            move |event: &ModifiersChangedEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                let handled =
+                    this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
+
+                if handled {
+                    cx.notify();
+                }
+            }
+        });
+    }
+
+    fn register_mouse_listeners(
+        &mut self,
+        origin: Point<Pixels>,
+        mode: TermMode,
+        bounds: Bounds<Pixels>,
+        cx: &mut WindowContext,
+    ) {
+        let focus = self.focus.clone();
+        let terminal = self.terminal.clone();
+        let interactive_bounds = InteractiveBounds {
+            bounds: bounds.intersect(&cx.content_mask().bounds),
+            stacking_order: cx.stacking_order().clone(),
+        };
+
+        self.interactivity.on_mouse_down(MouseButton::Left, {
+            let terminal = terminal.clone();
+            let focus = focus.clone();
+            move |e, cx| {
+                cx.focus(&focus);
+                terminal.update(cx, |terminal, cx| {
+                    terminal.mouse_down(&e, origin);
+                    cx.notify();
+                })
+            }
+        });
+
+        cx.on_mouse_event({
+            let bounds = bounds.clone();
+            let focus = self.focus.clone();
+            let terminal = self.terminal.clone();
+            move |e: &MouseMoveEvent, phase, cx| {
+                if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
+                    return;
+                }
+
+                if e.pressed_button.is_some() && !cx.has_active_drag() {
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.mouse_drag(e, origin, bounds);
+                        cx.notify();
+                    })
+                }
+
+                if interactive_bounds.visibly_contains(&e.position, cx) {
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.mouse_move(&e, origin);
+                        cx.notify();
+                    })
+                }
+            }
+        });
+
+        self.interactivity.on_mouse_up(
+            MouseButton::Left,
+            TerminalElement::generic_button_handler(
+                terminal.clone(),
+                origin,
+                focus.clone(),
+                move |terminal, origin, e, cx| {
+                    terminal.mouse_up(&e, origin, cx);
+                },
+            ),
+        );
+        self.interactivity.on_click({
+            let terminal = terminal.clone();
+            move |e, cx| {
+                if e.down.button == MouseButton::Right {
+                    let mouse_mode = terminal.update(cx, |terminal, _cx| {
+                        terminal.mouse_mode(e.down.modifiers.shift)
+                    });
+
+                    if !mouse_mode {
+                        //todo!(context menu)
+                        // view.deploy_context_menu(e.position, cx);
+                    }
+                }
+            }
+        });
+        self.interactivity.on_scroll_wheel({
+            let terminal = terminal.clone();
+            move |e, cx| {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.scroll_wheel(e, origin);
+                    cx.notify();
+                })
+            }
+        });
+
+        // Mouse mode handlers:
+        // All mouse modes need the extra click handlers
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            self.interactivity.on_mouse_down(
+                MouseButton::Right,
+                TerminalElement::generic_button_handler(
+                    terminal.clone(),
+                    origin,
+                    focus.clone(),
+                    move |terminal, origin, e, _cx| {
+                        terminal.mouse_down(&e, origin);
+                    },
+                ),
+            );
+            self.interactivity.on_mouse_down(
+                MouseButton::Middle,
+                TerminalElement::generic_button_handler(
+                    terminal.clone(),
+                    origin,
+                    focus.clone(),
+                    move |terminal, origin, e, _cx| {
+                        terminal.mouse_down(&e, origin);
+                    },
+                ),
+            );
+            self.interactivity.on_mouse_up(
+                MouseButton::Right,
+                TerminalElement::generic_button_handler(
+                    terminal.clone(),
+                    origin,
+                    focus.clone(),
+                    move |terminal, origin, e, cx| {
+                        terminal.mouse_up(&e, origin, cx);
+                    },
+                ),
+            );
+            self.interactivity.on_mouse_up(
+                MouseButton::Middle,
+                TerminalElement::generic_button_handler(
+                    terminal,
+                    origin,
+                    focus,
+                    move |terminal, origin, e, cx| {
+                        terminal.mouse_up(&e, origin, cx);
+                    },
+                ),
+            );
+        }
+    }
+}
+
+impl Element for TerminalElement {
+    type State = InteractiveElementState;
+
+    fn request_layout(
+        &mut self,
+        element_state: Option<Self::State>,
+        cx: &mut WindowContext<'_>,
+    ) -> (LayoutId, Self::State) {
+        let (layout_id, interactive_state) =
+            self.interactivity
+                .layout(element_state, cx, |mut style, cx| {
+                    style.size.width = relative(1.).into();
+                    style.size.height = relative(1.).into();
+                    let layout_id = cx.request_layout(&style, None);
+
+                    layout_id
+                });
+
+        (layout_id, interactive_state)
     }
 
     fn paint(
         &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
-        view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
-    ) -> Self::PaintState {
-        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+        bounds: Bounds<Pixels>,
+        state: &mut Self::State,
+        cx: &mut WindowContext<'_>,
+    ) {
+        let mut layout = self.compute_layout(bounds, cx);
 
-        //Setup element stuff
-        let clip_bounds = Some(visible_bounds);
+        cx.paint_quad(fill(bounds, layout.background_color));
+        let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
-        cx.paint_layer(clip_bounds, |cx| {
-            let origin = bounds.origin() + vec2f(layout.gutter, 0.);
+        let terminal_input_handler = TerminalInputHandler {
+            cx: cx.to_async(),
+            terminal: self.terminal.clone(),
+            cursor_bounds: layout
+                .cursor
+                .as_ref()
+                .map(|cursor| cursor.bounding_rect(origin)),
+        };
 
-            // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(origin, visible_bounds, layout.mode, cx);
+        self.register_mouse_listeners(origin, layout.mode, bounds, cx);
 
-            cx.scene().push_cursor_region(gpui::CursorRegion {
-                bounds,
-                style: if layout.hyperlink_tooltip.is_some() {
-                    CursorStyle::PointingHand
-                } else {
-                    CursorStyle::IBeam
-                },
-            });
+        let mut interactivity = mem::take(&mut self.interactivity);
+        interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
+            cx.handle_input(&self.focus, terminal_input_handler);
 
-            cx.paint_layer(clip_bounds, |cx| {
-                //Start with a background color
-                cx.scene().push_quad(Quad {
-                    bounds: RectF::new(bounds.origin(), bounds.size()),
-                    background: Some(layout.background_color),
-                    border: Default::default(),
-                    corner_radii: Default::default(),
-                });
+            self.register_key_listeners(cx);
 
-                for rect in &layout.rects {
-                    rect.paint(origin, layout, view, cx);
-                }
-            });
+            for rect in &layout.rects {
+                rect.paint(origin, &layout, cx);
+            }
 
-            //Draw Highlighted Backgrounds
-            cx.paint_layer(clip_bounds, |cx| {
+            cx.with_z_index(1, |cx| {
                 for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
                 {
                     if let Some((start_y, highlighted_range_lines)) =
-                        to_highlighted_range_lines(relative_highlighted_range, layout, origin)
+                        to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
                     {
                         let hr = HighlightedRange {
                             start_y, //Need to change this
-                            line_height: layout.size.line_height,
+                            line_height: layout.dimensions.line_height,
                             lines: highlighted_range_lines,
                             color: color.clone(),
                             //Copied from editor. TODO: move to theme or something
-                            corner_radius: 0.15 * layout.size.line_height,
+                            corner_radius: 0.15 * layout.dimensions.line_height,
                         };
                         hr.paint(bounds, cx);
                     }
                 }
             });
 
-            //Draw the text cells
-            cx.paint_layer(clip_bounds, |cx| {
+            cx.with_z_index(2, |cx| {
                 for cell in &layout.cells {
-                    cell.paint(origin, layout, visible_bounds, view, cx);
+                    cell.paint(origin, &layout, bounds, cx);
                 }
             });
 
-            //Draw cursor
             if self.cursor_visible {
-                if let Some(cursor) = &layout.cursor {
-                    cx.paint_layer(clip_bounds, |cx| {
+                cx.with_z_index(3, |cx| {
+                    if let Some(cursor) = &layout.cursor {
                         cursor.paint(origin, cx);
-                    })
-                }
+                    }
+                });
             }
 
-            if let Some(element) = &mut layout.hyperlink_tooltip {
-                element.paint(origin, visible_bounds, view, cx)
+            if let Some(mut element) = layout.hyperlink_tooltip.take() {
+                element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
             }
         });
     }
+}
 
-    fn metadata(&self) -> Option<&dyn std::any::Any> {
+impl IntoElement for TerminalElement {
+    type Element = Self;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some("terminal".into())
+    }
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+struct TerminalInputHandler {
+    cx: AsyncWindowContext,
+    terminal: Model<Terminal>,
+    cursor_bounds: Option<Bounds<Pixels>>,
+}
+
+impl PlatformInputHandler for TerminalInputHandler {
+    fn selected_text_range(&mut self) -> Option<std::ops::Range<usize>> {
+        self.cx
+            .update(|_, cx| {
+                if self
+                    .terminal
+                    .read(cx)
+                    .last_content
+                    .mode
+                    .contains(TermMode::ALT_SCREEN)
+                {
+                    None
+                } else {
+                    Some(0..0)
+                }
+            })
+            .ok()
+            .flatten()
+    }
+
+    fn marked_text_range(&mut self) -> Option<std::ops::Range<usize>> {
         None
     }
 
-    fn debug(
-        &self,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &TerminalView,
-        _: &gpui::ViewContext<TerminalView>,
-    ) -> gpui::serde_json::Value {
-        json!({
-            "type": "TerminalElement",
-        })
+    fn text_for_range(&mut self, _: std::ops::Range<usize>) -> Option<String> {
+        None
     }
 
-    fn rect_for_text_range(
-        &self,
-        _: Range<usize>,
-        bounds: RectF,
-        _: RectF,
-        layout: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &TerminalView,
-        _: &gpui::ViewContext<TerminalView>,
-    ) -> Option<RectF> {
-        // Use the same origin that's passed to `Cursor::paint` in the paint
-        // method bove.
-        let mut origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
+    fn replace_text_in_range(
+        &mut self,
+        _replacement_range: Option<std::ops::Range<usize>>,
+        text: &str,
+    ) {
+        self.cx
+            .update(|_, cx| {
+                self.terminal.update(cx, |terminal, _| {
+                    terminal.input(text.into());
+                })
+            })
+            .ok();
+    }
 
-        // TODO - Why is it necessary to move downward one line to get correct
-        // positioning? I would think that we'd want the same rect that is
-        // painted for the cursor.
-        origin += vec2f(0., layout.size.line_height);
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range_utf16: Option<std::ops::Range<usize>>,
+        _new_text: &str,
+        _new_selected_range: Option<std::ops::Range<usize>>,
+    ) {
+    }
 
-        Some(layout.cursor.as_ref()?.bounding_rect(origin))
+    fn unmark_text(&mut self) {}
+
+    fn bounds_for_range(&mut self, _range_utf16: std::ops::Range<usize>) -> Option<Bounds<Pixels>> {
+        self.cursor_bounds
     }
 }
 
@@ -875,10 +932,10 @@ fn is_blank(cell: &IndexedCell) -> bool {
 }
 
 fn to_highlighted_range_lines(
-    range: &RangeInclusive<Point>,
+    range: &RangeInclusive<AlacPoint>,
     layout: &LayoutState,
-    origin: Vector2F,
-) -> Option<(f32, Vec<HighlightedRangeLine>)> {
+    origin: Point<Pixels>,
+) -> Option<(Pixels, Vec<HighlightedRangeLine>)> {
     // Step 1. Normalize the points to be viewport relative.
     // When display_offset = 1, here's how the grid is arranged:
     //-2,0 -2,1...
@@ -897,28 +954,32 @@ fn to_highlighted_range_lines(
     // of the grid data we should be looking at. But for the rendering step, we don't
     // want negatives. We want things relative to the 'viewport' (the area of the grid
     // which is currently shown according to the display offset)
-    let unclamped_start = Point::new(
+    let unclamped_start = AlacPoint::new(
         range.start().line + layout.display_offset,
         range.start().column,
     );
-    let unclamped_end = Point::new(range.end().line + layout.display_offset, range.end().column);
+    let unclamped_end =
+        AlacPoint::new(range.end().line + layout.display_offset, range.end().column);
 
     // Step 2. Clamp range to viewport, and return None if it doesn't overlap
-    if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.size.num_lines() as i32 {
+    if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.dimensions.num_lines() as i32 {
         return None;
     }
 
     let clamped_start_line = unclamped_start.line.0.max(0) as usize;
-    let clamped_end_line = unclamped_end.line.0.min(layout.size.num_lines() as i32) as usize;
+    let clamped_end_line = unclamped_end
+        .line
+        .0
+        .min(layout.dimensions.num_lines() as i32) as usize;
     //Convert the start of the range to pixels
-    let start_y = origin.y() + clamped_start_line as f32 * layout.size.line_height;
+    let start_y = origin.y + clamped_start_line as f32 * layout.dimensions.line_height;
 
     // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
     //  (also convert to pixels)
     let mut highlighted_range_lines = Vec::new();
     for line in clamped_start_line..=clamped_end_line {
         let mut line_start = 0;
-        let mut line_end = layout.size.columns();
+        let mut line_end = layout.dimensions.columns();
 
         if line == clamped_start_line {
             line_start = unclamped_start.column.0 as usize;
@@ -928,10 +989,59 @@ fn to_highlighted_range_lines(
         }
 
         highlighted_range_lines.push(HighlightedRangeLine {
-            start_x: origin.x() + line_start as f32 * layout.size.cell_width,
-            end_x: origin.x() + line_end as f32 * layout.size.cell_width,
+            start_x: origin.x + line_start as f32 * layout.dimensions.cell_width,
+            end_x: origin.x + line_end as f32 * layout.dimensions.cell_width,
         });
     }
 
     Some((start_y, highlighted_range_lines))
+}
+
+///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
+fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) -> Hsla {
+    let colors = theme.colors();
+    match fg {
+        //Named and theme defined colors
+        terminal::alacritty_terminal::ansi::Color::Named(n) => match n {
+            NamedColor::Black => colors.terminal_ansi_black,
+            NamedColor::Red => colors.terminal_ansi_red,
+            NamedColor::Green => colors.terminal_ansi_green,
+            NamedColor::Yellow => colors.terminal_ansi_yellow,
+            NamedColor::Blue => colors.terminal_ansi_blue,
+            NamedColor::Magenta => colors.terminal_ansi_magenta,
+            NamedColor::Cyan => colors.terminal_ansi_cyan,
+            NamedColor::White => colors.terminal_ansi_white,
+            NamedColor::BrightBlack => colors.terminal_ansi_bright_black,
+            NamedColor::BrightRed => colors.terminal_ansi_bright_red,
+            NamedColor::BrightGreen => colors.terminal_ansi_bright_green,
+            NamedColor::BrightYellow => colors.terminal_ansi_bright_yellow,
+            NamedColor::BrightBlue => colors.terminal_ansi_bright_blue,
+            NamedColor::BrightMagenta => colors.terminal_ansi_bright_magenta,
+            NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
+            NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
+            NamedColor::Foreground => colors.text,
+            NamedColor::Background => colors.background,
+            NamedColor::Cursor => theme.players().local().cursor,
+
+            // todo!(more colors)
+            NamedColor::DimBlack => red(),
+            NamedColor::DimRed => red(),
+            NamedColor::DimGreen => red(),
+            NamedColor::DimYellow => red(),
+            NamedColor::DimBlue => red(),
+            NamedColor::DimMagenta => red(),
+            NamedColor::DimCyan => red(),
+            NamedColor::DimWhite => red(),
+            NamedColor::BrightForeground => red(),
+            NamedColor::DimForeground => red(),
+        },
+        //'True' colors
+        terminal::alacritty_terminal::ansi::Color::Spec(rgb) => {
+            terminal::rgba_color(rgb.r, rgb.g, rgb.b)
+        }
+        //8 bit, indexed colors
+        terminal::alacritty_terminal::ansi::Color::Indexed(i) => {
+            terminal::get_color_at_index(*i as usize, theme)
+        }
+    }
 }

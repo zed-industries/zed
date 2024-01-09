@@ -1,0 +1,23 @@
+#!/bin/bash
+
+set -eu
+source script/lib/deploy-helpers.sh
+
+if [[ $# < 2 ]]; then
+  echo "Usage: $0 <production|staging|preview> <tag-name> (nightly is not yet supported)"
+  exit 1
+fi
+environment=$1
+version=$2
+
+export_vars_for_environment ${environment}
+image_id=$(image_id_for_version ${version})
+
+export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)
+export ZED_KUBE_NAMESPACE=${environment}
+export ZED_IMAGE_ID=${image_id}
+
+target_zed_kube_cluster
+envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
+
+echo "deployed collab v${version} to ${environment}"

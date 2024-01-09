@@ -10,14 +10,16 @@ doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
+ui = { path = "../ui" }
 language = { path = "../language" }
 picker = { path = "../picker" }
 settings = { path = "../settings" }
 text = { path = "../text" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
+util = { path = "../util" }
 
 ordered-float.workspace = true
 postage.workspace = true

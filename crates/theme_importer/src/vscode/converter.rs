@@ -56,11 +56,12 @@ impl VsCodeThemeConverter {
         let syntax_theme = self.convert_syntax_theme()?;
 
         Ok(UserTheme {
-            name: self.theme_metadata.name.into(),
+            name: self.theme_metadata.name,
             appearance,
             styles: UserThemeStylesRefinement {
                 colors: theme_colors_refinements,
                 status: status_color_refinements,
+                player: None,
                 syntax: Some(syntax_theme),
             },
         })
@@ -132,6 +133,11 @@ impl VsCodeThemeConverter {
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
 
+        let vscode_editor_foreground = vscode_colors
+            .editor_foreground
+            .as_ref()
+            .traverse(|color| try_parse_color(&color))?;
+
         let vscode_editor_background = vscode_colors
             .editor_background
             .as_ref()
@@ -141,6 +147,16 @@ impl VsCodeThemeConverter {
             .scrollbar_slider_background
             .as_ref()
             .traverse(|color| try_parse_color(&color))?;
+
+        let vscode_token_colors_foreground = self
+            .theme
+            .token_colors
+            .iter()
+            .find(|token_color| token_color.scope.is_none())
+            .and_then(|token_color| token_color.settings.foreground.as_ref())
+            .traverse(|color| try_parse_color(&color))
+            .ok()
+            .flatten();
 
         Ok(ThemeColorsRefinement {
             border: vscode_panel_border,
@@ -197,18 +213,13 @@ impl VsCodeThemeConverter {
                 .foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
-                .or_else(|| {
-                    self.theme
-                        .token_colors
-                        .iter()
-                        .find(|token_color| token_color.scope.is_none())
-                        .and_then(|token_color| token_color.settings.foreground.as_ref())
-                        .traverse(|color| try_parse_color(&color))
-                        .ok()
-                        .flatten()
-                }),
+                .or(vscode_token_colors_foreground),
             text_muted: vscode_colors
                 .tab_inactive_foreground
+                .as_ref()
+                .traverse(|color| try_parse_color(&color))?,
+            link_text_hover: vscode_colors
+                .text_link_active_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
             tab_bar_background: vscode_colors
@@ -226,6 +237,7 @@ impl VsCodeThemeConverter {
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?
                 .or(vscode_editor_background),
+            editor_foreground: vscode_editor_foreground.or(vscode_token_colors_foreground),
             editor_background: vscode_editor_background,
             editor_gutter_background: vscode_editor_background,
             editor_line_number: vscode_colors
@@ -236,6 +248,8 @@ impl VsCodeThemeConverter {
                 .editor_foreground
                 .as_ref()
                 .traverse(|color| try_parse_color(&color))?,
+            editor_wrap_guide: vscode_panel_border,
+            editor_active_wrap_guide: vscode_panel_border,
             scrollbar_track_background: vscode_editor_background,
             scrollbar_track_border: vscode_colors
                 .editor_overview_ruler_border

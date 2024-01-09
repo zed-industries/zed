@@ -1,20 +1,16 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use channel::{ChannelChat, ChannelMessageId, MessageParams};
-use collab_ui::chat_panel::ChatPanel;
-use gpui::{executor::Deterministic, BorrowAppContext, ModelHandle, TestAppContext};
+use gpui::{BackgroundExecutor, Model, TestAppContext};
 use rpc::Notification;
-use std::sync::Arc;
-use workspace::dock::Panel;
 
 #[gpui::test]
 async fn test_basic_channel_messages(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     mut cx_a: &mut TestAppContext,
     mut cx_b: &mut TestAppContext,
     mut cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -57,13 +53,13 @@ async fn test_basic_channel_messages(
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     channel_chat_b
         .update(cx_b, |c, cx| c.send_message("three".into(), cx).unwrap())
         .await
         .unwrap();
 
-    deterministic.run_until_parked();
+    executor.run_until_parked();
 
     let channel_chat_c = client_c
         .channel_store()
@@ -117,12 +113,11 @@ async fn test_basic_channel_messages(
 
 #[gpui::test]
 async fn test_rejoin_channel_chat(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
@@ -178,7 +173,7 @@ async fn test_rejoin_channel_chat(
 
     // Client A reconnects.
     server.allow_connections();
-    deterministic.advance_clock(RECONNECT_TIMEOUT);
+    executor.advance_clock(RECONNECT_TIMEOUT);
 
     // Client A fetches the messages that were sent while they were disconnected
     // and resends their own messages which failed to send.
@@ -189,13 +184,12 @@ async fn test_rejoin_channel_chat(
 
 #[gpui::test]
 async fn test_remove_channel_message(
-    deterministic: Arc<Deterministic>,
+    executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
+    let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
@@ -235,7 +229,7 @@ async fn test_remove_channel_message(
         .unwrap();
 
     // Clients A and B see all of the messages.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     let expected_messages = &["one", "two", "three"];
     assert_messages(&channel_chat_a, expected_messages, cx_a);
     assert_messages(&channel_chat_b, expected_messages, cx_b);
@@ -252,7 +246,7 @@ async fn test_remove_channel_message(
         .unwrap();
 
     // Client B sees that the message is gone.
-    deterministic.run_until_parked();
+    executor.run_until_parked();
     let expected_messages = &["one", "three"];
     assert_messages(&channel_chat_a, expected_messages, cx_a);
     assert_messages(&channel_chat_b, expected_messages, cx_b);
@@ -267,146 +261,148 @@ async fn test_remove_channel_message(
 }
 
 #[track_caller]
-fn assert_messages(chat: &ModelHandle<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
+fn assert_messages(chat: &Model<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
+    // todo!(don't directly borrow here)
     assert_eq!(
-        chat.read_with(cx, |chat, _| chat
-            .messages()
-            .iter()
-            .map(|m| m.body.clone())
-            .collect::<Vec<_>>(),),
+        chat.read_with(cx, |chat, _| {
+            chat.messages()
+                .iter()
+                .map(|m| m.body.clone())
+                .collect::<Vec<_>>()
+        }),
         messages
     );
 }
 
-#[gpui::test]
-async fn test_channel_message_changes(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    deterministic.forbid_parking();
-    let mut server = TestServer::start(&deterministic).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
+//todo!(collab_ui)
+// #[gpui::test]
+// async fn test_channel_message_changes(
+//     executor: BackgroundExecutor,
+//     cx_a: &mut TestAppContext,
+//     cx_b: &mut TestAppContext,
+// ) {
+//     let mut server = TestServer::start(&executor).await;
+//     let client_a = server.create_client(cx_a, "user_a").await;
+//     let client_b = server.create_client(cx_b, "user_b").await;
 
-    let channel_id = server
-        .make_channel(
-            "the-channel",
-            None,
-            (&client_a, cx_a),
-            &mut [(&client_b, cx_b)],
-        )
-        .await;
+//     let channel_id = server
+//         .make_channel(
+//             "the-channel",
+//             None,
+//             (&client_a, cx_a),
+//             &mut [(&client_b, cx_b)],
+//         )
+//         .await;
 
-    // Client A sends a message, client B should see that there is a new message.
-    let channel_chat_a = client_a
-        .channel_store()
-        .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
-        .await
-        .unwrap();
+//     // Client A sends a message, client B should see that there is a new message.
+//     let channel_chat_a = client_a
+//         .channel_store()
+//         .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
+//         .await
+//         .unwrap();
 
-    channel_chat_a
-        .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
-        .await
-        .unwrap();
+//     channel_chat_a
+//         .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
+//         .await
+//         .unwrap();
 
-    deterministic.run_until_parked();
+//     executor.run_until_parked();
 
-    let b_has_messages = cx_b.read_with(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_new_messages(channel_id)
-            .unwrap()
-    });
+//     let b_has_messages = cx_b.read_with(|cx| {
+//         client_b
+//             .channel_store()
+//             .read(cx)
+//             .has_new_messages(channel_id)
+//             .unwrap()
+//     });
 
-    assert!(b_has_messages);
+//     assert!(b_has_messages);
 
-    // Opening the chat should clear the changed flag.
-    cx_b.update(|cx| {
-        collab_ui::init(&client_b.app_state, cx);
-    });
-    let project_b = client_b.build_empty_local_project(cx_b);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-    let chat_panel_b = workspace_b.update(cx_b, |workspace, cx| ChatPanel::new(workspace, cx));
-    chat_panel_b
-        .update(cx_b, |chat_panel, cx| {
-            chat_panel.set_active(true, cx);
-            chat_panel.select_channel(channel_id, None, cx)
-        })
-        .await
-        .unwrap();
+//     // Opening the chat should clear the changed flag.
+//     cx_b.update(|cx| {
+//         collab_ui::init(&client_b.app_state, cx);
+//     });
+//     let project_b = client_b.build_empty_local_project(cx_b);
+//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+//     let chat_panel_b = workspace_b.update(cx_b, |workspace, cx| ChatPanel::new(workspace, cx));
+//     chat_panel_b
+//         .update(cx_b, |chat_panel, cx| {
+//             chat_panel.set_active(true, cx);
+//             chat_panel.select_channel(channel_id, None, cx)
+//         })
+//         .await
+//         .unwrap();
 
-    deterministic.run_until_parked();
+//     executor.run_until_parked();
 
-    let b_has_messages = cx_b.read_with(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_new_messages(channel_id)
-            .unwrap()
-    });
+//     let b_has_messages = cx_b.read_with(|cx| {
+//         client_b
+//             .channel_store()
+//             .read(cx)
+//             .has_new_messages(channel_id)
+//             .unwrap()
+//     });
 
-    assert!(!b_has_messages);
+//     assert!(!b_has_messages);
 
-    // Sending a message while the chat is open should not change the flag.
-    channel_chat_a
-        .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
-        .await
-        .unwrap();
+//     // Sending a message while the chat is open should not change the flag.
+//     channel_chat_a
+//         .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
+//         .await
+//         .unwrap();
 
-    deterministic.run_until_parked();
+//     executor.run_until_parked();
 
-    let b_has_messages = cx_b.read_with(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_new_messages(channel_id)
-            .unwrap()
-    });
+//     let b_has_messages = cx_b.read_with(|cx| {
+//         client_b
+//             .channel_store()
+//             .read(cx)
+//             .has_new_messages(channel_id)
+//             .unwrap()
+//     });
 
-    assert!(!b_has_messages);
+//     assert!(!b_has_messages);
 
-    // Sending a message while the chat is closed should change the flag.
-    chat_panel_b.update(cx_b, |chat_panel, cx| {
-        chat_panel.set_active(false, cx);
-    });
+//     // Sending a message while the chat is closed should change the flag.
+//     chat_panel_b.update(cx_b, |chat_panel, cx| {
+//         chat_panel.set_active(false, cx);
+//     });
 
-    // Sending a message while the chat is open should not change the flag.
-    channel_chat_a
-        .update(cx_a, |c, cx| c.send_message("three".into(), cx).unwrap())
-        .await
-        .unwrap();
+//     // Sending a message while the chat is open should not change the flag.
+//     channel_chat_a
+//         .update(cx_a, |c, cx| c.send_message("three".into(), cx).unwrap())
+//         .await
+//         .unwrap();
 
-    deterministic.run_until_parked();
+//     executor.run_until_parked();
 
-    let b_has_messages = cx_b.read_with(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_new_messages(channel_id)
-            .unwrap()
-    });
+//     let b_has_messages = cx_b.read_with(|cx| {
+//         client_b
+//             .channel_store()
+//             .read(cx)
+//             .has_new_messages(channel_id)
+//             .unwrap()
+//     });
 
-    assert!(b_has_messages);
+//     assert!(b_has_messages);
 
-    // Closing the chat should re-enable change tracking
-    cx_b.update(|_| drop(chat_panel_b));
+//     // Closing the chat should re-enable change tracking
+//     cx_b.update(|_| drop(chat_panel_b));
 
-    channel_chat_a
-        .update(cx_a, |c, cx| c.send_message("four".into(), cx).unwrap())
-        .await
-        .unwrap();
+//     channel_chat_a
+//         .update(cx_a, |c, cx| c.send_message("four".into(), cx).unwrap())
+//         .await
+//         .unwrap();
 
-    deterministic.run_until_parked();
+//     executor.run_until_parked();
 
-    let b_has_messages = cx_b.read_with(|cx| {
-        client_b
-            .channel_store()
-            .read(cx)
-            .has_new_messages(channel_id)
-            .unwrap()
-    });
+//     let b_has_messages = cx_b.read_with(|cx| {
+//         client_b
+//             .channel_store()
+//             .read(cx)
+//             .has_new_messages(channel_id)
+//             .unwrap()
+//     });
 
-    assert!(b_has_messages);
-}
+//     assert!(b_has_messages);
+// }

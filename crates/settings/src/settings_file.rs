@@ -1,30 +1,10 @@
-use crate::{settings_store::SettingsStore, Setting};
+use crate::{settings_store::SettingsStore, Settings};
 use anyhow::Result;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{executor::Background, AppContext};
-use std::{
-    io::ErrorKind,
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-    time::Duration,
-};
+use gpui::{AppContext, BackgroundExecutor};
+use std::{io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
-
-pub fn register<T: Setting>(cx: &mut AppContext) {
-    cx.update_global::<SettingsStore, _, _>(|store, cx| {
-        store.register_setting::<T>(cx);
-    });
-}
-
-pub fn get<'a, T: Setting>(cx: &'a AppContext) -> &'a T {
-    cx.global::<SettingsStore>().get(None)
-}
-
-pub fn get_local<'a, T: Setting>(location: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a T {
-    cx.global::<SettingsStore>().get(location)
-}
 
 pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
 
@@ -36,6 +16,9 @@ pub fn test_settings() -> String {
     .unwrap();
     util::merge_non_null_json_value_into(
         serde_json::json!({
+            "ui_font_family": "Courier",
+            "ui_font_features": {},
+            "ui_font_size": 14,
             "buffer_font_family": "Courier",
             "buffer_font_features": {},
             "buffer_font_size": 14,
@@ -48,7 +31,7 @@ pub fn test_settings() -> String {
 }
 
 pub fn watch_config_file(
-    executor: Arc<Background>,
+    executor: &BackgroundExecutor,
     fs: Arc<dyn Fs>,
     path: PathBuf,
 ) -> mpsc::UnboundedReceiver<String> {
@@ -83,22 +66,26 @@ pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
 ) {
-    let user_settings_content = cx.background().block(user_settings_file_rx.next()).unwrap();
-    cx.update_global::<SettingsStore, _, _>(|store, cx| {
+    let user_settings_content = cx
+        .background_executor()
+        .block(user_settings_file_rx.next())
+        .unwrap();
+    cx.update_global(|store: &mut SettingsStore, cx| {
         store
             .set_user_settings(&user_settings_content, cx)
             .log_err();
     });
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
-            cx.update(|cx| {
-                cx.update_global::<SettingsStore, _, _>(|store, cx| {
-                    store
-                        .set_user_settings(&user_settings_content, cx)
-                        .log_err();
-                });
-                cx.refresh_windows();
+            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+                store
+                    .set_user_settings(&user_settings_content, cx)
+                    .log_err();
+                cx.refresh();
             });
+            if result.is_err() {
+                break; // App dropped
+            }
         }
     })
     .detach();
@@ -118,28 +105,17 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
     }
 }
 
-pub fn update_settings_file<T: Setting>(
+pub fn update_settings_file<T: Settings>(
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
     update: impl 'static + Send + FnOnce(&mut T::FileContent),
 ) {
     cx.spawn(|cx| async move {
-        let old_text = cx
-            .background()
-            .spawn({
-                let fs = fs.clone();
-                async move { load_settings(&fs).await }
-            })
-            .await?;
-
-        let new_text = cx.read(|cx| {
-            cx.global::<SettingsStore>()
-                .new_text_for_update::<T>(old_text, update)
-        });
-
-        cx.background()
-            .spawn(async move { fs.atomic_write(paths::SETTINGS.clone(), new_text).await })
-            .await?;
+        let old_text = load_settings(&fs).await?;
+        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
+            store.new_text_for_update::<T>(old_text, update)
+        })?;
+        fs.atomic_write(paths::SETTINGS.clone(), new_text).await?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);

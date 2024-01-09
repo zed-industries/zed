@@ -5,7 +5,7 @@ mod feature_flag_tests;
 mod message_tests;
 
 use super::*;
-use gpui::executor::Background;
+use gpui::BackgroundExecutor;
 use parking_lot::Mutex;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
@@ -22,7 +22,7 @@ pub struct TestDb {
 }
 
 impl TestDb {
-    pub fn sqlite(background: Arc<Background>) -> Self {
+    pub fn sqlite(background: BackgroundExecutor) -> Self {
         let url = format!("sqlite::memory:");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -59,7 +59,7 @@ impl TestDb {
         }
     }
 
-    pub fn postgres(background: Arc<Background>) -> Self {
+    pub fn postgres(background: BackgroundExecutor) -> Self {
         static LOCK: Mutex<()> = Mutex::new(());
 
         let _guard = LOCK.lock();
@@ -108,17 +108,14 @@ impl TestDb {
 macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
         #[gpui::test]
-        async fn $postgres_test_name() {
-            let test_db = crate::db::TestDb::postgres(
-                gpui::executor::Deterministic::new(0).build_background(),
-            );
+        async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
+            let test_db = crate::db::TestDb::postgres(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
 
         #[gpui::test]
-        async fn $sqlite_test_name() {
-            let test_db =
-                crate::db::TestDb::sqlite(gpui::executor::Deterministic::new(0).build_background());
+        async fn $sqlite_test_name(cx: &mut gpui::TestAppContext) {
+            let test_db = crate::db::TestDb::sqlite(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
     };

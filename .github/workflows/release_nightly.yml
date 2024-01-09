@@ -2,8 +2,8 @@ name: Release Nightly
 
 on:
     schedule:
-        # Fire every day at 1:00pm and 1:00am
-        - cron: "0 1,13 * * *"
+        # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
+        - cron: "0 7 * * *"
     push:
         tags:
             - "nightly"
@@ -92,7 +92,7 @@ jobs:
               run: script/generate-licenses
 
             - name: Create app bundle
-              run: script/bundle -2
+              run: script/bundle
 
             - name: Upload Zed Nightly
               run: script/upload-nightly

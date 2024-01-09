@@ -176,7 +176,7 @@ pub(crate) mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use gpui::AppContext;
+    use gpui::{AppContext, Context};
     use indoc::indoc;
     use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
     use settings::SettingsStore;
@@ -227,7 +227,8 @@ pub(crate) mod tests {
 
     #[gpui::test]
     fn test_outline_for_prompt(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::test(cx));
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         language_settings::init(cx);
         let text = indoc! {"
             struct X {
@@ -253,7 +254,7 @@ pub(crate) mod tests {
             }
         "};
         let buffer =
-            cx.add_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
+            cx.new_model(|cx| Buffer::new(0, 0, text).with_language(Arc::new(rust_lang()), cx));
         let snapshot = buffer.read(cx).snapshot();
 
         assert_eq!(

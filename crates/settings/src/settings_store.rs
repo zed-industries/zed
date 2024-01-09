@@ -18,7 +18,7 @@ use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
-pub trait Setting: 'static {
+pub trait Settings: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
@@ -35,7 +35,7 @@ pub trait Setting: 'static {
     fn load(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<Self>
     where
         Self: Sized;
@@ -76,6 +76,39 @@ pub trait Setting: 'static {
     fn missing_default() -> anyhow::Error {
         anyhow::anyhow!("missing default")
     }
+
+    fn register(cx: &mut AppContext)
+    where
+        Self: Sized,
+    {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.register_setting::<Self>(cx);
+        });
+    }
+
+    #[track_caller]
+    fn get<'a>(path: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a Self
+    where
+        Self: Sized,
+    {
+        cx.global::<SettingsStore>().get(path)
+    }
+
+    #[track_caller]
+    fn get_global<'a>(cx: &'a AppContext) -> &'a Self
+    where
+        Self: Sized,
+    {
+        cx.global::<SettingsStore>().get(None)
+    }
+
+    #[track_caller]
+    fn override_global<'a>(settings: Self, cx: &'a mut AppContext)
+    where
+        Self: Sized,
+    {
+        cx.global_mut::<SettingsStore>().override_global(settings)
+    }
 }
 
 pub struct SettingsJsonSchemaParams<'a> {
@@ -89,7 +122,10 @@ pub struct SettingsStore {
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
     raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
-    tab_size_callback: Option<(TypeId, Box<dyn Fn(&dyn Any) -> Option<usize>>)>,
+    tab_size_callback: Option<(
+        TypeId,
+        Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
+    )>,
 }
 
 impl Default for SettingsStore {
@@ -110,7 +146,7 @@ struct SettingValue<T> {
     local_values: Vec<(usize, Arc<Path>, T)>,
 }
 
-trait AnySettingValue {
+trait AnySettingValue: 'static + Send + Sync {
     fn key(&self) -> Option<&'static str>;
     fn setting_type_name(&self) -> &'static str;
     fn deserialize_setting(&self, json: &serde_json::Value) -> Result<DeserializedSetting>;
@@ -118,7 +154,7 @@ trait AnySettingValue {
         &self,
         default_value: &DeserializedSetting,
         custom: &[DeserializedSetting],
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<(usize, &Path)>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
@@ -135,7 +171,7 @@ struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
     /// Add a new type of setting to the store.
-    pub fn register_setting<T: Setting>(&mut self, cx: &AppContext) {
+    pub fn register_setting<T: Settings>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
         let entry = self.setting_values.entry(setting_type_id);
         if matches!(entry, hash_map::Entry::Occupied(_)) {
@@ -174,7 +210,7 @@ impl SettingsStore {
     ///
     /// Panics if the given setting type has not been registered, or if there is no
     /// value for this setting.
-    pub fn get<T: Setting>(&self, path: Option<(usize, &Path)>) -> &T {
+    pub fn get<T: Settings>(&self, path: Option<(usize, &Path)>) -> &T {
         self.setting_values
             .get(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -186,7 +222,7 @@ impl SettingsStore {
     /// Override the global value for a setting.
     ///
     /// The given value will be overwritten if the user settings file changes.
-    pub fn override_global<T: Setting>(&mut self, value: T) {
+    pub fn override_global<T: Settings>(&mut self, value: T) {
         self.setting_values
             .get_mut(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -202,7 +238,7 @@ impl SettingsStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &AppContext) -> Self {
+    pub fn test(cx: &mut AppContext) -> Self {
         let mut this = Self::default();
         this.set_default_settings(&crate::test_settings(), cx)
             .unwrap();
@@ -215,9 +251,9 @@ impl SettingsStore {
     /// This is only for tests. Normally, settings are only loaded from
     /// JSON files.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn update_user_settings<T: Setting>(
+    pub fn update_user_settings<T: Settings>(
         &mut self,
-        cx: &AppContext,
+        cx: &mut AppContext,
         update: impl FnOnce(&mut T::FileContent),
     ) {
         let old_text = serde_json::to_string(&self.raw_user_settings).unwrap();
@@ -227,7 +263,7 @@ impl SettingsStore {
 
     /// Update the value of a setting in a JSON file, returning the new text
     /// for that JSON file.
-    pub fn new_text_for_update<T: Setting>(
+    pub fn new_text_for_update<T: Settings>(
         &self,
         old_text: String,
         update: impl FnOnce(&mut T::FileContent),
@@ -242,7 +278,7 @@ impl SettingsStore {
 
     /// Update the value of a setting in a JSON file, returning a list
     /// of edits to apply to the JSON file.
-    pub fn edits_for_update<T: Setting>(
+    pub fn edits_for_update<T: Settings>(
         &self,
         text: &str,
         update: impl FnOnce(&mut T::FileContent),
@@ -284,7 +320,7 @@ impl SettingsStore {
     }
 
     /// Configure the tab sized when updating JSON files.
-    pub fn set_json_tab_size_callback<T: Setting>(
+    pub fn set_json_tab_size_callback<T: Settings>(
         &mut self,
         get_tab_size: fn(&T) -> Option<usize>,
     ) {
@@ -314,7 +350,7 @@ impl SettingsStore {
     pub fn set_default_settings(
         &mut self,
         default_settings_content: &str,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let settings: serde_json::Value = parse_json_with_comments(default_settings_content)?;
         if settings.is_object() {
@@ -330,7 +366,7 @@ impl SettingsStore {
     pub fn set_user_settings(
         &mut self,
         user_settings_content: &str,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         let settings: serde_json::Value = parse_json_with_comments(user_settings_content)?;
         if settings.is_object() {
@@ -348,7 +384,7 @@ impl SettingsStore {
         root_id: usize,
         path: Arc<Path>,
         settings_content: Option<&str>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         if let Some(content) = settings_content {
             self.raw_local_settings
@@ -361,7 +397,7 @@ impl SettingsStore {
     }
 
     /// Add or remove a set of local settings via a JSON string.
-    pub fn clear_local_settings(&mut self, root_id: usize, cx: &AppContext) -> Result<()> {
+    pub fn clear_local_settings(&mut self, root_id: usize, cx: &mut AppContext) -> Result<()> {
         self.raw_local_settings.retain(|k, _| k.0 != root_id);
         self.recompute_values(Some((root_id, "".as_ref())), cx)?;
         Ok(())
@@ -453,7 +489,7 @@ impl SettingsStore {
     fn recompute_values(
         &mut self,
         changed_local_path: Option<(usize, &Path)>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<()> {
         // Reload the global and local values for every setting.
         let mut user_settings_stack = Vec::<DeserializedSetting>::new();
@@ -541,7 +577,7 @@ impl Debug for SettingsStore {
     }
 }
 
-impl<T: Setting> AnySettingValue for SettingValue<T> {
+impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn key(&self) -> Option<&'static str> {
         T::KEY
     }
@@ -554,7 +590,7 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
         &self,
         default_value: &DeserializedSetting,
         user_values: &[DeserializedSetting],
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Result<Box<dyn Any>> {
         let default_value = default_value.0.downcast_ref::<T::FileContent>().unwrap();
         let values: SmallVec<[&T::FileContent; 6]> = user_values
@@ -679,14 +715,14 @@ fn replace_value_in_json_text(
 
     lazy_static! {
         static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(
-            tree_sitter_json::language(),
+            &tree_sitter_json::language(),
             "(pair key: (string) @key value: (_) @value)",
         )
         .unwrap();
     }
 
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(tree_sitter_json::language()).unwrap();
+    parser.set_language(&tree_sitter_json::language()).unwrap();
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();
@@ -837,6 +873,7 @@ fn to_pretty_json(value: &impl Serialize, indent_size: usize, indent_prefix_len:
 pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
     Ok(serde_json_lenient::from_str(content)?)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1123,7 +1160,7 @@ mod tests {
         );
     }
 
-    fn check_settings_update<T: Setting>(
+    fn check_settings_update<T: Settings>(
         store: &mut SettingsStore,
         old_json: String,
         update: fn(&mut T::FileContent),
@@ -1153,14 +1190,14 @@ mod tests {
         staff: Option<bool>,
     }
 
-    impl Setting for UserSettings {
+    impl Settings for UserSettings {
         const KEY: Option<&'static str> = Some("user");
         type FileContent = UserSettingsJson;
 
         fn load(
             default_value: &UserSettingsJson,
             user_values: &[&UserSettingsJson],
-            _: &AppContext,
+            _: &mut AppContext,
         ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
@@ -1169,14 +1206,14 @@ mod tests {
     #[derive(Debug, Deserialize, PartialEq)]
     struct TurboSetting(bool);
 
-    impl Setting for TurboSetting {
+    impl Settings for TurboSetting {
         const KEY: Option<&'static str> = Some("turbo");
         type FileContent = Option<bool>;
 
         fn load(
             default_value: &Option<bool>,
             user_values: &[&Option<bool>],
-            _: &AppContext,
+            _: &mut AppContext,
         ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
@@ -1196,7 +1233,7 @@ mod tests {
         key2: Option<String>,
     }
 
-    impl Setting for MultiKeySettings {
+    impl Settings for MultiKeySettings {
         const KEY: Option<&'static str> = None;
 
         type FileContent = MultiKeySettingsJson;
@@ -1204,7 +1241,7 @@ mod tests {
         fn load(
             default_value: &MultiKeySettingsJson,
             user_values: &[&MultiKeySettingsJson],
-            _: &AppContext,
+            _: &mut AppContext,
         ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
@@ -1229,7 +1266,7 @@ mod tests {
         pub hour_format: Option<HourFormat>,
     }
 
-    impl Setting for JournalSettings {
+    impl Settings for JournalSettings {
         const KEY: Option<&'static str> = Some("journal");
 
         type FileContent = JournalSettingsJson;
@@ -1237,7 +1274,7 @@ mod tests {
         fn load(
             default_value: &JournalSettingsJson,
             user_values: &[&JournalSettingsJson],
-            _: &AppContext,
+            _: &mut AppContext,
         ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
@@ -1255,12 +1292,12 @@ mod tests {
         language_setting_2: Option<bool>,
     }
 
-    impl Setting for LanguageSettings {
+    impl Settings for LanguageSettings {
         const KEY: Option<&'static str> = None;
 
         type FileContent = Self;
 
-        fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Result<Self> {
+        fn load(default_value: &Self, user_values: &[&Self], _: &mut AppContext) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
     }

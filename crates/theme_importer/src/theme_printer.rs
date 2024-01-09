@@ -108,6 +108,16 @@ impl<'a> Debug for UserThemeStylesRefinementPrinter<'a> {
             .field("colors", &ThemeColorsRefinementPrinter(&self.0.colors))
             .field("status", &StatusColorsRefinementPrinter(&self.0.status))
             .field(
+                "player",
+                &OptionPrinter(
+                    &self
+                        .0
+                        .player
+                        .as_ref()
+                        .map(|player_colors| PlayerColorsPrinter(player_colors)),
+                ),
+            )
+            .field(
                 "syntax",
                 &OptionPrinter(
                     &self
@@ -160,6 +170,7 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
             ),
             ("surface_background", self.0.surface_background),
             ("background", self.0.background),
+            ("panel_background", self.0.panel_background),
             ("element_background", self.0.element_background),
             ("element_hover", self.0.element_hover),
             ("element_active", self.0.element_active),
@@ -201,6 +212,7 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
                 self.0.scrollbar_track_background,
             ),
             ("scrollbar_track_border", self.0.scrollbar_track_border),
+            ("editor_foreground", self.0.editor_foreground),
             ("editor_background", self.0.editor_background),
             ("editor_gutter_background", self.0.editor_gutter_background),
             (
@@ -269,6 +281,7 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
             ("terminal_ansi_magenta", self.0.terminal_ansi_magenta),
             ("terminal_ansi_cyan", self.0.terminal_ansi_cyan),
             ("terminal_ansi_white", self.0.terminal_ansi_white),
+            ("link_text_hover", self.0.link_text_hover),
         ];
 
         f.write_str("ThemeColorsRefinement {")?;
@@ -281,6 +294,8 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
                 HslaPrinter(color).fmt(f)?;
                 f.write_str(")")?;
                 f.write_str(",")?;
+            } else {
+                log::warn!(target: "theme_printer", "No value for '{}' in theme", color_name);
             }
         }
 
@@ -295,19 +310,47 @@ impl<'a> Debug for StatusColorsRefinementPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let status_colors = vec![
             ("conflict", self.0.conflict),
+            ("conflict_background", self.0.conflict_background),
+            ("conflict_border", self.0.conflict_border),
             ("created", self.0.created),
+            ("created_background", self.0.created_background),
+            ("created_border", self.0.created_border),
             ("deleted", self.0.deleted),
+            ("deleted_background", self.0.deleted_background),
+            ("deleted_border", self.0.deleted_border),
             ("error", self.0.error),
+            ("error_background", self.0.error_background),
+            ("error_border", self.0.error_border),
             ("hidden", self.0.hidden),
+            ("hidden_background", self.0.hidden_background),
+            ("hidden_border", self.0.hidden_border),
             ("hint", self.0.hint),
+            ("hint_background", self.0.hint_background),
+            ("hint_border", self.0.hint_border),
             ("ignored", self.0.ignored),
+            ("ignored_background", self.0.ignored_background),
+            ("ignored_border", self.0.ignored_border),
             ("info", self.0.info),
+            ("info_background", self.0.info_background),
+            ("info_border", self.0.info_border),
             ("modified", self.0.modified),
+            ("modified_background", self.0.modified_background),
+            ("modified_border", self.0.modified_border),
             ("predictive", self.0.predictive),
+            ("predictive_background", self.0.predictive_background),
+            ("predictive_border", self.0.predictive_border),
             ("renamed", self.0.renamed),
+            ("renamed_background", self.0.renamed_background),
+            ("renamed_border", self.0.renamed_border),
             ("success", self.0.success),
+            ("success_background", self.0.success_background),
+            ("success_border", self.0.success_border),
             ("unreachable", self.0.unreachable),
+            ("unreachable_background", self.0.unreachable_background),
+            ("unreachable_border", self.0.unreachable_border),
             ("warning", self.0.warning),
+            ("warning_background", self.0.warning_background),
+            ("warning_border", self.0.warning_border),
         ];
 
         f.write_str("StatusColorsRefinement {")?;

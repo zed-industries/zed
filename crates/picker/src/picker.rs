@@ -1,265 +1,202 @@
 use editor::Editor;
 use gpui::{
-    elements::*,
-    geometry::vector::{vec2f, Vector2F},
-    keymap_matcher::KeymapContext,
-    platform::{CursorStyle, MouseButton},
-    AnyElement, AnyViewHandle, AppContext, Axis, Entity, MouseState, Task, View, ViewContext,
-    ViewHandle,
+    div, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
+    View, ViewContext, WindowContext,
 };
-use menu::{Cancel, Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use parking_lot::Mutex;
 use std::{cmp, sync::Arc};
-use util::ResultExt;
-use workspace::Modal;
-
-#[derive(Clone, Copy)]
-pub enum PickerEvent {
-    Dismiss,
-}
+use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
+use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
-    delegate: D,
-    query_editor: ViewHandle<Editor>,
-    list_state: UniformListState,
-    max_size: Vector2F,
-    theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
-    confirmed: bool,
-    pending_update_matches: Option<Task<Option<()>>>,
+    pub delegate: D,
+    scroll_handle: UniformListScrollHandle,
+    editor: View<Editor>,
+    pending_update_matches: Option<Task<()>>,
     confirm_on_update: Option<bool>,
-    has_focus: bool,
+    width: Option<Length>,
+    max_height: Option<Length>,
+
+    /// Whether the `Picker` is rendered as a self-contained modal.
+    ///
+    /// Set this to `false` when rendering the `Picker` as part of a larger modal.
+    is_modal: bool,
 }
 
 pub trait PickerDelegate: Sized + 'static {
-    fn placeholder_text(&self) -> Arc<str>;
+    type ListItem: IntoElement;
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
+    fn separators_after_indices(&self) -> Vec<usize> {
+        Vec::new()
+    }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
+
+    fn placeholder_text(&self) -> Arc<str>;
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
+
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+
     fn render_match(
         &self,
         ix: usize,
-        state: &mut MouseState,
         selected: bool,
-        cx: &AppContext,
-    ) -> AnyElement<Picker<Self>>;
-    fn center_selection_after_match_updates(&self) -> bool {
-        false
-    }
-    fn render_header(
-        &self,
-        _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<AnyElement<Picker<Self>>> {
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Option<Self::ListItem>;
+    fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         None
     }
-    fn render_footer(
-        &self,
-        _cx: &mut ViewContext<Picker<Self>>,
-    ) -> Option<AnyElement<Picker<Self>>> {
+    fn render_footer(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         None
     }
 }
 
-impl<D: PickerDelegate> Entity for Picker<D> {
-    type Event = PickerEvent;
-}
-
-impl<D: PickerDelegate> View for Picker<D> {
-    fn ui_name() -> &'static str {
-        "Picker"
-    }
-
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = (self.theme.lock())(theme::current(cx).as_ref());
-        let query = self.query(cx);
-        let match_count = self.delegate.match_count();
-
-        let container_style;
-        let editor_style;
-        if query.is_empty() && match_count == 0 {
-            container_style = theme.empty_container;
-            editor_style = theme.empty_input_editor.container;
-        } else {
-            container_style = theme.container;
-            editor_style = theme.input_editor.container;
-        };
-
-        Flex::new(Axis::Vertical)
-            .with_child(
-                ChildView::new(&self.query_editor, cx)
-                    .contained()
-                    .with_style(editor_style),
-            )
-            .with_children(self.delegate.render_header(cx))
-            .with_children(if match_count == 0 {
-                if query.is_empty() {
-                    None
-                } else {
-                    Some(
-                        Label::new("No matches", theme.no_matches.label.clone())
-                            .contained()
-                            .with_style(theme.no_matches.container)
-                            .into_any(),
-                    )
-                }
-            } else {
-                Some(
-                    UniformList::new(
-                        self.list_state.clone(),
-                        match_count,
-                        cx,
-                        move |this, mut range, items, cx| {
-                            let selected_ix = this.delegate.selected_index();
-                            range.end = cmp::min(range.end, this.delegate.match_count());
-                            items.extend(range.map(move |ix| {
-                                MouseEventHandler::new::<D, _>(ix, cx, |state, cx| {
-                                    this.delegate.render_match(ix, state, ix == selected_ix, cx)
-                                })
-                                // Capture mouse events
-                                .on_down(MouseButton::Left, |_, _, _| {})
-                                .on_up(MouseButton::Left, |_, _, _| {})
-                                .on_click(MouseButton::Left, move |click, picker, cx| {
-                                    picker.select_index(ix, click.cmd, cx);
-                                })
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .into_any()
-                            }));
-                        },
-                    )
-                    .contained()
-                    .with_margin_top(6.0)
-                    .flex(1., false)
-                    .into_any(),
-                )
-            })
-            .with_children(self.delegate.render_footer(cx))
-            .contained()
-            .with_style(container_style)
-            .constrained()
-            .with_max_width(self.max_size.x())
-            .with_max_height(self.max_size.y())
-            .into_any_named("picker")
-    }
-
-    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
-        Self::reset_to_default_keymap_context(keymap);
-        keymap.add_identifier("menu");
-    }
-
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.has_focus = true;
-        if cx.is_self_focused() {
-            cx.focus(&self.query_editor);
-        }
-    }
-
-    fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
-        self.has_focus = false;
-    }
-}
-
-impl<D: PickerDelegate> Modal for Picker<D> {
-    fn has_focus(&self) -> bool {
-        self.has_focus
-    }
-
-    fn dismiss_on_event(event: &Self::Event) -> bool {
-        matches!(event, PickerEvent::Dismiss)
+impl<D: PickerDelegate> FocusableView for Picker<D> {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.editor.focus_handle(cx)
     }
 }
 
 impl<D: PickerDelegate> Picker<D> {
-    pub fn init(cx: &mut AppContext) {
-        cx.add_action(Self::select_first);
-        cx.add_action(Self::select_last);
-        cx.add_action(Self::select_next);
-        cx.add_action(Self::select_prev);
-        cx.add_action(Self::confirm);
-        cx.add_action(Self::secondary_confirm);
-        cx.add_action(Self::cancel);
-    }
-
     pub fn new(delegate: D, cx: &mut ViewContext<Self>) -> Self {
-        let theme = Arc::new(Mutex::new(
-            Box::new(|theme: &theme::Theme| theme.picker.clone())
-                as Box<dyn Fn(&theme::Theme) -> theme::Picker>,
-        ));
-        let placeholder_text = delegate.placeholder_text();
-        let query_editor = cx.add_view({
-            let picker_theme = theme.clone();
-            |cx| {
-                let mut editor = Editor::single_line(
-                    Some(Arc::new(move |theme| {
-                        (picker_theme.lock())(theme).input_editor.clone()
-                    })),
-                    cx,
-                );
-                editor.set_placeholder_text(placeholder_text, cx);
-                editor
-            }
+        let editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text(delegate.placeholder_text(), cx);
+            editor
         });
-        cx.subscribe(&query_editor, Self::on_query_editor_event)
-            .detach();
+        cx.subscribe(&editor, Self::on_input_editor_event).detach();
         let mut this = Self {
-            query_editor,
-            list_state: Default::default(),
             delegate,
-            max_size: vec2f(540., 420.),
-            theme,
-            confirmed: false,
+            editor,
+            scroll_handle: UniformListScrollHandle::new(),
             pending_update_matches: None,
             confirm_on_update: None,
-            has_focus: false,
+            width: None,
+            max_height: None,
+            is_modal: true,
         };
-        this.update_matches(String::new(), cx);
+        this.update_matches("".to_string(), cx);
         this
     }
 
-    pub fn with_max_size(mut self, width: f32, height: f32) -> Self {
-        self.max_size = vec2f(width, height);
+    pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
+        self.width = Some(width.into());
         self
     }
 
-    pub fn with_theme<F>(self, theme: F) -> Self
-    where
-        F: 'static + Fn(&theme::Theme) -> theme::Picker,
-    {
-        *self.theme.lock() = Box::new(theme);
+    pub fn max_height(mut self, max_height: impl Into<gpui::Length>) -> Self {
+        self.max_height = Some(max_height.into());
         self
     }
 
-    pub fn delegate(&self) -> &D {
-        &self.delegate
+    pub fn modal(mut self, modal: bool) -> Self {
+        self.is_modal = modal;
+        self
     }
 
-    pub fn delegate_mut(&mut self) -> &mut D {
-        &mut self.delegate
+    pub fn focus(&self, cx: &mut WindowContext) {
+        self.editor.update(cx, |editor, cx| editor.focus(cx));
     }
 
-    pub fn query(&self, cx: &AppContext) -> String {
-        self.query_editor.read(cx).text(cx)
+    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            let index = self.delegate.selected_index();
+            let ix = cmp::min(index + 1, count - 1);
+            self.delegate.set_selected_index(ix, cx);
+            self.scroll_handle.scroll_to_item(ix);
+            cx.notify();
+        }
     }
 
-    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
-        self.query_editor
-            .update(cx, |editor, cx| editor.set_text(query, cx));
+    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            let index = self.delegate.selected_index();
+            let ix = index.saturating_sub(1);
+            self.delegate.set_selected_index(ix, cx);
+            self.scroll_handle.scroll_to_item(ix);
+            cx.notify();
+        }
     }
 
-    fn on_query_editor_event(
+    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            self.delegate.set_selected_index(0, cx);
+            self.scroll_handle.scroll_to_item(0);
+            cx.notify();
+        }
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        if count > 0 {
+            self.delegate.set_selected_index(count - 1, cx);
+            self.scroll_handle.scroll_to_item(count - 1);
+            cx.notify();
+        }
+    }
+
+    pub fn cycle_selection(&mut self, cx: &mut ViewContext<Self>) {
+        let count = self.delegate.match_count();
+        let index = self.delegate.selected_index();
+        let new_index = if index + 1 == count { 0 } else { index + 1 };
+        self.delegate.set_selected_index(new_index, cx);
+        self.scroll_handle.scroll_to_item(new_index);
+        cx.notify();
+    }
+
+    pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        self.delegate.dismissed(cx);
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        if self.pending_update_matches.is_some() {
+            self.confirm_on_update = Some(false)
+        } else {
+            self.delegate.confirm(false, cx);
+        }
+    }
+
+    fn secondary_confirm(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+        if self.pending_update_matches.is_some() {
+            self.confirm_on_update = Some(true)
+        } else {
+            self.delegate.confirm(true, cx);
+        }
+    }
+
+    fn handle_click(&mut self, ix: usize, secondary: bool, cx: &mut ViewContext<Self>) {
+        cx.stop_propagation();
+        cx.prevent_default();
+        self.delegate.set_selected_index(ix, cx);
+        self.delegate.confirm(secondary, cx);
+    }
+
+    fn on_input_editor_event(
         &mut self,
-        _: ViewHandle<Editor>,
-        event: &editor::Event,
+        _: View<Editor>,
+        event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::BufferEdited { .. } => self.update_matches(self.query(cx), cx),
-            editor::Event::Blurred if !self.confirmed => {
-                self.dismiss(cx);
+            editor::EditorEvent::BufferEdited => {
+                let query = self.editor.read(cx).text(cx);
+                self.update_matches(query, cx);
+            }
+            editor::EditorEvent::Blurred => {
+                self.cancel(&menu::Cancel, cx);
             }
             _ => {}
         }
+    }
+
+    pub fn refresh(&mut self, cx: &mut ViewContext<Self>) {
+        let query = self.editor.read(cx).text(cx);
+        self.update_matches(query, cx);
     }
 
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
@@ -270,99 +207,117 @@ impl<D: PickerDelegate> Picker<D> {
             this.update(&mut cx, |this, cx| {
                 this.matches_updated(cx);
             })
-            .log_err()
+            .ok();
         }));
     }
 
     fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
         let index = self.delegate.selected_index();
-        let target = if self.delegate.center_selection_after_match_updates() {
-            ScrollTarget::Center(index)
-        } else {
-            ScrollTarget::Show(index)
-        };
-        self.list_state.scroll_to(target);
+        self.scroll_handle.scroll_to_item(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
-            self.confirmed = true;
-            self.delegate.confirm(secondary, cx)
+            self.delegate.confirm(secondary, cx);
         }
         cx.notify();
     }
 
-    pub fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
-        if self.delegate.match_count() > 0 {
-            self.delegate.set_selected_index(0, cx);
-            self.list_state.scroll_to(ScrollTarget::Show(0));
-        }
-
-        cx.notify();
+    pub fn query(&self, cx: &AppContext) -> String {
+        self.editor.read(cx).text(cx)
     }
 
-    pub fn select_index(&mut self, index: usize, cmd: bool, cx: &mut ViewContext<Self>) {
-        if self.delegate.match_count() > 0 {
-            self.confirmed = true;
-            self.delegate.set_selected_index(index, cx);
-            self.delegate.confirm(cmd, cx);
-        }
+    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.set_text(query, cx));
     }
+}
 
-    pub fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
-        let match_count = self.delegate.match_count();
-        if match_count > 0 {
-            let index = match_count - 1;
-            self.delegate.set_selected_index(index, cx);
-            self.list_state.scroll_to(ScrollTarget::Show(index));
-        }
-        cx.notify();
-    }
+impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
+impl<D: PickerDelegate> ModalView for Picker<D> {}
 
-    pub fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        let next_index = self.delegate.selected_index() + 1;
-        if next_index < self.delegate.match_count() {
-            self.delegate.set_selected_index(next_index, cx);
-            self.list_state.scroll_to(ScrollTarget::Show(next_index));
-        }
+impl<D: PickerDelegate> Render for Picker<D> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let picker_editor = h_stack()
+            .overflow_hidden()
+            .flex_none()
+            .h_9()
+            .px_4()
+            .child(self.editor.clone());
 
-        cx.notify();
-    }
+        div()
+            .key_context("Picker")
+            .size_full()
+            .when_some(self.width, |el, width| el.w(width))
+            .overflow_hidden()
+            // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
+            // as a part of a modal rather than the entire modal.
+            //
+            // We should revisit how the `Picker` is styled to make it more composable.
+            .when(self.is_modal, |this| this.elevation_3(cx))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::secondary_confirm))
+            .child(picker_editor)
+            .child(Divider::horizontal())
+            .when(self.delegate.match_count() > 0, |el| {
+                el.child(
+                    v_stack()
+                        .flex_grow()
+                        .py_2()
+                        .max_h(self.max_height.unwrap_or(rems(18.).into()))
+                        .overflow_hidden()
+                        .children(self.delegate.render_header(cx))
+                        .child(
+                            uniform_list(
+                                cx.view().clone(),
+                                "candidates",
+                                self.delegate.match_count(),
+                                {
+                                    let separators_after_indices = self.delegate.separators_after_indices();
+                                    let selected_index = self.delegate.selected_index();
+                                    move |picker, visible_range, cx| {
+                                        visible_range
+                                            .map(|ix| {
+                                                div()
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(move |this, event: &MouseDownEvent, cx| {
+                                                            this.handle_click(
+                                                                ix,
+                                                                event.modifiers.command,
+                                                                cx,
+                                                            )
+                                                        }),
+                                                    )
+                                                    .children(picker.delegate.render_match(
+                                                        ix,
+                                                        ix == selected_index,
+                                                        cx,
+                                                    )).when(separators_after_indices.contains(&ix), |picker| picker.child(ListSeparator))
+                                            })
+                                            .collect()
+                                    }
+                                },
+                            )
+                            .track_scroll(self.scroll_handle.clone())
+                        )
 
-    pub fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-        let mut selected_index = self.delegate.selected_index();
-        if selected_index > 0 {
-            selected_index -= 1;
-            self.delegate.set_selected_index(selected_index, cx);
-            self.list_state
-                .scroll_to(ScrollTarget::Show(selected_index));
-        }
-
-        cx.notify();
-    }
-
-    pub fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        if self.pending_update_matches.is_some() {
-            self.confirm_on_update = Some(false)
-        } else {
-            self.confirmed = true;
-            self.delegate.confirm(false, cx);
-        }
-    }
-
-    pub fn secondary_confirm(&mut self, _: &SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        if self.pending_update_matches.is_some() {
-            self.confirm_on_update = Some(true)
-        } else {
-            self.confirmed = true;
-            self.delegate.confirm(true, cx);
-        }
-    }
-
-    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        self.dismiss(cx);
-    }
-
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(PickerEvent::Dismiss);
-        self.delegate.dismissed(cx);
+                )
+            })
+            .when(self.delegate.match_count() == 0, |el| {
+                el.child(
+                    v_stack().flex_grow().py_2().child(
+                        ListItem::new("empty_state")
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .disabled(true)
+                            .child(Label::new("No matches").color(Color::Muted)),
+                    ),
+                )
+            })
+            .children(self.delegate.render_footer(cx))
     }
 }

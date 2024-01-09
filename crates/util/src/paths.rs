@@ -10,6 +10,7 @@ lazy_static::lazy_static! {
     pub static ref EMBEDDINGS_DIR: PathBuf = HOME.join(".config/zed/embeddings");
     pub static ref LOGS_DIR: PathBuf = HOME.join("Library/Logs/Zed");
     pub static ref SUPPORT_DIR: PathBuf = HOME.join("Library/Application Support/Zed");
+    pub static ref PLUGINS_DIR: PathBuf = HOME.join("Library/Application Support/Zed/plugins");
     pub static ref LANGUAGES_DIR: PathBuf = HOME.join("Library/Application Support/Zed/languages");
     pub static ref COPILOT_DIR: PathBuf = HOME.join("Library/Application Support/Zed/copilot");
     pub static ref DEFAULT_PRETTIER_DIR: PathBuf = HOME.join("Library/Application Support/Zed/prettier");
@@ -67,8 +68,8 @@ impl<T: AsRef<Path>> PathExt for T {
     fn icon_suffix(&self) -> Option<&str> {
         let file_name = self.as_ref().file_name()?.to_str()?;
 
-        if file_name.starts_with(".") {
-            return file_name.strip_prefix(".");
+        if file_name.starts_with('.') {
+            return file_name.strip_prefix('.');
         }
 
         self.as_ref()
@@ -213,7 +214,7 @@ impl Eq for PathMatcher {}
 impl PathMatcher {
     pub fn new(maybe_glob: &str) -> Result<Self, globset::Error> {
         Ok(PathMatcher {
-            glob: Glob::new(&maybe_glob)?.compile_matcher(),
+            glob: Glob::new(maybe_glob)?.compile_matcher(),
             maybe_path: PathBuf::from(maybe_glob),
         })
     }

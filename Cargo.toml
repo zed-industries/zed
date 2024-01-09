@@ -1,137 +1,90 @@
 [workspace]
 members = [
+    "crates/assets",
     "crates/activity_indicator",
-    "crates/activity_indicator2",
     "crates/ai",
     "crates/assistant",
-    "crates/assistant2",
     "crates/audio",
-    "crates/audio2",
     "crates/auto_update",
-    "crates/auto_update2",
     "crates/breadcrumbs",
-    "crates/breadcrumbs2",
     "crates/call",
-    "crates/call2",
     "crates/channel",
-    "crates/channel2",
     "crates/cli",
     "crates/client",
-    "crates/client2",
     "crates/clock",
     "crates/collab",
-    "crates/collab2",
     "crates/collab_ui",
-    "crates/collab_ui2",
     "crates/collections",
     "crates/command_palette",
-    "crates/command_palette2",
-    "crates/component_test",
-    "crates/context_menu",
     "crates/copilot",
-    "crates/copilot2",
-    "crates/copilot_button",
+    "crates/copilot_ui",
     "crates/db",
-    "crates/db2",
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/diagnostics",
-    "crates/diagnostics2",
-    "crates/drag_and_drop",
     "crates/editor",
     "crates/feature_flags",
-    "crates/feature_flags2",
     "crates/feedback",
     "crates/file_finder",
     "crates/fs",
-    "crates/fs2",
     "crates/fsevent",
     "crates/fuzzy",
-    "crates/fuzzy2",
     "crates/git",
     "crates/go_to_line",
-    "crates/go_to_line2",
     "crates/gpui",
     "crates/gpui_macros",
-    "crates/gpui2",
-    "crates/gpui2_macros",
+    "crates/gpui",
+    "crates/gpui_macros",
     "crates/install_cli",
-    "crates/install_cli2",
     "crates/journal",
-    "crates/journal2",
+    "crates/journal",
     "crates/language",
-    "crates/language2",
     "crates/language_selector",
-    "crates/language_selector2",
     "crates/language_tools",
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
-    "crates/lsp2",
     "crates/media",
     "crates/menu",
-    "crates/menu2",
     "crates/multi_buffer",
-    "crates/multi_buffer2",
     "crates/node_runtime",
     "crates/notifications",
-    "crates/notifications2",
     "crates/outline",
-    "crates/outline2",
     "crates/picker",
-    "crates/picker2",
     "crates/plugin",
     "crates/plugin_macros",
-    "crates/plugin_runtime",
     "crates/prettier",
-    "crates/prettier2",
     "crates/project",
-    "crates/project2",
     "crates/project_panel",
-    "crates/project_panel2",
     "crates/project_symbols",
-    "crates/project_symbols2",
-    "crates/quick_action_bar2",
+    "crates/quick_action_bar",
     "crates/recent_projects",
-    "crates/recent_projects2",
     "crates/rope",
     "crates/rpc",
-    "crates/rpc2",
     "crates/search",
-    "crates/search2",
     "crates/semantic_index",
-    "crates/semantic_index2",
     "crates/settings",
-    "crates/settings2",
     "crates/snippet",
     "crates/sqlez",
     "crates/sqlez_macros",
     "crates/rich_text",
-    "crates/storybook2",
+    "crates/storybook",
     "crates/sum_tree",
     "crates/terminal",
-    "crates/terminal2",
-    "crates/terminal_view2",
+    "crates/terminal_view",
     "crates/text",
     "crates/theme",
-    "crates/theme2",
     "crates/theme_importer",
     "crates/theme_selector",
-    "crates/theme_selector2",
-    "crates/ui2",
+    "crates/ui",
     "crates/util",
     "crates/story",
     "crates/vim",
     "crates/vcs_menu",
-    "crates/vcs_menu2",
-    "crates/workspace2",
+    "crates/workspace",
     "crates/welcome",
-    "crates/welcome2",
-    "crates/xtask",
     "crates/zed",
-    "crates/zed2",
-    "crates/zed-actions",
-    "crates/zed_actions2"
+    "crates/zed_actions",
 ]
 default-members = ["crates/zed"]
 resolver = "2"
@@ -140,10 +93,7 @@ resolver = "2"
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
-# TODO: Switch back to the published version of `ctor` once:
-#       1. A new version of `ctor` is published with this change: https://github.com/mmastrac/rust-ctor/pull/295
-#       2. We've confirmed it's fine to update to the latest version of `ctor` (we're currently on v0.1.20).
-ctor = { git = "https://github.com/zed-industries/rust-ctor", rev = "7f824cf6a7943885a649b579f33f9ac53f0d1db6" }
+ctor = "0.2.6"
 derive_more = { version = "0.99.17" }
 env_logger = { version = "0.9" }
 futures = { version = "0.3" }
@@ -175,7 +125,7 @@ thiserror = { version = "1.0.29" }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 toml = { version = "0.5" }
 tiktoken-rs = "0.5.7"
-tree-sitter = "0.20"
+tree-sitter = { version = "0.20" }
 unindent = { version = "0.1.7" }
 pretty_assertions = "1.3.0"
 git2 = { version = "0.15", default-features = false}
@@ -206,13 +156,13 @@ tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-rack
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930"}
 tree-sitter-lua = "0.0.14"
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
-tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "786689b0562b9799ce53e824cb45a1a2a04dc673"}
+tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "26bbaecda0039df4067861ab38ea8ea169f7f5aa"}
 tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42"}
 tree-sitter-uiua = {git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"}
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "b5f461a69bf3df7298b1903574d506179e6390b0" }
-async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "31c40449749c4263a91a43593831b82229049a4c" }
+# wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
 cocoa = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }

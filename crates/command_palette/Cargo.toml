@@ -11,21 +11,26 @@ doctest = false
 [dependencies]
 collections = { path = "../collections" }
 editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
+fuzzy = {  path = "../fuzzy" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
-zed-actions = { path = "../zed-actions" }
+zed_actions = { path = "../zed_actions" }
+anyhow.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+menu = { path = "../menu" }
+go_to_line = { path = "../go_to_line" }
 serde_json.workspace = true
 workspace = { path = "../workspace", features = ["test-support"] }
 ctor.workspace = true

@@ -1,17 +1,23 @@
 use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
 };
+use collections::BTreeMap;
 use futures::Future;
 use gpui::{
-    executor::Foreground, keymap_matcher::Keystroke, AnyWindowHandle, AppContext, ContextHandle,
-    ModelContext, ViewContext, ViewHandle,
+    AnyWindowHandle, AppContext, Keystroke, ModelContext, View, ViewContext, VisualTestContext,
 };
 use indoc::indoc;
+use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
+use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 use util::{
     assert_set_eq,
@@ -20,19 +26,20 @@ use util::{
 
 use super::build_editor_with_project;
 
-pub struct EditorTestContext<'a> {
-    pub cx: &'a mut gpui::TestAppContext,
+pub struct EditorTestContext {
+    pub cx: gpui::VisualTestContext,
     pub window: AnyWindowHandle,
-    pub editor: ViewHandle<Editor>,
+    pub editor: View<Editor>,
+    pub assertion_cx: AssertionContextManager,
 }
 
-impl<'a> EditorTestContext<'a> {
-    pub async fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
-        let fs = FakeFs::new(cx.background());
+impl EditorTestContext {
+    pub async fn new(cx: &mut gpui::TestAppContext) -> EditorTestContext {
+        let fs = FakeFs::new(cx.executor());
         // fs.insert_file("/file", "".to_owned()).await;
         fs.insert_tree(
             "/root",
-            gpui::serde_json::json!({
+            serde_json::json!({
                 "file": "",
             }),
         )
@@ -44,15 +51,18 @@ impl<'a> EditorTestContext<'a> {
             })
             .await
             .unwrap();
-        let window = cx.add_window(|cx| {
-            cx.focus_self();
-            build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), cx)
+        let editor = cx.add_window(|cx| {
+            let editor =
+                build_editor_with_project(project, MultiBuffer::build_from_buffer(buffer, cx), cx);
+            editor.focus(cx);
+            editor
         });
-        let editor = window.root(cx);
+        let editor_view = editor.root_view(cx).unwrap();
         Self {
-            cx,
-            window: window.into(),
-            editor,
+            cx: VisualTestContext::from_window(*editor.deref(), cx),
+            window: editor.into(),
+            editor: editor_view,
+            assertion_cx: AssertionContextManager::new(),
         }
     }
 
@@ -60,24 +70,28 @@ impl<'a> EditorTestContext<'a> {
         &self,
         predicate: impl FnMut(&Editor, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
-        self.editor.condition(self.cx, predicate)
+        self.editor
+            .condition::<crate::EditorEvent>(&self.cx, predicate)
     }
 
-    pub fn editor<F, T>(&self, read: F) -> T
+    #[track_caller]
+    pub fn editor<F, T>(&mut self, read: F) -> T
     where
         F: FnOnce(&Editor, &ViewContext<Editor>) -> T,
     {
-        self.editor.read_with(self.cx, read)
+        self.editor
+            .update(&mut self.cx, |this, cx| read(&this, &cx))
     }
 
+    #[track_caller]
     pub fn update_editor<F, T>(&mut self, update: F) -> T
     where
         F: FnOnce(&mut Editor, &mut ViewContext<Editor>) -> T,
     {
-        self.editor.update(self.cx, update)
+        self.editor.update(&mut self.cx, update)
     }
 
-    pub fn multibuffer<F, T>(&self, read: F) -> T
+    pub fn multibuffer<F, T>(&mut self, read: F) -> T
     where
         F: FnOnce(&MultiBuffer, &AppContext) -> T,
     {
@@ -91,11 +105,11 @@ impl<'a> EditorTestContext<'a> {
         self.update_editor(|editor, cx| editor.buffer().update(cx, update))
     }
 
-    pub fn buffer_text(&self) -> String {
+    pub fn buffer_text(&mut self) -> String {
         self.multibuffer(|buffer, cx| buffer.snapshot(cx).text())
     }
 
-    pub fn buffer<F, T>(&self, read: F) -> T
+    pub fn buffer<F, T>(&mut self, read: F) -> T
     where
         F: FnOnce(&Buffer, &AppContext) -> T,
     {
@@ -115,8 +129,16 @@ impl<'a> EditorTestContext<'a> {
         })
     }
 
-    pub fn buffer_snapshot(&self) -> BufferSnapshot {
+    pub fn buffer_snapshot(&mut self) -> BufferSnapshot {
         self.buffer(|buffer, _| buffer.snapshot())
+    }
+
+    pub fn add_assertion_context(&self, context: String) -> ContextHandle {
+        self.assertion_cx.add_context(context)
+    }
+
+    pub fn assertion_context(&self) -> String {
+        self.assertion_cx.context()
     }
 
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) -> ContextHandle {
@@ -142,16 +164,16 @@ impl<'a> EditorTestContext<'a> {
         // before returning.
         // NOTE: we don't do this in simulate_keystroke() because a possible cause of bugs is that typing too
         // quickly races with async actions.
-        if let Foreground::Deterministic { cx_id: _, executor } = self.cx.foreground().as_ref() {
-            executor.run_until_parked();
-        } else {
-            unreachable!();
-        }
+        self.cx.background_executor.run_until_parked();
 
         keystrokes_under_test_handle
     }
 
-    pub fn ranges(&self, marked_text: &str) -> Vec<Range<usize>> {
+    pub fn run_until_parked(&mut self) {
+        self.cx.background_executor.run_until_parked();
+    }
+
+    pub fn ranges(&mut self, marked_text: &str) -> Vec<Range<usize>> {
         let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
         assert_eq!(self.buffer_text(), unmarked_text);
         ranges
@@ -161,12 +183,12 @@ impl<'a> EditorTestContext<'a> {
         let ranges = self.ranges(marked_text);
         let snapshot = self
             .editor
-            .update(self.cx, |editor, cx| editor.snapshot(cx));
+            .update(&mut self.cx, |editor, cx| editor.snapshot(cx));
         ranges[0].start.to_display_point(&snapshot)
     }
 
     // Returns anchors for the current buffer using `«` and `»`
-    pub fn text_anchor_range(&self, marked_text: &str) -> Range<language::Anchor> {
+    pub fn text_anchor_range(&mut self, marked_text: &str) -> Range<language::Anchor> {
         let ranges = self.ranges(marked_text);
         let snapshot = self.buffer_snapshot();
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
@@ -191,7 +213,7 @@ impl<'a> EditorTestContext<'a> {
             marked_text.escape_debug().to_string()
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
-        self.editor.update(self.cx, |editor, cx| {
+        self.editor.update(&mut self.cx, |editor, cx| {
             editor.set_text(unmarked_text, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_ranges(selection_ranges)
@@ -207,7 +229,7 @@ impl<'a> EditorTestContext<'a> {
             marked_text.escape_debug().to_string()
         ));
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
-        self.editor.update(self.cx, |editor, cx| {
+        self.editor.update(&mut self.cx, |editor, cx| {
             assert_eq!(editor.text(cx), unmarked_text);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_ranges(selection_ranges)
@@ -274,9 +296,12 @@ impl<'a> EditorTestContext<'a> {
         self.assert_selections(expected_selections, expected_marked_text)
     }
 
-    fn editor_selections(&self) -> Vec<Range<usize>> {
+    #[track_caller]
+    fn editor_selections(&mut self) -> Vec<Range<usize>> {
         self.editor
-            .read_with(self.cx, |editor, cx| editor.selections.all::<usize>(cx))
+            .update(&mut self.cx, |editor, cx| {
+                editor.selections.all::<usize>(cx)
+            })
             .into_iter()
             .map(|s| {
                 if s.reversed {
@@ -301,14 +326,14 @@ impl<'a> EditorTestContext<'a> {
             panic!(
                 indoc! {"
 
-                    {}Editor has unexpected selections.
+                {}Editor has unexpected selections.
 
-                    Expected selections:
-                    {}
+                Expected selections:
+                {}
 
-                    Actual selections:
-                    {}
-                "},
+                Actual selections:
+                {}
+            "},
                 self.assertion_context(),
                 expected_marked_text,
                 actual_marked_text,
@@ -317,16 +342,63 @@ impl<'a> EditorTestContext<'a> {
     }
 }
 
-impl<'a> Deref for EditorTestContext<'a> {
+impl Deref for EditorTestContext {
     type Target = gpui::TestAppContext;
 
     fn deref(&self) -> &Self::Target {
-        self.cx
+        &self.cx
     }
 }
 
-impl<'a> DerefMut for EditorTestContext<'a> {
+impl DerefMut for EditorTestContext {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
+    }
+}
+
+/// Tracks string context to be printed when assertions fail.
+/// Often this is done by storing a context string in the manager and returning the handle.
+#[derive(Clone)]
+pub struct AssertionContextManager {
+    id: Arc<AtomicUsize>,
+    contexts: Arc<RwLock<BTreeMap<usize, String>>>,
+}
+
+impl AssertionContextManager {
+    pub fn new() -> Self {
+        Self {
+            id: Arc::new(AtomicUsize::new(0)),
+            contexts: Arc::new(RwLock::new(BTreeMap::new())),
+        }
+    }
+
+    pub fn add_context(&self, context: String) -> ContextHandle {
+        let id = self.id.fetch_add(1, Ordering::Relaxed);
+        let mut contexts = self.contexts.write();
+        contexts.insert(id, context);
+        ContextHandle {
+            id,
+            manager: self.clone(),
+        }
+    }
+
+    pub fn context(&self) -> String {
+        let contexts = self.contexts.read();
+        format!("\n{}\n", contexts.values().join("\n"))
+    }
+}
+
+/// Used to track the lifetime of a piece of context so that it can be provided when an assertion fails.
+/// For example, in the EditorTestContext, `set_state` returns a context handle so that if an assertion fails,
+/// the state that was set initially for the failure can be printed in the error message
+pub struct ContextHandle {
+    id: usize,
+    manager: AssertionContextManager,
+}
+
+impl Drop for ContextHandle {
+    fn drop(&mut self) {
+        let mut contexts = self.manager.contexts.write();
+        contexts.remove(&self.id);
     }
 }

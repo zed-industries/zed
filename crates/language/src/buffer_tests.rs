@@ -1,25 +1,25 @@
+use super::*;
 use crate::language_settings::{
     AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
 };
-
-use super::*;
+use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
-use gpui::{AppContext, ModelHandle};
+use gpui::{AppContext, Model};
+use gpui::{Context, TestAppContext};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
 use std::{
-    cell::RefCell,
     env,
     ops::Range,
-    rc::Rc,
     time::{Duration, Instant},
 };
 use text::network::Network;
 use text::LineEnding;
+use text::{Point, ToPoint};
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 
@@ -42,8 +42,8 @@ fn init_logger() {
 fn test_line_endings(cx: &mut gpui::AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
-        let mut buffer = Buffer::new(0, cx.model_id() as u64, "one\r\ntwo\rthree")
+    cx.new_model(|cx| {
+        let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), "one\r\ntwo\rthree")
             .with_language(Arc::new(rust_lang()), cx);
         assert_eq!(buffer.text(), "one\ntwo\nthree");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);
@@ -135,24 +135,24 @@ fn test_select_language() {
 #[gpui::test]
 fn test_edit_events(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
-    let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
-    let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
+    let buffer_1_events = Arc::new(Mutex::new(Vec::new()));
+    let buffer_2_events = Arc::new(Mutex::new(Vec::new()));
 
-    let buffer1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abcdef"));
-    let buffer2 = cx.add_model(|cx| Buffer::new(1, cx.model_id() as u64, "abcdef"));
-    let buffer1_ops = Rc::new(RefCell::new(Vec::new()));
+    let buffer1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abcdef"));
+    let buffer2 = cx.new_model(|cx| Buffer::new(1, cx.entity_id().as_u64(), "abcdef"));
+    let buffer1_ops = Arc::new(Mutex::new(Vec::new()));
     buffer1.update(cx, {
         let buffer1_ops = buffer1_ops.clone();
         |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
-                Event::Operation(op) => buffer1_ops.borrow_mut().push(op),
-                event => buffer_1_events.borrow_mut().push(event),
+                Event::Operation(op) => buffer1_ops.lock().push(op),
+                event => buffer_1_events.lock().push(event),
             })
             .detach();
             let buffer_2_events = buffer_2_events.clone();
             cx.subscribe(&buffer2, move |_, _, event, _| {
-                buffer_2_events.borrow_mut().push(event.clone())
+                buffer_2_events.lock().push(event.clone())
             })
             .detach();
 
@@ -179,12 +179,10 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     // Incorporating a set of remote ops emits a single edited event,
     // followed by a dirty changed event.
     buffer2.update(cx, |buffer, cx| {
-        buffer
-            .apply_ops(buffer1_ops.borrow_mut().drain(..), cx)
-            .unwrap();
+        buffer.apply_ops(buffer1_ops.lock().drain(..), cx).unwrap();
     });
     assert_eq!(
-        mem::take(&mut *buffer_1_events.borrow_mut()),
+        mem::take(&mut *buffer_1_events.lock()),
         vec![
             Event::Edited,
             Event::DirtyChanged,
@@ -193,7 +191,7 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
         ]
     );
     assert_eq!(
-        mem::take(&mut *buffer_2_events.borrow_mut()),
+        mem::take(&mut *buffer_2_events.lock()),
         vec![Event::Edited, Event::DirtyChanged]
     );
 
@@ -205,28 +203,26 @@ fn test_edit_events(cx: &mut gpui::AppContext) {
     // Incorporating the remote ops again emits a single edited event,
     // followed by a dirty changed event.
     buffer2.update(cx, |buffer, cx| {
-        buffer
-            .apply_ops(buffer1_ops.borrow_mut().drain(..), cx)
-            .unwrap();
+        buffer.apply_ops(buffer1_ops.lock().drain(..), cx).unwrap();
     });
     assert_eq!(
-        mem::take(&mut *buffer_1_events.borrow_mut()),
+        mem::take(&mut *buffer_1_events.lock()),
         vec![Event::Edited, Event::DirtyChanged,]
     );
     assert_eq!(
-        mem::take(&mut *buffer_2_events.borrow_mut()),
+        mem::take(&mut *buffer_2_events.lock()),
         vec![Event::Edited, Event::DirtyChanged]
     );
 }
 
 #[gpui::test]
-async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
+async fn test_apply_diff(cx: &mut TestAppContext) {
     let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
-    let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text));
-    let anchor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
+    let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
+    let anchor = buffer.update(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
 
     let text = "a\nccc\ndddd\nffffff\n";
-    let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
+    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
@@ -234,7 +230,7 @@ async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
     });
 
     let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-    let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
+    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
@@ -254,15 +250,15 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     ]
     .join("\n");
 
-    let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text));
+    let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), text));
 
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the foratting task starts running.
-    let format = buffer.read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
     smol::future::yield_now().await;
 
     // Edit the buffer while the normalization task is running.
-    let version_before_edit = buffer.read_with(cx, |buffer, _| buffer.version());
+    let version_before_edit = buffer.update(cx, |buffer, _| buffer.version());
     buffer.update(cx, |buffer, cx| {
         buffer.edit(
             [
@@ -318,12 +314,13 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
-    let buffer = cx.add_model(|cx| {
-        Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx)
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx)
     });
 
     // Wait for the initial text to parse
-    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+    cx.executor().run_until_parked();
+    assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         concat!(
@@ -354,7 +351,8 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a(b: C) { d; }");
         assert!(buf.is_parsing());
     });
-    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+    cx.executor().run_until_parked();
+    assert!(!buffer.update(cx, |buffer, _| buffer.is_parsing()));
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         concat!(
@@ -386,7 +384,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
     });
-    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+    cx.executor().run_until_parked();
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         concat!(
@@ -408,7 +406,8 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a() {}");
         assert!(buf.is_parsing());
     });
-    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+
+    cx.executor().run_until_parked();
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         concat!(
@@ -426,7 +425,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
     });
-    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+    cx.executor().run_until_parked();
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         concat!(
@@ -443,15 +442,15 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
-    let buffer = cx.add_model(|cx| {
+    let buffer = cx.new_model(|cx| {
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, "{}").with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), "{}").with_language(Arc::new(rust_lang()), cx);
         buffer.set_sync_parse_timeout(Duration::ZERO);
         buffer
     });
 
     // Wait for the initial text to parse
-    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+    cx.executor().run_until_parked();
     assert_eq!(
         get_tree_sexp(&buffer, cx),
         "(source_file (expression_statement (block)))"
@@ -460,7 +459,7 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         buffer.set_language(Some(Arc::new(json_lang())), cx)
     });
-    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+    cx.executor().run_until_parked();
     assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
 }
 
@@ -493,11 +492,11 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx.add_model(|cx| {
-        Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx)
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx)
     });
     let outline = buffer
-        .read_with(cx, |buffer, _| buffer.snapshot().outline(None))
+        .update(cx, |buffer, _| buffer.snapshot().outline(None))
         .unwrap();
 
     assert_eq!(
@@ -560,7 +559,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
         let matches = cx
-            .read(|cx| outline.search(query, cx.background().clone()))
+            .update(|cx| outline.search(query, cx.background_executor().clone()))
             .await;
         matches
             .into_iter()
@@ -579,11 +578,11 @@ async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx.add_model(|cx| {
-        Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx)
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx)
     });
     let outline = buffer
-        .read_with(cx, |buffer, _| buffer.snapshot().outline(None))
+        .update(cx, |buffer, _| buffer.snapshot().outline(None))
         .unwrap();
 
     assert_eq!(
@@ -617,10 +616,10 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx.add_model(|cx| {
-        Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(language), cx)
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(language), cx)
     });
-    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     // extra context nodes are included in the outline.
     let outline = snapshot.outline(None).unwrap();
@@ -661,10 +660,10 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx.add_model(|cx| {
-        Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx)
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx)
     });
-    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     // point is at the start of an item
     assert_eq!(
@@ -882,10 +881,10 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &
 
 #[gpui::test]
 fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = "fn a() { b(|c| {}) }";
         let buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx);
         let snapshot = buffer.snapshot();
 
         assert_eq!(
@@ -923,10 +922,10 @@ fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
 fn test_autoindent_with_soft_tabs(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = "fn a() {}";
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
@@ -966,10 +965,10 @@ fn test_autoindent_with_hard_tabs(cx: &mut AppContext) {
         settings.defaults.hard_tabs = Some(true);
     });
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = "fn a() {}";
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         assert_eq!(buffer.text(), "fn a() {\n\t\n}");
@@ -1007,10 +1006,11 @@ fn test_autoindent_with_hard_tabs(cx: &mut AppContext) {
 fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
+        let entity_id = cx.entity_id();
         let mut buffer = Buffer::new(
             0,
-            cx.model_id() as u64,
+            entity_id.as_u64(),
             "
             fn a() {
             c;
@@ -1080,10 +1080,12 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
         buffer
     });
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
+        eprintln!("second buffer: {:?}", cx.entity_id());
+
         let mut buffer = Buffer::new(
             0,
-            cx.model_id() as u64,
+            cx.entity_id().as_u64(),
             "
             fn a() {
                 b();
@@ -1137,16 +1139,18 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
         );
         buffer
     });
+
+    eprintln!("DONE");
 }
 
 #[gpui::test]
 fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let mut buffer = Buffer::new(
             0,
-            cx.model_id() as u64,
+            cx.entity_id().as_u64(),
             "
             fn a() {
                 i
@@ -1205,10 +1209,10 @@ fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut Ap
 fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let mut buffer = Buffer::new(
             0,
-            cx.model_id() as u64,
+            cx.entity_id().as_u64(),
             "
             fn a() {}
             "
@@ -1262,10 +1266,10 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut AppContext) {
 fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = "a\nb";
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(0..1, "\n"), (2..3, "\n")],
             Some(AutoindentMode::EachLine),
@@ -1280,7 +1284,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut AppContext) {
 fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = "
             const a: usize = 1;
             fn b() {
@@ -1292,7 +1296,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
         .unindent();
 
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(Point::new(3, 0)..Point::new(3, 0), "e(\n    f()\n);\n")],
             Some(AutoindentMode::EachLine),
@@ -1322,7 +1326,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
 fn test_autoindent_block_mode(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = r#"
             fn a() {
                 b();
@@ -1330,7 +1334,7 @@ fn test_autoindent_block_mode(cx: &mut AppContext) {
         "#
         .unindent();
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx);
 
         // When this text was copied, both of the quotation marks were at the same
         // indent level, but the indentation of the first line was not included in
@@ -1406,7 +1410,7 @@ fn test_autoindent_block_mode(cx: &mut AppContext) {
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = r#"
             fn a() {
                 if b() {
@@ -1416,7 +1420,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
         "#
         .unindent();
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, text).with_language(Arc::new(rust_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(Arc::new(rust_lang()), cx);
 
         // The original indent columns are not known, so this text is
         // auto-indented in a block as if the first line was copied in
@@ -1486,7 +1490,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
 fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = "
             * one
                 - a
@@ -1495,7 +1499,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(0, cx.model_id() as u64, text).with_language(
+        let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), text).with_language(
             Arc::new(Language::new(
                 LanguageConfig {
                     name: "Markdown".into(),
@@ -1555,7 +1559,7 @@ fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
     language_registry.add(html_language.clone());
     language_registry.add(javascript_language.clone());
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let (text, ranges) = marked_text_ranges(
             &"
                 <div>ˇ
@@ -1571,7 +1575,7 @@ fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
             false,
         );
 
-        let mut buffer = Buffer::new(0, cx.model_id() as u64, text);
+        let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), text);
         buffer.set_language_registry(language_registry);
         buffer.set_language(Some(html_language), cx);
         buffer.edit(
@@ -1606,9 +1610,9 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
     });
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let mut buffer =
-            Buffer::new(0, cx.model_id() as u64, "").with_language(Arc::new(ruby_lang()), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), "").with_language(Arc::new(ruby_lang()), cx);
 
         let text = r#"
             class C
@@ -1649,7 +1653,7 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
 fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let language = Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
@@ -1710,7 +1714,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         .unindent();
 
         let buffer =
-            Buffer::new(0, cx.model_id() as u64, &text).with_language(Arc::new(language), cx);
+            Buffer::new(0, cx.entity_id().as_u64(), &text).with_language(Arc::new(language), cx);
         let snapshot = buffer.snapshot();
 
         let config = snapshot.language_scope_at(0).unwrap();
@@ -1782,7 +1786,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
 fn test_language_scope_at_with_rust(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -1822,7 +1826,7 @@ fn test_language_scope_at_with_rust(cx: &mut AppContext) {
         "#
         .unindent();
 
-        let buffer = Buffer::new(0, cx.model_id() as u64, text.clone())
+        let buffer = Buffer::new(0, cx.entity_id().as_u64(), text.clone())
             .with_language(Arc::new(language), cx);
         let snapshot = buffer.snapshot();
 
@@ -1850,7 +1854,7 @@ fn test_language_scope_at_with_rust(cx: &mut AppContext) {
 fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
-    cx.add_model(|cx| {
+    cx.new_model(|cx| {
         let text = r#"
             <ol>
             <% people.each do |person| %>
@@ -1867,7 +1871,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
         language_registry.add(Arc::new(html_lang()));
         language_registry.add(Arc::new(erb_lang()));
 
-        let mut buffer = Buffer::new(0, cx.model_id() as u64, text);
+        let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), text);
         buffer.set_language_registry(language_registry.clone());
         buffer.set_language(
             language_registry
@@ -1898,8 +1902,8 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
 fn test_serialization(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
 
-    let buffer1 = cx.add_model(|cx| {
-        let mut buffer = Buffer::new(0, cx.model_id() as u64, "abc");
+    let buffer1 = cx.new_model(|cx| {
+        let mut buffer = Buffer::new(0, cx.entity_id().as_u64(), "abc");
         buffer.edit([(3..3, "D")], None, cx);
 
         now += Duration::from_secs(1);
@@ -1919,10 +1923,10 @@ fn test_serialization(cx: &mut gpui::AppContext) {
 
     let state = buffer1.read(cx).to_proto();
     let ops = cx
-        .background()
+        .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
-    let buffer2 = cx.add_model(|cx| {
-        let mut buffer = Buffer::from_proto(1, state, None).unwrap();
+    let buffer2 = cx.new_model(|cx| {
+        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
         buffer
             .apply_ops(
                 ops.into_iter()
@@ -1953,16 +1957,18 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
         .collect::<String>();
     let mut replica_ids = Vec::new();
     let mut buffers = Vec::new();
-    let network = Rc::new(RefCell::new(Network::new(rng.clone())));
-    let base_buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, base_text.as_str()));
+    let network = Arc::new(Mutex::new(Network::new(rng.clone())));
+    let base_buffer =
+        cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), base_text.as_str()));
 
     for i in 0..rng.gen_range(min_peers..=max_peers) {
-        let buffer = cx.add_model(|cx| {
+        let buffer = cx.new_model(|cx| {
             let state = base_buffer.read(cx).to_proto();
             let ops = cx
-                .background()
+                .background_executor()
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
-            let mut buffer = Buffer::from_proto(i as ReplicaId, state, None).unwrap();
+            let mut buffer =
+                Buffer::from_proto(i as ReplicaId, Capability::ReadWrite, state, None).unwrap();
             buffer
                 .apply_ops(
                     ops.into_iter()
@@ -1975,16 +1981,17 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
                 if let Event::Operation(op) = event {
                     network
-                        .borrow_mut()
+                        .lock()
                         .broadcast(buffer.replica_id(), vec![proto::serialize_operation(op)]);
                 }
             })
             .detach();
             buffer
         });
+
         buffers.push(buffer);
         replica_ids.push(i as ReplicaId);
-        network.borrow_mut().add_peer(i as ReplicaId);
+        network.lock().add_peer(i as ReplicaId);
         log::info!("Adding initial peer with replica id {}", i);
     }
 
@@ -2065,7 +2072,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             50..=59 if replica_ids.len() < max_peers => {
                 let old_buffer_state = buffer.read(cx).to_proto();
                 let old_buffer_ops = cx
-                    .background()
+                    .background_executor()
                     .block(buffer.read(cx).serialize_ops(None, cx));
                 let new_replica_id = (0..=replica_ids.len() as ReplicaId)
                     .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())
@@ -2076,9 +2083,14 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     new_replica_id,
                     replica_id
                 );
-                new_buffer = Some(cx.add_model(|cx| {
-                    let mut new_buffer =
-                        Buffer::from_proto(new_replica_id, old_buffer_state, None).unwrap();
+                new_buffer = Some(cx.new_model(|cx| {
+                    let mut new_buffer = Buffer::from_proto(
+                        new_replica_id,
+                        Capability::ReadWrite,
+                        old_buffer_state,
+                        None,
+                    )
+                    .unwrap();
                     new_buffer
                         .apply_ops(
                             old_buffer_ops
@@ -2096,7 +2108,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     let network = network.clone();
                     cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
                         if let Event::Operation(op) = event {
-                            network.borrow_mut().broadcast(
+                            network.lock().broadcast(
                                 buffer.replica_id(),
                                 vec![proto::serialize_operation(op)],
                             );
@@ -2105,15 +2117,15 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                     .detach();
                     new_buffer
                 }));
-                network.borrow_mut().replicate(replica_id, new_replica_id);
+                network.lock().replicate(replica_id, new_replica_id);
 
                 if new_replica_id as usize == replica_ids.len() {
                     replica_ids.push(new_replica_id);
                 } else {
                     let new_buffer = new_buffer.take().unwrap();
-                    while network.borrow().has_unreceived(new_replica_id) {
+                    while network.lock().has_unreceived(new_replica_id) {
                         let ops = network
-                            .borrow_mut()
+                            .lock()
                             .receive(new_replica_id)
                             .into_iter()
                             .map(|op| proto::deserialize_operation(op).unwrap());
@@ -2140,9 +2152,9 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                 });
                 mutation_count -= 1;
             }
-            _ if network.borrow().has_unreceived(replica_id) => {
+            _ if network.lock().has_unreceived(replica_id) => {
                 let ops = network
-                    .borrow_mut()
+                    .lock()
                     .receive(replica_id)
                     .into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap());
@@ -2167,7 +2179,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
             buffer.read(cx).check_invariants();
         }
 
-        if mutation_count == 0 && network.borrow().is_idle() {
+        if mutation_count == 0 && network.lock().is_idle() {
             break;
         }
     }
@@ -2438,8 +2450,8 @@ fn javascript_lang() -> Language {
     .unwrap()
 }
 
-fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
-    buffer.read_with(cx, |buffer, _| {
+fn get_tree_sexp(buffer: &Model<Buffer>, cx: &mut gpui::TestAppContext) -> String {
+    buffer.update(cx, |buffer, _| {
         let snapshot = buffer.snapshot();
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
         layers[0].node().to_sexp()
@@ -2454,8 +2466,8 @@ fn assert_bracket_pairs(
     cx: &mut AppContext,
 ) {
     let (expected_text, selection_ranges) = marked_text_ranges(selection_text, false);
-    let buffer = cx.add_model(|cx| {
-        Buffer::new(0, cx.model_id() as u64, expected_text.clone())
+    let buffer = cx.new_model(|cx| {
+        Buffer::new(0, cx.entity_id().as_u64(), expected_text.clone())
             .with_language(Arc::new(language), cx)
     });
     let buffer = buffer.update(cx, |buffer, _cx| buffer.snapshot());
@@ -2478,9 +2490,10 @@ fn assert_bracket_pairs(
 }
 
 fn init_settings(cx: &mut AppContext, f: fn(&mut AllLanguageSettingsContent)) {
-    cx.set_global(SettingsStore::test(cx));
+    let settings_store = SettingsStore::test(cx);
+    cx.set_global(settings_store);
     crate::init(cx);
-    cx.update_global::<SettingsStore, _, _>(|settings, cx| {
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings::<AllLanguageSettings>(cx, f);
     });
 }

@@ -7,7 +7,6 @@ use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{
     borrow::Cow,
-    cell::RefCell,
     cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
     fmt, iter,
@@ -16,13 +15,9 @@ use std::{
 };
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
-use tree_sitter::{
-    Node, Parser, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree,
-};
+use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
 
-thread_local! {
-    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
-}
+use super::PARSER;
 
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 
@@ -1166,7 +1161,7 @@ fn parse_text(
             .set_included_ranges(&ranges)
             .expect("overlapping ranges");
         parser
-            .set_language(grammar.ts_language)
+            .set_language(&grammar.ts_language)
             .expect("incompatible grammar");
         parser
             .parse_with(

@@ -7,17 +7,21 @@ use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
+use gpui::{
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SharedString, Task,
+    WeakModel,
+};
+use language::Capability;
 use rpc::{
     proto::{self, ChannelVisibility},
     TypedEnvelope,
 };
 use std::{mem, sync::Arc, time::Duration};
-use util::ResultExt;
+use util::{async_maybe, ResultExt};
 
-pub fn init(client: &Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
+pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let channel_store =
-        cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+        cx.new_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
     cx.set_global(channel_store);
 }
 
@@ -34,7 +38,7 @@ pub struct ChannelStore {
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
     opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
     client: Arc<Client>,
-    user_store: ModelHandle<UserStore>,
+    user_store: Model<UserStore>,
     _rpc_subscription: Subscription,
     _watch_connection_status: Task<Option<()>>,
     disconnect_channel_buffers_task: Option<Task<()>>,
@@ -44,7 +48,7 @@ pub struct ChannelStore {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub id: ChannelId,
-    pub name: String,
+    pub name: SharedString,
     pub visibility: proto::ChannelVisibility,
     pub role: proto::ChannelRole,
     pub unseen_note_version: Option<(u64, clock::Global)>,
@@ -71,8 +75,12 @@ impl Channel {
         slug.trim_matches(|c| c == '-').to_string()
     }
 
-    pub fn can_edit_notes(&self) -> bool {
-        self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin
+    pub fn channel_buffer_capability(&self) -> Capability {
+        if self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin {
+            Capability::ReadWrite
+        } else {
+            Capability::ReadOnly
+        }
     }
 }
 
@@ -112,44 +120,45 @@ pub enum ChannelEvent {
     ChannelRenamed(ChannelId),
 }
 
-impl Entity for ChannelStore {
-    type Event = ChannelEvent;
-}
+impl EventEmitter<ChannelEvent> for ChannelStore {}
 
-enum OpenedModelHandle<E: Entity> {
-    Open(WeakModelHandle<E>),
-    Loading(Shared<Task<Result<ModelHandle<E>, Arc<anyhow::Error>>>>),
+enum OpenedModelHandle<E> {
+    Open(WeakModel<E>),
+    Loading(Shared<Task<Result<Model<E>, Arc<anyhow::Error>>>>),
 }
 
 impl ChannelStore {
-    pub fn global(cx: &AppContext) -> ModelHandle<Self> {
-        cx.global::<ModelHandle<Self>>().clone()
+    pub fn global(cx: &AppContext) -> Model<Self> {
+        cx.global::<Model<Self>>().clone()
     }
 
     pub fn new(
         client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
+        user_store: Model<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let rpc_subscription =
-            client.add_message_handler(cx.handle(), Self::handle_update_channels);
+            client.add_message_handler(cx.weak_model(), Self::handle_update_channels);
 
         let mut connection_status = client.status();
         let (update_channels_tx, mut update_channels_rx) = mpsc::unbounded();
-        let watch_connection_status = cx.spawn_weak(|this, mut cx| async move {
+        let watch_connection_status = cx.spawn(|this, mut cx| async move {
             while let Some(status) = connection_status.next().await {
-                let this = this.upgrade(&cx)?;
+                let this = this.upgrade()?;
                 match status {
                     client::Status::Connected { .. } => {
                         this.update(&mut cx, |this, cx| this.handle_connect(cx))
+                            .ok()?
                             .await
                             .log_err()?;
                     }
                     client::Status::SignedOut | client::Status::UpgradeRequired => {
-                        this.update(&mut cx, |this, cx| this.handle_disconnect(false, cx));
+                        this.update(&mut cx, |this, cx| this.handle_disconnect(false, cx))
+                            .ok();
                     }
                     _ => {
-                        this.update(&mut cx, |this, cx| this.handle_disconnect(true, cx));
+                        this.update(&mut cx, |this, cx| this.handle_disconnect(true, cx))
+                            .ok();
                     }
                 }
             }
@@ -169,17 +178,22 @@ impl ChannelStore {
             _rpc_subscription: rpc_subscription,
             _watch_connection_status: watch_connection_status,
             disconnect_channel_buffers_task: None,
-            _update_channels: cx.spawn_weak(|this, mut cx| async move {
-                while let Some(update_channels) = update_channels_rx.next().await {
-                    if let Some(this) = this.upgrade(&cx) {
-                        let update_task = this.update(&mut cx, |this, cx| {
-                            this.update_channels(update_channels, cx)
-                        });
-                        if let Some(update_task) = update_task {
-                            update_task.await.log_err();
+            _update_channels: cx.spawn(|this, mut cx| async move {
+                async_maybe!({
+                    while let Some(update_channels) = update_channels_rx.next().await {
+                        if let Some(this) = this.upgrade() {
+                            let update_task = this.update(&mut cx, |this, cx| {
+                                this.update_channels(update_channels, cx)
+                            })?;
+                            if let Some(update_task) = update_task {
+                                update_task.await.log_err();
+                            }
                         }
                     }
-                }
+                    anyhow::Ok(())
+                })
+                .await
+                .log_err();
             }),
         }
     }
@@ -240,10 +254,10 @@ impl ChannelStore {
         self.channel_index.by_id().get(&channel_id)
     }
 
-    pub fn has_open_channel_buffer(&self, channel_id: ChannelId, cx: &AppContext) -> bool {
+    pub fn has_open_channel_buffer(&self, channel_id: ChannelId, _cx: &AppContext) -> bool {
         if let Some(buffer) = self.opened_buffers.get(&channel_id) {
             if let OpenedModelHandle::Open(buffer) = buffer {
-                return buffer.upgrade(cx).is_some();
+                return buffer.upgrade().is_some();
             }
         }
         false
@@ -253,7 +267,7 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
+    ) -> Task<Result<Model<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         let channel_store = cx.handle();
@@ -278,13 +292,13 @@ impl ChannelStore {
                     .request(proto::GetChannelMessagesById { message_ids }),
             )
         };
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             if let Some(request) = request {
                 let response = request.await?;
                 let this = this
-                    .upgrade(&cx)
+                    .upgrade()
                     .ok_or_else(|| anyhow!("channel store dropped"))?;
-                let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
+                let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
                 ChannelMessage::from_proto_vec(response.messages, &user_store, &mut cx).await
             } else {
                 Ok(Vec::new())
@@ -354,7 +368,7 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<ChannelChat>>> {
+    ) -> Task<Result<Model<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         let this = cx.handle();
@@ -371,22 +385,23 @@ impl ChannelStore {
     /// Make sure that the resource is only opened once, even if this method
     /// is called multiple times with the same channel id while the first task
     /// is still running.
-    fn open_channel_resource<T: Entity, F, Fut>(
+    fn open_channel_resource<T, F, Fut>(
         &mut self,
         channel_id: ChannelId,
         get_map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenedModelHandle<T>>,
         load: F,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<T>>>
+    ) -> Task<Result<Model<T>>>
     where
         F: 'static + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
-        Fut: Future<Output = Result<ModelHandle<T>>>,
+        Fut: Future<Output = Result<Model<T>>>,
+        T: 'static,
     {
         let task = loop {
             match get_map(self).entry(channel_id) {
                 hash_map::Entry::Occupied(e) => match e.get() {
                     OpenedModelHandle::Open(model) => {
-                        if let Some(model) = model.upgrade(cx) {
+                        if let Some(model) = model.upgrade() {
                             break Task::ready(Ok(model)).shared();
                         } else {
                             get_map(self).remove(&channel_id);
@@ -399,12 +414,12 @@ impl ChannelStore {
                 },
                 hash_map::Entry::Vacant(e) => {
                     let task = cx
-                        .spawn(|this, cx| async move {
-                            let channel = this.read_with(&cx, |this, _| {
+                        .spawn(move |this, mut cx| async move {
+                            let channel = this.update(&mut cx, |this, _| {
                                 this.channel_for_id(channel_id).cloned().ok_or_else(|| {
                                     Arc::new(anyhow!("no channel for id: {}", channel_id))
                                 })
-                            })?;
+                            })??;
 
                             load(channel, cx).await.map_err(Arc::new)
                         })
@@ -413,7 +428,7 @@ impl ChannelStore {
                     e.insert(OpenedModelHandle::Loading(task.clone()));
                     cx.spawn({
                         let task = task.clone();
-                        |this, mut cx| async move {
+                        move |this, mut cx| async move {
                             let result = task.await;
                             this.update(&mut cx, |this, _| match result {
                                 Ok(model) => {
@@ -425,7 +440,8 @@ impl ChannelStore {
                                 Err(_) => {
                                     get_map(this).remove(&channel_id);
                                 }
-                            });
+                            })
+                            .ok();
                         }
                     })
                     .detach();
@@ -433,7 +449,7 @@ impl ChannelStore {
                 }
             }
         };
-        cx.foreground()
+        cx.background_executor()
             .spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
     }
 
@@ -458,7 +474,7 @@ impl ChannelStore {
     ) -> Task<Result<ChannelId>> {
         let client = self.client.clone();
         let name = name.trim_start_matches("#").to_owned();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let response = client
                 .request(proto::CreateChannel { name, parent_id })
                 .await?;
@@ -467,15 +483,6 @@ impl ChannelStore {
                 .channel
                 .ok_or_else(|| anyhow!("missing channel in response"))?;
             let channel_id = channel.id;
-
-            // let parent_edge = if let Some(parent_id) = parent_id {
-            //     vec![ChannelEdge {
-            //         channel_id: channel.id,
-            //         parent_id,
-            //     }]
-            // } else {
-            //     vec![]
-            // };
 
             this.update(&mut cx, |this, cx| {
                 let task = this.update_channels(
@@ -492,7 +499,7 @@ impl ChannelStore {
                 // will resolve before this flush_effects finishes. Synchronously emitting this event
                 // ensures that the collab panel will observe this creation before the frame completes
                 cx.emit(ChannelEvent::ChannelCreated(channel_id));
-            });
+            })?;
 
             Ok(channel_id)
         })
@@ -505,7 +512,7 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(|_, _| async move {
+        cx.spawn(move |_, _| async move {
             let _ = client
                 .request(proto::MoveChannel { channel_id, to })
                 .await?;
@@ -521,7 +528,7 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(|_, _| async move {
+        cx.spawn(move |_, _| async move {
             let _ = client
                 .request(proto::SetChannelVisibility {
                     channel_id,
@@ -546,7 +553,7 @@ impl ChannelStore {
 
         cx.notify();
         let client = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let result = client
                 .request(proto::InviteChannelMember {
                     channel_id,
@@ -558,7 +565,7 @@ impl ChannelStore {
             this.update(&mut cx, |this, cx| {
                 this.outgoing_invites.remove(&(channel_id, user_id));
                 cx.notify();
-            });
+            })?;
 
             result?;
 
@@ -578,7 +585,7 @@ impl ChannelStore {
 
         cx.notify();
         let client = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let result = client
                 .request(proto::RemoveChannelMember {
                     channel_id,
@@ -589,7 +596,7 @@ impl ChannelStore {
             this.update(&mut cx, |this, cx| {
                 this.outgoing_invites.remove(&(channel_id, user_id));
                 cx.notify();
-            });
+            })?;
             result?;
             Ok(())
         })
@@ -608,7 +615,7 @@ impl ChannelStore {
 
         cx.notify();
         let client = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let result = client
                 .request(proto::SetChannelMemberRole {
                     channel_id,
@@ -620,7 +627,7 @@ impl ChannelStore {
             this.update(&mut cx, |this, cx| {
                 this.outgoing_invites.remove(&(channel_id, user_id));
                 cx.notify();
-            });
+            })?;
 
             result?;
             Ok(())
@@ -635,7 +642,7 @@ impl ChannelStore {
     ) -> Task<Result<()>> {
         let client = self.client.clone();
         let name = new_name.to_string();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(move |this, mut cx| async move {
             let channel = client
                 .request(proto::RenameChannel { channel_id, name })
                 .await?
@@ -656,7 +663,7 @@ impl ChannelStore {
                 // will resolve before this flush_effects finishes. Synchronously emitting this event
                 // ensures that the collab panel will observe this creation before the frame complete
                 cx.emit(ChannelEvent::ChannelRenamed(channel_id))
-            });
+            })?;
             Ok(())
         })
     }
@@ -668,7 +675,7 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.background().spawn(async move {
+        cx.background_executor().spawn(async move {
             client
                 .request(proto::RespondToChannelInvite { channel_id, accept })
                 .await?;
@@ -683,17 +690,17 @@ impl ChannelStore {
     ) -> Task<Result<Vec<ChannelMembership>>> {
         let client = self.client.clone();
         let user_store = self.user_store.downgrade();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(move |_, mut cx| async move {
             let response = client
                 .request(proto::GetChannelMembers { channel_id })
                 .await?;
 
             let user_ids = response.members.iter().map(|m| m.user_id).collect();
             let user_store = user_store
-                .upgrade(&cx)
+                .upgrade()
                 .ok_or_else(|| anyhow!("user store dropped"))?;
             let users = user_store
-                .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))
+                .update(&mut cx, |user_store, cx| user_store.get_users(user_ids, cx))?
                 .await?;
 
             Ok(users
@@ -727,7 +734,7 @@ impl ChannelStore {
     }
 
     async fn handle_update_channels(
-        this: ModelHandle<Self>,
+        this: Model<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -736,7 +743,7 @@ impl ChannelStore {
             this.update_channels_tx
                 .unbounded_send(message.payload)
                 .unwrap();
-        });
+        })?;
         Ok(())
     }
 
@@ -750,7 +757,7 @@ impl ChannelStore {
 
         for chat in self.opened_chats.values() {
             if let OpenedModelHandle::Open(chat) = chat {
-                if let Some(chat) = chat.upgrade(cx) {
+                if let Some(chat) = chat.upgrade() {
                     chat.update(cx, |chat, cx| {
                         chat.rejoin(cx);
                     });
@@ -761,7 +768,7 @@ impl ChannelStore {
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
             if let OpenedModelHandle::Open(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
+                if let Some(buffer) = buffer.upgrade() {
                     let channel_buffer = buffer.read(cx);
                     let buffer = channel_buffer.buffer().read(cx);
                     buffer_versions.push(proto::ChannelBufferVersion {
@@ -787,7 +794,7 @@ impl ChannelStore {
             this.update(&mut cx, |this, cx| {
                 this.opened_buffers.retain(|_, buffer| match buffer {
                     OpenedModelHandle::Open(channel_buffer) => {
-                        let Some(channel_buffer) = channel_buffer.upgrade(cx) else {
+                        let Some(channel_buffer) = channel_buffer.upgrade() else {
                             return false;
                         };
 
@@ -824,7 +831,7 @@ impl ChannelStore {
 
                                 if let Some(operations) = operations {
                                     let client = this.client.clone();
-                                    cx.background()
+                                    cx.background_executor()
                                         .spawn(async move {
                                             let operations = operations.await;
                                             for chunk in
@@ -849,7 +856,8 @@ impl ChannelStore {
                     }
                     OpenedModelHandle::Loading(_) => true,
                 });
-            });
+            })
+            .ok();
             anyhow::Ok(())
         })
     }
@@ -858,21 +866,22 @@ impl ChannelStore {
         cx.notify();
 
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
-            cx.spawn_weak(|this, mut cx| async move {
+            cx.spawn(move |this, mut cx| async move {
                 if wait_for_reconnect {
-                    cx.background().timer(RECONNECT_TIMEOUT).await;
+                    cx.background_executor().timer(RECONNECT_TIMEOUT).await;
                 }
 
-                if let Some(this) = this.upgrade(&cx) {
+                if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         for (_, buffer) in this.opened_buffers.drain() {
                             if let OpenedModelHandle::Open(buffer) = buffer {
-                                if let Some(buffer) = buffer.upgrade(cx) {
+                                if let Some(buffer) = buffer.upgrade() {
                                     buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                                 }
                             }
                         }
-                    });
+                    })
+                    .ok();
                 }
             })
         });
@@ -892,14 +901,16 @@ impl ChannelStore {
                 .channel_invitations
                 .binary_search_by_key(&channel.id, |c| c.id)
             {
-                Ok(ix) => Arc::make_mut(&mut self.channel_invitations[ix]).name = channel.name,
+                Ok(ix) => {
+                    Arc::make_mut(&mut self.channel_invitations[ix]).name = channel.name.into()
+                }
                 Err(ix) => self.channel_invitations.insert(
                     ix,
                     Arc::new(Channel {
                         id: channel.id,
                         visibility: channel.visibility(),
                         role: channel.role(),
-                        name: channel.name,
+                        name: channel.name.into(),
                         unseen_note_version: None,
                         unseen_message_id: None,
                         parent_path: channel.parent_path,
@@ -931,7 +942,7 @@ impl ChannelStore {
                     if let Some(OpenedModelHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
                     {
-                        if let Some(buffer) = buffer.upgrade(cx) {
+                        if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, ChannelBuffer::disconnect);
                         }
                     }
@@ -945,7 +956,7 @@ impl ChannelStore {
 
                 if channel_changed {
                     if let Some(OpenedModelHandle::Open(buffer)) = self.opened_buffers.get(&id) {
-                        if let Some(buffer) = buffer.upgrade(cx) {
+                        if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, ChannelBuffer::channel_changed);
                         }
                     }
@@ -1010,8 +1021,7 @@ impl ChannelStore {
                 }
 
                 cx.notify();
-            });
-            anyhow::Ok(())
+            })
         }))
     }
 }

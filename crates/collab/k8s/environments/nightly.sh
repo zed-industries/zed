@@ -1,0 +1,4 @@
+ZED_ENVIRONMENT=nightly
+RUST_LOG=info
+INVITE_LINK_PREFIX=https://zed.dev/invites/
+DATABASE_MAX_CONNECTIONS=10

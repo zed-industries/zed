@@ -402,7 +402,7 @@
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
-      "cmd-shift-f": "workspace::NewSearch",
+      "cmd-shift-f": "workspace::DeploySearch",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-t": "project_symbols::Toggle",
@@ -502,7 +502,7 @@
     }
   },
   {
-    "context": "Editor",
+    "context": "Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "cmd-f8": "editor::GoToHunk",

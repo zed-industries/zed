@@ -1,7 +1,8 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
-use gpui::{FontCache, TextLayoutCache};
+use gpui::{px, Pixels, TextSystem};
 use language::Point;
+
 use std::{ops::Range, sync::Arc};
 
 #[derive(Debug, PartialEq)]
@@ -13,9 +14,9 @@ pub enum FindRange {
 /// TextLayoutDetails encompasses everything we need to move vertically
 /// taking into account variable width characters.
 pub struct TextLayoutDetails {
-    pub font_cache: Arc<FontCache>,
-    pub text_layout_cache: Arc<TextLayoutCache>,
+    pub text_system: Arc<TextSystem>,
     pub editor_style: EditorStyle,
+    pub rem_size: Pixels,
 }
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
@@ -94,10 +95,10 @@ pub fn up_by_rows(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
-        SelectionGoal::HorizontalPosition(x) => x,
-        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
-        SelectionGoal::HorizontalRange { end, .. } => end,
-        _ => map.x_for_point(start, text_layout_details),
+        SelectionGoal::HorizontalPosition(x) => x.into(), // todo!("Can the fields in SelectionGoal by Pixels? We should extract a geometry crate and depend on that.")
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        SelectionGoal::HorizontalRange { end, .. } => end.into(),
+        _ => map.x_for_display_point(start, text_layout_details),
     };
 
     let prev_row = start.row().saturating_sub(row_count);
@@ -106,19 +107,22 @@ pub fn up_by_rows(
         Bias::Left,
     );
     if point.row() < start.row() {
-        *point.column_mut() = map.column_for_x(point.row(), goal_x, text_layout_details)
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
     } else if preserve_column_at_start {
         return (start, goal);
     } else {
         point = DisplayPoint::new(0, 0);
-        goal_x = 0.0;
+        goal_x = px(0.);
     }
 
     let mut clipped_point = map.clip_point(point, Bias::Left);
     if clipped_point.row() < point.row() {
         clipped_point = map.clip_point(point, Bias::Right);
     }
-    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
+    (
+        clipped_point,
+        SelectionGoal::HorizontalPosition(goal_x.into()),
+    )
 }
 
 pub fn down_by_rows(
@@ -130,28 +134,31 @@ pub fn down_by_rows(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
-        SelectionGoal::HorizontalPosition(x) => x,
-        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
-        SelectionGoal::HorizontalRange { end, .. } => end,
-        _ => map.x_for_point(start, text_layout_details),
+        SelectionGoal::HorizontalPosition(x) => x.into(),
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        SelectionGoal::HorizontalRange { end, .. } => end.into(),
+        _ => map.x_for_display_point(start, text_layout_details),
     };
 
     let new_row = start.row() + row_count;
     let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
-        *point.column_mut() = map.column_for_x(point.row(), goal_x, text_layout_details)
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
     } else if preserve_column_at_end {
         return (start, goal);
     } else {
         point = map.max_point();
-        goal_x = map.x_for_point(point, text_layout_details)
+        goal_x = map.x_for_display_point(point, text_layout_details)
     }
 
     let mut clipped_point = map.clip_point(point, Bias::Right);
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
     }
-    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
+    (
+        clipped_point,
+        SelectionGoal::HorizontalPosition(goal_x.into()),
+    )
 }
 
 pub fn line_beginning(
@@ -453,6 +460,8 @@ mod tests {
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
         Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
     };
+    use gpui::{font, Context as _};
+    use language::Capability;
     use project::Project;
     use settings::SettingsStore;
     use util::post_inc;
@@ -563,19 +572,12 @@ mod tests {
         init_test(cx);
 
         let input_text = "abcdefghijklmnopqrstuvwxys";
-        let family_id = cx
-            .font_cache()
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
+        let font = font("Helvetica");
+        let font_size = px(14.0);
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, None, 1, 1, cx));
+            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
 
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;
@@ -756,23 +758,16 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
         let window = cx.window.clone();
-        cx.update_window(window, |cx| {
+        _ = cx.update_window(window, |_, cx| {
             let text_layout_details =
-                editor.read_with(cx, |editor, cx| editor.text_layout_details(cx));
+                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
 
-            let family_id = cx
-                .font_cache()
-                .load_family(&["Helvetica"], &Default::default())
-                .unwrap();
-            let font_id = cx
-                .font_cache()
-                .select_font(family_id, &Default::default())
-                .unwrap();
+            let font = font("Helvetica");
 
             let buffer =
-                cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abc\ndefg\nhijkl\nmn"));
-            let multibuffer = cx.add_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(0);
+                cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "abc\ndefg\nhijkl\nmn"));
+            let multibuffer = cx.new_model(|cx| {
+                let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
                     [
@@ -790,19 +785,20 @@ mod tests {
                 multibuffer
             });
             let display_map =
-                cx.add_model(|cx| DisplayMap::new(multibuffer, font_id, 14.0, None, 2, 2, cx));
+                cx.new_model(|cx| DisplayMap::new(multibuffer, font, px(14.0), None, 2, 2, cx));
             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 
-            let col_2_x = snapshot.x_for_point(DisplayPoint::new(2, 2), &text_layout_details);
+            let col_2_x =
+                snapshot.x_for_display_point(DisplayPoint::new(2, 2), &text_layout_details);
 
             // Can't move up into the first excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
                     DisplayPoint::new(2, 2),
-                    SelectionGoal::HorizontalPosition(col_2_x),
+                    SelectionGoal::HorizontalPosition(col_2_x.0),
                     false,
                     &text_layout_details
                 ),
@@ -825,67 +821,70 @@ mod tests {
                 ),
             );
 
-            let col_4_x = snapshot.x_for_point(DisplayPoint::new(3, 4), &text_layout_details);
+            let col_4_x =
+                snapshot.x_for_display_point(DisplayPoint::new(3, 4), &text_layout_details);
 
             // Move up and down within first excerpt
             assert_eq!(
                 up(
                     &snapshot,
                     DisplayPoint::new(3, 4),
-                    SelectionGoal::HorizontalPosition(col_4_x),
+                    SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(2, 3),
-                    SelectionGoal::HorizontalPosition(col_4_x)
+                    SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
                     DisplayPoint::new(2, 3),
-                    SelectionGoal::HorizontalPosition(col_4_x),
+                    SelectionGoal::HorizontalPosition(col_4_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(3, 4),
-                    SelectionGoal::HorizontalPosition(col_4_x)
+                    SelectionGoal::HorizontalPosition(col_4_x.0)
                 ),
             );
 
-            let col_5_x = snapshot.x_for_point(DisplayPoint::new(6, 5), &text_layout_details);
+            let col_5_x =
+                snapshot.x_for_display_point(DisplayPoint::new(6, 5), &text_layout_details);
 
             // Move up and down across second excerpt's header
             assert_eq!(
                 up(
                     &snapshot,
                     DisplayPoint::new(6, 5),
-                    SelectionGoal::HorizontalPosition(col_5_x),
+                    SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(3, 4),
-                    SelectionGoal::HorizontalPosition(col_5_x)
+                    SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
                     DisplayPoint::new(3, 4),
-                    SelectionGoal::HorizontalPosition(col_5_x),
+                    SelectionGoal::HorizontalPosition(col_5_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(6, 5),
-                    SelectionGoal::HorizontalPosition(col_5_x)
+                    SelectionGoal::HorizontalPosition(col_5_x.0)
                 ),
             );
 
-            let max_point_x = snapshot.x_for_point(DisplayPoint::new(7, 2), &text_layout_details);
+            let max_point_x =
+                snapshot.x_for_display_point(DisplayPoint::new(7, 2), &text_layout_details);
 
             // Can't move down off the end
             assert_eq!(
@@ -898,28 +897,29 @@ mod tests {
                 ),
                 (
                     DisplayPoint::new(7, 2),
-                    SelectionGoal::HorizontalPosition(max_point_x)
+                    SelectionGoal::HorizontalPosition(max_point_x.0)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
                     DisplayPoint::new(7, 2),
-                    SelectionGoal::HorizontalPosition(max_point_x),
+                    SelectionGoal::HorizontalPosition(max_point_x.0),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(7, 2),
-                    SelectionGoal::HorizontalPosition(max_point_x)
+                    SelectionGoal::HorizontalPosition(max_point_x.0)
                 ),
             );
         });
     }
 
     fn init_test(cx: &mut gpui::AppContext) {
-        cx.set_global(SettingsStore::test(cx));
-        theme::init((), cx);
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         crate::init(cx);
         Project::init_settings(cx);
