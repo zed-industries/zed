@@ -24,12 +24,35 @@ pub struct ProjectPanelSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectPanelSettingsContent {
+    /// Customise default width (in pixels) taken by project panel
+    ///
+    /// Default: 240
     pub default_width: Option<f32>,
+    /// The position of project panel
+    ///
+    /// Default: left
     pub dock: Option<ProjectPanelDockPosition>,
+    /// Whether to show file icons in the project panel.
+    ///
+    /// Default: true
     pub file_icons: Option<bool>,
+    /// Whether to show folder icons or chevrons for directories in the project panel.
+    ///
+    /// Default: true
     pub folder_icons: Option<bool>,
+    /// Whether to show the git status in the project panel.
+    ///
+    /// Default: true
     pub git_status: Option<bool>,
+    /// Amount of indentation (in pixels) for nested items.
+    ///
+    /// Default: 20
     pub indent_size: Option<f32>,
+    /// Whether to reveal it in the project panel automatically,
+    /// when a corresponding project entry becomes active.
+    /// Gitignored entries are never auto revealed.
+    ///
+    /// Default: true
     pub auto_reveal_entries: Option<bool>,
 }
 

@@ -965,6 +965,7 @@ impl LocalWorktree {
         let entry = self.refresh_entry(path.clone(), None, cx);
 
         cx.spawn(|this, mut cx| async move {
+            let abs_path = abs_path?;
             let text = fs.load(&abs_path).await?;
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
@@ -1050,6 +1051,7 @@ impl LocalWorktree {
 
         cx.spawn(move |this, mut cx| async move {
             let entry = save.await?;
+            let abs_path = abs_path?;
             let this = this.upgrade().context("worktree dropped")?;
 
             let (entry_id, mtime, path) = match entry {
@@ -1139,9 +1141,9 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let write = cx.background_executor().spawn(async move {
             if is_dir {
-                fs.create_dir(&abs_path).await
+                fs.create_dir(&abs_path?).await
             } else {
-                fs.save(&abs_path, &Default::default(), Default::default())
+                fs.save(&abs_path?, &Default::default(), Default::default())
                     .await
             }
         });
@@ -1188,7 +1190,7 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let write = cx
             .background_executor()
-            .spawn(async move { fs.save(&abs_path, &text, line_ending).await });
+            .spawn(async move { fs.save(&abs_path?, &text, line_ending).await });
 
         cx.spawn(|this, mut cx| async move {
             write.await?;
@@ -1210,10 +1212,10 @@ impl LocalWorktree {
 
         let delete = cx.background_executor().spawn(async move {
             if entry.is_file() {
-                fs.remove_file(&abs_path, Default::default()).await?;
+                fs.remove_file(&abs_path?, Default::default()).await?;
             } else {
                 fs.remove_dir(
-                    &abs_path,
+                    &abs_path?,
                     RemoveOptions {
                         recursive: true,
                         ignore_if_not_exists: false,
@@ -1252,7 +1254,7 @@ impl LocalWorktree {
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
         let rename = cx.background_executor().spawn(async move {
-            fs.rename(&abs_old_path, &abs_new_path, Default::default())
+            fs.rename(&abs_old_path?, &abs_new_path?, Default::default())
                 .await
         });
 
@@ -1284,8 +1286,8 @@ impl LocalWorktree {
         let copy = cx.background_executor().spawn(async move {
             copy_recursive(
                 fs.as_ref(),
-                &abs_old_path,
-                &abs_new_path,
+                &abs_old_path?,
+                &abs_new_path?,
                 Default::default(),
             )
             .await
@@ -1609,11 +1611,17 @@ impl Snapshot {
         &self.abs_path
     }
 
-    pub fn absolutize(&self, path: &Path) -> PathBuf {
+    pub fn absolutize(&self, path: &Path) -> Result<PathBuf> {
+        if path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(anyhow!("invalid path"));
+        }
         if path.file_name().is_some() {
-            self.abs_path.join(path)
+            Ok(self.abs_path.join(path))
         } else {
-            self.abs_path.to_path_buf()
+            Ok(self.abs_path.to_path_buf())
         }
     }
 
@@ -2823,7 +2831,7 @@ impl language::LocalFile for File {
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
         cx.background_executor()
-            .spawn(async move { fs.load(&abs_path).await })
+            .spawn(async move { fs.load(&abs_path?).await })
     }
 
     fn buffer_reloaded(

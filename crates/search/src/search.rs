@@ -60,11 +60,11 @@ impl SearchOptions {
         }
     }
 
-    pub fn icon(&self) -> ui::Icon {
+    pub fn icon(&self) -> ui::IconName {
         match *self {
-            SearchOptions::WHOLE_WORD => ui::Icon::WholeWord,
-            SearchOptions::CASE_SENSITIVE => ui::Icon::CaseSensitive,
-            SearchOptions::INCLUDE_IGNORED => ui::Icon::FileGit,
+            SearchOptions::WHOLE_WORD => ui::IconName::WholeWord,
+            SearchOptions::CASE_SENSITIVE => ui::IconName::CaseSensitive,
+            SearchOptions::INCLUDE_IGNORED => ui::IconName::FileGit,
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }

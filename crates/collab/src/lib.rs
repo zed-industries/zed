@@ -88,7 +88,7 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
@@ -100,7 +100,7 @@ pub struct Config {
     pub live_kit_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
-    pub zed_environment: String,
+    pub zed_environment: Arc<str>,
 }
 
 impl Config {

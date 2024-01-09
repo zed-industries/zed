@@ -467,12 +467,11 @@ impl<V> View<V> {
                         }
                     }
 
-                    // todo!(start_waiting)
-                    // cx.borrow().foreground_executor().start_waiting();
+                    cx.borrow().background_executor().start_waiting();
                     rx.recv()
                         .await
                         .expect("view dropped with pending condition");
-                    // cx.borrow().foreground_executor().finish_waiting();
+                    cx.borrow().background_executor().finish_waiting();
                 }
             })
             .await

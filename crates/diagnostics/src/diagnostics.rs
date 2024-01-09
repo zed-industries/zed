@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, prelude::*, Icon, IconElement, Label};
+use ui::{h_stack, prelude::*, Icon, IconName, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -660,7 +660,7 @@ impl Item for ProjectDiagnosticsEditor {
                     then.child(
                         h_stack()
                             .gap_1()
-                            .child(IconElement::new(Icon::XCircle).color(Color::Error))
+                            .child(Icon::new(IconName::XCircle).color(Color::Error))
                             .child(Label::new(self.summary.error_count.to_string()).color(
                                 if selected {
                                     Color::Default
@@ -674,9 +674,7 @@ impl Item for ProjectDiagnosticsEditor {
                     then.child(
                         h_stack()
                             .gap_1()
-                            .child(
-                                IconElement::new(Icon::ExclamationTriangle).color(Color::Warning),
-                            )
+                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
                             .child(Label::new(self.summary.warning_count.to_string()).color(
                                 if selected {
                                     Color::Default
@@ -816,10 +814,10 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                 .flex_none()
                                 .map(|icon| {
                                     if diagnostic.severity == DiagnosticSeverity::ERROR {
-                                        icon.path(Icon::XCircle.path())
+                                        icon.path(IconName::XCircle.path())
                                             .text_color(Color::Error.color(cx))
                                     } else {
-                                        icon.path(Icon::ExclamationTriangle.path())
+                                        icon.path(IconName::ExclamationTriangle.path())
                                             .text_color(Color::Warning.color(cx))
                                     }
                                 }),

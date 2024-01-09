@@ -293,6 +293,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 
 [[package]]
+name = "assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "rust-embed",
+]
+
+[[package]]
 name = "assistant"
 version = "0.1.0"
 dependencies = [
@@ -677,6 +686,7 @@ dependencies = [
  "log",
  "menu",
  "project",
+ "schemars",
  "serde",
  "serde_derive",
  "serde_json",
@@ -1442,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1549,6 +1559,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "story",
  "theme",
  "theme_selector",
  "time",
@@ -1687,12 +1698,11 @@ dependencies = [
  "settings",
  "smol",
  "theme",
- "ui",
  "util",
 ]
 
 [[package]]
-name = "copilot_button"
+name = "copilot_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1705,6 +1715,7 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "ui",
  "util",
  "workspace",
  "zed_actions",
@@ -7437,6 +7448,7 @@ dependencies = [
  "backtrace-on-stack-overflow",
  "chrono",
  "clap 4.4.4",
+ "collab_ui",
  "dialoguer",
  "editor",
  "fuzzy",
@@ -9528,6 +9540,7 @@ dependencies = [
  "activity_indicator",
  "ai",
  "anyhow",
+ "assets",
  "assistant",
  "async-compression",
  "async-recursion 0.3.2",
@@ -9546,7 +9559,7 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot",
- "copilot_button",
+ "copilot_ui",
  "ctor",
  "db",
  "diagnostics",

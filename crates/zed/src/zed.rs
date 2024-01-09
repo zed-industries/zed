@@ -1,11 +1,9 @@
 mod app_menus;
-mod assets;
 pub mod languages;
 mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
-pub use assets::*;
 use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
@@ -18,6 +16,7 @@ pub use only_instance::*;
 pub use open_listener::*;
 
 use anyhow::{anyhow, Context as _};
+use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -120,8 +119,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         //         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
         //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
-        let copilot =
-            cx.new_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
+        let copilot = cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -766,7 +764,6 @@ fn open_bundled_file(
     .detach_and_log_err(cx);
 }
 
-// todo!()
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,6 +874,7 @@ mod tests {
         })
         .await
         .unwrap();
+        cx.background_executor.run_until_parked();
         assert_eq!(cx.read(|cx| cx.windows().len()), 2);
         let workspace_1 = cx
             .update(|cx| cx.windows()[0].downcast::<Workspace>())

@@ -1,3 +1,4 @@
+use crate::sign_in::CopilotCodeVerification;
 use anyhow::Result;
 use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
@@ -16,7 +17,9 @@ use util::{paths, ResultExt};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
-    ui::{popover_menu, ButtonCommon, Clickable, ContextMenu, Icon, IconButton, IconSize, Tooltip},
+    ui::{
+        popover_menu, ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, Tooltip,
+    },
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
@@ -50,15 +53,15 @@ impl Render for CopilotButton {
             .unwrap_or_else(|| all_language_settings.copilot_enabled(None, None));
 
         let icon = match status {
-            Status::Error(_) => Icon::CopilotError,
+            Status::Error(_) => IconName::CopilotError,
             Status::Authorized => {
                 if enabled {
-                    Icon::Copilot
+                    IconName::Copilot
                 } else {
-                    Icon::CopilotDisabled
+                    IconName::CopilotDisabled
                 }
             }
-            _ => Icon::CopilotInit,
+            _ => IconName::CopilotInit,
         };
 
         if let Status::Error(e) = status {
@@ -331,7 +334,9 @@ fn initiate_sign_in(cx: &mut WindowContext) {
         return;
     };
     let status = copilot.read(cx).status();
-
+    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+        return;
+    };
     match status {
         Status::Starting { task } => {
             let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
@@ -370,9 +375,12 @@ fn initiate_sign_in(cx: &mut WindowContext) {
             .detach();
         }
         _ => {
-            copilot
-                .update(cx, |copilot, cx| copilot.sign_in(cx))
-                .detach_and_log_err(cx);
+            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
+            workspace
+                .update(cx, |this, cx| {
+                    this.toggle_modal(cx, |cx| CopilotCodeVerification::new(&copilot, cx));
+                })
+                .ok();
         }
     }
 }
