@@ -21,9 +21,16 @@ pub enum LineHeightStyle {
 
 /// A common set of traits all labels must implement.
 pub trait LabelCommon {
+    /// Sets the size of the label using a [`LabelSize`].
     fn size(self, size: LabelSize) -> Self;
+
+    /// Sets the line height style of the label using a [`LineHeightStyle`].
     fn line_height_style(self, line_height_style: LineHeightStyle) -> Self;
+
+    /// Sets the color of the label using a [`Color`].
     fn color(self, color: Color) -> Self;
+
+    /// Sets the strikethrough property of the label.
     fn strikethrough(self, strikethrough: bool) -> Self;
 }
 

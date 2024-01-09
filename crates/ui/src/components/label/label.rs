@@ -10,18 +10,24 @@ use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 /// # Examples
 ///
 /// ```
-/// Label::new("Hello, World!")
+/// use ui::prelude::*;
+///
+/// Label::new("Hello, World!");
 /// ```
 ///
 /// **A colored label**, for example labeling a dangerous action:
 ///
 /// ```
+/// use ui::prelude::*;
+///
 /// let my_label = Label::new("Delete").color(Color::Error);
 /// ```
 ///
 /// **A label with a strikethrough**, for example labeling something that has been deleted:
 ///
 /// ```
+/// use ui::prelude::*;
+///
 /// let my_label = Label::new("Deleted").strikethrough(true);
 /// ```
 #[derive(IntoElement)]
@@ -31,11 +37,13 @@ pub struct Label {
 }
 
 impl Label {
-    /// Create a new `Label` with the given text.
+    /// Create a new [`Label`] with the given text.
     ///
     /// # Examples
     ///
     /// ```
+    /// use ui::prelude::*;
+    ///
     /// let my_label = Label::new("Hello, World!");
     /// ```
     pub fn new(label: impl Into<SharedString>) -> Self {
@@ -52,7 +60,9 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
-    /// let my_label = Label::new("Hello, World!").size(LabelSize::Large);
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").size(LabelSize::Small);
     /// ```
     fn size(mut self, size: LabelSize) -> Self {
         self.base = self.base.size(size);
@@ -64,7 +74,9 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
-    /// let my_label = Label::new("Hello, World!").line_height_style(LineHeightStyle::Normal);
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").line_height_style(LineHeightStyle::UiLabel);
     /// ```
     fn line_height_style(mut self, line_height_style: LineHeightStyle) -> Self {
         self.base = self.base.line_height_style(line_height_style);
@@ -76,7 +88,9 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
-    /// let my_label = Label::new("Hello, World!").color(Color::Primary);
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").color(Color::Accent);
     /// ```
     fn color(mut self, color: Color) -> Self {
         self.base = self.base.color(color);
@@ -88,6 +102,8 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
+    /// use ui::prelude::*;
+    ///
     /// let my_label = Label::new("Hello, World!").strikethrough(true);
     /// ```
     fn strikethrough(mut self, strikethrough: bool) -> Self {
