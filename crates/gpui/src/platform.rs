@@ -44,8 +44,6 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
 }
 
-pub type DrawWindow = Box<dyn FnMut() -> Result<Scene>>;
-
 pub(crate) trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
@@ -66,7 +64,6 @@ pub(crate) trait Platform: 'static {
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
-        draw: DrawWindow,
     ) -> Box<dyn PlatformWindow>;
 
     fn set_display_link_output_callback(
@@ -157,6 +154,7 @@ pub trait PlatformWindow {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
+    fn on_request_frame(&self, callback: Box<dyn FnMut()>);
     fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
@@ -167,6 +165,7 @@ pub trait PlatformWindow {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn invalidate(&self);
+    fn draw(&self, scene: &Scene);
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 

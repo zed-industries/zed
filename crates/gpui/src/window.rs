@@ -337,14 +337,7 @@ impl Window {
         options: WindowOptions,
         cx: &mut AppContext,
     ) -> Self {
-        let platform_window = cx.platform.open_window(
-            handle,
-            options,
-            Box::new({
-                let mut cx = cx.to_async();
-                move || handle.update(&mut cx, |_, cx| cx.draw())
-            }),
-        );
+        let platform_window = cx.platform.open_window(handle, options);
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -353,6 +346,12 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
 
+        platform_window.on_request_frame(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle.update(&mut cx, |_, cx| cx.draw()).log_err();
+            }
+        }));
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |_, _| {
@@ -1358,7 +1357,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Draw pixels to the display for this window based on the contents of its scene.
-    pub(crate) fn draw(&mut self) -> Scene {
+    pub(crate) fn draw(&mut self) {
         println!("=====================");
         self.window.dirty = false;
         self.window.drawing = true;
@@ -1470,7 +1469,7 @@ impl<'a> WindowContext<'a> {
         self.window.drawing = false;
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
-        scene
+        self.window.platform_window.draw(&scene);
     }
 
     /// Dispatch a mouse or keyboard event on the window.

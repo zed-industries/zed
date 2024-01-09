@@ -1,7 +1,6 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    Keymap, Platform, PlatformDisplay, PlatformTextSystem, Scene, TestDisplay, TestWindow,
-    WindowOptions,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -162,7 +161,6 @@ impl Platform for TestPlatform {
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
-        _draw: Box<dyn FnMut() -> Result<Scene>>,
     ) -> Box<dyn crate::PlatformWindow> {
         let window = TestWindow::new(
             options,

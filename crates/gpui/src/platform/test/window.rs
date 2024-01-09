@@ -218,6 +218,8 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
+    fn on_request_frame(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_input(&self, callback: Box<dyn FnMut(crate::InputEvent) -> bool>) {
         self.0.lock().input_callback = Some(callback)
     }
@@ -254,9 +256,9 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn invalidate(&self) {
-        // (self.draw.lock())().unwrap();
-    }
+    fn invalidate(&self) {}
+
+    fn draw(&self, _scene: &crate::Scene) {}
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
