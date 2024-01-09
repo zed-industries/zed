@@ -4,7 +4,7 @@ use crate::{
 };
 use collections::FxHashMap;
 use parking_lot::Mutex;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::{
     any::{Any, TypeId},
     mem,
@@ -18,6 +18,7 @@ pub struct DispatchNodeId(usize);
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
+    view_stack: Vec<EntityId>,
     nodes: Vec<DispatchNode>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
@@ -49,6 +50,7 @@ impl DispatchTree {
         Self {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
+            view_stack: Vec::new(),
             nodes: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
@@ -60,8 +62,9 @@ impl DispatchTree {
 
     pub fn clear(&mut self) {
         self.node_stack.clear();
-        self.nodes.clear();
         self.context_stack.clear();
+        self.view_stack.clear();
+        self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
         self.keystroke_matchers.clear();
@@ -82,10 +85,14 @@ impl DispatchTree {
     }
 
     pub fn pop_node(&mut self) {
-        let node_id = self.node_stack.pop().unwrap();
-        if self.nodes[node_id.0].context.is_some() {
+        let node = &self.nodes[self.active_node_id().0];
+        if node.context.is_some() {
             self.context_stack.pop();
         }
+        if node.view_id.is_some() {
+            self.view_stack.pop();
+        }
+        self.node_stack.pop();
     }
 
     fn move_node(&mut self, source_node: &mut DispatchNode) {
@@ -102,7 +109,7 @@ impl DispatchTree {
         target_node.action_listeners = mem::take(&mut source_node.action_listeners);
     }
 
-    pub fn graft(&mut self, view_id: EntityId, source: &mut Self) {
+    pub fn graft(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
         let view_source_node_id = source
             .view_node_ids
             .get(&view_id)
@@ -110,6 +117,7 @@ impl DispatchTree {
         let view_source_node = &mut source.nodes[view_source_node_id.0];
         self.move_node(view_source_node);
 
+        let mut grafted_view_ids = smallvec![view_id];
         let mut source_stack = vec![*view_source_node_id];
         for (source_node_id, source_node) in source
             .nodes
@@ -130,12 +138,17 @@ impl DispatchTree {
             } else {
                 source_stack.push(source_node_id);
                 self.move_node(source_node);
+                if let Some(view_id) = source_node.view_id {
+                    grafted_view_ids.push(view_id);
+                }
             }
         }
 
         while !source_stack.is_empty() {
             self.pop_node();
         }
+
+        grafted_view_ids
     }
 
     pub fn clear_pending_keystrokes(&mut self) {
@@ -192,6 +205,7 @@ impl DispatchTree {
         let node_id = self.active_node_id();
         self.active_node().view_id = Some(view_id);
         self.view_node_ids.insert(view_id, node_id);
+        self.view_stack.push(view_id);
     }
 
     pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {
@@ -320,6 +334,24 @@ impl DispatchTree {
         }
         focus_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         focus_path
+    }
+
+    pub fn view_path(&self, view_id: EntityId) -> SmallVec<[EntityId; 8]> {
+        let mut view_path: SmallVec<[EntityId; 8]> = SmallVec::new();
+        let mut current_node_id = self.view_node_ids.get(&view_id).copied();
+        while let Some(node_id) = current_node_id {
+            let node = self.node(node_id);
+            if let Some(view_id) = node.view_id {
+                view_path.push(view_id);
+            }
+            current_node_id = node.parent;
+        }
+        view_path.reverse(); // Reverse the path so it goes from the root to the view node.
+        view_path
+    }
+
+    pub fn active_view_id(&self) -> Option<EntityId> {
+        self.view_stack.last().copied()
     }
 
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {

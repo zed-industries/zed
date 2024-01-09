@@ -295,8 +295,6 @@ pub(crate) struct Frame {
     pub(crate) next_stacking_order_id: u32,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
-    pub(crate) view_parents: FxHashMap<EntityId, EntityId>,
-    pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
 }
 
@@ -313,8 +311,6 @@ impl Frame {
             depth_map: Default::default(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
-            view_parents: FxHashMap::default(),
-            view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
         }
     }
@@ -325,8 +321,6 @@ impl Frame {
         self.dispatch_tree.clear();
         self.depth_map.clear();
         self.next_stacking_order_id = 0;
-        self.view_parents.clear();
-        debug_assert!(self.view_stack.is_empty());
         self.reused_views.clear();
     }
 
@@ -886,8 +880,8 @@ impl<'a> WindowContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
+        let view_id = self.active_view_id();
         let order = self.window.next_frame.z_index_stack.clone();
-        let view_id = *self.window.next_frame.view_stack.last().unwrap();
         self.window
             .next_frame
             .mouse_listeners
@@ -1029,6 +1023,7 @@ impl<'a> WindowContext<'a> {
     ) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let view_id = self.active_view_id();
         let window = &mut *self.window;
         for shadow in shadows {
             let mut shadow_bounds = bounds;
@@ -1037,6 +1032,8 @@ impl<'a> WindowContext<'a> {
             window.next_frame.scene_builder.insert(
                 &window.next_frame.z_index_stack,
                 Shadow {
+                    view_id: view_id.as_u64() as u32,
+                    layer_id: 0,
                     order: 0,
                     bounds: shadow_bounds.scale(scale_factor),
                     content_mask: content_mask.scale(scale_factor),
@@ -1054,11 +1051,14 @@ impl<'a> WindowContext<'a> {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let view_id = self.active_view_id();
 
         let window = &mut *self.window;
         window.next_frame.scene_builder.insert(
             &window.next_frame.z_index_stack,
             Quad {
+                view_id: view_id.as_u64() as u32,
+                layer_id: 0,
                 order: 0,
                 bounds: quad.bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -1074,8 +1074,11 @@ impl<'a> WindowContext<'a> {
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let view_id = self.active_view_id();
+
         path.content_mask = content_mask;
         path.color = color.into();
+        path.view_id = view_id.as_u64() as u32;
         let window = &mut *self.window;
         window
             .next_frame
@@ -1101,10 +1104,14 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
+        let view_id = self.active_view_id();
+
         let window = &mut *self.window;
         window.next_frame.scene_builder.insert(
             &window.next_frame.z_index_stack,
             Underline {
+                view_id: view_id.as_u64() as u32,
+                layer_id: 0,
                 order: 0,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -1154,10 +1161,13 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let view_id = self.active_view_id();
             let window = &mut *self.window;
             window.next_frame.scene_builder.insert(
                 &window.next_frame.z_index_stack,
                 MonochromeSprite {
+                    view_id: view_id.as_u64() as u32,
+                    layer_id: 0,
                     order: 0,
                     bounds,
                     content_mask,
@@ -1204,11 +1214,14 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let view_id = self.active_view_id();
             let window = &mut *self.window;
 
             window.next_frame.scene_builder.insert(
                 &window.next_frame.z_index_stack,
                 PolychromeSprite {
+                    view_id: view_id.as_u64() as u32,
+                    layer_id: 0,
                     order: 0,
                     bounds,
                     corner_radii: Default::default(),
@@ -1246,11 +1259,14 @@ impl<'a> WindowContext<'a> {
                     Ok((params.size, Cow::Owned(bytes)))
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
+        let view_id = self.active_view_id();
 
         let window = &mut *self.window;
         window.next_frame.scene_builder.insert(
             &window.next_frame.z_index_stack,
             MonochromeSprite {
+                view_id: view_id.as_u64() as u32,
+                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -1282,11 +1298,14 @@ impl<'a> WindowContext<'a> {
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
+        let view_id = self.active_view_id();
 
         let window = &mut *self.window;
         window.next_frame.scene_builder.insert(
             &window.next_frame.z_index_stack,
             PolychromeSprite {
+                view_id: view_id.as_u64() as u32,
+                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -1303,10 +1322,13 @@ impl<'a> WindowContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
+        let view_id = self.active_view_id();
         let window = &mut *self.window;
         window.next_frame.scene_builder.insert(
             &window.next_frame.z_index_stack,
             Surface {
+                view_id: view_id.as_u64() as u32,
+                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -1316,13 +1338,23 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn reuse_geometry(&mut self) {
+        let view_id = self.active_view_id();
         let window = &mut self.window;
-        let view_id = *window.next_frame.view_stack.last().unwrap();
-        assert!(window.next_frame.reused_views.insert(view_id));
-        window
+        let grafted_view_ids = window
             .next_frame
             .dispatch_tree
-            .graft(view_id, &mut window.rendered_frame.dispatch_tree)
+            .graft(view_id, &mut window.rendered_frame.dispatch_tree);
+        for view_id in grafted_view_ids {
+            assert!(window.next_frame.reused_views.insert(view_id));
+        }
+    }
+
+    fn active_view_id(&self) -> EntityId {
+        self.window
+            .next_frame
+            .dispatch_tree
+            .active_view_id()
+            .expect("a view should always be active")
     }
 
     /// Draw pixels to the display for this window based on the contents of its scene.
@@ -1375,6 +1407,7 @@ impl<'a> WindowContext<'a> {
                     .draw(active_tooltip.cursor_offset, available_space, cx);
             });
         }
+        self.window.dirty_views.clear();
 
         self.window
             .next_frame
@@ -1385,6 +1418,7 @@ impl<'a> WindowContext<'a> {
             );
         self.window.next_frame.focus = self.window.focus;
         self.window.root_view = Some(root_view);
+
         for (type_id, listeners) in &mut self.window.rendered_frame.mouse_listeners {
             let next_listeners = self
                 .window
@@ -1434,7 +1468,6 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.drawing = false;
-        self.window.dirty_views.clear();
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
         scene
@@ -2132,9 +2165,13 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     }
 
     fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window_mut().next_frame.view_stack.push(view_id);
+        self.window_mut().next_frame.dispatch_tree.push_node(None);
+        self.window_mut()
+            .next_frame
+            .dispatch_tree
+            .associate_view(view_id);
         let result = f(self);
-        self.window_mut().next_frame.view_stack.pop();
+        self.window_mut().next_frame.dispatch_tree.pop_node();
         result
     }
 
@@ -2495,17 +2532,13 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     pub fn notify(&mut self) {
-        let mut dirty_view_id = Some(self.view.entity_id());
-        while let Some(view_id) = dirty_view_id {
-            if self.window_cx.window.dirty_views.insert(view_id) {
-                dirty_view_id = self
-                    .window_cx
-                    .window
-                    .rendered_frame
-                    .view_parents
-                    .get(&view_id)
-                    .copied();
-            } else {
+        for view_id in self
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .view_path(self.view.entity_id())
+        {
+            if !self.window.dirty_views.insert(view_id) {
                 break;
             }
         }
