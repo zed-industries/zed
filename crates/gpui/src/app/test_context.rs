@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
@@ -9,13 +11,19 @@ use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
 use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
+/// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
+/// an implementation of `Context` with additional methods that are useful in tests.
 #[derive(Clone)]
 pub struct TestAppContext {
+    #[doc(hidden)]
     pub app: Rc<AppCell>,
+    #[doc(hidden)]
     pub background_executor: BackgroundExecutor,
+    #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
+    #[doc(hidden)]
     pub dispatcher: TestDispatcher,
-    pub test_platform: Rc<TestPlatform>,
+    test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
 }
 
@@ -76,6 +84,7 @@ impl Context for TestAppContext {
 }
 
 impl TestAppContext {
+    /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn new(dispatcher: TestDispatcher) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
@@ -95,38 +104,47 @@ impl TestAppContext {
         }
     }
 
+    /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
     pub fn new_app(&self) -> TestAppContext {
         Self::new(self.dispatcher.clone())
     }
 
+    /// Simulates quitting the app.
     pub fn quit(&self) {
         self.app.borrow_mut().shutdown();
     }
 
+    /// Schedules all windows to be redrawn on the next effect cycle.
     pub fn refresh(&mut self) -> Result<()> {
         let mut app = self.app.borrow_mut();
         app.refresh();
         Ok(())
     }
 
+    /// Returns an executor (for running tasks in the background)
     pub fn executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
 
+    /// Returns an executor (for running tasks on the main thread)
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
     }
 
+    /// Gives you an `&mut AppContext` for the duration of the closure
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> R {
         let mut cx = self.app.borrow_mut();
         cx.update(f)
     }
 
+    /// Gives you an `&AppContext` for the duration of the closure
     pub fn read<R>(&self, f: impl FnOnce(&AppContext) -> R) -> R {
         let cx = self.app.borrow();
         f(&*cx)
     }
 
+    /// Adds a new window. The Window will always be backed by a `TestWindow` which
+    /// can be retrieved with `self.test_window(handle)`
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
@@ -136,12 +154,16 @@ impl TestAppContext {
         cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window))
     }
 
+    /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> AnyWindowHandle {
         let mut cx = self.app.borrow_mut();
         cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| EmptyView {}))
             .any_handle
     }
 
+    /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
+    /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
+    /// the returned one. `let (view, cx) = cx.add_window_view(...);`
     pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
@@ -156,18 +178,23 @@ impl TestAppContext {
         (view, Box::leak(cx))
     }
 
+    /// returns the TextSystem
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }
 
+    /// Simulates writing to the platform clipboard
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.test_platform.write_to_clipboard(item)
     }
 
+    /// Simulates reading from the platform clipboard.
+    /// This will return the most recent value from `write_to_clipboard`.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.test_platform.read_from_clipboard()
     }
 
+    /// Simulates choosing a File in the platform's "Open" dialog.
     pub fn simulate_new_path_selection(
         &self,
         select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
@@ -175,22 +202,27 @@ impl TestAppContext {
         self.test_platform.simulate_new_path_selection(select_path);
     }
 
+    /// Simulates clicking a button in an platform-level alert dialog.
     pub fn simulate_prompt_answer(&self, button_ix: usize) {
         self.test_platform.simulate_prompt_answer(button_ix);
     }
 
+    /// Returns true if there's an alert dialog open.
     pub fn has_pending_prompt(&self) -> bool {
         self.test_platform.has_pending_prompt()
     }
 
+    /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Returns all windows open in the test.
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.app.borrow().windows().clone()
     }
 
+    /// Run the given task on the main thread.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
@@ -199,16 +231,20 @@ impl TestAppContext {
         self.foreground_executor.spawn(f(self.to_async()))
     }
 
+    /// true if the given global is defined
     pub fn has_global<G: 'static>(&self) -> bool {
         let app = self.app.borrow();
         app.has_global::<G>()
     }
 
+    /// runs the given closure with a reference to the global
+    /// panics if `has_global` would return false.
     pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
         let app = self.app.borrow();
         read(app.global(), &app)
     }
 
+    /// runs the given closure with a reference to the global (if set)
     pub fn try_read_global<G: 'static, R>(
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
@@ -217,11 +253,13 @@ impl TestAppContext {
         Some(read(lock.try_global()?, &lock))
     }
 
+    /// sets the global in this context.
     pub fn set_global<G: 'static>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
         lock.set_global(global);
     }
 
+    /// updates the global in this context. (panics if `has_global` would return false)
     pub fn update_global<G: 'static, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
@@ -230,6 +268,8 @@ impl TestAppContext {
         lock.update_global(update)
     }
 
+    /// Returns an `AsyncAppContext` which can be used to run tasks that expect to be on a background
+    /// thread on the current thread in tests.
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
             app: Rc::downgrade(&self.app),
@@ -238,6 +278,7 @@ impl TestAppContext {
         }
     }
 
+    /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
         A: Action,
@@ -251,7 +292,8 @@ impl TestAppContext {
 
     /// simulate_keystrokes takes a space-separated list of keys to type.
     /// cx.simulate_keystrokes("cmd-shift-p b k s p enter")
-    /// will run backspace on the current editor through the command palette.
+    /// in Zed, this will run backspace on the current editor through the command palette.
+    /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
             .split(" ")
@@ -266,7 +308,8 @@ impl TestAppContext {
 
     /// simulate_input takes a string of text to type.
     /// cx.simulate_input("abc")
-    /// will type abc into your current editor.
+    /// will type abc into your current editor
+    /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
         for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
             self.dispatch_keystroke(window, keystroke.into(), false);
@@ -275,6 +318,7 @@ impl TestAppContext {
         self.background_executor.run_until_parked()
     }
 
+    /// dispatches a single Keystroke (see also `simulate_keystrokes` and `simulate_input`)
     pub fn dispatch_keystroke(
         &mut self,
         window: AnyWindowHandle,
@@ -285,6 +329,7 @@ impl TestAppContext {
             .simulate_keystroke(keystroke, is_held)
     }
 
+    /// Returns the `TestWindow` backing the given handle.
     pub fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app
             .borrow_mut()
@@ -299,6 +344,7 @@ impl TestAppContext {
             .clone()
     }
 
+    /// Returns a stream of notifications whenever the View or Model is updated.
     pub fn notifications<T: 'static>(&mut self, entity: &impl Entity<T>) -> impl Stream<Item = ()> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
@@ -315,6 +361,7 @@ impl TestAppContext {
         rx
     }
 
+    /// Retuens a stream of events emitted by the given Model.
     pub fn events<Evt, T: 'static + EventEmitter<Evt>>(
         &mut self,
         entity: &Model<T>,
@@ -333,6 +380,8 @@ impl TestAppContext {
         rx
     }
 
+    /// Runs until the given condition becomes true. (Prefer `run_until_parked` if you
+    /// don't need to jump in at a specific time).
     pub async fn condition<T: 'static>(
         &mut self,
         model: &Model<T>,
@@ -362,6 +411,7 @@ impl TestAppContext {
 }
 
 impl<T: Send> Model<T> {
+    /// Block until the next event is emitted by the model, then return it.
     pub fn next_event<Evt>(&self, cx: &mut TestAppContext) -> Evt
     where
         Evt: Send + Clone + 'static,
@@ -391,6 +441,7 @@ impl<T: Send> Model<T> {
 }
 
 impl<V: 'static> View<V> {
+    /// Returns a future that resolves when the view is next updated.
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
         use postage::prelude::{Sink as _, Stream as _};
 
@@ -417,6 +468,7 @@ impl<V: 'static> View<V> {
 }
 
 impl<V> View<V> {
+    /// Returns a future that resolves when the condition becomes true.
     pub fn condition<Evt>(
         &self,
         cx: &TestAppContext,
@@ -483,6 +535,8 @@ impl<V> View<V> {
 
 use derive_more::{Deref, DerefMut};
 #[derive(Deref, DerefMut, Clone)]
+/// A VisualTestContext is the test-equivalent of a `WindowContext`. It allows you to
+/// run window-specific test code.
 pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
@@ -491,10 +545,14 @@ pub struct VisualTestContext {
 }
 
 impl<'a> VisualTestContext {
+    /// Provides the `WindowContext` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
 
+    /// Create a new VisualTestContext. You would typically shadow the passed in
+    /// TestAppContext with this, as this is typically more useful.
+    /// `let cx = VisualTestContext::from_window(window, cx);`
     pub fn from_window(window: AnyWindowHandle, cx: &TestAppContext) -> Self {
         Self {
             cx: cx.clone(),
@@ -502,10 +560,12 @@ impl<'a> VisualTestContext {
         }
     }
 
+    /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&self) {
         self.cx.background_executor.run_until_parked();
     }
 
+    /// Dispatch the action to the currently focused node.
     pub fn dispatch_action<A>(&mut self, action: A)
     where
         A: Action,
@@ -513,24 +573,32 @@ impl<'a> VisualTestContext {
         self.cx.dispatch_action(self.window, action)
     }
 
+    /// Read the title off the window (set by `WindowContext#set_window_title`)
     pub fn window_title(&mut self) -> Option<String> {
         self.cx.test_window(self.window).0.lock().title.clone()
     }
 
+    /// Simulate a sequence of keystrokes `cx.simulate_keystrokes("cmd-p escape")`
+    /// Automatically runs until parked.
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
         self.cx.simulate_keystrokes(self.window, keystrokes)
     }
 
+    /// Simulate typing text `cx.simulate_input("hello")`
+    /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
     }
 
+    /// Simulates the user blurring the window.
     pub fn deactivate_window(&mut self) {
         if Some(self.window) == self.test_platform.active_window() {
             self.test_platform.set_active_window(None)
         }
         self.background_executor.run_until_parked();
     }
+
+    /// Simulates the user closing the window.
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
         let handler = self
@@ -667,6 +735,7 @@ impl VisualContext for VisualTestContext {
 }
 
 impl AnyWindowHandle {
+    /// Creates the given view in this window.
     pub fn build_view<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
@@ -676,6 +745,7 @@ impl AnyWindowHandle {
     }
 }
 
+/// An EmptyView for testing.
 pub struct EmptyView {}
 
 impl Render for EmptyView {

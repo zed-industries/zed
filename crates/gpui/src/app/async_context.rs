@@ -82,6 +82,7 @@ impl Context for AsyncAppContext {
 }
 
 impl AsyncAppContext {
+    /// Schedules all windows in the application to be redrawn.
     pub fn refresh(&mut self) -> Result<()> {
         let app = self
             .app
@@ -92,14 +93,17 @@ impl AsyncAppContext {
         Ok(())
     }
 
+    /// Get an executor which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
     }
 
+    /// Get an executor which can be used to spawn futures in the foreground.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
     }
 
+    /// Invoke the given function in the context of the app, then flush any effects produced during its invocation.
     pub fn update<R>(&self, f: impl FnOnce(&mut AppContext) -> R) -> Result<R> {
         let app = self
             .app
@@ -109,6 +113,7 @@ impl AsyncAppContext {
         Ok(f(&mut lock))
     }
 
+    /// Open a window with the given options based on the root view returned by the given function.
     pub fn open_window<V>(
         &self,
         options: crate::WindowOptions,
@@ -125,6 +130,7 @@ impl AsyncAppContext {
         Ok(lock.open_window(options, build_root_view))
     }
 
+    /// Schedule a future to be polled in the background.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
