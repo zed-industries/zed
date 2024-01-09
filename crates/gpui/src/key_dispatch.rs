@@ -192,9 +192,8 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                for i in 1..context_stack.len() {
-                    dbg!(i);
-                    let context = &context_stack[0..i];
+                for i in 0..context_stack.len() {
+                    let context = &context_stack[0..=i];
                     if keymap.binding_enabled(binding, context) {
                         return true;
                     }
@@ -333,36 +332,26 @@ mod tests {
 
     #[test]
     fn test_keybinding_for_action_bounds() {
-        dbg!("got here");
-
         let keymap = Keymap::new(vec![KeyBinding::new(
             "cmd-n",
             TestAction,
             Some("ProjectPanel"),
         )]);
-        dbg!("got here");
 
         let mut registry = ActionRegistry::default();
-        dbg!("got here");
 
         registry.load_action::<TestAction>();
 
-        dbg!("got here");
-
         let keymap = Arc::new(Mutex::new(keymap));
-        dbg!("got here");
 
         let tree = DispatchTree::new(keymap, Rc::new(registry));
 
-        dbg!("got here");
-        let keybinding = tree.bindings_for_action(
-            &TestAction,
-            &vec![
-                KeyContext::parse(",").unwrap(),
-                KeyContext::parse("Workspace").unwrap(),
-                KeyContext::parse("ProjectPanel").unwrap(),
-            ],
-        );
+        let contexts = vec![
+            KeyContext::parse("Workspace").unwrap(),
+            KeyContext::parse("ProjectPanel").unwrap(),
+        ];
+
+        let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
         assert!(keybinding[0].action.partial_eq(&TestAction))
     }
