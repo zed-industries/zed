@@ -285,7 +285,8 @@ impl Element for AnyView {
                     && cache_key.text_style == cx.text_style()
                     && !cx.window.dirty_views.contains(&self.entity_id())
                 {
-                    println!("could reuse geometry for view {}", self.entity_id());
+                    cx.reuse_geometry();
+                    return;
                 }
             }
 

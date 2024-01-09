@@ -1,12 +1,13 @@
 use crate::{
-    arena::ArenaRef, Action, ActionRegistry, DispatchPhase, FocusId, KeyBinding, KeyContext,
-    KeyMatch, Keymap, Keystroke, KeystrokeMatcher, WindowContext,
+    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, KeyMatch,
+    Keymap, Keystroke, KeystrokeMatcher, WindowContext,
 };
-use collections::HashMap;
+use collections::FxHashMap;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    mem,
     rc::Rc,
     sync::Arc,
 };
@@ -18,8 +19,9 @@ pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
     nodes: Vec<DispatchNode>,
-    focusable_node_ids: HashMap<FocusId, DispatchNodeId>,
-    keystroke_matchers: HashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
+    focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
+    view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
+    keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Arc<Mutex<Keymap>>,
     action_registry: Rc<ActionRegistry>,
 }
@@ -30,15 +32,16 @@ pub(crate) struct DispatchNode {
     pub action_listeners: Vec<DispatchActionListener>,
     pub context: Option<KeyContext>,
     focus_id: Option<FocusId>,
+    view_id: Option<EntityId>,
     parent: Option<DispatchNodeId>,
 }
 
-type KeyListener = ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
+type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
     pub(crate) action_type: TypeId,
-    pub(crate) listener: ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+    pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
 }
 
 impl DispatchTree {
@@ -47,8 +50,9 @@ impl DispatchTree {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
             nodes: Vec::new(),
-            focusable_node_ids: HashMap::default(),
-            keystroke_matchers: HashMap::default(),
+            focusable_node_ids: FxHashMap::default(),
+            view_node_ids: FxHashMap::default(),
+            keystroke_matchers: FxHashMap::default(),
             keymap,
             action_registry,
         }
@@ -59,6 +63,7 @@ impl DispatchTree {
         self.nodes.clear();
         self.context_stack.clear();
         self.focusable_node_ids.clear();
+        self.view_node_ids.clear();
         self.keystroke_matchers.clear();
     }
 
@@ -80,6 +85,56 @@ impl DispatchTree {
         let node_id = self.node_stack.pop().unwrap();
         if self.nodes[node_id.0].context.is_some() {
             self.context_stack.pop();
+        }
+    }
+
+    fn move_node(&mut self, source_node: &mut DispatchNode) {
+        self.push_node(source_node.context.take());
+        if let Some(focus_id) = source_node.focus_id {
+            self.make_focusable(focus_id);
+        }
+        if let Some(view_id) = source_node.view_id {
+            self.associate_view(view_id);
+        }
+
+        let target_node = self.active_node();
+        target_node.key_listeners = mem::take(&mut source_node.key_listeners);
+        target_node.action_listeners = mem::take(&mut source_node.action_listeners);
+    }
+
+    pub fn graft(&mut self, view_id: EntityId, source: &mut Self) {
+        let view_source_node_id = source
+            .view_node_ids
+            .get(&view_id)
+            .expect("view should exist in previous dispatch tree");
+        let view_source_node = &mut source.nodes[view_source_node_id.0];
+        self.move_node(view_source_node);
+
+        let mut source_stack = vec![*view_source_node_id];
+        for (source_node_id, source_node) in source
+            .nodes
+            .iter_mut()
+            .enumerate()
+            .skip(view_source_node_id.0 + 1)
+        {
+            let source_node_id = DispatchNodeId(source_node_id);
+            while let Some(source_ancestor) = source_stack.last() {
+                if source_node.parent != Some(*source_ancestor) {
+                    source_stack.pop();
+                    self.pop_node();
+                }
+            }
+
+            if source_stack.is_empty() {
+                break;
+            } else {
+                source_stack.push(source_node_id);
+                self.move_node(source_node);
+            }
+        }
+
+        while !source_stack.is_empty() {
+            self.pop_node();
         }
     }
 
@@ -117,7 +172,7 @@ impl DispatchTree {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        listener: ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
     ) {
         self.active_node()
             .action_listeners
@@ -131,6 +186,12 @@ impl DispatchTree {
         let node_id = self.active_node_id();
         self.active_node().focus_id = Some(focus_id);
         self.focusable_node_ids.insert(focus_id, node_id);
+    }
+
+    pub fn associate_view(&mut self, view_id: EntityId) {
+        let node_id = self.active_node_id();
+        self.active_node().view_id = Some(view_id);
+        self.view_node_ids.insert(view_id, node_id);
     }
 
     pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {
