@@ -76,30 +76,33 @@ impl Notification {
     }
 }
 
-#[test]
-fn test_notification() {
-    // Notifications can be serialized and deserialized.
-    for notification in [
-        Notification::ContactRequest { sender_id: 1 },
-        Notification::ContactRequestAccepted { responder_id: 2 },
-        Notification::ChannelInvitation {
-            channel_id: 100,
-            channel_name: "the-channel".into(),
-            inviter_id: 50,
-        },
-        Notification::ChannelMessageMention {
-            sender_id: 200,
-            channel_id: 30,
-            message_id: 1,
-        },
-    ] {
-        let message = notification.to_proto();
-        let deserialized = Notification::from_proto(&message).unwrap();
-        assert_eq!(deserialized, notification);
-    }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_notification() {
+        // Notifications can be serialized and deserialized.
+        for notification in [
+            Notification::ContactRequest { sender_id: 1 },
+            Notification::ContactRequestAccepted { responder_id: 2 },
+            Notification::ChannelInvitation {
+                channel_id: 100,
+                channel_name: "the-channel".into(),
+                inviter_id: 50,
+            },
+            Notification::ChannelMessageMention {
+                sender_id: 200,
+                channel_id: 30,
+                message_id: 1,
+            },
+        ] {
+            let message = notification.to_proto();
+            let deserialized = Notification::from_proto(&message).unwrap();
+            assert_eq!(deserialized, notification);
+        }
 
-    // When notifications are serialized, the `kind` and `actor_id` fields are
-    // stored separately, and do not appear redundantly in the JSON.
-    let notification = Notification::ContactRequest { sender_id: 1 };
-    assert_eq!(notification.to_proto().content, "{}");
+        // When notifications are serialized, the `kind` and `actor_id` fields are
+        // stored separately, and do not appear redundantly in the JSON.
+        let notification = Notification::ContactRequest { sender_id: 1 };
+        assert_eq!(notification.to_proto().content, "{}");
+    }
 }
