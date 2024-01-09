@@ -513,14 +513,15 @@ impl Drop for Room {
 
 struct RoomDelegate {
     native_delegate: swift::RoomDelegate,
-    _weak_room: Weak<Room>,
+    weak_room: *mut c_void,
 }
 
 impl RoomDelegate {
     fn new(weak_room: Weak<Room>) -> Self {
+        let weak_room = weak_room.into_raw() as *mut c_void;
         let native_delegate = unsafe {
             LKRoomDelegateCreate(
-                weak_room.as_ptr() as *mut c_void,
+                weak_room,
                 Self::on_did_disconnect,
                 Self::on_did_subscribe_to_remote_audio_track,
                 Self::on_did_unsubscribe_from_remote_audio_track,
@@ -532,7 +533,7 @@ impl RoomDelegate {
         };
         Self {
             native_delegate,
-            _weak_room: weak_room,
+            weak_room,
         }
     }
 
@@ -647,6 +648,7 @@ impl Drop for RoomDelegate {
     fn drop(&mut self) {
         unsafe {
             CFRelease(self.native_delegate.0);
+            let _ = Weak::from_raw(self.weak_room);
         }
     }
 }
