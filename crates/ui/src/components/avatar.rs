@@ -16,10 +16,12 @@ pub enum AvatarShape {
 /// # Examples
 ///
 /// ```
+/// use ui::{Avatar, AvatarShape};
+///
 /// Avatar::new("path/to/image.png")
 ///     .shape(AvatarShape::Circle)
 ///     .grayscale(true)
-///     .border_color(cx.theme().colors().border)
+///     .border_color(gpui::red());
 /// ```
 #[derive(IntoElement)]
 pub struct Avatar {
@@ -87,6 +89,8 @@ impl Avatar {
     /// # Examples
     ///
     /// ```
+    /// use ui::{Avatar, AvatarShape};
+    ///
     /// Avatar::new("path/to/image.png").shape(AvatarShape::Circle);
     /// ```
     pub fn shape(mut self, shape: AvatarShape) -> Self {
@@ -102,6 +106,8 @@ impl Avatar {
     /// # Examples
     ///
     /// ```
+    /// use ui::{Avatar, AvatarShape};
+    ///
     /// let avatar = Avatar::new("path/to/image.png").grayscale(true);
     /// ```
     pub fn grayscale(mut self, grayscale: bool) -> Self {

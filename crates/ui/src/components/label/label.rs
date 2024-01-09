@@ -37,7 +37,7 @@ pub struct Label {
 }
 
 impl Label {
-    /// Create a new `Label` with the given text.
+    /// Create a new [`Label`] with the given text.
     ///
     /// # Examples
     ///
@@ -62,7 +62,7 @@ impl LabelCommon for Label {
     /// ```
     /// use ui::prelude::*;
     ///
-    /// let my_label = Label::new("Hello, World!").size(LabelSize::Large);
+    /// let my_label = Label::new("Hello, World!").size(LabelSize::Small);
     /// ```
     fn size(mut self, size: LabelSize) -> Self {
         self.base = self.base.size(size);
@@ -76,7 +76,7 @@ impl LabelCommon for Label {
     /// ```
     /// use ui::prelude::*;
     ///
-    /// let my_label = Label::new("Hello, World!").line_height_style(LineHeightStyle::Normal);
+    /// let my_label = Label::new("Hello, World!").line_height_style(LineHeightStyle::UiLabel);
     /// ```
     fn line_height_style(mut self, line_height_style: LineHeightStyle) -> Self {
         self.base = self.base.line_height_style(line_height_style);
@@ -90,7 +90,7 @@ impl LabelCommon for Label {
     /// ```
     /// use ui::prelude::*;
     ///
-    /// let my_label = Label::new("Hello, World!").color(Color::Primary);
+    /// let my_label = Label::new("Hello, World!").color(Color::Accent);
     /// ```
     fn color(mut self, color: Color) -> Self {
         self.base = self.base.color(color);
