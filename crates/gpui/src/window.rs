@@ -238,6 +238,7 @@ impl Drop for FocusHandle {
 /// FocusableView allows users of your view to easily
 /// focus it (using cx.focus_view(view))
 pub trait FocusableView: 'static + Render {
+    /// Returns the focus handle associated with this view.
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
 
@@ -251,6 +252,7 @@ impl<M: FocusableView + EventEmitter<DismissEvent>> ManagedView for M {}
 pub struct DismissEvent;
 
 // Holds the state for a specific window.
+#[doc(hidden)]
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
@@ -442,6 +444,7 @@ impl Window {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Default + Debug> {
+    /// The bounds
     pub bounds: Bounds<P>,
 }
 
@@ -1788,7 +1791,7 @@ impl<'a> WindowContext<'a> {
             .available_actions(node_id)
     }
 
-    /// Returns any key bindings that invoke the given action.
+    /// Returns key bindings that invoke the given action on the currently focused element.
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
             .rendered_frame
@@ -1799,6 +1802,7 @@ impl<'a> WindowContext<'a> {
             )
     }
 
+    /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
     pub fn bindings_for_action_in(
         &self,
         action: &dyn Action,
@@ -1817,6 +1821,7 @@ impl<'a> WindowContext<'a> {
         dispatch_tree.bindings_for_action(action, &context_stack)
     }
 
+    /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
     pub fn listener_for<V: Render, E>(
         &self,
         view: &View<V>,
@@ -1828,6 +1833,7 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
     pub fn handler_for<V: Render>(
         &self,
         view: &View<V>,
@@ -1839,7 +1845,8 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    //========== ELEMENT RELATED FUNCTIONS ===========
+    /// Invoke the given function with the given focus handle present on the key dispatch stack.
+    /// If you want an element to participate in key dispatch, use this method to push its key context and focus handle into the stack during paint.
     pub fn with_key_dispatch<R>(
         &mut self,
         context: Option<KeyContext>,
@@ -1878,6 +1885,8 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    /// Register a callback that can interrupt the closing of the current window based the returned boolean.
+    /// If the callback returns false, the window won't be closed.
     pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
         let mut this = self.to_async();
         self.window
@@ -2052,19 +2061,24 @@ impl<'a> BorrowMut<AppContext> for WindowContext<'a> {
     }
 }
 
+/// This trait contains functionality that is shared across [ViewContext] and [WindowContext]
 pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
+    #[doc(hidden)]
     fn app_mut(&mut self) -> &mut AppContext {
         self.borrow_mut()
     }
 
+    #[doc(hidden)]
     fn app(&self) -> &AppContext {
         self.borrow()
     }
 
+    #[doc(hidden)]
     fn window(&self) -> &Window {
         self.borrow()
     }
 
+    #[doc(hidden)]
     fn window_mut(&mut self) -> &mut Window {
         self.borrow_mut()
     }
@@ -3111,10 +3125,15 @@ impl AnyWindowHandle {
 /// as other internal representations.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ElementId {
+    /// The id of a View element
     View(EntityId),
+    /// An integer id
     Integer(usize),
+    /// A string based id
     Name(SharedString),
+    /// An id that's equated with a focus handle
     FocusHandle(FocusId),
+    /// A combination of a name and an integer
     NamedInteger(SharedString, usize),
 }
 

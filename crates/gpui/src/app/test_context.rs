@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
@@ -255,6 +257,8 @@ impl TestAppContext {
         lock.update_global(update)
     }
 
+    /// Returns an `AsyncAppContext` which can be used to run tasks that expect to be on a background
+    /// thread on the current thread in tests.
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
             app: Rc::downgrade(&self.app),
@@ -263,6 +267,7 @@ impl TestAppContext {
         }
     }
 
+    /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
         A: Action,
@@ -276,7 +281,8 @@ impl TestAppContext {
 
     /// simulate_keystrokes takes a space-separated list of keys to type.
     /// cx.simulate_keystrokes("cmd-shift-p b k s p enter")
-    /// will run backspace on the current editor through the command palette.
+    /// in Zed, this will run backspace on the current editor through the command palette.
+    /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes
             .split(" ")
@@ -291,7 +297,8 @@ impl TestAppContext {
 
     /// simulate_input takes a string of text to type.
     /// cx.simulate_input("abc")
-    /// will type abc into your current editor.
+    /// will type abc into your current editor
+    /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
         for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
             self.dispatch_keystroke(window, keystroke.into(), false);
@@ -300,6 +307,7 @@ impl TestAppContext {
         self.background_executor.run_until_parked()
     }
 
+    /// dispatches a single Keystroke (see also `simulate_keystrokes` and `simulate_input`)
     pub fn dispatch_keystroke(
         &mut self,
         window: AnyWindowHandle,
@@ -310,6 +318,7 @@ impl TestAppContext {
             .simulate_keystroke(keystroke, is_held)
     }
 
+    /// Returns the `TestWindow` backing the given handle.
     pub fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app
             .borrow_mut()
@@ -324,6 +333,7 @@ impl TestAppContext {
             .clone()
     }
 
+    /// Returns a stream of notifications whenever the View or Model is updated.
     pub fn notifications<T: 'static>(&mut self, entity: &impl Entity<T>) -> impl Stream<Item = ()> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
@@ -340,6 +350,7 @@ impl TestAppContext {
         rx
     }
 
+    /// Retuens a stream of events emitted by the given Model.
     pub fn events<Evt, T: 'static + EventEmitter<Evt>>(
         &mut self,
         entity: &Model<T>,
@@ -358,6 +369,8 @@ impl TestAppContext {
         rx
     }
 
+    /// Runs until the given condition becomes true. (Prefer `run_until_parked` if you
+    /// don't need to jump in at a specific time).
     pub async fn condition<T: 'static>(
         &mut self,
         model: &Model<T>,
@@ -387,6 +400,7 @@ impl TestAppContext {
 }
 
 impl<T: Send> Model<T> {
+    /// Block until the next event is emitted by the model, then return it.
     pub fn next_event<Evt>(&self, cx: &mut TestAppContext) -> Evt
     where
         Evt: Send + Clone + 'static,
@@ -416,6 +430,7 @@ impl<T: Send> Model<T> {
 }
 
 impl<V: 'static> View<V> {
+    /// Returns a future that resolves when the view is next updated.
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
         use postage::prelude::{Sink as _, Stream as _};
 
@@ -442,6 +457,7 @@ impl<V: 'static> View<V> {
 }
 
 impl<V> View<V> {
+    /// Returns a future that resolves when the condition becomes true.
     pub fn condition<Evt>(
         &self,
         cx: &TestAppContext,
@@ -506,6 +522,8 @@ impl<V> View<V> {
     }
 }
 
+/// A VisualTestContext is the test-equivalent of a `WindowContext`. It allows you to
+/// run window-specific test code.
 use derive_more::{Deref, DerefMut};
 #[derive(Deref, DerefMut, Clone)]
 pub struct VisualTestContext {
@@ -520,6 +538,9 @@ impl<'a> VisualTestContext {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
 
+    /// Create a new VisualTestContext. You would typically shadow the passed in
+    /// TestAppContext with this, as this is typically more useful.
+    /// `let cx = VisualTestContext::from_window(window, cx);`
     pub fn from_window(window: AnyWindowHandle, cx: &TestAppContext) -> Self {
         Self {
             cx: cx.clone(),
@@ -527,10 +548,12 @@ impl<'a> VisualTestContext {
         }
     }
 
+    /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&self) {
         self.cx.background_executor.run_until_parked();
     }
 
+    /// Dispatch the action to the currently focused node.
     pub fn dispatch_action<A>(&mut self, action: A)
     where
         A: Action,
@@ -538,24 +561,32 @@ impl<'a> VisualTestContext {
         self.cx.dispatch_action(self.window, action)
     }
 
+    /// Read the title off the window (set by `WindowContext#set_window_title`)
     pub fn window_title(&mut self) -> Option<String> {
         self.cx.test_window(self.window).0.lock().title.clone()
     }
 
+    /// Simulate a sequence of keystrokes `cx.simulate_keystrokes("cmd-p escape")`
+    /// Automatically runs until parked.
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
         self.cx.simulate_keystrokes(self.window, keystrokes)
     }
 
+    /// Simulate typing text `cx.simulate_input("hello")`
+    /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
     }
 
+    /// Simulates the user blurring the window.
     pub fn deactivate_window(&mut self) {
         if Some(self.window) == self.test_platform.active_window() {
             self.test_platform.set_active_window(None)
         }
         self.background_executor.run_until_parked();
     }
+
+    /// Simulates the user closing the window.
     /// Returns true if the window was closed.
     pub fn simulate_close(&mut self) -> bool {
         let handler = self
