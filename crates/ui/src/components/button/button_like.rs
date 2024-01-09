@@ -4,10 +4,12 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+/// A trait for buttons that can be Selected. Enables setting the [ButtonStyle] of a button when it is selected.
 pub trait SelectableButton: Selectable {
     fn selected_style(self, style: ButtonStyle) -> Self;
 }
 
+/// A common set of traits all buttons must implement.
 pub trait ButtonCommon: Clickable + Disableable {
     /// A unique element ID to identify the button.
     fn id(&self) -> &ElementId;
