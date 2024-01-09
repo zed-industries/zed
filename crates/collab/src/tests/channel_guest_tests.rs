@@ -1,7 +1,7 @@
 use crate::tests::TestServer;
 use call::ActiveCall;
 use editor::Editor;
-use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
+use gpui::{BackgroundExecutor, TestAppContext};
 use rpc::proto;
 
 #[gpui::test]
@@ -132,5 +132,28 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     room_b
         .update(cx_b, |room, cx| room.share_microphone(cx))
         .await
-        .unwrap()
+        .unwrap();
+
+    // B is demoted
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_participant_role(
+                    client_b.user_id().unwrap(),
+                    proto::ChannelRole::Guest,
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+
+    // project and buffers are no longer editable
+    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+    assert!(editor_b.update(cx_b, |editor, cx| editor.read_only(cx)));
+    assert!(room_b
+        .update(cx_b, |room, cx| room.share_microphone(cx))
+        .await
+        .is_err());
 }

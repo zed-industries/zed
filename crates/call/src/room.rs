@@ -754,6 +754,18 @@ impl Room {
                     if this.local_participant.role != role {
                         this.local_participant.role = role;
 
+                        if role == proto::ChannelRole::Guest {
+                            for project in mem::take(&mut this.shared_projects) {
+                                if let Some(project) = project.upgrade() {
+                                    this.unshare_project(project, cx).log_err();
+                                }
+                            }
+                            this.local_participant.projects.clear();
+                            if let Some(live_kit_room) = &mut this.live_kit {
+                                live_kit_room.stop_publishing(cx);
+                            }
+                        }
+
                         this.joined_projects.retain(|project| {
                             if let Some(project) = project.upgrade() {
                                 project.update(cx, |project, cx| project.set_role(role, cx));
@@ -1631,6 +1643,24 @@ impl LiveKitRoom {
         }
 
         Ok((result, old_muted))
+    }
+
+    fn stop_publishing(&mut self, cx: &mut ModelContext<Room>) {
+        if let LocalTrack::Published {
+            track_publication, ..
+        } = mem::replace(&mut self.microphone_track, LocalTrack::None)
+        {
+            self.room.unpublish_track(track_publication);
+            cx.notify();
+        }
+
+        if let LocalTrack::Published {
+            track_publication, ..
+        } = mem::replace(&mut self.screen_track, LocalTrack::None)
+        {
+            self.room.unpublish_track(track_publication);
+            cx.notify();
+        }
     }
 }
 

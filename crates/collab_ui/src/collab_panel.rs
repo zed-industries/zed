@@ -865,9 +865,9 @@ impl CollabPanel {
                             .ok();
                     }))
             })
-            .when(is_call_admin && role == proto::ChannelRole::Guest, |el| {
+            .when(is_call_admin, |el| {
                 el.on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
-                    this.deploy_participant_context_menu(event.position, user_id, cx)
+                    this.deploy_participant_context_menu(event.position, user_id, role, cx)
                 }))
             })
     }
@@ -1006,27 +1006,60 @@ impl CollabPanel {
         &mut self,
         position: Point<Pixels>,
         user_id: u64,
+        role: proto::ChannelRole,
         cx: &mut ViewContext<Self>,
     ) {
         let this = cx.view().clone();
+        if !(role == proto::ChannelRole::Guest || role == proto::ChannelRole::Member) {
+            return;
+        }
 
         let context_menu = ContextMenu::build(cx, |context_menu, cx| {
-            context_menu.entry(
-                "Allow Write Access",
-                None,
-                cx.handler_for(&this, move |_, cx| {
-                    ActiveCall::global(cx)
-                        .update(cx, |call, cx| {
-                            let Some(room) = call.room() else {
-                                return Task::ready(Ok(()));
-                            };
-                            room.update(cx, |room, cx| {
-                                room.set_participant_role(user_id, proto::ChannelRole::Member, cx)
+            if role == proto::ChannelRole::Guest {
+                context_menu.entry(
+                    "Grant Write Access",
+                    None,
+                    cx.handler_for(&this, move |_, cx| {
+                        ActiveCall::global(cx)
+                            .update(cx, |call, cx| {
+                                let Some(room) = call.room() else {
+                                    return Task::ready(Ok(()));
+                                };
+                                room.update(cx, |room, cx| {
+                                    room.set_participant_role(
+                                        user_id,
+                                        proto::ChannelRole::Member,
+                                        cx,
+                                    )
+                                })
                             })
-                        })
-                        .detach_and_notify_err(cx)
-                }),
-            )
+                            .detach_and_notify_err(cx)
+                    }),
+                )
+            } else if role == proto::ChannelRole::Member {
+                context_menu.entry(
+                    "Revoke Write Access",
+                    None,
+                    cx.handler_for(&this, move |_, cx| {
+                        ActiveCall::global(cx)
+                            .update(cx, |call, cx| {
+                                let Some(room) = call.room() else {
+                                    return Task::ready(Ok(()));
+                                };
+                                room.update(cx, |room, cx| {
+                                    room.set_participant_role(
+                                        user_id,
+                                        proto::ChannelRole::Guest,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .detach_and_notify_err(cx)
+                    }),
+                )
+            } else {
+                unreachable!()
+            }
         });
 
         cx.focus_view(&context_menu);

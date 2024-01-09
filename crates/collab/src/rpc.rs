@@ -1264,18 +1264,41 @@ async fn set_room_participant_role(
     response: Response<proto::SetRoomParticipantRole>,
     session: Session,
 ) -> Result<()> {
-    let room = session
-        .db()
-        .await
-        .set_room_participant_role(
-            session.user_id,
-            RoomId::from_proto(request.room_id),
-            UserId::from_proto(request.user_id),
-            ChannelRole::from(request.role()),
-        )
-        .await?;
+    let (live_kit_room, can_publish) = {
+        let room = session
+            .db()
+            .await
+            .set_room_participant_role(
+                session.user_id,
+                RoomId::from_proto(request.room_id),
+                UserId::from_proto(request.user_id),
+                ChannelRole::from(request.role()),
+            )
+            .await?;
 
-    room_updated(&room, &session.peer);
+        let live_kit_room = room.live_kit_room.clone();
+        let can_publish = ChannelRole::from(request.role()).can_publish_to_rooms();
+        room_updated(&room, &session.peer);
+        (live_kit_room, can_publish)
+    };
+
+    if let Some(live_kit) = session.live_kit_client.as_ref() {
+        live_kit
+            .update_participant(
+                live_kit_room.clone(),
+                request.user_id.to_string(),
+                live_kit_server::proto::ParticipantPermission {
+                    can_subscribe: true,
+                    can_publish,
+                    can_publish_data: can_publish,
+                    hidden: false,
+                    recorder: false,
+                },
+            )
+            .await
+            .trace_err();
+    }
+
     response.send(proto::Ack {})?;
     Ok(())
 }

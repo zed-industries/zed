@@ -133,7 +133,7 @@ impl ChannelRole {
         }
     }
 
-    pub fn can_share_projects(&self) -> bool {
+    pub fn can_publish_to_rooms(&self) -> bool {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
