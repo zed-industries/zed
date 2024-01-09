@@ -1433,6 +1433,9 @@ impl ProjectPanel {
                     }))
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, cx| {
+                            // Stop propagation to prevent the catch-all context menu for the project
+                            // panel from being deployed.
+                            cx.stop_propagation();
                             this.deploy_context_menu(event.position, entry_id, cx);
                         },
                     )),
