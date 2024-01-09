@@ -3,7 +3,7 @@ use ui::IconButton;
 use ui::{prelude::*, Tooltip};
 
 pub(super) fn render_nav_button(
-    icon: ui::Icon,
+    icon: ui::IconPath,
     active: bool,
     tooltip: &'static str,
     action: &'static dyn Action,

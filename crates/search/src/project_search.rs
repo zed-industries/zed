@@ -38,7 +38,7 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    h_stack, prelude::*, v_stack, Icon, IconButton, IconElement, Label, LabelCommon, LabelSize,
+    h_stack, prelude::*, v_stack, IconButton, Icon, IconPath, Label, LabelCommon, LabelSize,
     Selectable, ToggleButton, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
@@ -432,11 +432,13 @@ impl Item for ProjectSearchView {
             .unwrap_or_else(|| "Project search".into());
         h_stack()
             .gap_2()
-            .child(IconElement::new(Icon::MagnifyingGlass).color(if selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
+            .child(
+                Icon::new(IconPath::MagnifyingGlass).color(if selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                }),
+            )
             .child(Label::new(tab_name).color(if selected {
                 Color::Default
             } else {
@@ -1616,12 +1618,12 @@ impl Render for ProjectSearchBar {
                 .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
-                .child(IconElement::new(Icon::MagnifyingGlass))
+                .child(Icon::new(IconPath::MagnifyingGlass))
                 .child(self.render_text_input(&search.query_editor, cx))
                 .child(
                     h_stack()
                         .child(
-                            IconButton::new("project-search-filter-button", Icon::Filter)
+                            IconButton::new("project-search-filter-button", IconPath::Filter)
                                 .tooltip(|cx| {
                                     Tooltip::for_action("Toggle filters", &ToggleFilters, cx)
                                 })
@@ -1639,7 +1641,7 @@ impl Render for ProjectSearchBar {
                             this.child(
                                 IconButton::new(
                                     "project-search-case-sensitive",
-                                    Icon::CaseSensitive,
+                                    IconPath::CaseSensitive,
                                 )
                                 .tooltip(|cx| {
                                     Tooltip::for_action(
@@ -1659,7 +1661,7 @@ impl Render for ProjectSearchBar {
                                 )),
                             )
                             .child(
-                                IconButton::new("project-search-whole-word", Icon::WholeWord)
+                                IconButton::new("project-search-whole-word", IconPath::WholeWord)
                                     .tooltip(|cx| {
                                         Tooltip::for_action(
                                             "Toggle whole word",
@@ -1738,7 +1740,7 @@ impl Render for ProjectSearchBar {
                         }),
                 )
                 .child(
-                    IconButton::new("project-search-toggle-replace", Icon::Replace)
+                    IconButton::new("project-search-toggle-replace", IconPath::Replace)
                         .on_click(cx.listener(|this, _, cx| {
                             this.toggle_replace(&ToggleReplace, cx);
                         }))
@@ -1755,7 +1757,7 @@ impl Render for ProjectSearchBar {
                 .border_1()
                 .border_color(cx.theme().colors().border)
                 .rounded_lg()
-                .child(IconElement::new(Icon::Replace).size(ui::IconSize::Small))
+                .child(Icon::new(IconPath::Replace).size(ui::IconSize::Small))
                 .child(self.render_text_input(&search.replacement_editor, cx))
         } else {
             // Fill out the space if we don't have a replacement editor.
@@ -1764,7 +1766,7 @@ impl Render for ProjectSearchBar {
         let actions_column = h_stack()
             .when(search.replace_enabled, |this| {
                 this.child(
-                    IconButton::new("project-search-replace-next", Icon::ReplaceNext)
+                    IconButton::new("project-search-replace-next", IconPath::ReplaceNext)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
                                 search.update(cx, |this, cx| {
@@ -1775,7 +1777,7 @@ impl Render for ProjectSearchBar {
                         .tooltip(|cx| Tooltip::for_action("Replace next match", &ReplaceNext, cx)),
                 )
                 .child(
-                    IconButton::new("project-search-replace-all", Icon::ReplaceAll)
+                    IconButton::new("project-search-replace-all", IconPath::ReplaceAll)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
                                 search.update(cx, |this, cx| {
@@ -1796,7 +1798,7 @@ impl Render for ProjectSearchBar {
                 this
             })
             .child(
-                IconButton::new("project-search-prev-match", Icon::ChevronLeft)
+                IconButton::new("project-search-prev-match", IconPath::ChevronLeft)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(search) = this.active_project_search.as_ref() {
@@ -1810,7 +1812,7 @@ impl Render for ProjectSearchBar {
                     }),
             )
             .child(
-                IconButton::new("project-search-next-match", Icon::ChevronRight)
+                IconButton::new("project-search-next-match", IconPath::ChevronRight)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(search) = this.active_project_search.as_ref() {

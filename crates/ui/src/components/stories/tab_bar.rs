@@ -38,16 +38,19 @@ impl Render for TabBarStory {
                 h_stack().child(
                     TabBar::new("tab_bar_1")
                         .start_child(
-                            IconButton::new("navigate_backward", Icon::ArrowLeft)
+                            IconButton::new("navigate_backward", IconPath::ArrowLeft)
                                 .icon_size(IconSize::Small),
                         )
                         .start_child(
-                            IconButton::new("navigate_forward", Icon::ArrowRight)
+                            IconButton::new("navigate_forward", IconPath::ArrowRight)
                                 .icon_size(IconSize::Small),
                         )
-                        .end_child(IconButton::new("new", Icon::Plus).icon_size(IconSize::Small))
                         .end_child(
-                            IconButton::new("split_pane", Icon::Split).icon_size(IconSize::Small),
+                            IconButton::new("new", IconPath::Plus).icon_size(IconSize::Small),
+                        )
+                        .end_child(
+                            IconButton::new("split_pane", IconPath::Split)
+                                .icon_size(IconSize::Small),
                         )
                         .children(tabs),
                 ),

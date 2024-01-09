@@ -1,6 +1,6 @@
 use gpui::ClickEvent;
 
-use crate::{prelude::*, Color, Icon, IconButton, IconSize};
+use crate::{prelude::*, Color, IconButton, IconPath, IconSize};
 
 #[derive(IntoElement)]
 pub struct Disclosure {
@@ -32,8 +32,8 @@ impl RenderOnce for Disclosure {
         IconButton::new(
             self.id,
             match self.is_open {
-                true => Icon::ChevronDown,
-                false => Icon::ChevronRight,
+                true => IconPath::ChevronDown,
+                false => IconPath::ChevronRight,
             },
         )
         .icon_color(Color::Muted)

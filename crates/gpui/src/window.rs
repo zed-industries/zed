@@ -1754,6 +1754,7 @@ impl<'a> WindowContext<'a> {
             .available_actions(node_id)
     }
 
+    /// What bindings exist for the current element?
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
             .rendered_frame
@@ -1764,7 +1765,8 @@ impl<'a> WindowContext<'a> {
             )
     }
 
-    pub fn bindings_for_action_in(
+    /// If the given handle were to be focused, what bindings would exist for the given action.
+    pub fn bindings_for_action_when_focused(
         &self,
         action: &dyn Action,
         focus_handle: &FocusHandle,

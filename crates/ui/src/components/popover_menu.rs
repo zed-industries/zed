@@ -30,6 +30,17 @@ pub struct PopoverMenu<M: ManagedView> {
 }
 
 impl<M: ManagedView> PopoverMenu<M> {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        PopoverMenu {
+            id: id.into(),
+            child_builder: None,
+            menu_builder: None,
+            anchor: AnchorCorner::TopLeft,
+            attach: None,
+            offset: None,
+        }
+    }
+
     pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> Option<View<M>> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self

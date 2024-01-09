@@ -1,5 +1,5 @@
 use gpui::{Render, ViewContext, WeakView};
-use ui::{prelude::*, ButtonCommon, Icon, IconButton, Tooltip};
+use ui::{prelude::*, ButtonCommon, IconButton, IconPath, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::{feedback_modal::FeedbackModal, GiveFeedback};
@@ -27,7 +27,7 @@ impl Render for DeployFeedbackButton {
                 })
             })
             .is_some();
-        IconButton::new("give-feedback", Icon::Envelope)
+        IconButton::new("give-feedback", IconPath::Envelope)
             .style(ui::ButtonStyle::Subtle)
             .icon_size(IconSize::Small)
             .selected(is_open)

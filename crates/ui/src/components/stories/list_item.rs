@@ -2,7 +2,7 @@ use gpui::Render;
 use story::Story;
 
 use crate::{prelude::*, Avatar};
-use crate::{Icon, ListItem};
+use crate::{IconPath, ListItem};
 
 pub struct ListItemStory;
 
@@ -18,13 +18,13 @@ impl Render for ListItemStory {
                 ListItem::new("inset_list_item")
                     .inset(true)
                     .start_slot(
-                        IconElement::new(Icon::Bell)
+                        Icon::new(IconPath::Bell)
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
                     .child("Hello, world!")
                     .end_slot(
-                        IconElement::new(Icon::Bell)
+                        Icon::new(IconPath::Bell)
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     ),
@@ -34,7 +34,7 @@ impl Render for ListItemStory {
                 ListItem::new("with start slot_icon")
                     .child("Hello, world!")
                     .start_slot(
-                        IconElement::new(Icon::Bell)
+                        Icon::new(IconPath::Bell)
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     ),

@@ -6,6 +6,10 @@ use util::arc_cow::ArcCow;
 #[derive(Deref, DerefMut, Eq, PartialEq, Hash, Clone)]
 pub struct SharedString(ArcCow<'static, str>);
 
+// TODO: Use me more places than Nathan's blog post.
+#[derive(Deref, DerefMut)]
+pub struct SharedUrl(SharedString);
+
 impl Default for SharedString {
     fn default() -> Self {
         Self(ArcCow::Owned("".into()))

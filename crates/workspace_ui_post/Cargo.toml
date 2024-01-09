@@ -1,0 +1,12 @@
+[package]
+name = "workspace_ui"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/workspace_ui_post.rs"
+
+[dependencies]
+gpui = { path = "../gpui" }
+ui = { path = "../ui" }
+theme = { path = "../theme" }

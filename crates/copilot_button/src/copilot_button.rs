@@ -16,7 +16,9 @@ use util::{paths, ResultExt};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
-    ui::{popover_menu, ButtonCommon, Clickable, ContextMenu, Icon, IconButton, IconSize, Tooltip},
+    ui::{
+        popover_menu, ButtonCommon, Clickable, ContextMenu, IconButton, IconPath, IconSize, Tooltip,
+    },
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
@@ -50,15 +52,15 @@ impl Render for CopilotButton {
             .unwrap_or_else(|| all_language_settings.copilot_enabled(None, None));
 
         let icon = match status {
-            Status::Error(_) => Icon::CopilotError,
+            Status::Error(_) => IconPath::CopilotError,
             Status::Authorized => {
                 if enabled {
-                    Icon::Copilot
+                    IconPath::Copilot
                 } else {
-                    Icon::CopilotDisabled
+                    IconPath::CopilotDisabled
                 }
             }
-            _ => Icon::CopilotInit,
+            _ => IconPath::CopilotInit,
         };
 
         if let Status::Error(e) = status {

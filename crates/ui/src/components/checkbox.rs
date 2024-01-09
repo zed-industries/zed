@@ -1,7 +1,7 @@
 use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
 
 use crate::prelude::*;
-use crate::{Color, Icon, IconElement, Selection};
+use crate::{Color, Icon, IconPath, Selection};
 
 pub type CheckHandler = Box<dyn Fn(&Selection, &mut WindowContext) + 'static>;
 
@@ -47,7 +47,7 @@ impl RenderOnce for Checkbox {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.checked {
-            Selection::Selected => Some(IconElement::new(Icon::Check).size(IconSize::Small).color(
+            Selection::Selected => Some(Icon::new(IconPath::Check).size(IconSize::Small).color(
                 if self.disabled {
                     Color::Disabled
                 } else {
@@ -55,7 +55,7 @@ impl RenderOnce for Checkbox {
                 },
             )),
             Selection::Indeterminate => Some(
-                IconElement::new(Icon::Dash)
+                Icon::new(IconPath::Dash)
                     .size(IconSize::Small)
                     .color(if self.disabled {
                         Color::Disabled

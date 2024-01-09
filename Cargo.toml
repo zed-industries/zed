@@ -81,6 +81,7 @@ members = [
     "crates/vim",
     "crates/vcs_menu",
     "crates/workspace",
+    "crates/workspace_ui_post",
     "crates/welcome",
     "crates/zed",
     "crates/zed_actions",

@@ -318,7 +318,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                             command.name.clone(),
                             r#match.positions.clone(),
                         ))
-                        .children(KeyBinding::for_action_in(
+                        .children(KeyBinding::for_action_when_focused(
                             &*command.action,
                             &self.previous_focus_handle,
                             cx,

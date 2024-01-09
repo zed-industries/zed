@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, Icon, IconElement, IconSize};
+use crate::{h_stack, prelude::*, Icon, IconPath, IconSize};
 use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
@@ -26,16 +26,16 @@ impl RenderOnce for KeyBinding {
                     .text_color(cx.theme().colors().text_muted)
                     .when(keystroke.modifiers.function, |el| el.child(Key::new("fn")))
                     .when(keystroke.modifiers.control, |el| {
-                        el.child(KeyIcon::new(Icon::Control))
+                        el.child(KeyIcon::new(IconPath::Control))
                     })
                     .when(keystroke.modifiers.alt, |el| {
-                        el.child(KeyIcon::new(Icon::Option))
+                        el.child(KeyIcon::new(IconPath::Option))
                     })
                     .when(keystroke.modifiers.command, |el| {
-                        el.child(KeyIcon::new(Icon::Command))
+                        el.child(KeyIcon::new(IconPath::Command))
                     })
                     .when(keystroke.modifiers.shift, |el| {
-                        el.child(KeyIcon::new(Icon::Shift))
+                        el.child(KeyIcon::new(IconPath::Shift))
                     })
                     .when_some(key_icon, |el, icon| el.child(KeyIcon::new(icon)))
                     .when(key_icon.is_none(), |el| {
@@ -46,37 +46,40 @@ impl RenderOnce for KeyBinding {
 }
 
 impl KeyBinding {
+    /// Bindings for an action based on the current focus.
     pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
         let key_binding = cx.bindings_for_action(action).last().cloned()?;
         Some(Self::new(key_binding))
     }
 
-    // like for_action(), but lets you specify the context from which keybindings
-    // are matched.
-    pub fn for_action_in(
+    /// Bindings for an action assuming the given focus handle is focused.
+    pub fn for_action_when_focused(
         action: &dyn Action,
         focus: &FocusHandle,
         cx: &mut WindowContext,
     ) -> Option<Self> {
-        let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+        let key_binding = cx
+            .bindings_for_action_when_focused(action, focus)
+            .last()
+            .cloned()?;
         Some(Self::new(key_binding))
     }
 
-    fn icon_for_key(keystroke: &Keystroke) -> Option<Icon> {
+    fn icon_for_key(keystroke: &Keystroke) -> Option<IconPath> {
         match keystroke.key.as_str() {
-            "left" => Some(Icon::ArrowLeft),
-            "right" => Some(Icon::ArrowRight),
-            "up" => Some(Icon::ArrowUp),
-            "down" => Some(Icon::ArrowDown),
-            "backspace" => Some(Icon::Backspace),
-            "delete" => Some(Icon::Delete),
-            "return" => Some(Icon::Return),
-            "enter" => Some(Icon::Return),
-            "tab" => Some(Icon::Tab),
-            "space" => Some(Icon::Space),
-            "escape" => Some(Icon::Escape),
-            "pagedown" => Some(Icon::PageDown),
-            "pageup" => Some(Icon::PageUp),
+            "left" => Some(IconPath::ArrowLeft),
+            "right" => Some(IconPath::ArrowRight),
+            "up" => Some(IconPath::ArrowUp),
+            "down" => Some(IconPath::ArrowDown),
+            "backspace" => Some(IconPath::Backspace),
+            "delete" => Some(IconPath::Delete),
+            "return" => Some(IconPath::Return),
+            "enter" => Some(IconPath::Return),
+            "tab" => Some(IconPath::Tab),
+            "space" => Some(IconPath::Space),
+            "escape" => Some(IconPath::Escape),
+            "pagedown" => Some(IconPath::PageDown),
+            "pageup" => Some(IconPath::PageUp),
             _ => None,
         }
     }
@@ -120,13 +123,13 @@ impl Key {
 
 #[derive(IntoElement)]
 pub struct KeyIcon {
-    icon: Icon,
+    icon: IconPath,
 }
 
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         div().w(rems(14. / 16.)).child(
-            IconElement::new(self.icon)
+            Icon::new(self.icon)
                 .size(IconSize::Small)
                 .color(Color::Muted),
         )
@@ -134,7 +137,7 @@ impl RenderOnce for KeyIcon {
 }
 
 impl KeyIcon {
-    pub fn new(icon: Icon) -> Self {
+    pub fn new(icon: IconPath) -> Self {
         Self { icon }
     }
 }

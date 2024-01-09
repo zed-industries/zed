@@ -14,6 +14,6 @@ pub use crate::visible_on_hover::*;
 pub use crate::{h_stack, v_stack};
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color, StyledExt};
-pub use crate::{Icon, IconElement, IconPosition, IconSize};
+pub use crate::{Icon, IconPath, IconPosition, IconSize};
 pub use crate::{Label, LabelCommon, LabelSize, LineHeightStyle};
 pub use theme::ActiveTheme;

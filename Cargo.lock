@@ -9455,6 +9455,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace_ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "theme",
+ "ui",
+]
+
+[[package]]
 name = "ws2_32-sys"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

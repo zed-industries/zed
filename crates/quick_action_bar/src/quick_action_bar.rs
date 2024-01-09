@@ -6,7 +6,7 @@ use gpui::{
     Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
-use ui::{prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, Tooltip};
+use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconPath, IconSize, Tooltip};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -43,7 +43,7 @@ impl Render for QuickActionBar {
 
         let inlay_hints_button = Some(QuickActionBarButton::new(
             "toggle inlay hints",
-            Icon::InlayHint,
+            IconPath::InlayHint,
             editor.read(cx).inlay_hints_enabled(),
             Box::new(editor::ToggleInlayHints),
             "Toggle Inlay Hints",
@@ -60,7 +60,7 @@ impl Render for QuickActionBar {
 
         let search_button = Some(QuickActionBarButton::new(
             "toggle buffer search",
-            Icon::MagnifyingGlass,
+            IconPath::MagnifyingGlass,
             !self.buffer_search_bar.read(cx).is_dismissed(),
             Box::new(buffer_search::Deploy { focus: false }),
             "Buffer Search",
@@ -77,7 +77,7 @@ impl Render for QuickActionBar {
 
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
-            Icon::MagicWand,
+            IconPath::MagicWand,
             false,
             Box::new(InlineAssist),
             "Inline Assist",
@@ -108,7 +108,7 @@ impl EventEmitter<ToolbarItemEvent> for QuickActionBar {}
 #[derive(IntoElement)]
 struct QuickActionBarButton {
     id: ElementId,
-    icon: Icon,
+    icon: IconPath,
     toggled: bool,
     action: Box<dyn Action>,
     tooltip: SharedString,
@@ -118,7 +118,7 @@ struct QuickActionBarButton {
 impl QuickActionBarButton {
     fn new(
         id: impl Into<ElementId>,
-        icon: Icon,
+        icon: IconPath,
         toggled: bool,
         action: Box<dyn Action>,
         tooltip: impl Into<SharedString>,

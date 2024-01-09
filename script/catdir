@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Target directory containing source files
+DIRECTORY="$1"
+
+# Function to recursively concatenate file contents
+deep_recurse() {
+  local current_dir="$1"
+  for FILE in "$current_dir"/*; do
+    if [ -f "$FILE" ]; then # Ensure it's a file, not a directory
+      # Write the code fence and file path to stdout
+      echo '```'
+      echo "Path: $FILE"
+      echo '```'
+
+      # Output the contents of the file to stdout
+      cat "$FILE"
+
+      # Optionally, you can add a separator or an empty line between files
+      echo -e "\n"
+    elif [ -d "$FILE" ]; then # If it's a directory, recurse into it
+      deep_recurse "$FILE"
+    fi
+  done
+}
+
+# Call the recursive function with the initial directory
+deep_recurse "$DIRECTORY"

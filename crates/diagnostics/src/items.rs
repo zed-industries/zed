@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
-use ui::{h_stack, prelude::*, Button, ButtonLike, Color, Icon, IconElement, Label, Tooltip};
+use ui::{h_stack, prelude::*, Button, ButtonLike, Color, Icon, IconPath, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::{Deploy, ProjectDiagnosticsEditor};
@@ -26,13 +26,13 @@ impl Render for DiagnosticIndicator {
             (0, 0) => h_stack().map(|this| {
                 if !self.in_progress_checks.is_empty() {
                     this.child(
-                        IconElement::new(Icon::ArrowCircle)
+                        Icon::new(IconPath::ArrowCircle)
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
                 } else {
                     this.child(
-                        IconElement::new(Icon::Check)
+                        Icon::new(IconPath::Check)
                             .size(IconSize::Small)
                             .color(Color::Default),
                     )
@@ -41,7 +41,7 @@ impl Render for DiagnosticIndicator {
             (0, warning_count) => h_stack()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::ExclamationTriangle)
+                    Icon::new(IconPath::ExclamationTriangle)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
@@ -49,7 +49,7 @@ impl Render for DiagnosticIndicator {
             (error_count, 0) => h_stack()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::XCircle)
+                    Icon::new(IconPath::XCircle)
                         .size(IconSize::Small)
                         .color(Color::Error),
                 )
@@ -57,13 +57,13 @@ impl Render for DiagnosticIndicator {
             (error_count, warning_count) => h_stack()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::XCircle)
+                    Icon::new(IconPath::XCircle)
                         .size(IconSize::Small)
                         .color(Color::Error),
                 )
                 .child(Label::new(error_count.to_string()).size(LabelSize::Small))
                 .child(
-                    IconElement::new(Icon::ExclamationTriangle)
+                    Icon::new(IconPath::ExclamationTriangle)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
