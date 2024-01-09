@@ -105,7 +105,7 @@ pub struct Config {
 
 impl Config {
     pub fn is_development(&self) -> bool {
-        self.zed_environment == "development"
+        self.zed_environment == "development".into()
     }
 }
 
