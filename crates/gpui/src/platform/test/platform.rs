@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+/// TestPlatform implements the Platform trait for use in tests.
 pub struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,

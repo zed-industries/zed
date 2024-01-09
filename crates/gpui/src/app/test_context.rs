@@ -15,11 +15,15 @@ use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 /// an implementation of `Context` with additional methods that are useful in tests.
 #[derive(Clone)]
 pub struct TestAppContext {
+    #[doc(hidden)]
     pub app: Rc<AppCell>,
+    #[doc(hidden)]
     pub background_executor: BackgroundExecutor,
+    #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
+    #[doc(hidden)]
     pub dispatcher: TestDispatcher,
-    pub test_platform: Rc<TestPlatform>,
+    test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
 }
 
@@ -80,6 +84,7 @@ impl Context for TestAppContext {
 }
 
 impl TestAppContext {
+    /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn new(dispatcher: TestDispatcher) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
@@ -138,8 +143,8 @@ impl TestAppContext {
         f(&*cx)
     }
 
-    // Adds a new window. The Window will always be backed by a `TestWindow` which
-    // can be retrieved with `self.test_window(handle)`
+    /// Adds a new window. The Window will always be backed by a `TestWindow` which
+    /// can be retrieved with `self.test_window(handle)`
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
@@ -149,7 +154,7 @@ impl TestAppContext {
         cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window))
     }
 
-    // Adds a new window with no content.
+    /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> AnyWindowHandle {
         let mut cx = self.app.borrow_mut();
         cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| EmptyView {}))
@@ -226,16 +231,20 @@ impl TestAppContext {
         self.foreground_executor.spawn(f(self.to_async()))
     }
 
+    /// true if the given global is defined
     pub fn has_global<G: 'static>(&self) -> bool {
         let app = self.app.borrow();
         app.has_global::<G>()
     }
 
+    /// runs the given closure with a reference to the global
+    /// panics if `has_global` would return false.
     pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> R {
         let app = self.app.borrow();
         read(app.global(), &app)
     }
 
+    /// runs the given closure with a reference to the global (if set)
     pub fn try_read_global<G: 'static, R>(
         &self,
         read: impl FnOnce(&G, &AppContext) -> R,
@@ -244,11 +253,13 @@ impl TestAppContext {
         Some(read(lock.try_global()?, &lock))
     }
 
+    /// sets the global in this context.
     pub fn set_global<G: 'static>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
         lock.set_global(global);
     }
 
+    /// updates the global in this context. (panics if `has_global` would return false)
     pub fn update_global<G: 'static, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
@@ -522,10 +533,10 @@ impl<V> View<V> {
     }
 }
 
-/// A VisualTestContext is the test-equivalent of a `WindowContext`. It allows you to
-/// run window-specific test code.
 use derive_more::{Deref, DerefMut};
 #[derive(Deref, DerefMut, Clone)]
+/// A VisualTestContext is the test-equivalent of a `WindowContext`. It allows you to
+/// run window-specific test code.
 pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
@@ -534,6 +545,7 @@ pub struct VisualTestContext {
 }
 
 impl<'a> VisualTestContext {
+    /// Provides the `WindowContext` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
@@ -723,6 +735,7 @@ impl VisualContext for VisualTestContext {
 }
 
 impl AnyWindowHandle {
+    /// Creates the given view in this window.
     pub fn build_view<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
@@ -732,6 +745,7 @@ impl AnyWindowHandle {
     }
 }
 
+/// An EmptyView for testing.
 pub struct EmptyView {}
 
 impl Render for EmptyView {

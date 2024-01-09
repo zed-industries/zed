@@ -45,11 +45,13 @@ use util::{
 
 /// Temporary(?) wrapper around [`RefCell<AppContext>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
+#[doc(hidden)]
 pub struct AppCell {
     app: RefCell<AppContext>,
 }
 
 impl AppCell {
+    #[doc(hidden)]
     #[track_caller]
     pub fn borrow(&self) -> AppRef {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
@@ -59,6 +61,7 @@ impl AppCell {
         AppRef(self.app.borrow())
     }
 
+    #[doc(hidden)]
     #[track_caller]
     pub fn borrow_mut(&self) -> AppRefMut {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
@@ -69,6 +72,7 @@ impl AppCell {
     }
 }
 
+#[doc(hidden)]
 #[derive(Deref, DerefMut)]
 pub struct AppRef<'a>(Ref<'a, AppContext>);
 
@@ -81,6 +85,7 @@ impl<'a> Drop for AppRef<'a> {
     }
 }
 
+#[doc(hidden)]
 #[derive(Deref, DerefMut)]
 pub struct AppRefMut<'a>(RefMut<'a, AppContext>);
 
@@ -93,6 +98,8 @@ impl<'a> Drop for AppRefMut<'a> {
     }
 }
 
+/// A reference to a GPUI application, typically constructed in the `main` function of your app.
+/// You won't interact with this type much outside of initial configuration and startup.
 pub struct App(Rc<AppCell>);
 
 /// Represents an application before it is fully launched. Once your app is
@@ -136,6 +143,8 @@ impl App {
         self
     }
 
+    /// Invokes a handler when an already-running application is launched.
+    /// On macOS, this can occur when the application icon is double-clicked or the app is launched via the dock.
     pub fn on_reopen<F>(&self, mut callback: F) -> &Self
     where
         F: 'static + FnMut(&mut AppContext),
@@ -149,18 +158,22 @@ impl App {
         self
     }
 
+    /// Returns metadata associated with the application
     pub fn metadata(&self) -> AppMetadata {
         self.0.borrow().app_metadata.clone()
     }
 
+    /// Returns a handle to the [BackgroundExecutor] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()
     }
 
+    /// Returns a handle to the [ForegroundExecutor] associated with this app, which can be used to spawn futures in the foreground.
     pub fn foreground_executor(&self) -> ForegroundExecutor {
         self.0.borrow().foreground_executor.clone()
     }
 
+    /// Returns a reference to the [TextSystem] associated with this app.
     pub fn text_system(&self) -> Arc<TextSystem> {
         self.0.borrow().text_system.clone()
     }
@@ -173,12 +186,6 @@ type KeystrokeObserver = Box<dyn FnMut(&KeystrokeEvent, &mut WindowContext) + 's
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
-
-// struct FrameConsumer {
-//     next_frame_callbacks: Vec<FrameCallback>,
-//     task: Task<()>,
-//     display_linker
-// }
 
 pub struct AppContext {
     pub(crate) this: Weak<AppCell>,
@@ -314,10 +321,12 @@ impl AppContext {
         }
     }
 
+    /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&mut self) {
         self.platform.quit();
     }
 
+    /// Get metadata about the app and platform.
     pub fn app_metadata(&self) -> AppMetadata {
         self.app_metadata.clone()
     }
@@ -340,6 +349,7 @@ impl AppContext {
         result
     }
 
+    /// Arrange a callback to be invoked when the given model or view calls `notify` on its respective context.
     pub fn observe<W, E>(
         &mut self,
         entity: &E,
@@ -355,7 +365,7 @@ impl AppContext {
         })
     }
 
-    pub fn observe_internal<W, E>(
+    pub(crate) fn observe_internal<W, E>(
         &mut self,
         entity: &E,
         mut on_notify: impl FnMut(E, &mut AppContext) -> bool + 'static,
@@ -380,15 +390,17 @@ impl AppContext {
         subscription
     }
 
-    pub fn subscribe<T, E, Evt>(
+    /// Arrange for the given callback to be invoked whenever the given model or view emits an event of a given type.
+    /// The callback is provided a handle to the emitting entity and a reference to the emitted event.
+    pub fn subscribe<T, E, Event>(
         &mut self,
         entity: &E,
-        mut on_event: impl FnMut(E, &Evt, &mut AppContext) + 'static,
+        mut on_event: impl FnMut(E, &Event, &mut AppContext) + 'static,
     ) -> Subscription
     where
-        T: 'static + EventEmitter<Evt>,
+        T: 'static + EventEmitter<Event>,
         E: Entity<T>,
-        Evt: 'static,
+        Event: 'static,
     {
         self.subscribe_internal(entity, move |entity, event, cx| {
             on_event(entity, event, cx);
@@ -426,6 +438,9 @@ impl AppContext {
         subscription
     }
 
+    /// Returns handles to all open windows in the application.
+    /// Each handle could be downcast to a handle typed for the root view of that window.
+    /// To find all windows of a given type, you could filter on
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         self.windows
             .values()
