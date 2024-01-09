@@ -1,4 +1,4 @@
-use gpui::Render;
+use gpui::{Render, SharedUrl};
 use story::Story;
 
 use crate::{prelude::*, Avatar};
@@ -43,7 +43,7 @@ impl Render for ListItemStory {
             .child(
                 ListItem::new("with_start slot avatar")
                     .child("Hello, world!")
-                    .start_slot(Avatar::new(SharedString::from(
+                    .start_slot(Avatar::new(SharedUrl::from(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     ))),
             )
@@ -51,7 +51,7 @@ impl Render for ListItemStory {
             .child(
                 ListItem::new("with_left_avatar")
                     .child("Hello, world!")
-                    .end_slot(Avatar::new(SharedString::from(
+                    .end_slot(Avatar::new(SharedUrl::from(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     ))),
             )
@@ -62,23 +62,23 @@ impl Render for ListItemStory {
                     .end_slot(
                         h_stack()
                             .gap_2()
-                            .child(Avatar::new(SharedString::from(
+                            .child(Avatar::new(SharedUrl::from(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
                             )))
-                            .child(Avatar::new(SharedString::from(
+                            .child(Avatar::new(SharedUrl::from(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
                             )))
-                            .child(Avatar::new(SharedString::from(
+                            .child(Avatar::new(SharedUrl::from(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
                             )))
-                            .child(Avatar::new(SharedString::from(
+                            .child(Avatar::new(SharedUrl::from(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
                             )))
-                            .child(Avatar::new(SharedString::from(
+                            .child(Avatar::new(SharedUrl::from(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
                             ))),
                     )
-                    .end_hover_slot(Avatar::new(SharedString::from(
+                    .end_hover_slot(Avatar::new(SharedUrl::from(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     ))),
             )

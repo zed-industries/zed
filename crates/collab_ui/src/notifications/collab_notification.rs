@@ -1,10 +1,10 @@
-use gpui::{img, prelude::*, AnyElement};
+use gpui::{img, prelude::*, AnyElement, SharedUrl};
 use smallvec::SmallVec;
 use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct CollabNotification {
-    avatar_uri: SharedString,
+    avatar_uri: SharedUrl,
     accept_button: Button,
     dismiss_button: Button,
     children: SmallVec<[AnyElement; 2]>,
@@ -12,7 +12,7 @@ pub struct CollabNotification {
 
 impl CollabNotification {
     pub fn new(
-        avatar_uri: impl Into<SharedString>,
+        avatar_uri: impl Into<SharedUrl>,
         accept_button: Button,
         dismiss_button: Button,
     ) -> Self {
