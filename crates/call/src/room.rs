@@ -173,7 +173,11 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
 
-                if !cx.update(|cx| Self::mute_on_join(cx))? {
+                let is_read_only = this
+                    .update(&mut cx, |room, _| room.read_only())
+                    .unwrap_or(true);
+
+                if !cx.update(|cx| Self::mute_on_join(cx))? && !is_read_only {
                     this.update(&mut cx, |this, cx| this.share_microphone(cx))?
                         .await?;
                 }

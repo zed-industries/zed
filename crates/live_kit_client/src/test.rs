@@ -167,6 +167,10 @@ impl TestServer {
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
 
+        if claims.video.can_publish == Some(false) {
+            return Err(anyhow!("user is not allowed to publish"));
+        }
+
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
@@ -204,6 +208,10 @@ impl TestServer {
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
+
+        if claims.video.can_publish == Some(false) {
+            return Err(anyhow!("user is not allowed to publish"));
+        }
 
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
