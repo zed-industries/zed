@@ -15,7 +15,7 @@ use support::h_flex;
 use theme::ActiveTheme;
 use ui::{
     h_stack, popover_menu, Avatar, ButtonCommon, ButtonLike, ButtonStyle, Color, ContextMenu, Icon,
-    IconPath, PopoverMenu, Tooltip,
+    IconName, PopoverMenu, Tooltip,
 };
 
 // Next we'll define a titlebar struct, which for now has a single field representing the user menu button.
@@ -123,7 +123,7 @@ impl RenderOnce for UserMenuButton {
                             h_flex()
                                 .gap_0p5()
                                 .child(Avatar::new(avatar_url.clone()))
-                                .child(Icon::new(IconPath::ChevronDown).color(Color::Muted)),
+                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
@@ -145,7 +145,7 @@ impl RenderOnce for UserMenuButton {
                         .child(
                             h_stack()
                                 .gap_0p5()
-                                .child(Icon::new(IconPath::ChevronDown).color(Color::Muted)),
+                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
