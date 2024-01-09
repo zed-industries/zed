@@ -163,17 +163,17 @@ impl App {
         self.0.borrow().app_metadata.clone()
     }
 
-    /// Returns a handle to the [BackgroundExecutor] associated with this app, which can be used to spawn futures in the background.
+    /// Returns a handle to the [`BackgroundExecutor`] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()
     }
 
-    /// Returns a handle to the [ForegroundExecutor] associated with this app, which can be used to spawn futures in the foreground.
+    /// Returns a handle to the [`ForegroundExecutor`] associated with this app, which can be used to spawn futures in the foreground.
     pub fn foreground_executor(&self) -> ForegroundExecutor {
         self.0.borrow().foreground_executor.clone()
     }
 
-    /// Returns a reference to the [TextSystem] associated with this app.
+    /// Returns a reference to the [`TextSystem`] associated with this app.
     pub fn text_system(&self) -> Arc<TextSystem> {
         self.0.borrow().text_system.clone()
     }
@@ -299,7 +299,7 @@ impl AppContext {
         app
     }
 
-    /// Quit the application gracefully. Handlers registered with `ModelContext::on_app_quit`
+    /// Quit the application gracefully. Handlers registered with [`ModelContext::on_app_quit`]
     /// will be given 100ms to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
@@ -580,7 +580,7 @@ impl AppContext {
         self.pending_effects.push_back(effect);
     }
 
-    /// Called at the end of AppContext::update to complete any side effects
+    /// Called at the end of [`AppContext::update`] to complete any side effects
     /// such as notifying observers, emitting events, etc. Effects can themselves
     /// cause effects, so we continue looping until all effects are processed.
     fn flush_effects(&mut self) {

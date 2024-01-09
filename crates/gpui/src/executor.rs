@@ -33,8 +33,10 @@ pub struct ForegroundExecutor {
 }
 
 /// Task is a primitive that allows work to happen in the background.
-/// It implements Future so you can `.await` on it.
-/// If you drop a task it will be cancelled immediately. Calling `.detach()` allows
+///
+/// It implements [`Future`] so you can `.await` on it.
+///
+/// If you drop a task it will be cancelled immediately. Calling [`Task::detach`] allows
 /// the task to continue running in the background, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
@@ -387,7 +389,7 @@ impl ForegroundExecutor {
     }
 }
 
-/// Scope manages a set of tasks that are enqueued and waited on together. See `BackgroundExecutor#scoped`
+/// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
 pub struct Scope<'a> {
     executor: BackgroundExecutor,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
