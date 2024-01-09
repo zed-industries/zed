@@ -28,7 +28,7 @@ use gpui::{
     AnchorCorner, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners,
     CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Hsla, InteractiveBounds,
     InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollWheelEvent, ShapedLine,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
     SharedString, Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun,
     TextStyle, View, ViewContext, WindowContext,
 };
@@ -579,41 +579,6 @@ impl EditorElement {
                 cx.stop_propagation();
             }
         }
-    }
-
-    fn scroll(
-        editor: &mut Editor,
-        event: &ScrollWheelEvent,
-        position_map: &PositionMap,
-        bounds: &InteractiveBounds,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        if !bounds.visibly_contains(&event.position, cx) {
-            return;
-        }
-
-        let line_height = position_map.line_height;
-        let max_glyph_width = position_map.em_width;
-        let (delta, axis) = match event.delta {
-            gpui::ScrollDelta::Pixels(mut pixels) => {
-                //Trackpad
-                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
-                (pixels, axis)
-            }
-
-            gpui::ScrollDelta::Lines(lines) => {
-                //Not trackpad
-                let pixels = point(lines.x * max_glyph_width, lines.y * line_height);
-                (pixels, None)
-            }
-        };
-
-        let scroll_position = position_map.snapshot.scroll_position();
-        let x = f32::from((scroll_position.x * max_glyph_width - delta.x) / max_glyph_width);
-        let y = f32::from((scroll_position.y * line_height - delta.y) / line_height);
-        let scroll_position = point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
-        editor.scroll(scroll_position, axis, cx);
-        cx.stop_propagation();
     }
 
     fn paint_background(
@@ -2450,6 +2415,64 @@ impl EditorElement {
         )
     }
 
+    fn paint_scroll_wheel_listener(
+        &mut self,
+        interactive_bounds: &InteractiveBounds,
+        layout: &LayoutState,
+        cx: &mut WindowContext,
+    ) {
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+            let interactive_bounds = interactive_bounds.clone();
+            let mut delta = ScrollDelta::default();
+
+            move |event: &ScrollWheelEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    delta = delta.coalesce(event.delta);
+                    editor.update(cx, |editor, cx| {
+                        let position = event.position;
+                        let position_map: &PositionMap = &position_map;
+                        let bounds = &interactive_bounds;
+                        if !bounds.visibly_contains(&position, cx) {
+                            return;
+                        }
+
+                        let line_height = position_map.line_height;
+                        let max_glyph_width = position_map.em_width;
+                        let (delta, axis) = match delta {
+                            gpui::ScrollDelta::Pixels(mut pixels) => {
+                                //Trackpad
+                                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+                                (pixels, axis)
+                            }
+
+                            gpui::ScrollDelta::Lines(lines) => {
+                                //Not trackpad
+                                let pixels =
+                                    point(lines.x * max_glyph_width, lines.y * line_height);
+                                (pixels, None)
+                            }
+                        };
+
+                        let scroll_position = position_map.snapshot.scroll_position();
+                        let x = f32::from(
+                            (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width,
+                        );
+                        let y =
+                            f32::from((scroll_position.y * line_height - delta.y) / line_height);
+                        let scroll_position =
+                            point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
+                        editor.scroll(scroll_position, axis, cx);
+                        cx.stop_propagation();
+                    });
+                }
+            }
+        });
+    }
+
     fn paint_mouse_listeners(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -2463,21 +2486,7 @@ impl EditorElement {
             stacking_order: cx.stacking_order().clone(),
         };
 
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            let editor = self.editor.clone();
-            let interactive_bounds = interactive_bounds.clone();
-
-            move |event: &ScrollWheelEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
-                {
-                    editor.update(cx, |editor, cx| {
-                        Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
-                    });
-                }
-            }
-        });
+        self.paint_scroll_wheel_listener(&interactive_bounds, layout, cx);
 
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
