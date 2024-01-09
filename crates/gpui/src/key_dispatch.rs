@@ -70,17 +70,34 @@ impl DispatchTree {
         self.keystroke_matchers.clear();
     }
 
-    pub fn push_node(&mut self, context: Option<KeyContext>) {
+    pub fn push_node(
+        &mut self,
+        context: Option<KeyContext>,
+        focus_id: Option<FocusId>,
+        view_id: Option<EntityId>,
+    ) {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
             parent,
+            focus_id,
+            view_id,
             ..Default::default()
         });
         self.node_stack.push(node_id);
+
         if let Some(context) = context {
             self.active_node().context = Some(context.clone());
             self.context_stack.push(context);
+        }
+
+        if let Some(focus_id) = focus_id {
+            self.focusable_node_ids.insert(focus_id, node_id);
+        }
+
+        if let Some(view_id) = view_id {
+            self.view_stack.push(view_id);
+            self.view_node_ids.insert(view_id, node_id);
         }
     }
 
@@ -96,14 +113,11 @@ impl DispatchTree {
     }
 
     fn move_node(&mut self, source_node: &mut DispatchNode) {
-        self.push_node(source_node.context.take());
-        if let Some(focus_id) = source_node.focus_id {
-            self.make_focusable(focus_id);
-        }
-        if let Some(view_id) = source_node.view_id {
-            self.associate_view(view_id);
-        }
-
+        self.push_node(
+            source_node.context.take(),
+            source_node.focus_id,
+            source_node.view_id,
+        );
         let target_node = self.active_node();
         target_node.key_listeners = mem::take(&mut source_node.key_listeners);
         target_node.action_listeners = mem::take(&mut source_node.action_listeners);
@@ -193,19 +207,6 @@ impl DispatchTree {
                 action_type,
                 listener,
             });
-    }
-
-    pub fn make_focusable(&mut self, focus_id: FocusId) {
-        let node_id = self.active_node_id();
-        self.active_node().focus_id = Some(focus_id);
-        self.focusable_node_ids.insert(focus_id, node_id);
-    }
-
-    pub fn associate_view(&mut self, view_id: EntityId) {
-        let node_id = self.active_node_id();
-        self.active_node().view_id = Some(view_id);
-        self.view_node_ids.insert(view_id, node_id);
-        self.view_stack.push(view_id);
     }
 
     pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {

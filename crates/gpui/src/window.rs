@@ -1866,13 +1866,12 @@ impl<'a> WindowContext<'a> {
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
         let window = &mut self.window;
-        window.next_frame.dispatch_tree.push_node(context.clone());
-        if let Some(focus_handle) = focus_handle.as_ref() {
-            window
-                .next_frame
-                .dispatch_tree
-                .make_focusable(focus_handle.id);
-        }
+        let focus_id = focus_handle.as_ref().map(|handle| handle.id);
+        window
+            .next_frame
+            .dispatch_tree
+            .push_node(context.clone(), focus_id, None);
+
         let result = f(focus_handle, self);
 
         self.window.next_frame.dispatch_tree.pop_node();
@@ -2165,11 +2164,10 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     }
 
     fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window_mut().next_frame.dispatch_tree.push_node(None);
         self.window_mut()
             .next_frame
             .dispatch_tree
-            .associate_view(view_id);
+            .push_node(None, None, Some(view_id));
         let result = f(self);
         self.window_mut().next_frame.dispatch_tree.pop_node();
         result
