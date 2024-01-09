@@ -78,6 +78,8 @@ impl Notification {
 
 #[cfg(test)]
 mod tests {
+    use crate::Notification;
+
     #[test]
     fn test_notification() {
         // Notifications can be serialized and deserialized.
