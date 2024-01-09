@@ -2322,12 +2322,6 @@ impl CollabPanel {
                     .child(
                         h_stack()
                             .id(channel_id as usize)
-                            // HACK: This is a dirty hack to help with the positioning of the button container.
-                            //
-                            // We're using a pixel width for the elements but then allowing the contents to
-                            // overflow. This means that the label and facepile will be shown, but will not
-                            // push the button container off the edge of the panel.
-                            .w_px()
                             .child(Label::new(channel.name.clone()))
                             .children(face_pile.map(|face_pile| face_pile.render(cx))),
                     ),
