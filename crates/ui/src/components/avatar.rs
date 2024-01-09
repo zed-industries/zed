@@ -8,6 +8,16 @@ pub enum Shape {
     RoundedRectangle,
 }
 
+/// An element that renders a user avatar with customizable appearance options.
+///
+/// # Examples
+///
+/// ```
+/// Avatar::new("path/to/image.png")
+///     .shape(Shape::Circle)
+///     .grayscale(true)
+///     .border_color(cx.theme().colors().border)
+/// ```
 #[derive(IntoElement)]
 pub struct Avatar {
     image: Img,
@@ -66,6 +76,16 @@ impl Avatar {
         }
     }
 
+    /// Sets the shape of the avatar image.
+    ///
+    /// This method allows the shape of the avatar to be specified using the [Shape] enum.
+    /// It modifies the corner radius of the image to match the specified shape.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// Avatar::new("path/to/image.png").shape(Shape::Circle);
+    /// ```
     pub fn shape(mut self, shape: Shape) -> Self {
         self.image = match shape {
             Shape::Circle => self.image.rounded_full(),
@@ -74,6 +94,13 @@ impl Avatar {
         self
     }
 
+    /// Applies a grayscale filter to the avatar image.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let avatar = Avatar::new("path/to/image.png").grayscale(true);
+    /// ```
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.image = self.image.grayscale(grayscale);
         self
