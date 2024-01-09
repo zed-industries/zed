@@ -1,10 +1,13 @@
 use crate::prelude::*;
 use gpui::{img, Hsla, ImageSource, Img, IntoElement, Styled};
 
+/// The shape of an [`Avatar`].
 #[derive(Debug, Default, PartialEq, Clone)]
-pub enum Shape {
+pub enum AvatarShape {
+    /// The avatar is shown in a circle.
     #[default]
     Circle,
+    /// The avatar is shown in a rectangle with rounded corners.
     RoundedRectangle,
 }
 
@@ -14,7 +17,7 @@ pub enum Shape {
 ///
 /// ```
 /// Avatar::new("path/to/image.png")
-///     .shape(Shape::Circle)
+///     .shape(AvatarShape::Circle)
 ///     .grayscale(true)
 ///     .border_color(cx.theme().colors().border)
 /// ```
@@ -28,7 +31,7 @@ pub struct Avatar {
 impl RenderOnce for Avatar {
     fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
         if self.image.style().corner_radii.top_left.is_none() {
-            self = self.shape(Shape::Circle);
+            self = self.shape(AvatarShape::Circle);
         }
 
         let size = cx.rem_size();
@@ -84,12 +87,12 @@ impl Avatar {
     /// # Examples
     ///
     /// ```
-    /// Avatar::new("path/to/image.png").shape(Shape::Circle);
+    /// Avatar::new("path/to/image.png").shape(AvatarShape::Circle);
     /// ```
-    pub fn shape(mut self, shape: Shape) -> Self {
+    pub fn shape(mut self, shape: AvatarShape) -> Self {
         self.image = match shape {
-            Shape::Circle => self.image.rounded_full(),
-            Shape::RoundedRectangle => self.image.rounded_md(),
+            AvatarShape::Circle => self.image.rounded_full(),
+            AvatarShape::RoundedRectangle => self.image.rounded_md(),
         };
         self
     }
