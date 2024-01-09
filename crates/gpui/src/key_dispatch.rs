@@ -192,8 +192,8 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                for i in 1..context_stack.len() {
-                    let context = &context_stack[0..i];
+                for i in 0..context_stack.len() {
+                    let context = &context_stack[0..=i];
                     if keymap.binding_enabled(binding, context) {
                         return true;
                     }
