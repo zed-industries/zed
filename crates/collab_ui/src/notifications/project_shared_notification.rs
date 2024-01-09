@@ -131,7 +131,7 @@ impl Render for ProjectSharedNotification {
 
         cx.set_rem_size(ui_font_size);
 
-        div().font(ui_font).child(
+        div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.owner.avatar_uri.clone(),
                 Button::new("open", "Open").on_click(cx.listener(move |this, _event, cx| {

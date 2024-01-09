@@ -126,7 +126,7 @@ impl Render for IncomingCallNotification {
 
         cx.set_rem_size(ui_font_size);
 
-        div().font(ui_font).child(
+        div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.state.call.calling_user.avatar_uri.clone(),
                 Button::new("accept", "Accept").on_click({
