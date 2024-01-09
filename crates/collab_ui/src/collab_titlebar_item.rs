@@ -41,12 +41,6 @@ pub fn init(cx: &mut AppContext) {
         workspace.set_titlebar_item(titlebar_item.into(), cx)
     })
     .detach();
-    // todo!()
-    // cx.add_action(CollabTitlebarItem::share_project);
-    // cx.add_action(CollabTitlebarItem::unshare_project);
-    // cx.add_action(CollabTitlebarItem::toggle_user_menu);
-    // cx.add_action(CollabTitlebarItem::toggle_vcs_menu);
-    // cx.add_action(CollabTitlebarItem::toggle_project_menu);
 }
 
 pub struct CollabTitlebarItem {

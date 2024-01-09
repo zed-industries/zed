@@ -19,7 +19,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for window in notification_windows.drain(..) {
                 window
                     .update(&mut cx, |_, cx| {
-                        // todo!()
                         cx.remove_window();
                     })
                     .log_err();

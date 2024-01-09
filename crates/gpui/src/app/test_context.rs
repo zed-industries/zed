@@ -481,7 +481,7 @@ impl<V> View<V> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (tx, mut rx) = postage::mpsc::channel(1024);
-        let timeout_duration = Duration::from_millis(100); //todo!() cx.condition_duration();
+        let timeout_duration = Duration::from_millis(100);
 
         let mut cx = cx.app.borrow_mut();
         let subscriptions = (

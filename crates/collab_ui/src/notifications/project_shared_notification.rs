@@ -51,7 +51,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 for window in windows {
                     window
                         .update(cx, |_, cx| {
-                            // todo!()
                             cx.remove_window();
                         })
                         .ok();
@@ -64,7 +63,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 for window in windows {
                     window
                         .update(cx, |_, cx| {
-                            // todo!()
                             cx.remove_window();
                         })
                         .ok();
