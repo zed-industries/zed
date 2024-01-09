@@ -114,12 +114,24 @@ impl ActionRegistry {
     pub(crate) fn load_actions(&mut self) {
         for builder in __GPUI_ACTIONS {
             let action = builder();
-            //todo(remove)
-            let name: SharedString = action.name.into();
-            self.builders_by_name.insert(name.clone(), action.build);
-            self.names_by_type_id.insert(action.type_id, name.clone());
-            self.all_names.push(name);
+            self.insert_action(action);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_action<A: Action>(&mut self) {
+        self.insert_action(ActionData {
+            name: A::debug_name(),
+            type_id: TypeId::of::<A>(),
+            build: A::build,
+        });
+    }
+
+    fn insert_action(&mut self, action: ActionData) {
+        let name: SharedString = action.name.into();
+        self.builders_by_name.insert(name.clone(), action.build);
+        self.names_by_type_id.insert(action.type_id, name.clone());
+        self.all_names.push(name);
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
