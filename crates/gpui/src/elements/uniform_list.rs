@@ -95,6 +95,7 @@ impl UniformListScrollHandle {
             } else if item_bottom > scroll_top + state.list_height {
                 scroll_offset.y = -(item_bottom - state.list_height);
             }
+            self.deferred_scroll_to_item = None;
         } else {
             self.deferred_scroll_to_item = Some(ix);
         }
@@ -104,7 +105,6 @@ impl UniformListScrollHandle {
         if let Some(state) = &*self.state.borrow() {
             -state.scroll_offset.borrow().y
         } else {
-            self.deferred_scroll_to_item = Some(0);
             Pixels::ZERO
         }
     }
@@ -241,12 +241,15 @@ impl Element for UniformList {
                         scroll_handle.state.borrow_mut().replace(ScrollHandleState {
                             item_height,
                             list_height: padded_bounds.size.height,
-                            scroll_offset: shared_scroll_offset,
+                            scroll_offset: shared_scroll_offset.clone(),
                         });
-                        if let Some(ix) = scroll_handle.deferred_scroll_to_item.take() {
-                            dbg!("@@@@");
-                            scroll_handle.scroll_to_item(ix);
-                            cx.notify();
+                        if let Some(scroll_handle) = self.scroll_handle.as_mut() {
+                            if scroll_handle.state.borrow().is_some() {
+                                if let Some(ix) = scroll_handle.deferred_scroll_to_item.take() {
+                                    scroll_handle.scroll_to_item(ix);
+                                    scroll_offset = *shared_scroll_offset.borrow();
+                                }
+                            }
                         }
                     }
 
