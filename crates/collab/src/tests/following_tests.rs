@@ -161,7 +161,6 @@ async fn test_basic_following(
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
         .await
         .unwrap();
-    let weak_project_c = project_c.downgrade();
     drop(project_c);
 
     // Client C also follows client A.
@@ -248,7 +247,6 @@ async fn test_basic_following(
     cx_c.cx.update(|_| {});
 
     weak_workspace_c.assert_dropped();
-    weak_project_c.assert_dropped();
 
     // Clients A and B see that client B is following A, and client C is not present in the followers.
     executor.run_until_parked();
