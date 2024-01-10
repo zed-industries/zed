@@ -26,7 +26,7 @@ impl DisplayDiffHunk {
             &DisplayDiffHunk::Folded { display_row } => display_row,
             DisplayDiffHunk::Unfolded {
                 display_row_range, ..
-            } => display_row_range.start,
+            } => *display_row_range.start(),
         }
     }
 
@@ -36,7 +36,7 @@ impl DisplayDiffHunk {
 
             DisplayDiffHunk::Unfolded {
                 display_row_range, ..
-            } => display_row_range.start..=display_row_range.end,
+            } => display_row_range.clone(),
         };
 
         range.contains(&display_row)
