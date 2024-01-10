@@ -1,3 +1,4 @@
+use crate::{ConnectionState, RoomUpdate, Sid};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{BTreeMap, HashMap};
@@ -104,9 +105,8 @@ impl TestServer {
                 client_room
                     .0
                     .lock()
-                    .video_track_updates
-                    .0
-                    .try_broadcast(RemoteVideoTrackUpdate::Subscribed(track.clone()))
+                    .updates_tx
+                    .try_broadcast(RoomUpdate::SubscribedToRemoteVideoTrack(track.clone()))
                     .unwrap();
             }
             room.client_rooms.insert(identity, client_room);
@@ -211,9 +211,8 @@ impl TestServer {
                 let _ = client_room
                     .0
                     .lock()
-                    .video_track_updates
-                    .0
-                    .try_broadcast(RemoteVideoTrackUpdate::Subscribed(track.clone()))
+                    .updates_tx
+                    .try_broadcast(RoomUpdate::SubscribedToRemoteVideoTrack(track.clone()))
                     .unwrap();
             }
         }
@@ -261,9 +260,8 @@ impl TestServer {
                 let _ = client_room
                     .0
                     .lock()
-                    .audio_track_updates
-                    .0
-                    .try_broadcast(RemoteAudioTrackUpdate::Subscribed(
+                    .updates_tx
+                    .try_broadcast(RoomUpdate::SubscribedToRemoteAudioTrack(
                         track.clone(),
                         publication.clone(),
                     ))
@@ -369,39 +367,26 @@ impl live_kit_server::api::Client for TestApiClient {
     }
 }
 
-pub type Sid = String;
-
 struct RoomState {
     connection: (
         watch::Sender<ConnectionState>,
         watch::Receiver<ConnectionState>,
     ),
     display_sources: Vec<MacOSDisplay>,
-    audio_track_updates: (
-        async_broadcast::Sender<RemoteAudioTrackUpdate>,
-        async_broadcast::Receiver<RemoteAudioTrackUpdate>,
-    ),
-    video_track_updates: (
-        async_broadcast::Sender<RemoteVideoTrackUpdate>,
-        async_broadcast::Receiver<RemoteVideoTrackUpdate>,
-    ),
-}
-
-#[derive(Clone, Eq, PartialEq)]
-pub enum ConnectionState {
-    Disconnected,
-    Connected { url: String, token: String },
+    updates_tx: async_broadcast::Sender<RoomUpdate>,
+    updates_rx: async_broadcast::Receiver<RoomUpdate>,
 }
 
 pub struct Room(Mutex<RoomState>);
 
 impl Room {
     pub fn new() -> Arc<Self> {
+        let (updates_tx, updates_rx) = async_broadcast::broadcast(128);
         Arc::new(Self(Mutex::new(RoomState {
             connection: watch::channel_with(ConnectionState::Disconnected),
             display_sources: Default::default(),
-            video_track_updates: async_broadcast::broadcast(128),
-            audio_track_updates: async_broadcast::broadcast(128),
+            updates_tx,
+            updates_rx,
         })))
     }
 
@@ -505,12 +490,8 @@ impl Room {
             .collect()
     }
 
-    pub fn remote_audio_track_updates(&self) -> impl Stream<Item = RemoteAudioTrackUpdate> {
-        self.0.lock().audio_track_updates.1.clone()
-    }
-
-    pub fn remote_video_track_updates(&self) -> impl Stream<Item = RemoteVideoTrackUpdate> {
-        self.0.lock().video_track_updates.1.clone()
+    pub fn updates(&self) -> impl Stream<Item = RoomUpdate> {
+        self.0.lock().updates_rx.clone()
     }
 
     pub fn set_display_sources(&self, sources: Vec<MacOSDisplay>) {
@@ -644,20 +625,6 @@ impl RemoteAudioTrack {
     pub fn disable(&self) -> impl Future<Output = Result<()>> {
         async { Ok(()) }
     }
-}
-
-#[derive(Clone)]
-pub enum RemoteVideoTrackUpdate {
-    Subscribed(Arc<RemoteVideoTrack>),
-    Unsubscribed { publisher_id: Sid, track_id: Sid },
-}
-
-#[derive(Clone)]
-pub enum RemoteAudioTrackUpdate {
-    ActiveSpeakersChanged { speakers: Vec<Sid> },
-    MuteChanged { track_id: Sid, muted: bool },
-    Subscribed(Arc<RemoteAudioTrack>, Arc<RemoteTrackPublication>),
-    Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
 #[derive(Clone)]

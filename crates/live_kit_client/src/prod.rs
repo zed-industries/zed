@@ -1,3 +1,4 @@
+use crate::{ConnectionState, RoomUpdate, Sid};
 use anyhow::{anyhow, Context, Result};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
@@ -155,22 +156,13 @@ extern "C" {
     fn LKRemoteTrackPublicationGetSid(publication: swift::RemoteTrackPublication) -> CFStringRef;
 }
 
-pub type Sid = String;
-
-#[derive(Clone, Eq, PartialEq)]
-pub enum ConnectionState {
-    Disconnected,
-    Connected { url: String, token: String },
-}
-
 pub struct Room {
     native_room: swift::Room,
     connection: Mutex<(
         watch::Sender<ConnectionState>,
         watch::Receiver<ConnectionState>,
     )>,
-    remote_audio_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteAudioTrackUpdate>>>,
-    remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteVideoTrackUpdate>>>,
+    update_subscribers: Mutex<Vec<mpsc::UnboundedSender<RoomUpdate>>>,
     _delegate: RoomDelegate,
 }
 
@@ -181,8 +173,7 @@ impl Room {
             Self {
                 native_room: unsafe { LKRoomCreate(delegate.native_delegate) },
                 connection: Mutex::new(watch::channel_with(ConnectionState::Disconnected)),
-                remote_audio_track_subscribers: Default::default(),
-                remote_video_track_subscribers: Default::default(),
+                update_subscribers: Default::default(),
                 _delegate: delegate,
             }
         })
@@ -397,15 +388,9 @@ impl Room {
         }
     }
 
-    pub fn remote_audio_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteAudioTrackUpdate> {
+    pub fn updates(&self) -> mpsc::UnboundedReceiver<RoomUpdate> {
         let (tx, rx) = mpsc::unbounded();
-        self.remote_audio_track_subscribers.lock().push(tx);
-        rx
-    }
-
-    pub fn remote_video_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteVideoTrackUpdate> {
-        let (tx, rx) = mpsc::unbounded();
-        self.remote_video_track_subscribers.lock().push(tx);
+        self.update_subscribers.lock().push(tx);
         rx
     }
 
@@ -416,8 +401,8 @@ impl Room {
     ) {
         let track = Arc::new(track);
         let publication = Arc::new(publication);
-        self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::Subscribed(
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::SubscribedToRemoteAudioTrack(
                 track.clone(),
                 publication.clone(),
             ))
@@ -426,8 +411,8 @@ impl Room {
     }
 
     fn did_unsubscribe_from_remote_audio_track(&self, publisher_id: String, track_id: String) {
-        self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::Unsubscribed {
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::UnsubscribedFromRemoteAudioTrack {
                 publisher_id: publisher_id.clone(),
                 track_id: track_id.clone(),
             })
@@ -436,8 +421,8 @@ impl Room {
     }
 
     fn mute_changed_from_remote_audio_track(&self, track_id: String, muted: bool) {
-        self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::MuteChanged {
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::RemoteAudioTrackMuteChanged {
                 track_id: track_id.clone(),
                 muted,
             })
@@ -445,29 +430,26 @@ impl Room {
         });
     }
 
-    // A vec of publisher IDs
     fn active_speakers_changed(&self, speakers: Vec<String>) {
-        self.remote_audio_track_subscribers
-            .lock()
-            .retain(move |tx| {
-                tx.unbounded_send(RemoteAudioTrackUpdate::ActiveSpeakersChanged {
-                    speakers: speakers.clone(),
-                })
-                .is_ok()
-            });
+        self.update_subscribers.lock().retain(move |tx| {
+            tx.unbounded_send(RoomUpdate::ActiveSpeakersChanged {
+                speakers: speakers.clone(),
+            })
+            .is_ok()
+        });
     }
 
     fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
         let track = Arc::new(track);
-        self.remote_video_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteVideoTrackUpdate::Subscribed(track.clone()))
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::SubscribedToRemoteVideoTrack(track.clone()))
                 .is_ok()
         });
     }
 
     fn did_unsubscribe_from_remote_video_track(&self, publisher_id: String, track_id: String) {
-        self.remote_video_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteVideoTrackUpdate::Unsubscribed {
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::UnsubscribedFromRemoteVideoTrack {
                 publisher_id: publisher_id.clone(),
                 track_id: track_id.clone(),
             })
@@ -887,18 +869,6 @@ impl Drop for RemoteVideoTrack {
     fn drop(&mut self) {
         unsafe { CFRelease(self.native_track.0) }
     }
-}
-
-pub enum RemoteVideoTrackUpdate {
-    Subscribed(Arc<RemoteVideoTrack>),
-    Unsubscribed { publisher_id: Sid, track_id: Sid },
-}
-
-pub enum RemoteAudioTrackUpdate {
-    ActiveSpeakersChanged { speakers: Vec<Sid> },
-    MuteChanged { track_id: Sid, muted: bool },
-    Subscribed(Arc<RemoteAudioTrack>, Arc<RemoteTrackPublication>),
-    Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
 pub struct MacOSDisplay(swift::MacOSDisplay);
