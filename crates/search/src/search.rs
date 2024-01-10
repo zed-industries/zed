@@ -98,7 +98,7 @@ impl SearchOptions {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
             .style(ButtonStyle::Subtle)
-            .when(active, |button| button.style(ButtonStyle::Filled))
+            .selected(active)
             .tooltip({
                 let action = self.to_toggle_action();
                 let label: SharedString = format!("Toggle {}", self.label()).into();
