@@ -110,7 +110,7 @@ prost = { version = "0.8" }
 rand = { version = "0.8.5" }
 refineable = { path = "./crates/refineable" }
 regex = { version = "1.5" }
-rust-embed = { version = "8.0", features = ["include-exclude"] }
+rust-embed = { version = "8.0", features = ["include-exclude", "compression"] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 schemars = { version = "0.8" }
 serde = { version = "1.0", features = ["derive", "rc"] }
