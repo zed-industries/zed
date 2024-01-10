@@ -312,7 +312,7 @@ impl FileFinderDelegate {
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
         cx.observe(&project, |file_finder, _, cx| {
-            //todo!() We should probably not re-render on every project anything
+            //todo We should probably not re-render on every project anything
             file_finder
                 .picker
                 .update(cx, |picker, cx| picker.refresh(cx))
