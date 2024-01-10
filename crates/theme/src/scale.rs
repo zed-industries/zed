@@ -2,7 +2,9 @@ use gpui::{AppContext, Hsla, SharedString};
 
 use crate::{ActiveTheme, Appearance};
 
-/// A one-based step in a [`ColorScale`].
+/// A collection of colors that are used to style the UI.
+///
+/// Each step has a semantic meaning, and is used to style different parts of the UI.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct ColorScaleStep(usize);
 
@@ -37,6 +39,10 @@ impl ColorScaleStep {
     ];
 }
 
+/// A scale of colors for a given [`ColorScaleSet`].
+///
+/// Each [`ColorScale`] contains exactly 12 colors. Refer to
+/// [`ColorScaleStep`] for a reference of what each step is used for.
 pub struct ColorScale(Vec<Hsla>);
 
 impl FromIterator<Hsla> for ColorScale {
@@ -229,6 +235,7 @@ impl IntoIterator for ColorScales {
     }
 }
 
+/// Provides groups of [`ColorScale`]s for light and dark themes, as well as transparent versions of each scale.
 pub struct ColorScaleSet {
     name: SharedString,
     light: ColorScale,

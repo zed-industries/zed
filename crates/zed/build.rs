@@ -22,7 +22,7 @@ fn main() {
     println!("cargo:rustc-link-arg=-Wl,-ObjC");
 
     // Populate git sha environment variable if git is available
-    println!("cargo:rerun-if-changed=.git/logs/HEAD");
+    println!("cargo:rerun-if-changed=../../.git/logs/HEAD");
     if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {
         if output.status.success() {
             let git_sha = String::from_utf8_lossy(&output.stdout);

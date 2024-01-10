@@ -36,6 +36,9 @@ pub enum VenvSettings {
     #[default]
     Off,
     On {
+        /// Default directories to search for virtual environments, relative
+        /// to the current working directory. We recommend overriding this
+        /// in your project's settings, rather than globally.
         activate_script: Option<ActivateScript>,
         directories: Option<Vec<PathBuf>>,
     },
@@ -73,20 +76,68 @@ pub enum ActivateScript {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettingsContent {
+    /// What shell to use when opening a terminal.
+    ///
+    /// Default: system
     pub shell: Option<Shell>,
+    /// What working directory to use when launching the terminal
+    ///
+    /// Default: current_project_directory
     pub working_directory: Option<WorkingDirectory>,
+    /// Set the terminal's font size.
+    ///
+    /// If this option is not included,
+    /// the terminal will default to matching the buffer's font size.
     pub font_size: Option<f32>,
+    /// Set the terminal's font family.
+    ///
+    /// If this option is not included,
+    /// the terminal will default to matching the buffer's font family.
     pub font_family: Option<String>,
+    /// Set the terminal's line height.
+    ///
+    /// Default: comfortable
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
+    /// Any key-value pairs added to this list will be added to the terminal's
+    /// environment. Use `:` to separate multiple values.
+    ///
+    /// Default: {}
     pub env: Option<HashMap<String, String>>,
+    /// Set the cursor blinking behavior in the terminal.
+    ///
+    /// Default: terminal_controlled
     pub blinking: Option<TerminalBlink>,
+    /// Set whether Alternate Scroll mode (code: ?1007) is active by default.
+    /// Alternate Scroll mode converts mouse scroll events into up / down key
+    /// presses when in the alternate screen (e.g. when running applications
+    /// like vim or  less). The terminal can still set and unset this mode.
+    ///
+    /// Default: off
     pub alternate_scroll: Option<AlternateScroll>,
+    /// Set whether the option key behaves as the meta key.
+    ///
+    /// Default: false
     pub option_as_meta: Option<bool>,
+    /// Whether or not selecting text in the terminal will automatically
+    /// copy to the system clipboard.
+    ///
+    /// Default: false
     pub copy_on_select: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
+    /// Default width when the terminal is docked to the left or right.
+    ///
+    /// Default: 640
     pub default_width: Option<f32>,
+    /// Default height when the terminal is docked to the bottom.
+    ///
+    /// Default: 320
     pub default_height: Option<f32>,
+    /// Activate the python virtual environment, if one is found, in the
+    /// terminal's working directory (as resolved by the working_directory
+    /// setting). Set this to "off" to disable this behavior.
+    ///
+    /// Default: on
     pub detect_venv: Option<VenvSettings>,
 }
 
@@ -107,9 +158,13 @@ impl settings::Settings for TerminalSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalLineHeight {
+    /// Use a line height that's comfortable for reading, 1.618
     #[default]
     Comfortable,
+    /// Use a standard line height, 1.3. This option is useful for TUIs,
+    /// particularly if they use box characters
     Standard,
+    /// Use a custom line height.
     Custom(f32),
 }
 
@@ -127,17 +182,25 @@ impl TerminalLineHeight {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
+    /// Never blink the cursor, ignoring the terminal mode.
     Off,
+    /// Default the cursor blink to off, but allow the terminal to
+    /// set blinking.
     TerminalControlled,
+    /// Always blink the cursor, ignoring the terminal mode.
     On,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
+    /// Use the system's default terminal configuration in /etc/passwd
     System,
     Program(String),
-    WithArguments { program: String, args: Vec<String> },
+    WithArguments {
+        program: String,
+        args: Vec<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -150,8 +213,15 @@ pub enum AlternateScroll {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
+    /// Use the current file's project directory.  Will Fallback to the
+    /// first project directory strategy if unsuccessful.
     CurrentProjectDirectory,
+    /// Use the first project in this workspace's directory.
     FirstProjectDirectory,
+    /// Always use this platform's home directory (if it can be found).
     AlwaysHome,
+    /// Slways use a specific directory. This value will be shell expanded.
+    /// If this path is not a valid directory the terminal will default to
+    /// this platform's home directory  (if it can be found).
     Always { directory: String },
 }

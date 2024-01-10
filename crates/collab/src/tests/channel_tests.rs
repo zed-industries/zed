@@ -1337,6 +1337,7 @@ async fn test_guest_access(
         })
         .await
         .unwrap();
+    executor.run_until_parked();
 
     assert_channels_list_shape(client_b.channel_store(), cx_b, &[]);
 

@@ -3065,6 +3065,7 @@ async fn test_local_settings(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
+    executor.run_until_parked();
 
     // As client B, join that project and observe the local settings.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -4936,10 +4937,10 @@ async fn test_project_symbols(
         .await
         .unwrap();
 
-    buffer_b_2.read_with(cx_b, |buffer, _| {
+    buffer_b_2.read_with(cx_b, |buffer, cx| {
         assert_eq!(
-            buffer.file().unwrap().path().as_ref(),
-            Path::new("../crate-2/two.rs")
+            buffer.file().unwrap().full_path(cx),
+            Path::new("/code/crate-2/two.rs")
         );
     });
 

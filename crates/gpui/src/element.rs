@@ -31,14 +31,14 @@ pub trait IntoElement: Sized {
     /// The specific type of element into which the implementing type is converted.
     type Element: Element;
 
-    /// The [ElementId] of self once converted into an [Element].
+    /// The [`ElementId`] of self once converted into an [`Element`].
     /// If present, the resulting element's state will be carried across frames.
     fn element_id(&self) -> Option<ElementId>;
 
-    /// Convert self into a type that implements [Element].
+    /// Convert self into a type that implements [`Element`].
     fn into_element(self) -> Self::Element;
 
-    /// Convert self into a dynamically-typed [AnyElement].
+    /// Convert self into a dynamically-typed [`AnyElement`].
     fn into_any_element(self) -> AnyElement {
         self.into_element().into_any()
     }
@@ -115,7 +115,7 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement;
 }
 
-/// You can derive [IntoElement] on any type that implements this trait.
+/// You can derive [`IntoElement`] on any type that implements this trait.
 /// It is used to allow views to be expressed in terms of abstract data.
 pub trait RenderOnce: 'static {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement;
@@ -224,7 +224,7 @@ enum ElementDrawPhase<S> {
     },
 }
 
-/// A wrapper around an implementer of [Element] that allows it to be drawn in a window.
+/// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
 impl<E: Element> DrawableElement<E> {
     fn new(element: E) -> Self {
         DrawableElement {

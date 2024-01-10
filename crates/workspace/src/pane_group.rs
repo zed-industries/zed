@@ -12,7 +12,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use ui::{prelude::*, Button};
 
-const HANDLE_HITBOX_SIZE: f32 = 10.0; //todo!(change this back to 4)
+pub const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
@@ -268,15 +268,6 @@ impl Member {
                         )
                     })
                     .into_any()
-
-                // let el = div()
-                //     .flex()
-                //     .flex_1()
-                //     .gap_px()
-                //     .w_full()
-                //     .h_full()
-                //     .bg(cx.theme().colors().editor)
-                //     .children();
             }
             Member::Axis(axis) => axis
                 .render(
@@ -487,6 +478,7 @@ impl PaneAxis {
             basis,
             self.flexes.clone(),
             self.bounding_boxes.clone(),
+            cx.view().downgrade(),
         )
         .children(self.members.iter().enumerate().map(|(ix, member)| {
             if member.contains(active_pane) {
@@ -575,21 +567,28 @@ mod element {
     use gpui::{
         px, relative, Along, AnyElement, Axis, Bounds, CursorStyle, Element, InteractiveBounds,
         IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WindowContext,
+        Size, Style, WeakView, WindowContext,
     };
     use parking_lot::Mutex;
+    use settings::Settings;
     use smallvec::SmallVec;
     use ui::prelude::*;
+    use util::ResultExt;
+
+    use crate::Workspace;
+
+    use crate::WorkspaceSettings;
 
     use super::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE};
 
     const DIVIDER_SIZE: f32 = 1.0;
 
-    pub fn pane_axis(
+    pub(super) fn pane_axis(
         axis: Axis,
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
+        workspace: WeakView<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
@@ -598,6 +597,7 @@ mod element {
             bounding_boxes,
             children: SmallVec::new(),
             active_pane_ix: None,
+            workspace,
         }
     }
 
@@ -608,6 +608,7 @@ mod element {
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
+        workspace: WeakView<Workspace>,
     }
 
     impl PaneAxisElement {
@@ -623,6 +624,7 @@ mod element {
             axis: Axis,
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
+            workspace: WeakView<Workspace>,
             cx: &mut WindowContext,
         ) {
             let min_size = match axis {
@@ -696,8 +698,9 @@ mod element {
                 proposed_current_pixel_change -= current_pixel_change;
             }
 
-            // todo!(schedule serialize)
-            // workspace.schedule_serialize(cx);
+            workspace
+                .update(cx, |this, cx| this.schedule_serialize(cx))
+                .log_err();
             cx.refresh();
         }
 
@@ -708,6 +711,7 @@ mod element {
             ix: usize,
             pane_bounds: Bounds<Pixels>,
             axis_bounds: Bounds<Pixels>,
+            workspace: WeakView<Workspace>,
             cx: &mut WindowContext,
         ) {
             let handle_bounds = Bounds {
@@ -742,24 +746,39 @@ mod element {
 
                 cx.on_mouse_event({
                     let dragged_handle = dragged_handle.clone();
-                    move |e: &MouseDownEvent, phase, _cx| {
+                    let flexes = flexes.clone();
+                    let workspace = workspace.clone();
+                    move |e: &MouseDownEvent, phase, cx| {
                         if phase.bubble() && handle_bounds.contains(&e.position) {
                             dragged_handle.replace(Some(ix));
+                            if e.click_count >= 2 {
+                                let mut borrow = flexes.lock();
+                                *borrow = vec![1.; borrow.len()];
+                                workspace
+                                    .update(cx, |this, cx| this.schedule_serialize(cx))
+                                    .log_err();
+                                cx.refresh();
+                            }
                         }
                     }
                 });
-                cx.on_mouse_event(move |e: &MouseMoveEvent, phase, cx| {
-                    let dragged_handle = dragged_handle.borrow();
-                    if phase.bubble() && *dragged_handle == Some(ix) {
-                        Self::compute_resize(
-                            &flexes,
-                            e,
-                            ix,
-                            axis,
-                            pane_bounds.origin,
-                            axis_bounds.size,
-                            cx,
-                        )
+                cx.on_mouse_event({
+                    let workspace = workspace.clone();
+                    move |e: &MouseMoveEvent, phase, cx| {
+                        let dragged_handle = dragged_handle.borrow();
+
+                        if phase.bubble() && *dragged_handle == Some(ix) {
+                            Self::compute_resize(
+                                &flexes,
+                                e,
+                                ix,
+                                axis,
+                                pane_bounds.origin,
+                                axis_bounds.size,
+                                workspace.clone(),
+                                cx,
+                            )
+                        }
                     }
                 });
             });
@@ -808,20 +827,39 @@ mod element {
             debug_assert!(flexes.len() == len);
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
+            let magnification_value = WorkspaceSettings::get(None, cx).active_pane_magnification;
+            let active_pane_magnification = if magnification_value == 1. {
+                None
+            } else {
+                Some(magnification_value)
+            };
+
+            let total_flex = if let Some(flex) = active_pane_magnification {
+                self.children.len() as f32 - 1. + flex
+            } else {
+                len as f32
+            };
+
             let mut origin = bounds.origin;
-            let space_per_flex = bounds.size.along(self.axis) / len as f32;
+            let space_per_flex = bounds.size.along(self.axis) / total_flex;
 
             let mut bounding_boxes = self.bounding_boxes.lock();
             bounding_boxes.clear();
 
             for (ix, child) in self.children.iter_mut().enumerate() {
-                //todo!(active_pane_magnification)
-                // If using active pane magnification, need to switch to using
-                // 1 for all non-active panes, and then the magnification for the
-                // active pane.
+                let child_flex = active_pane_magnification
+                    .map(|magnification| {
+                        if self.active_pane_ix == Some(ix) {
+                            magnification
+                        } else {
+                            1.
+                        }
+                    })
+                    .unwrap_or_else(|| flexes[ix]);
+
                 let child_size = bounds
                     .size
-                    .apply_along(self.axis, |_| space_per_flex * flexes[ix]);
+                    .apply_along(self.axis, |_| space_per_flex * child_flex);
 
                 let child_bounds = Bounds {
                     origin,
@@ -831,19 +869,23 @@ mod element {
                 cx.with_z_index(0, |cx| {
                     child.draw(origin, child_size.into(), cx);
                 });
-                cx.with_z_index(1, |cx| {
-                    if ix < len - 1 {
-                        Self::push_handle(
-                            self.flexes.clone(),
-                            state.clone(),
-                            self.axis,
-                            ix,
-                            child_bounds,
-                            bounds,
-                            cx,
-                        );
-                    }
-                });
+
+                if active_pane_magnification.is_none() {
+                    cx.with_z_index(1, |cx| {
+                        if ix < len - 1 {
+                            Self::push_handle(
+                                self.flexes.clone(),
+                                state.clone(),
+                                self.axis,
+                                ix,
+                                child_bounds,
+                                bounds,
+                                self.workspace.clone(),
+                                cx,
+                            );
+                        }
+                    });
+                }
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
             }

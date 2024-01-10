@@ -2,7 +2,7 @@ use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    AppState,
+    AppState, Config,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
@@ -20,7 +20,11 @@ use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use rpc::{proto::ChannelRole, RECEIVE_TIMEOUT};
+use rpc::{
+    proto::{self, ChannelRole},
+    RECEIVE_TIMEOUT,
+};
+use serde_json::json;
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -228,12 +232,16 @@ impl TestServer {
             Project::init(&client, cx);
             client::init(&client, cx);
             language::init(cx);
-            editor::init_settings(cx);
+            editor::init(cx);
             workspace::init(app_state.clone(), cx);
             audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
             channel::init(&client, user_store.clone(), cx);
             notifications::init(client.clone(), user_store, cx);
+            collab_ui::init(&app_state, cx);
+            file_finder::init(cx);
+            menu::init();
+            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
         });
 
         client
@@ -351,6 +359,31 @@ impl TestServer {
         channel_id
     }
 
+    pub async fn make_public_channel(
+        &self,
+        channel: &str,
+        client: &TestClient,
+        cx: &mut TestAppContext,
+    ) -> u64 {
+        let channel_id = self
+            .make_channel(channel, None, (client, cx), &mut [])
+            .await;
+
+        client
+            .channel_store()
+            .update(cx, |channel_store, cx| {
+                channel_store.set_channel_visibility(
+                    channel_id,
+                    proto::ChannelVisibility::Public,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        channel_id
+    }
+
     pub async fn make_channel_tree(
         &self,
         channels: &[(&str, Option<&str>)],
@@ -414,7 +447,19 @@ impl TestServer {
         Arc::new(AppState {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(fake_server.create_api_client())),
-            config: Default::default(),
+            config: Config {
+                http_port: 0,
+                database_url: "".into(),
+                database_max_connections: 0,
+                api_token: "".into(),
+                invite_link_prefix: "".into(),
+                live_kit_server: None,
+                live_kit_key: None,
+                live_kit_secret: None,
+                rust_log: None,
+                log_json: None,
+                zed_environment: "test".into(),
+            },
         })
     }
 }
@@ -568,6 +613,20 @@ impl TestClient {
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
+    pub async fn build_test_project(&self, cx: &mut TestAppContext) -> Model<Project> {
+        self.fs()
+            .insert_tree(
+                "/a",
+                json!({
+                    "1.txt": "one\none\none",
+                    "2.txt": "two\ntwo\ntwo",
+                    "3.txt": "three\nthree\nthree",
+                }),
+            )
+            .await;
+        self.build_local_project("/a", cx).await.0
+    }
+
     pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> Model<Project> {
         cx.update(|cx| {
             Project::local(
@@ -605,7 +664,22 @@ impl TestClient {
         project: &Model<Project>,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
-        cx.add_window_view(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
+        cx.add_window_view(|cx| {
+            cx.activate_window();
+            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+        })
+    }
+
+    pub fn active_workspace<'a>(
+        &'a self,
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+
+        let view = window.root_view(cx).unwrap();
+        let cx = Box::new(VisualTestContext::from_window(*window.deref(), cx));
+        // it might be nice to try and cleanup these at the end of each test.
+        (view, Box::leak(cx))
     }
 }
 

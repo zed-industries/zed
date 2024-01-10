@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn test_wrap_line() {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let cx = TestAppContext::new(dispatcher);
+        let cx = TestAppContext::new(dispatcher, None);
 
         cx.update(|cx| {
             let text_system = cx.text_system().clone();

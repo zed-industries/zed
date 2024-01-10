@@ -57,12 +57,28 @@ pub struct AssistantSettings {
     pub default_open_ai_model: OpenAIModel,
 }
 
+/// Assistant panel settings
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AssistantSettingsContent {
+    /// Whether to show the assistant panel button in the status bar.
+    ///
+    /// Default: true
     pub button: Option<bool>,
+    /// Where to dock the assistant.
+    ///
+    /// Default: right
     pub dock: Option<AssistantDockPosition>,
+    /// Default width in pixels when the assistant is docked to the left or right.
+    ///
+    /// Default: 640
     pub default_width: Option<f32>,
+    /// Default height in pixels when the assistant is docked to the bottom.
+    ///
+    /// Default: 320
     pub default_height: Option<f32>,
+    /// The default OpenAI model to use when starting new conversations.
+    ///
+    /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAIModel>,
 }
 

@@ -19,7 +19,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::Item,
     pane,
-    ui::Icon,
+    ui::IconName,
     DraggedTab, Pane, Workspace,
 };
 
@@ -71,7 +71,7 @@ impl TerminalPanel {
                 h_stack()
                     .gap_2()
                     .child(
-                        IconButton::new("plus", Icon::Plus)
+                        IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
                             .on_click(move |_, cx| {
                                 terminal_panel
@@ -82,10 +82,10 @@ impl TerminalPanel {
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", Icon::Maximize)
+                        IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
                             .selected(zoomed)
-                            .selected_icon(Icon::Minimize)
+                            .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))
@@ -477,8 +477,8 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<Icon> {
-        Some(Icon::Terminal)
+    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
+        Some(IconName::Terminal)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

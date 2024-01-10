@@ -7,16 +7,40 @@ use std::sync::Arc;
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
+    /// Configuration for language servers.
+    ///
+    /// The following settings can be overriden for specific language servers:
+    /// - initialization_options
+    /// To override settings for a language, add an entry for that language server's
+    /// name to the lsp value.
+    /// Default: null
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,
+
+    /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
+    /// Completely ignore files matching globs from `file_scan_exclusions`
+    ///
+    /// Default: [
+    ///   "**/.git",
+    ///   "**/.svn",
+    ///   "**/.hg",
+    ///   "**/CVS",
+    ///   "**/.DS_Store",
+    ///   "**/Thumbs.db",
+    ///   "**/.classpath",
+    ///   "**/.settings"
+    /// ]
     #[serde(default)]
     pub file_scan_exclusions: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
+    /// Whether or not to show the git gutter.
+    ///
+    /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
     pub gutter_debounce: Option<u64>,
 }
@@ -24,8 +48,10 @@ pub struct GitSettings {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GitGutterSetting {
+    /// Show git gutter in tracked files.
     #[default]
     TrackedFiles,
+    /// Hide git gutter
     Hide,
 }
 

@@ -337,6 +337,7 @@ struct MacWindowState {
     ime_state: ImeState,
     // Retains the last IME Text
     ime_text: Option<String>,
+    external_files_dragged: bool,
 }
 
 impl MacWindowState {
@@ -565,6 +566,7 @@ impl MacWindow {
                 previous_modifiers_changed_event: None,
                 ime_state: ImeState::None,
                 ime_text: None,
+                external_files_dragged: false,
             })));
 
             (*native_window).set_ivar(
@@ -1230,15 +1232,20 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ..
                 },
             ) => {
-                lock.synthetic_drag_counter += 1;
-                let executor = lock.executor.clone();
-                executor
-                    .spawn(synthetic_drag(
-                        weak_window_state,
-                        lock.synthetic_drag_counter,
-                        event.clone(),
-                    ))
-                    .detach();
+                // Synthetic drag is used for selecting long buffer contents while buffer is being scrolled.
+                // External file drag and drop is able to emit its own synthetic mouse events which will conflict
+                // with these ones.
+                if !lock.external_files_dragged {
+                    lock.synthetic_drag_counter += 1;
+                    let executor = lock.executor.clone();
+                    executor
+                        .spawn(synthetic_drag(
+                            weak_window_state,
+                            lock.synthetic_drag_counter,
+                            event.clone(),
+                        ))
+                        .detach();
+                }
             }
 
             InputEvent::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
@@ -1679,6 +1686,7 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
         let paths = external_paths_from_event(dragging_info);
         InputEvent::FileDrop(FileDropEvent::Entered { position, paths })
     }) {
+        window_state.lock().external_files_dragged = true;
         NSDragOperationCopy
     } else {
         NSDragOperationNone
@@ -1701,6 +1709,7 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::Exited));
+    window_state.lock().external_files_dragged = false;
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {

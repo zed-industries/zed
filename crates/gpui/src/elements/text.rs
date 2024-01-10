@@ -202,7 +202,10 @@ impl TextState {
                 let Some(lines) = cx
                     .text_system()
                     .shape_text(
-                        &text, font_size, &runs, wrap_width, // Wrap if we know the width.
+                        text.clone(),
+                        font_size,
+                        &runs,
+                        wrap_width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {
