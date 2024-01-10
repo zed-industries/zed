@@ -39,7 +39,8 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 /// depending on whether a point to hover over is provided.
 pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewContext<Editor>) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
-        if let Some(point) = point {
+        let has_context_menu = editor.mouse_context_menu.is_some();
+        if let (Some(point), false) = (point, has_context_menu) {
             show_hover(editor, point, false, cx);
         } else {
             hide_hover(editor, cx);
@@ -477,7 +478,7 @@ impl InfoPopover {
     ) -> AnyElement {
         div()
             .id("info_popover")
-            .elevation_2(cx)
+            .elevation_1(cx)
             .p_2()
             .overflow_y_scroll()
             .max_w(max_size.width)
@@ -547,6 +548,7 @@ impl DiagnosticPopover {
         div()
             .id("diagnostic")
             .overflow_y_scroll()
+            .elevation_1(cx)
             .px_2()
             .py_1()
             .bg(diagnostic_colors.background)

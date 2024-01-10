@@ -42,12 +42,12 @@ impl RenderOnce for Popover {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         div()
             .flex()
+            .elevation_2(cx)
             .gap_1()
-            .child(v_stack().elevation_2(cx).px_1().children(self.children))
+            .child(v_stack().px_1().children(self.children))
             .when_some(self.aside, |this, aside| {
                 this.child(
                     v_stack()
-                        .elevation_2(cx)
                         .bg(cx.theme().colors().surface_background)
                         .px_1()
                         .child(aside),

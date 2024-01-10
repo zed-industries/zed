@@ -1473,7 +1473,7 @@ impl CodeActionsMenu {
                     .collect()
             },
         )
-        .elevation_1(cx)
+        .elevation_2(cx)
         .px_2()
         .py_1()
         .max_h(max_height)
