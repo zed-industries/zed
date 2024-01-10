@@ -282,8 +282,7 @@ impl Platform for TestPlatform {
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        // todo()
-        true
+        false
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

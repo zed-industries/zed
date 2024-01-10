@@ -852,6 +852,10 @@ impl Workspace {
         &self.right_dock
     }
 
+    pub fn is_edited(&self) -> bool {
+        self.window_edited
+    }
+
     pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
@@ -2055,7 +2059,7 @@ impl Workspace {
             _ => bounding_box.center(),
         };
 
-        let distance_to_next = 8.; //todo(pane dividers styling)
+        let distance_to_next = pane_group::HANDLE_HITBOX_SIZE;
 
         let target = match direction {
             SplitDirection::Left => {
