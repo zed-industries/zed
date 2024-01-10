@@ -1,7 +1,7 @@
 use crate::{
     point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Element,
     ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
-    Pixels, Point, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    Pixels, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -65,48 +65,18 @@ pub struct UniformList {
 
 #[derive(Clone, Default)]
 pub struct UniformListScrollHandle {
-    state: Rc<RefCell<Option<ScrollHandleState>>>,
-    deferred_scroll_to_item: Option<usize>,
-}
-
-#[derive(Clone, Debug)]
-struct ScrollHandleState {
-    item_height: Pixels,
-    list_height: Pixels,
-    scroll_offset: Rc<RefCell<Point<Pixels>>>,
+    deferred_scroll_to_item: Rc<RefCell<Option<usize>>>,
 }
 
 impl UniformListScrollHandle {
     pub fn new() -> Self {
         Self {
-            state: Rc::new(RefCell::new(None)),
-            deferred_scroll_to_item: None,
+            deferred_scroll_to_item: Rc::new(RefCell::new(None)),
         }
     }
 
     pub fn scroll_to_item(&mut self, ix: usize) {
-        if let Some(state) = &*self.state.borrow() {
-            let mut scroll_offset = state.scroll_offset.borrow_mut();
-            let item_top = state.item_height * ix;
-            let item_bottom = item_top + state.item_height;
-            let scroll_top = -scroll_offset.y;
-            if item_top < scroll_top {
-                scroll_offset.y = -item_top;
-            } else if item_bottom > scroll_top + state.list_height {
-                scroll_offset.y = -(item_bottom - state.list_height);
-            }
-            self.deferred_scroll_to_item = None;
-        } else {
-            self.deferred_scroll_to_item = Some(ix);
-        }
-    }
-
-    pub fn scroll_top(&mut self) -> Pixels {
-        if let Some(state) = &*self.state.borrow() {
-            -state.scroll_offset.borrow().y
-        } else {
-            Pixels::ZERO
-        }
+        self.deferred_scroll_to_item.replace(Some(ix));
     }
 }
 
@@ -199,18 +169,14 @@ impl Element for UniformList {
         let shared_scroll_offset = element_state
             .interactive
             .scroll_offset
-            .get_or_insert_with(|| {
-                if let Some(scroll_handle) = self.scroll_handle.as_ref() {
-                    if let Some(scroll_handle) = scroll_handle.state.borrow().as_ref() {
-                        return scroll_handle.scroll_offset.clone();
-                    }
-                }
-
-                Rc::default()
-            })
+            .get_or_insert_with(|| Rc::default())
             .clone();
 
         let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
+        let shared_scroll_to_item = self
+            .scroll_handle
+            .as_mut()
+            .and_then(|handle| handle.deferred_scroll_to_item.take());
 
         self.interactivity.paint(
             bounds,
@@ -237,20 +203,18 @@ impl Element for UniformList {
                         scroll_offset.y = min_scroll_offset;
                     }
 
-                    if let Some(scroll_handle) = self.scroll_handle.as_mut() {
-                        scroll_handle.state.borrow_mut().replace(ScrollHandleState {
-                            item_height,
-                            list_height: padded_bounds.size.height,
-                            scroll_offset: shared_scroll_offset.clone(),
-                        });
-                        if let Some(scroll_handle) = self.scroll_handle.as_mut() {
-                            if scroll_handle.state.borrow().is_some() {
-                                if let Some(ix) = scroll_handle.deferred_scroll_to_item.take() {
-                                    scroll_handle.scroll_to_item(ix);
-                                    scroll_offset = *shared_scroll_offset.borrow();
-                                }
-                            }
+                    if let Some(ix) = shared_scroll_to_item {
+                        let list_height = padded_bounds.size.height;
+                        let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
+                        let item_top = item_height * ix;
+                        let item_bottom = item_top + item_height;
+                        let scroll_top = -updated_scroll_offset.y;
+                        if item_top < scroll_top {
+                            updated_scroll_offset.y = -item_top;
+                        } else if item_bottom > scroll_top + list_height {
+                            updated_scroll_offset.y = -(item_bottom - list_height);
                         }
+                        scroll_offset = *updated_scroll_offset;
                     }
 
                     let first_visible_element_ix =
