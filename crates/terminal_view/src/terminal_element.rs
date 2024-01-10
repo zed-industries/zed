@@ -424,7 +424,6 @@ impl TerminalElement {
             let line_height = font_pixels * line_height.to_pixels(rem_size);
             let font_id = cx.text_system().resolve_font(&text_style.font());
 
-            // todo!(do we need to keep this unwrap?)
             let cell_width = text_system
                 .advance(font_id, font_pixels, 'm')
                 .unwrap()
@@ -524,7 +523,6 @@ impl TerminalElement {
                             underline: Default::default(),
                         }],
                     )
-                    //todo!(do we need to keep this unwrap?)
                     .unwrap()
             };
 
@@ -664,21 +662,6 @@ impl TerminalElement {
                 },
             ),
         );
-        self.interactivity.on_click({
-            let terminal = terminal.clone();
-            move |e, cx| {
-                if e.down.button == MouseButton::Right {
-                    let mouse_mode = terminal.update(cx, |terminal, _cx| {
-                        terminal.mouse_mode(e.down.modifiers.shift)
-                    });
-
-                    if !mouse_mode {
-                        //todo!(context menu)
-                        // view.deploy_context_menu(e.position, cx);
-                    }
-                }
-            }
-        });
         self.interactivity.on_scroll_wheel({
             let terminal = terminal.clone();
             move |e, cx| {

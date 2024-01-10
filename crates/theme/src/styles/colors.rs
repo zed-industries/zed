@@ -222,6 +222,7 @@ pub struct ThemeStyles {
 
     #[refineable]
     pub status: StatusColors,
+
     pub player: PlayerColors,
     pub syntax: Arc<SyntaxTheme>,
 }

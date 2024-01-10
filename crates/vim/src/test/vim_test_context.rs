@@ -6,7 +6,7 @@ use editor::test::{
 use futures::Future;
 use gpui::{Context, View, VisualContext};
 use lsp::request;
-use search::BufferSearchBar;
+use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
 
@@ -59,9 +59,9 @@ impl VimTestContext {
                 pane.toolbar().update(cx, |toolbar, cx| {
                     let buffer_search_bar = cx.new_view(BufferSearchBar::new);
                     toolbar.add_item(buffer_search_bar, cx);
-                    // todo!();
-                    // let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                    // toolbar.add_item(project_search_bar, cx);
+
+                    let project_search_bar = cx.new_view(|_| ProjectSearchBar::new());
+                    toolbar.add_item(project_search_bar, cx);
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {

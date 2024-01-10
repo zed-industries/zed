@@ -111,6 +111,11 @@ impl TestAppContext {
         self.fn_name
     }
 
+    /// Checks whether there have been any new path prompts received by the platform.
+    pub fn did_prompt_for_new_path(&self) -> bool {
+        self.test_platform.did_prompt_for_new_path()
+    }
+
     /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
     pub fn new_app(&self) -> TestAppContext {
         Self::new(self.dispatcher.clone(), self.fn_name)

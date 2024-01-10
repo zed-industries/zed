@@ -8,8 +8,6 @@ use std::{any::TypeId, ops::DerefMut};
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(NotificationTracker::new());
-    // todo!()
-    // simple_message_notification::init(cx);
 }
 
 pub trait Notification: EventEmitter<DismissEvent> + Render {}
