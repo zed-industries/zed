@@ -804,8 +804,9 @@ impl EditorElement {
 
             let start_row = display_row_range.start;
             let end_row = display_row_range.end;
+
             let start_y = start_row as f32 * line_height - scroll_top;
-            let end_y = (end_row + 1) as f32 * line_height - scroll_top;
+            let end_y = end_row as f32 * line_height - scroll_top;
 
             let width = 0.275 * line_height;
             let highlight_origin = bounds.origin + point(-width, start_y);
@@ -1544,6 +1545,7 @@ impl EditorElement {
         let buffer_end_row = DisplayPoint::new(display_rows.end, 0)
             .to_point(snapshot)
             .row;
+
         buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(hunk, snapshot))
