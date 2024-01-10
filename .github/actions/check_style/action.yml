@@ -21,4 +21,4 @@ runs:
           # so specify those here, and disable the rest until Zed's workspace
           # will have more fixes & suppression for the standard lint set
           run: |
-              cargo clippy --workspace --all-targets --all-features -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
+              CARGO_LOG=debug cargo -vvv clippy --workspace --all-targets --all-features -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
