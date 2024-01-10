@@ -164,7 +164,7 @@ To call the functions that a plugin exports host-side, you need to have 'handles
 
 For example, let's suppose we're creating a plugin that:
 
-1. formats a message 
+1. formats a message
 2. processes a list of numbers somehow
 
 We could create a struct for this plugin as follows:
@@ -179,7 +179,7 @@ pub struct CoolPlugin {
 }
 ```
 
-Note that this plugin also holds an owned reference to the runtime, which is stored in the `Plugin` type. In asynchronous or multithreaded contexts, it may be required to put `Plugin` behind an `Arc<Mutex<Plugin>>`. Although plugins expose an asynchronous interface, the underlying Wasm engine can only execute a single function at a time. 
+Note that this plugin also holds an owned reference to the runtime, which is stored in the `Plugin` type. In asynchronous or multithreaded contexts, it may be required to put `Plugin` behind an `Arc<Mutex<Plugin>>`. Although plugins expose an asynchronous interface, the underlying Wasm engine can only execute a single function at a time.
 
 > **Note**: This is a limitation of the WebAssembly standard itself. In the future, to work around this, we've been considering starting a pool of plugins, or instantiating a new plugin per call (this isn't as bad as it sounds, as instantiating a new plugin only takes about 30µs).
 
@@ -203,7 +203,7 @@ To add a sync native function to a plugin, use the `.host_function` method:
 
 ```rust
 let builder = builder.host_function(
-    "add_f64", 
+    "add_f64",
     |(a, b): (f64, f64)| a + b,
 ).unwrap();
 ```
@@ -224,7 +224,7 @@ To add an async native function to a plugin, use the `.host_function_async` meth
 
 ```rust
 let builder = builder.host_function_async(
-    "half", 
+    "half",
     |n: f64| async move { n / 2.0 },
 ).unwrap();
 ```
@@ -252,9 +252,9 @@ let plugin = builder
     .unwrap();
 ```
 
-The `.init` method takes a single argument containing the plugin binary. 
+The `.init` method takes a single argument containing the plugin binary.
 
-1. If not precompiled, use `PluginBinary::Wasm(bytes)`. This supports both the WebAssembly Textual format (`.wat`) and the WebAssembly Binary format (`.wasm`). 
+1. If not precompiled, use `PluginBinary::Wasm(bytes)`. This supports both the WebAssembly Textual format (`.wat`) and the WebAssembly Binary format (`.wasm`).
 
 2. If precompiled, use `PluginBinary::Precompiled(bytes)`. This supports precompiled plugins ending in `.wasm.pre`. You need to be extra-careful when using precompiled plugins to ensure that the plugin target matches the target of the binary you are compiling.
 
@@ -317,4 +317,4 @@ The `.call` method takes two arguments:
 This method is async, and must be `.await`ed. If something goes wrong (e.g. the plugin panics, or there is a type mismatch between the plugin and `WasiFn`), then this method will return an error.
 
 ## Last Notes
-This has been a brief overview of how the plugin system currently works in Zed. We hope to implement higher-level affordances as time goes on, to make writing plugins easier, and providing tooling so that users of Zed may also write plugins to extend their own editors. 
+This has been a brief overview of how the plugin system currently works in Zed. We hope to implement higher-level affordances as time goes on, to make writing plugins easier, and providing tooling so that users of Zed may also write plugins to extend their own editors.

@@ -104,7 +104,7 @@ pub struct ActionData {
 }
 
 /// This constant must be public to be accessible from other crates.
-/// But it's existence is an implementation detail and should not be used directly.
+/// But its existence is an implementation detail and should not be used directly.
 #[doc(hidden)]
 #[linkme::distributed_slice]
 pub static __GPUI_ACTIONS: [MacroActionBuilder];

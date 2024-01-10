@@ -73,7 +73,7 @@ impl RenderOnce for Checkbox {
         //  - a previously agreed to license that has been updated
         //
         // For the sake of styles we treat the indeterminate state as selected,
-        // but it's icon will be different.
+        // but its icon will be different.
         let selected =
             self.checked == Selection::Selected || self.checked == Selection::Indeterminate;
 
