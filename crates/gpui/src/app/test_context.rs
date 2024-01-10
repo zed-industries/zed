@@ -545,7 +545,8 @@ use derive_more::{Deref, DerefMut};
 pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
-    cx: TestAppContext,
+    /// cx is the original TestAppContext (you can more easily access this using Deref)
+    pub cx: TestAppContext,
     window: AnyWindowHandle,
 }
 
