@@ -18,7 +18,6 @@ use workspace::{ModalView, Toast, Workspace};
 actions!(branches, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
-    // todo!() po
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, action, cx| {
             BranchList::toggle_modal(workspace, action, cx).log_err();

@@ -2,14 +2,12 @@ use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
     AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter, Render,
-    View, ViewContext, VisualContext,
+    Task, View, ViewContext, VisualContext, WindowContext,
 };
 use std::{any::TypeId, ops::DerefMut};
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(NotificationTracker::new());
-    // todo!()
-    // simple_message_notification::init(cx);
 }
 
 pub trait Notification: EventEmitter<DismissEvent> + Render {}
@@ -175,7 +173,7 @@ pub mod simple_message_notification {
     };
     use std::sync::Arc;
     use ui::prelude::*;
-    use ui::{h_stack, v_stack, Button, Icon, IconElement, Label, StyledExt};
+    use ui::{h_stack, v_stack, Button, Icon, IconName, Label, StyledExt};
 
     pub struct MessageNotification {
         message: SharedString,
@@ -230,7 +228,7 @@ pub mod simple_message_notification {
                         .child(
                             div()
                                 .id("cancel")
-                                .child(IconElement::new(Icon::Close))
+                                .child(Icon::new(IconName::Close))
                                 .cursor_pointer()
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
                         ),
@@ -247,105 +245,6 @@ pub mod simple_message_notification {
                 }))
         }
     }
-    // todo!()
-    //     impl View for MessageNotification {
-    //         fn ui_name() -> &'static str {
-    //             "MessageNotification"
-    //         }
-
-    //         fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
-    //             let theme = theme::current(cx).clone();
-    //             let theme = &theme.simple_message_notification;
-
-    //             enum MessageNotificationTag {}
-
-    //             let click_message = self.click_message.clone();
-    //             let message = match &self.message {
-    //                 NotificationMessage::Text(text) => {
-    //                     Text::new(text.to_owned(), theme.message.text.clone()).into_any()
-    //                 }
-    //                 NotificationMessage::Element(e) => e(theme.message.text.clone(), cx),
-    //             };
-    //             let on_click = self.on_click.clone();
-    //             let has_click_action = on_click.is_some();
-
-    //             Flex::column()
-    //                 .with_child(
-    //                     Flex::row()
-    //                         .with_child(
-    //                             message
-    //                                 .contained()
-    //                                 .with_style(theme.message.container)
-    //                                 .aligned()
-    //                                 .top()
-    //                                 .left()
-    //                                 .flex(1., true),
-    //                         )
-    //                         .with_child(
-    //                             MouseEventHandler::new::<Cancel, _>(0, cx, |state, _| {
-    //                                 let style = theme.dismiss_button.style_for(state);
-    //                                 Svg::new("icons/x.svg")
-    //                                     .with_color(style.color)
-    //                                     .constrained()
-    //                                     .with_width(style.icon_width)
-    //                                     .aligned()
-    //                                     .contained()
-    //                                     .with_style(style.container)
-    //                                     .constrained()
-    //                                     .with_width(style.button_width)
-    //                                     .with_height(style.button_width)
-    //                             })
-    //                             .with_padding(Padding::uniform(5.))
-    //                             .on_click(MouseButton::Left, move |_, this, cx| {
-    //                                 this.dismiss(&Default::default(), cx);
-    //                             })
-    //                             .with_cursor_style(CursorStyle::PointingHand)
-    //                             .aligned()
-    //                             .constrained()
-    //                             .with_height(cx.font_cache().line_height(theme.message.text.font_size))
-    //                             .aligned()
-    //                             .top()
-    //                             .flex_float(),
-    //                         ),
-    //                 )
-    //                 .with_children({
-    //                     click_message
-    //                         .map(|click_message| {
-    //                             MouseEventHandler::new::<MessageNotificationTag, _>(
-    //                                 0,
-    //                                 cx,
-    //                                 |state, _| {
-    //                                     let style = theme.action_message.style_for(state);
-
-    //                                     Flex::row()
-    //                                         .with_child(
-    //                                             Text::new(click_message, style.text.clone())
-    //                                                 .contained()
-    //                                                 .with_style(style.container),
-    //                                         )
-    //                                         .contained()
-    //                                 },
-    //                             )
-    //                             .on_click(MouseButton::Left, move |_, this, cx| {
-    //                                 if let Some(on_click) = on_click.as_ref() {
-    //                                     on_click(cx);
-    //                                     this.dismiss(&Default::default(), cx);
-    //                                 }
-    //                             })
-    //                             // Since we're not using a proper overlay, we have to capture these extra events
-    //                             .on_down(MouseButton::Left, |_, _, _| {})
-    //                             .on_up(MouseButton::Left, |_, _, _| {})
-    //                             .with_cursor_style(if has_click_action {
-    //                                 CursorStyle::PointingHand
-    //                             } else {
-    //                                 CursorStyle::Arrow
-    //                             })
-    //                         })
-    //                         .into_iter()
-    //                 })
-    //                 .into_any()
-    //         }
-    //     }
 }
 
 pub trait NotifyResultExt {
@@ -391,5 +290,20 @@ where
                 None
             }
         }
+    }
+}
+
+pub trait NotifyTaskExt {
+    fn detach_and_notify_err(self, cx: &mut WindowContext);
+}
+
+impl<R, E> NotifyTaskExt for Task<Result<R, E>>
+where
+    E: std::fmt::Debug + 'static,
+    R: 'static,
+{
+    fn detach_and_notify_err(self, cx: &mut WindowContext) {
+        cx.spawn(|mut cx| async move { self.await.notify_async_err(&mut cx) })
+            .detach();
     }
 }

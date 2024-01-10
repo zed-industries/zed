@@ -2,11 +2,12 @@ use gpui::Hsla;
 use refineable::Refineable;
 use std::sync::Arc;
 
-use crate::{PlayerColors, StatusColors, SyntaxTheme, SystemColors};
+use crate::{PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme, SystemColors};
 
 #[derive(Refineable, Clone, Debug)]
 #[refineable(Debug, serde::Deserialize)]
 pub struct ThemeColors {
+    /// Border color. Used for most borders, is usually a high contrast color.
     pub border: Hsla,
     /// Border color. Used for deemphasized borders, like a visual divider between two sections
     pub border_variant: Hsla,
@@ -219,7 +220,10 @@ pub struct ThemeStyles {
 
     #[refineable]
     pub colors: ThemeColors,
+
+    #[refineable]
     pub status: StatusColors,
+
     pub player: PlayerColors,
     pub syntax: Arc<SyntaxTheme>,
 }

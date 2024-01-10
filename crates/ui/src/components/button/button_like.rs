@@ -4,10 +4,12 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+/// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Selectable {
     fn selected_style(self, style: ButtonStyle) -> Self;
 }
 
+/// A common set of traits all buttons must implement.
 pub trait ButtonCommon: Clickable + Disableable {
     /// A unique element ID to identify the button.
     fn id(&self) -> &ElementId;
@@ -93,6 +95,7 @@ impl From<ButtonStyle> for Color {
     }
 }
 
+/// The visual appearance of a button.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ButtonStyle {
     /// A filled button with a solid background color. Provides emphasis versus
@@ -260,8 +263,9 @@ impl ButtonStyle {
     }
 }
 
-/// ButtonSize can also be used to help build  non-button elements
-/// that are consistently sized with buttons.
+/// The height of a button.
+///
+/// Can also be used to size non-button elements to align with [`Button`]s.
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonSize {
     Large,

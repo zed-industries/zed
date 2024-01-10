@@ -37,10 +37,10 @@ where
         })))
     }
 
-    /// Inserts a new `[Subscription]` for the given `emitter_key`. By default, subscriptions
+    /// Inserts a new [`Subscription`] for the given `emitter_key`. By default, subscriptions
     /// are inert, meaning that they won't be listed when calling `[SubscriberSet::remove]` or `[SubscriberSet::retain]`.
-    /// This method returns a tuple of a `[Subscription]` and an `impl FnOnce`, and you can use the latter
-    /// to activate the `[Subscription]`.
+    /// This method returns a tuple of a [`Subscription`] and an `impl FnOnce`, and you can use the latter
+    /// to activate the [`Subscription`].
     #[must_use]
     pub fn insert(
         &self,

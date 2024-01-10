@@ -1004,6 +1004,46 @@ impl Database {
         .await
     }
 
+    pub async fn set_room_participant_role(
+        &self,
+        admin_id: UserId,
+        room_id: RoomId,
+        user_id: UserId,
+        role: ChannelRole,
+    ) -> Result<RoomGuard<proto::Room>> {
+        self.room_transaction(room_id, |tx| async move {
+            room_participant::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(admin_id))
+                        .add(room_participant::Column::Role.eq(ChannelRole::Admin)),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("only admins can set participant role"))?;
+
+            let result = room_participant::Entity::update_many()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(user_id)),
+                )
+                .set(room_participant::ActiveModel {
+                    role: ActiveValue::set(Some(ChannelRole::from(role))),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+
+            if result.rows_affected != 1 {
+                Err(anyhow!("could not update room participant role"))?;
+            }
+            Ok(self.get_room(room_id, &tx).await?)
+        })
+        .await
+    }
+
     pub async fn connection_lost(&self, connection: ConnectionId) -> Result<()> {
         self.transaction(|tx| async move {
             self.room_connection_lost(connection, &*tx).await?;

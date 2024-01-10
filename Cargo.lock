@@ -293,6 +293,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 
 [[package]]
+name = "assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "rust-embed",
+]
+
+[[package]]
 name = "assistant"
 version = "0.1.0"
 dependencies = [
@@ -677,6 +686,7 @@ dependencies = [
  "log",
  "menu",
  "project",
+ "schemars",
  "serde",
  "serde_derive",
  "serde_json",
@@ -1442,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.34.0"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1463,6 +1473,7 @@ dependencies = [
  "editor",
  "env_logger",
  "envy",
+ "file_finder",
  "fs",
  "futures 0.3.28",
  "git",
@@ -1476,6 +1487,7 @@ dependencies = [
  "live_kit_server",
  "log",
  "lsp",
+ "menu",
  "nanoid",
  "node_runtime",
  "notifications",
@@ -1549,6 +1561,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "story",
  "theme",
  "theme_selector",
  "time",
@@ -1687,12 +1700,11 @@ dependencies = [
  "settings",
  "smol",
  "theme",
- "ui",
  "util",
 ]
 
 [[package]]
-name = "copilot_button"
+name = "copilot_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1705,6 +1717,7 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "ui",
  "util",
  "workspace",
  "zed_actions",
@@ -3428,6 +3441,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "include-flate"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2e11569346406931d20276cc460215ee2826e7cad43aa986999cb244dd7adb0"
+dependencies = [
+ "include-flate-codegen-exports",
+ "lazy_static",
+ "libflate",
+]
+
+[[package]]
+name = "include-flate-codegen"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a7d6e1419fa3129eb0802b4c99603c0d425c79fb5d76191d5a20d0ab0d664e8"
+dependencies = [
+ "libflate",
+ "proc-macro-hack",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "include-flate-codegen-exports"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75657043ffe3d8280f1cb8aef0f505532b392ed7758e0baeac22edadcee31a03"
+dependencies = [
+ "include-flate-codegen",
+ "proc-macro-hack",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3817,6 +3864,26 @@ name = "libc"
 version = "0.2.148"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cdc71e17332e86d2e1d38c1f99edcb6288ee11b815fb1a4b049eaa2114d369b"
+
+[[package]]
+name = "libflate"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ff4ae71b685bbad2f2f391fe74f6b7659a34871c08b210fdc039e43bee07d18"
+dependencies = [
+ "adler32",
+ "crc32fast",
+ "libflate_lz77",
+]
+
+[[package]]
+name = "libflate_lz77"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a52d3a8bfc85f250440e4424db7d857e241a3aebbbe301f3eb606ab15c39acbf"
+dependencies = [
+ "rle-decode-fast",
+]
 
 [[package]]
 name = "libgit2-sys"
@@ -5396,6 +5463,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-hack"
+version = "0.5.20+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc375e1527247fe1a97d8b7156678dfe7c1af2fc075c9a4db3690ecd2a148068"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.67"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6090,6 +6163,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rle-decode-fast"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
+
+[[package]]
 name = "rmp"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6236,6 +6315,7 @@ version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1e7d90385b59f0a6bf3d3b757f3ca4ece2048265d70db20a2016043d4509a40"
 dependencies = [
+ "include-flate",
  "rust-embed-impl",
  "rust-embed-utils",
  "walkdir",
@@ -7437,6 +7517,7 @@ dependencies = [
  "backtrace-on-stack-overflow",
  "chrono",
  "clap 4.4.4",
+ "collab_ui",
  "dialoguer",
  "editor",
  "fuzzy",
@@ -9528,6 +9609,7 @@ dependencies = [
  "activity_indicator",
  "ai",
  "anyhow",
+ "assets",
  "assistant",
  "async-compression",
  "async-recursion 0.3.2",
@@ -9546,7 +9628,7 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot",
- "copilot_button",
+ "copilot_ui",
  "ctor",
  "db",
  "diagnostics",

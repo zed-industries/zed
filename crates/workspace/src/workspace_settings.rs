@@ -12,33 +12,37 @@ pub struct WorkspaceSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
+    /// Scale by which to zoom the active pane.
+    /// When set to 1.0, the active pane has the same size as others,
+    /// but when set to a larger value, the active pane takes up more space.
+    ///
+    /// Default: `1.0`
     pub active_pane_magnification: Option<f32>,
+    /// Whether or not to prompt the user to confirm before closing the application.
+    ///
+    /// Default: false
     pub confirm_quit: Option<bool>,
+    /// Whether or not to show the call status icon in the status bar.
+    ///
+    /// Default: true
     pub show_call_status_icon: Option<bool>,
+    /// When to automatically save edited buffers.
+    ///
+    /// Default: off
     pub autosave: Option<AutosaveSetting>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
+    /// Disable autosave.
     Off,
+    /// Save after inactivity period of `milliseconds`.
     AfterDelay { milliseconds: u64 },
+    /// Autosave when focus changes.
     OnFocusChange,
+    /// Autosave when the active window changes.
     OnWindowChange,
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct GitSettings {
-    pub git_gutter: Option<GitGutterSetting>,
-    pub gutter_debounce: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GitGutterSetting {
-    #[default]
-    TrackedFiles,
-    Hide,
 }
 
 impl Settings for WorkspaceSettings {

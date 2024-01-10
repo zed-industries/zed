@@ -85,6 +85,7 @@ impl LayerIndex {
     }
 }
 
+/// An appropriate z-index for the given layer based on its intended useage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementIndex {
     Effect,

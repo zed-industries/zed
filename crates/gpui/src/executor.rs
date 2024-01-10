@@ -32,6 +32,12 @@ pub struct ForegroundExecutor {
     not_send: PhantomData<Rc<()>>,
 }
 
+/// Task is a primitive that allows work to happen in the background.
+///
+/// It implements [`Future`] so you can `.await` on it.
+///
+/// If you drop a task it will be cancelled immediately. Calling [`Task::detach`] allows
+/// the task to continue running in the background, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
 pub enum Task<T> {
@@ -40,10 +46,12 @@ pub enum Task<T> {
 }
 
 impl<T> Task<T> {
+    /// Create a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
         Task::Ready(Some(val))
     }
 
+    /// Detaching a task runs it to completion in the background
     pub fn detach(self) {
         match self {
             Task::Ready(_) => {}
@@ -57,6 +65,8 @@ where
     T: 'static,
     E: 'static + Debug,
 {
+    /// Run the task to completion in the background and log any
+    /// errors that occur.
     #[track_caller]
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
         let location = core::panic::Location::caller();
@@ -97,6 +107,10 @@ type AnyLocalFuture<R> = Pin<Box<dyn 'static + Future<Output = R>>>;
 
 type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 
+/// BackgroundExecutor lets you run things on background threads.
+/// In production this is a thread pool with no ordering guarantees.
+/// In tests this is simalated by running tasks one by one in a deterministic
+/// (but arbitrary) order controlled by the `SEED` environment variable.
 impl BackgroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
@@ -135,6 +149,7 @@ impl BackgroundExecutor {
         Task::Spawned(task)
     }
 
+    /// Used by the test harness to run an async test in a syncronous fashion.
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
@@ -145,6 +160,8 @@ impl BackgroundExecutor {
         }
     }
 
+    /// Block the current thread until the given future resolves.
+    /// Consider using `block_with_timeout` instead.
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
         if let Ok(value) = self.block_internal(true, future, usize::MAX) {
             value
@@ -206,6 +223,8 @@ impl BackgroundExecutor {
         }
     }
 
+    /// Block the current thread until the given future resolves
+    /// or `duration` has elapsed.
     pub fn block_with_timeout<R>(
         &self,
         duration: Duration,
@@ -238,6 +257,8 @@ impl BackgroundExecutor {
         }
     }
 
+    /// Scoped lets you start a number of tasks and waits
+    /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
@@ -253,6 +274,9 @@ impl BackgroundExecutor {
         }
     }
 
+    /// Returns a task that will complete after the given duration.
+    /// Depending on other concurrent tasks the elapsed duration may be longer
+    /// than reqested.
     pub fn timer(&self, duration: Duration) -> Task<()> {
         let (runnable, task) = async_task::spawn(async move {}, {
             let dispatcher = self.dispatcher.clone();
@@ -262,65 +286,81 @@ impl BackgroundExecutor {
         Task::Spawned(task)
     }
 
+    /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
     #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
         self.dispatcher.as_test().unwrap().start_waiting();
     }
 
+    /// in tests, removes the debugging data added by start_waiting
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
         self.dispatcher.as_test().unwrap().finish_waiting();
     }
 
+    /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
         self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 
+    /// in tests, indicate that a given task from `spawn_labeled` should run after everything else
     #[cfg(any(test, feature = "test-support"))]
     pub fn deprioritize(&self, task_label: TaskLabel) {
         self.dispatcher.as_test().unwrap().deprioritize(task_label)
     }
 
+    /// in tests, move time forward. This does not run any tasks, but does make `timer`s ready.
     #[cfg(any(test, feature = "test-support"))]
     pub fn advance_clock(&self, duration: Duration) {
         self.dispatcher.as_test().unwrap().advance_clock(duration)
     }
 
+    /// in tests, run one task.
     #[cfg(any(test, feature = "test-support"))]
     pub fn tick(&self) -> bool {
         self.dispatcher.as_test().unwrap().tick(false)
     }
 
+    /// in tests, run all tasks that are ready to run. If after doing so
+    /// the test still has outstanding tasks, this will panic. (See also `allow_parking`)
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
         self.dispatcher.as_test().unwrap().run_until_parked()
     }
 
+    /// in tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
+    /// This is useful when you are integrating other (non-GPUI) futures, like disk access, that
+    /// do take real async time to run.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
         self.dispatcher.as_test().unwrap().allow_parking();
     }
 
+    /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
     pub fn rng(&self) -> StdRng {
         self.dispatcher.as_test().unwrap().rng()
     }
 
+    /// How many CPUs are available to the dispatcher
     pub fn num_cpus(&self) -> usize {
         num_cpus::get()
     }
 
+    /// Whether we're on the main thread.
     pub fn is_main_thread(&self) -> bool {
         self.dispatcher.is_main_thread()
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
         self.dispatcher.as_test().unwrap().set_block_on_ticks(range);
     }
 }
 
+/// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self {
@@ -329,8 +369,7 @@ impl ForegroundExecutor {
         }
     }
 
-    /// Enqueues the given closure to be run on any thread. The closure returns
-    /// a future which will be run to completion on any available thread.
+    /// Enqueues the given Task to run on the main thread at some point in the future.
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
     where
         R: 'static,
@@ -350,6 +389,7 @@ impl ForegroundExecutor {
     }
 }
 
+/// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
 pub struct Scope<'a> {
     executor: BackgroundExecutor,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,

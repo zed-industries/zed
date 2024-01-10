@@ -19,7 +19,10 @@ use std::{
 #[cfg(any(test, feature = "test-support"))]
 use collections::HashMap;
 
-slotmap::new_key_type! { pub struct EntityId; }
+slotmap::new_key_type! {
+    /// A unique identifier for a model or view across the application.
+    pub struct EntityId;
+}
 
 impl EntityId {
     pub fn as_u64(self) -> u64 {

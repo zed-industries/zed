@@ -40,7 +40,7 @@ Expect this to take 30min to an hour! Some of these steps will take quite a whil
      - (not applicable) Fine-grained Tokens, at the moment of writing, did not allow any kind of access of non-owned private repos
    - Keep the token in the browser tab/editor for the next two steps
 1. (Optional but reccomended) Add your GITHUB_TOKEN to your `.zshrc` or `.bashrc` like this: `export GITHUB_TOKEN=yourGithubAPIToken`
-1. Ensure the Zed.dev website is checked out in a sibling directory and install it's dependencies:
+1. Ensure the Zed.dev website is checked out in a sibling directory and install its dependencies:
     ```
     cd ..
     git clone https://github.com/zed-industries/zed.dev

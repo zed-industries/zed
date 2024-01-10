@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::{BTreeMap, HashMap};
 use futures::Stream;
 use gpui::BackgroundExecutor;
-use live_kit_server::token;
+use live_kit_server::{proto, token};
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
 use postage::watch;
@@ -151,6 +151,21 @@ impl TestServer {
         Ok(())
     }
 
+    async fn update_participant(
+        &self,
+        room_name: String,
+        identity: String,
+        permission: proto::ParticipantPermission,
+    ) -> Result<()> {
+        self.executor.simulate_random_delay().await;
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&room_name)
+            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+        room.participant_permissions.insert(identity, permission);
+        Ok(())
+    }
+
     pub async fn disconnect_client(&self, client_identity: String) {
         self.executor.simulate_random_delay().await;
         let mut server_rooms = self.rooms.lock();
@@ -171,6 +186,17 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&*room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+
+        let can_publish = room
+            .participant_permissions
+            .get(&identity)
+            .map(|permission| permission.can_publish)
+            .or(claims.video.can_publish)
+            .unwrap_or(true);
+
+        if !can_publish {
+            return Err(anyhow!("user is not allowed to publish"));
+        }
 
         let track = Arc::new(RemoteVideoTrack {
             sid: nanoid::nanoid!(17),
@@ -209,6 +235,17 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&*room_name)
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+
+        let can_publish = room
+            .participant_permissions
+            .get(&identity)
+            .map(|permission| permission.can_publish)
+            .or(claims.video.can_publish)
+            .unwrap_or(true);
+
+        if !can_publish {
+            return Err(anyhow!("user is not allowed to publish"));
+        }
 
         let track = Arc::new(RemoteAudioTrack {
             sid: nanoid::nanoid!(17),
@@ -265,6 +302,7 @@ struct TestServerRoom {
     client_rooms: HashMap<Sid, Arc<Room>>,
     video_tracks: Vec<Arc<RemoteVideoTrack>>,
     audio_tracks: Vec<Arc<RemoteAudioTrack>>,
+    participant_permissions: HashMap<Sid, proto::ParticipantPermission>,
 }
 
 impl TestServerRoom {}
@@ -294,6 +332,19 @@ impl live_kit_server::api::Client for TestApiClient {
     async fn remove_participant(&self, room: String, identity: String) -> Result<()> {
         let server = TestServer::get(&self.url)?;
         server.remove_participant(room, identity).await?;
+        Ok(())
+    }
+
+    async fn update_participant(
+        &self,
+        room: String,
+        identity: String,
+        permission: live_kit_server::proto::ParticipantPermission,
+    ) -> Result<()> {
+        let server = TestServer::get(&self.url)?;
+        server
+            .update_participant(room, identity, permission)
+            .await?;
         Ok(())
     }
 

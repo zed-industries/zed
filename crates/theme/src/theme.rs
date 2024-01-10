@@ -1,3 +1,11 @@
+//! # Theme
+//!
+//! This crate provides the theme system for Zed.
+//!
+//! ## Overview
+//!
+//! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
+
 mod default_colors;
 mod default_theme;
 mod one_themes;
@@ -72,13 +80,6 @@ impl ActiveTheme for AppContext {
         &ThemeSettings::get_global(self).active_theme
     }
 }
-
-// todo!()
-// impl<'a> ActiveTheme for WindowContext<'a> {
-//     fn theme(&self) -> &Arc<Theme> {
-//         &ThemeSettings::get_global(self.app()).active_theme
-//     }
-// }
 
 pub struct ThemeFamily {
     pub id: String,

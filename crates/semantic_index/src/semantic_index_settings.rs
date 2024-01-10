@@ -8,8 +8,13 @@ pub struct SemanticIndexSettings {
     pub enabled: bool,
 }
 
+/// Configuration of semantic index, an alternate search engine available in
+/// project search.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct SemanticIndexSettingsContent {
+    /// Whether or not to display the Semantic mode in project search.
+    ///
+    /// Default: true
     pub enabled: Option<bool>,
 }
 

@@ -60,7 +60,13 @@ impl ClosePosition {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ItemSettingsContent {
+    /// Whether to show the Git file status on a tab item.
+    ///
+    /// Default: true
     git_status: Option<bool>,
+    /// Position of the close button in a tab.
+    ///
+    /// Default: right
     close_position: Option<ClosePosition>,
 }
 

@@ -16,7 +16,7 @@ use lsp::DiagnosticSeverity;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
-use ui::{StyledExt, Tooltip};
+use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -514,6 +514,8 @@ impl DiagnosticPopover {
             None => self.local_diagnostic.diagnostic.message.clone(),
         };
 
+        let status_colors = cx.theme().status();
+
         struct DiagnosticColors {
             pub background: Hsla,
             pub border: Hsla,
@@ -521,24 +523,24 @@ impl DiagnosticPopover {
 
         let diagnostic_colors = match self.local_diagnostic.diagnostic.severity {
             DiagnosticSeverity::ERROR => DiagnosticColors {
-                background: style.status.error_background,
-                border: style.status.error_border,
+                background: status_colors.error_background,
+                border: status_colors.error_border,
             },
             DiagnosticSeverity::WARNING => DiagnosticColors {
-                background: style.status.warning_background,
-                border: style.status.warning_border,
+                background: status_colors.warning_background,
+                border: status_colors.warning_border,
             },
             DiagnosticSeverity::INFORMATION => DiagnosticColors {
-                background: style.status.info_background,
-                border: style.status.info_border,
+                background: status_colors.info_background,
+                border: status_colors.info_border,
             },
             DiagnosticSeverity::HINT => DiagnosticColors {
-                background: style.status.hint_background,
-                border: style.status.hint_border,
+                background: status_colors.hint_background,
+                border: status_colors.hint_border,
             },
             _ => DiagnosticColors {
-                background: style.status.ignored_background,
-                border: style.status.ignored_border,
+                background: status_colors.ignored_background,
+                border: status_colors.ignored_border,
             },
         };
 

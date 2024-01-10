@@ -1,12 +1,13 @@
 use crate::notification_window_options;
+use crate::notifications::collab_notification::CollabNotification;
 use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
-use gpui::{img, px, AppContext, ParentElement, Render, Size, Styled, ViewContext, VisualContext};
+use gpui::{AppContext, Size};
 use settings::Settings;
 use std::sync::{Arc, Weak};
 use theme::ThemeSettings;
-use ui::{h_stack, prelude::*, v_stack, Button, Label};
+use ui::{prelude::*, Button, Label};
 use workspace::AppState;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
@@ -50,7 +51,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 for window in windows {
                     window
                         .update(cx, |_, cx| {
-                            // todo!()
                             cx.remove_window();
                         })
                         .ok();
@@ -63,7 +63,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 for window in windows {
                     window
                         .update(cx, |_, cx| {
-                            // todo!()
                             cx.remove_window();
                         })
                         .ok();
@@ -130,51 +129,30 @@ impl Render for ProjectSharedNotification {
 
         cx.set_rem_size(ui_font_size);
 
-        h_stack()
-            .font(ui_font)
-            .text_ui()
-            .justify_between()
-            .size_full()
-            .overflow_hidden()
-            .elevation_3(cx)
-            .p_2()
-            .gap_2()
-            .child(
-                img(self.owner.avatar_uri.clone())
-                    .w_12()
-                    .h_12()
-                    .rounded_full(),
+        div().size_full().font(ui_font).child(
+            CollabNotification::new(
+                self.owner.avatar_uri.clone(),
+                Button::new("open", "Open").on_click(cx.listener(move |this, _event, cx| {
+                    this.join(cx);
+                })),
+                Button::new("dismiss", "Dismiss").on_click(cx.listener(move |this, _event, cx| {
+                    this.dismiss(cx);
+                })),
             )
-            .child(
-                v_stack()
-                    .overflow_hidden()
-                    .child(Label::new(self.owner.github_login.clone()))
-                    .child(Label::new(format!(
-                        "is sharing a project in Zed{}",
-                        if self.worktree_root_names.is_empty() {
-                            ""
-                        } else {
-                            ":"
-                        }
-                    )))
-                    .children(if self.worktree_root_names.is_empty() {
-                        None
-                    } else {
-                        Some(Label::new(self.worktree_root_names.join(", ")))
-                    }),
-            )
-            .child(
-                v_stack()
-                    .child(Button::new("open", "Open").on_click(cx.listener(
-                        move |this, _event, cx| {
-                            this.join(cx);
-                        },
-                    )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        move |this, _event, cx| {
-                            this.dismiss(cx);
-                        },
-                    ))),
-            )
+            .child(Label::new(self.owner.github_login.clone()))
+            .child(Label::new(format!(
+                "is sharing a project in Zed{}",
+                if self.worktree_root_names.is_empty() {
+                    ""
+                } else {
+                    ":"
+                }
+            )))
+            .children(if self.worktree_root_names.is_empty() {
+                None
+            } else {
+                Some(Label::new(self.worktree_root_names.join(", ")))
+            }),
+        )
     }
 }

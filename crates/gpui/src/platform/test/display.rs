@@ -32,7 +32,7 @@ impl PlatformDisplay for TestDisplay {
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
-        todo!()
+        unimplemented!()
     }
 
     fn bounds(&self) -> crate::Bounds<crate::GlobalPixels> {

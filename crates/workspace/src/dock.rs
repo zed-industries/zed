@@ -28,7 +28,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
     fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
@@ -52,7 +52,7 @@ pub trait PanelHandle: Send + Sync {
     fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
     fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -104,7 +104,7 @@ where
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         self.read(cx).icon(cx)
     }
 
@@ -167,15 +167,6 @@ impl DockPosition {
         }
     }
 
-    // todo!()
-    // fn to_resize_handle_side(self) -> HandleSide {
-    //     match self {
-    //         Self::Left => HandleSide::Right,
-    //         Self::Bottom => HandleSide::Top,
-    //         Self::Right => HandleSide::Left,
-    //     }
-    // }
-
     pub fn axis(&self) -> Axis {
         match self {
             Self::Left | Self::Right => Axis::Horizontal,
@@ -186,8 +177,6 @@ impl DockPosition {
 
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
-    // todo!()
-    // context_menu: View<ContextMenu>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -264,12 +253,6 @@ impl Dock {
     pub fn is_open(&self) -> bool {
         self.is_open
     }
-
-    // todo!()
-    //     pub fn has_focus(&self, cx: &WindowContext) -> bool {
-    //         self.visible_panel()
-    //             .map_or(false, |panel| panel.has_focus(cx))
-    //     }
 
     pub fn panel<T: Panel>(&self) -> Option<View<T>> {
         self.panel_entries
@@ -395,7 +378,6 @@ impl Dock {
                         })
                         .ok();
                 }
-                // todo!() we do not use this event in the production code (even in zed1), remove it
                 PanelEvent::Activate => {
                     if let Some(ix) = this
                         .panel_entries
@@ -418,16 +400,8 @@ impl Dock {
             }),
         ];
 
-        // todo!()
-        // let dock_view_id = cx.view_id();
         self.panel_entries.push(PanelEntry {
             panel: Arc::new(panel),
-            // todo!()
-            // context_menu: cx.add_view(|cx| {
-            //     let mut menu = ContextMenu::new(dock_view_id, cx);
-            //     menu.set_position_mode(OverlayPositionMode::Local);
-            //     menu
-            // }),
             _subscriptions: subscriptions,
         });
         cx.notify()
@@ -619,7 +593,6 @@ impl PanelButtons {
 
 impl Render for PanelButtons {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // todo!()
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
@@ -775,7 +748,7 @@ pub mod test {
             self.size = size.unwrap_or(px(300.));
         }
 
-        fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+        fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
             None
         }
 

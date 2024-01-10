@@ -1,21 +1,21 @@
 use gpui::{AnyView, DefiniteLength};
 
 use crate::{prelude::*, SelectableButton};
-use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
 
 #[derive(IntoElement)]
 pub struct IconButton {
     base: ButtonLike,
-    icon: Icon,
+    icon: IconName,
     icon_size: IconSize,
     icon_color: Color,
-    selected_icon: Option<Icon>,
+    selected_icon: Option<IconName>,
 }
 
 impl IconButton {
-    pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
+    pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
         Self {
             base: ButtonLike::new(id),
             icon,
@@ -35,7 +35,7 @@ impl IconButton {
         self
     }
 
-    pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+    pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
         self
     }

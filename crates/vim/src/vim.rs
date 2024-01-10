@@ -33,6 +33,9 @@ use workspace::{self, Workspace};
 
 use crate::state::ReplayableAction;
 
+/// Whether or not to enable Vim mode (work in progress).
+///
+/// Default: false
 pub struct VimModeSetting(pub bool);
 
 #[derive(Clone, Deserialize, PartialEq)]
