@@ -128,7 +128,6 @@ impl ActionRegistry {
     }
 
     fn insert_action(&mut self, action: ActionData) {
-        //todo!(remove)
         let name: SharedString = action.name.into();
         self.builders_by_name.insert(name.clone(), action.build);
         self.names_by_type_id.insert(action.type_id, name.clone());
