@@ -111,7 +111,6 @@ mod test {
 
         let mut cx1 = VisualTestContext::from_window(cx.window, &cx);
         let editor1 = cx.editor.clone();
-        dbg!(editor1.entity_id());
 
         let buffer = cx.new_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
         let (editor2, cx2) = cx.add_window_view(|cx| Editor::for_buffer(buffer, None, cx));

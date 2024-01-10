@@ -14,8 +14,8 @@ env:
     RUST_BACKTRACE: 1
 
 jobs:
-    rustfmt:
-        name: Check formatting
+    style:
+        name: Check formatting and Clippy lints
         runs-on:
             - self-hosted
             - test
@@ -25,16 +25,17 @@ jobs:
               with:
                   clean: false
                   submodules: "recursive"
+                  fetch-depth: 0
 
-            - name: Run rustfmt
-              uses: ./.github/actions/check_formatting
+            - name: Run style checks
+              uses: ./.github/actions/check_style
 
     tests:
         name: Run tests
         runs-on:
             - self-hosted
             - test
-        needs: rustfmt
+        needs: style
         steps:
             - name: Checkout repo
               uses: actions/checkout@v3
