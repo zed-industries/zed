@@ -16,6 +16,12 @@ pub trait FeatureFlag {
     const NAME: &'static str;
 }
 
+pub enum ChannelsAlpha {}
+
+impl FeatureFlag for ChannelsAlpha {
+    const NAME: &'static str = "channels_alpha";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where

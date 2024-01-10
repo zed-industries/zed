@@ -1,4 +1,4 @@
-use crate::{channel_view::ChannelView, ChatPanelSettings};
+use crate::{channel_view::ChannelView, is_channels_feature_enabled, ChatPanelSettings};
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
@@ -612,6 +612,9 @@ impl Panel for ChatPanel {
         self.active = active;
         if active {
             self.acknowledge_last_message(cx);
+            if !is_channels_feature_enabled(cx) {
+                cx.emit(Event::Dismissed);
+            }
         }
     }
 
@@ -620,6 +623,10 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
+        if !is_channels_feature_enabled(cx) {
+            return None;
+        }
+
         Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
