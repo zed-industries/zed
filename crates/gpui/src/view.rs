@@ -292,7 +292,7 @@ impl Element for AnyView {
                     && !cx.window.dirty_views.contains(&self.entity_id())
                     && !cx.window.refreshing
                 {
-                    cx.reuse_geometry();
+                    cx.reuse_view();
                     return;
                 }
             }

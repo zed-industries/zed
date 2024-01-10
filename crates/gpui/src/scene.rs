@@ -125,7 +125,7 @@ impl Scene {
         }
     }
 
-    pub fn insert_views_from_scene(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
+    pub fn reuse_views(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
         for shadow in prev_scene.shadows.drain(..) {
             if views.contains(&EntityId::from(shadow.view_id as u64)) {
                 let order = &prev_scene.orders_by_layer[&shadow.layer_id];

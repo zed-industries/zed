@@ -347,6 +347,37 @@ impl Frame {
             .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
             .unwrap_or_default()
     }
+
+    fn reuse_views(&mut self, prev_frame: &mut Self) {
+        // Reuse mouse listeners that didn't change since the last frame.
+        for (type_id, listeners) in &mut prev_frame.mouse_listeners {
+            let next_listeners = self.mouse_listeners.entry(*type_id).or_default();
+            for (order, view_id, listener) in listeners.drain(..) {
+                if self.reused_views.contains(&view_id) {
+                    next_listeners.push((order, view_id, listener));
+                }
+            }
+        }
+
+        // Reuse entries in the depth map that didn't change since the last frame.
+        for (order, view_id, bounds) in prev_frame.depth_map.drain(..) {
+            if self.reused_views.contains(&view_id) {
+                self.depth_map.push((order, view_id, bounds));
+            }
+        }
+        self.depth_map.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Retain element states for views that didn't change since the last frame.
+        for (element_id, state) in prev_frame.element_states.drain() {
+            if self.reused_views.contains(&state.parent_view_id) {
+                self.element_states.entry(element_id).or_insert(state);
+            }
+        }
+
+        // Reuse geometry that didn't change since the last frame.
+        self.scene
+            .reuse_views(&self.reused_views, &mut prev_frame.scene);
+    }
 }
 
 impl Window {
@@ -1376,7 +1407,7 @@ impl<'a> WindowContext<'a> {
         );
     }
 
-    pub(crate) fn reuse_geometry(&mut self) {
+    pub(crate) fn reuse_view(&mut self) {
         let view_id = self.parent_view_id().unwrap();
         let window = &mut self.window;
         let grafted_view_ids = window
@@ -1450,56 +1481,9 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.window_active = self.window.active;
         self.window.root_view = Some(root_view);
 
-        // Reuse mouse listeners that didn't change since the last frame.
-        for (type_id, listeners) in &mut self.window.rendered_frame.mouse_listeners {
-            let next_listeners = self
-                .window
-                .next_frame
-                .mouse_listeners
-                .entry(*type_id)
-                .or_default();
-            for (order, view_id, listener) in listeners.drain(..) {
-                if self.window.next_frame.reused_views.contains(&view_id) {
-                    next_listeners.push((order, view_id, listener));
-                }
-            }
-        }
-
-        // Reuse entries in the depth map that didn't change since the last frame.
-        for (order, view_id, bounds) in self.window.rendered_frame.depth_map.drain(..) {
-            if self.window.next_frame.reused_views.contains(&view_id) {
-                self.window
-                    .next_frame
-                    .depth_map
-                    .push((order, view_id, bounds));
-            }
-        }
         self.window
             .next_frame
-            .depth_map
-            .sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Retain element states for views that didn't change since the last frame.
-        for (element_id, state) in self.window.rendered_frame.element_states.drain() {
-            if self
-                .window
-                .next_frame
-                .reused_views
-                .contains(&state.parent_view_id)
-            {
-                self.window
-                    .next_frame
-                    .element_states
-                    .entry(element_id)
-                    .or_insert(state);
-            }
-        }
-
-        // Reuse geometry that didn't change since the last frame.
-        self.window.next_frame.scene.insert_views_from_scene(
-            &self.window.next_frame.reused_views,
-            &mut self.window.rendered_frame.scene,
-        );
+            .reuse_views(&mut self.window.rendered_frame);
         self.window.next_frame.scene.finish();
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
