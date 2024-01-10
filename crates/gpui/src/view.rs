@@ -89,9 +89,11 @@ impl<V: Render> Element for View<V> {
         _state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
-        let layout_id = element.request_layout(cx);
-        (layout_id, Some(element))
+        cx.with_view_id(self.entity_id(), |cx| {
+            let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
+            let layout_id = element.request_layout(cx);
+            (layout_id, Some(element))
+        })
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
@@ -228,10 +230,12 @@ impl AnyView {
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
     ) {
-        cx.with_absolute_element_offset(origin, |cx| {
-            let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
-            cx.compute_layout(layout_id, available_space);
-            cx.with_view_id(self.entity_id(), |cx| rendered_element.paint(cx));
+        cx.with_view_id(self.entity_id(), |cx| {
+            cx.with_absolute_element_offset(origin, |cx| {
+                let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
+                cx.compute_layout(layout_id, available_space);
+                rendered_element.paint(cx)
+            });
         })
     }
 }
@@ -254,21 +258,23 @@ impl Element for AnyView {
         state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        if self.cache {
-            if let Some(state) = state {
-                let layout_id = cx.request_layout(&state.root_style, None);
-                return (layout_id, state);
+        cx.with_view_id(self.entity_id(), |cx| {
+            if self.cache {
+                if let Some(state) = state {
+                    let layout_id = cx.request_layout(&state.root_style, None);
+                    return (layout_id, state);
+                }
             }
-        }
 
-        let (layout_id, element) = (self.request_layout)(self, cx);
-        let root_style = cx.layout_style(layout_id).unwrap().clone();
-        let state = AnyViewState {
-            root_style,
-            cache_key: None,
-            element: Some(element),
-        };
-        (layout_id, state)
+            let (layout_id, element) = (self.request_layout)(self, cx);
+            let root_style = cx.layout_style(layout_id).unwrap().clone();
+            let state = AnyViewState {
+                root_style,
+                cache_key: None,
+                element: Some(element),
+            };
+            (layout_id, state)
+        })
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {

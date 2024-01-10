@@ -280,6 +280,7 @@ pub struct Window {
 
 pub(crate) struct ElementStateBox {
     inner: Box<dyn Any>,
+    parent_view_id: EntityId,
     #[cfg(debug_assertions)]
     type_name: &'static str,
 }
@@ -290,11 +291,12 @@ pub(crate) struct Frame {
     mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
+    pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
     pub(crate) next_stacking_order_id: u32,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
+    pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
 }
 
@@ -311,6 +313,7 @@ impl Frame {
             depth_map: Default::default(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
         }
     }
@@ -323,6 +326,7 @@ impl Frame {
         self.next_stacking_order_id = 0;
         self.reused_views.clear();
         self.scene.clear();
+        debug_assert_eq!(self.view_stack.len(), 0);
     }
 
     fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -880,7 +884,7 @@ impl<'a> WindowContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
         let order = self.window.next_frame.z_index_stack.clone();
         self.window
             .next_frame
@@ -967,17 +971,18 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
         let stacking_order = self.window.next_frame.z_index_stack.clone();
-        let depth_map = &mut self.window.next_frame.depth_map;
-        match depth_map.binary_search_by(|(level, _)| stacking_order.cmp(level)) {
-            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, bounds)),
-        }
+        let view_id = self.parent_view_id().unwrap();
+        self.window
+            .next_frame
+            .depth_map
+            .push((stacking_order, view_id, bounds));
     }
 
     /// Returns true if there is no opaque layer containing the given point
     /// on top of the given level. Layers whose level is an extension of the
     /// level are not considered to be on top of the level.
     pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
-        for (opaque_level, bounds) in self.window.rendered_frame.depth_map.iter() {
+        for (opaque_level, _, bounds) in self.window.rendered_frame.depth_map.iter() {
             if level >= opaque_level {
                 break;
             }
@@ -994,7 +999,7 @@ impl<'a> WindowContext<'a> {
         point: &Point<Pixels>,
         level: &StackingOrder,
     ) -> bool {
-        for (opaque_level, bounds) in self.window.rendered_frame.depth_map.iter() {
+        for (opaque_level, _, bounds) in self.window.rendered_frame.depth_map.iter() {
             if level >= opaque_level {
                 break;
             }
@@ -1023,7 +1028,7 @@ impl<'a> WindowContext<'a> {
     ) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
         let window = &mut *self.window;
         for shadow in shadows {
             let mut shadow_bounds = bounds;
@@ -1051,7 +1056,7 @@ impl<'a> WindowContext<'a> {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1074,7 +1079,7 @@ impl<'a> WindowContext<'a> {
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
 
         path.content_mask = content_mask;
         path.color = color.into();
@@ -1104,7 +1109,7 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1161,7 +1166,7 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.active_view_id();
+            let view_id = self.parent_view_id().unwrap();
             let window = &mut *self.window;
             window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
@@ -1214,7 +1219,7 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.active_view_id();
+            let view_id = self.parent_view_id().unwrap();
             let window = &mut *self.window;
 
             window.next_frame.scene.insert(
@@ -1259,7 +1264,7 @@ impl<'a> WindowContext<'a> {
                     Ok((params.size, Cow::Owned(bytes)))
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1298,7 +1303,7 @@ impl<'a> WindowContext<'a> {
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1322,7 +1327,7 @@ impl<'a> WindowContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
         let window = &mut *self.window;
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
@@ -1338,8 +1343,7 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn reuse_geometry(&mut self) {
-        println!("reusing geometry");
-        let view_id = self.active_view_id();
+        let view_id = self.parent_view_id().unwrap();
         let window = &mut self.window;
         let grafted_view_ids = window
             .next_frame
@@ -1350,17 +1354,8 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    fn active_view_id(&self) -> EntityId {
-        self.window
-            .next_frame
-            .dispatch_tree
-            .active_view_id()
-            .expect("a view should always be active")
-    }
-
     /// Draw pixels to the display for this window based on the contents of its scene.
     pub(crate) fn draw(&mut self) {
-        println!("=====================");
         self.window.dirty = false;
         self.window.drawing = true;
 
@@ -1409,11 +1404,6 @@ impl<'a> WindowContext<'a> {
             });
         }
         self.window.dirty_views.clear();
-        self.window.next_frame.scene.insert_views_from_scene(
-            &self.window.next_frame.reused_views,
-            &mut self.window.rendered_frame.scene,
-        );
-        self.window.next_frame.scene.finish();
 
         self.window
             .next_frame
@@ -1425,6 +1415,7 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.focus = self.window.focus;
         self.window.root_view = Some(root_view);
 
+        // Reuse mouse listeners that didn't change since the last frame.
         for (type_id, listeners) in &mut self.window.rendered_frame.mouse_listeners {
             let next_listeners = self
                 .window
@@ -1438,6 +1429,43 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
+
+        // Reuse entries in the depth map that didn't change since the last frame.
+        for (order, view_id, bounds) in self.window.rendered_frame.depth_map.drain(..) {
+            if self.window.next_frame.reused_views.contains(&view_id) {
+                self.window
+                    .next_frame
+                    .depth_map
+                    .push((order, view_id, bounds));
+            }
+        }
+        self.window
+            .next_frame
+            .depth_map
+            .sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Retain element states for views that didn't change since the last frame.
+        for (element_id, state) in self.window.rendered_frame.element_states.drain() {
+            if self
+                .window
+                .next_frame
+                .reused_views
+                .contains(&state.parent_view_id)
+            {
+                self.window
+                    .next_frame
+                    .element_states
+                    .entry(element_id)
+                    .or_insert(state);
+            }
+        }
+
+        // Reuse geometry that didn't change since the last frame.
+        self.window.next_frame.scene.insert_views_from_scene(
+            &self.window.next_frame.reused_views,
+            &mut self.window.rendered_frame.scene,
+        );
+        self.window.next_frame.scene.finish();
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
         mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
@@ -1871,18 +1899,127 @@ impl<'a> WindowContext<'a> {
         focus_handle: Option<FocusHandle>,
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
+        let parent_view_id = self.parent_view_id();
         let window = &mut self.window;
         let focus_id = focus_handle.as_ref().map(|handle| handle.id);
         window
             .next_frame
             .dispatch_tree
-            .push_node(context.clone(), focus_id, None);
+            .push_node(context.clone(), focus_id, parent_view_id);
 
         let result = f(focus_handle, self);
 
         self.window.next_frame.dispatch_tree.pop_node();
 
         result
+    }
+
+    pub(crate) fn with_view_id<R>(
+        &mut self,
+        view_id: EntityId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.window.next_frame.view_stack.push(view_id);
+        let result = f(self);
+        self.window.next_frame.view_stack.pop();
+        result
+    }
+
+    /// Update or initialize state for an element with the given id that lives across multiple
+    /// frames. If an element with this id existed in the rendered frame, its state will be passed
+    /// to the given closure. The state returned by the closure will be stored so it can be referenced
+    /// when drawing the next frame.
+    pub(crate) fn with_element_state<S, R>(
+        &mut self,
+        id: ElementId,
+        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    ) -> R
+    where
+        S: 'static,
+    {
+        self.with_element_id(Some(id), |cx| {
+            let global_id = cx.window().element_id_stack.clone();
+
+            if let Some(any) = cx
+                .window_mut()
+                .next_frame
+                .element_states
+                .remove(&global_id)
+                .or_else(|| {
+                    cx.window_mut()
+                        .rendered_frame
+                        .element_states
+                        .remove(&global_id)
+                })
+            {
+                let ElementStateBox {
+                    inner,
+                    parent_view_id,
+                    #[cfg(debug_assertions)]
+                    type_name
+                } = any;
+                // Using the extra inner option to avoid needing to reallocate a new box.
+                let mut state_box = inner
+                    .downcast::<Option<S>>()
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                // Actual: Option<AnyElement> <- View
+                // Requested: () <- AnyElemet
+                let state = state_box
+                    .take()
+                    .expect("element state is already on the stack");
+                let (result, state) = f(Some(state), cx);
+                state_box.replace(state);
+                cx.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_id, ElementStateBox {
+                        inner: state_box,
+                        parent_view_id,
+                        #[cfg(debug_assertions)]
+                        type_name
+                    });
+                result
+            } else {
+                let (result, state) = f(None, cx);
+                let parent_view_id = cx.parent_view_id().unwrap();
+                cx.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_id,
+                        ElementStateBox {
+                            inner: Box::new(Some(state)),
+                            parent_view_id,
+                            #[cfg(debug_assertions)]
+                            type_name: std::any::type_name::<S>()
+                        }
+
+                    );
+                result
+            }
+        })
+    }
+
+    fn parent_view_id(&self) -> Option<EntityId> {
+        self.window.next_frame.view_stack.last().copied()
     }
 
     /// Set an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
@@ -2169,16 +2306,6 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         result
     }
 
-    fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window_mut()
-            .next_frame
-            .dispatch_tree
-            .push_node(None, None, Some(view_id));
-        let result = f(self);
-        self.window_mut().next_frame.dispatch_tree.pop_node();
-        result
-    }
-
     /// Update the global element offset relative to the current offset. This is used to implement
     /// scrolling.
     fn with_element_offset<R>(
@@ -2218,98 +2345,6 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             .last()
             .copied()
             .unwrap_or_default()
-    }
-
-    /// Update or initialize state for an element with the given id that lives across multiple
-    /// frames. If an element with this id existed in the rendered frame, its state will be passed
-    /// to the given closure. The state returned by the closure will be stored so it can be referenced
-    /// when drawing the next frame.
-    fn with_element_state<S, R>(
-        &mut self,
-        id: ElementId,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
-    ) -> R
-    where
-        S: 'static,
-    {
-        self.with_element_id(Some(id), |cx| {
-            let global_id = cx.window().element_id_stack.clone();
-
-            if let Some(any) = cx
-                .window_mut()
-                .next_frame
-                .element_states
-                .remove(&global_id)
-                .or_else(|| {
-                    cx.window_mut()
-                        .rendered_frame
-                        .element_states
-                        .remove(&global_id)
-                })
-            {
-                let ElementStateBox {
-                    inner,
-
-                    #[cfg(debug_assertions)]
-                    type_name
-                } = any;
-                // Using the extra inner option to avoid needing to reallocate a new box.
-                let mut state_box = inner
-                    .downcast::<Option<S>>()
-                    .map_err(|_| {
-                        #[cfg(debug_assertions)]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                std::any::type_name::<S>(),
-                                type_name
-                            )
-                        }
-
-                        #[cfg(not(debug_assertions))]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}",
-                                std::any::type_name::<S>(),
-                            )
-                        }
-                    })
-                    .unwrap();
-
-                // Actual: Option<AnyElement> <- View
-                // Requested: () <- AnyElemet
-                let state = state_box
-                    .take()
-                    .expect("element state is already on the stack");
-                let (result, state) = f(Some(state), cx);
-                state_box.replace(state);
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id, ElementStateBox {
-                        inner: state_box,
-
-                        #[cfg(debug_assertions)]
-                        type_name
-                    });
-                result
-            } else {
-                let (result, state) = f(None, cx);
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id,
-                        ElementStateBox {
-                            inner: Box::new(Some(state)),
-
-                            #[cfg(debug_assertions)]
-                            type_name: std::any::type_name::<S>()
-                        }
-
-                    );
-                result
-            }
-        })
     }
 
     /// Obtain the current content mask.

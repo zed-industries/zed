@@ -18,7 +18,6 @@ pub struct DispatchNodeId(usize);
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
-    view_stack: Vec<EntityId>,
     nodes: Vec<DispatchNode>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
@@ -50,7 +49,6 @@ impl DispatchTree {
         Self {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
-            view_stack: Vec::new(),
             nodes: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
@@ -63,7 +61,6 @@ impl DispatchTree {
     pub fn clear(&mut self) {
         self.node_stack.clear();
         self.context_stack.clear();
-        self.view_stack.clear();
         self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
@@ -76,6 +73,15 @@ impl DispatchTree {
         focus_id: Option<FocusId>,
         view_id: Option<EntityId>,
     ) {
+        // Associate a view id to this only if it is the root node for the view.
+        let view_id = view_id.and_then(|view_id| {
+            if self.view_node_ids.contains_key(&view_id) {
+                None
+            } else {
+                Some(view_id)
+            }
+        });
+
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
@@ -96,7 +102,6 @@ impl DispatchTree {
         }
 
         if let Some(view_id) = view_id {
-            self.view_stack.push(view_id);
             self.view_node_ids.insert(view_id, node_id);
         }
     }
@@ -106,21 +111,14 @@ impl DispatchTree {
         if node.context.is_some() {
             self.context_stack.pop();
         }
-        if node.view_id.is_some() {
-            self.view_stack.pop();
-        }
         self.node_stack.pop();
     }
 
-    fn move_node(&mut self, source_node: &mut DispatchNode) {
-        self.push_node(
-            source_node.context.take(),
-            source_node.focus_id,
-            source_node.view_id,
-        );
-        let target_node = self.active_node();
-        target_node.key_listeners = mem::take(&mut source_node.key_listeners);
-        target_node.action_listeners = mem::take(&mut source_node.action_listeners);
+    fn move_node(&mut self, source: &mut DispatchNode) {
+        self.push_node(source.context.take(), source.focus_id, source.view_id);
+        let target = self.active_node();
+        target.key_listeners = mem::take(&mut source.key_listeners);
+        target.action_listeners = mem::take(&mut source.action_listeners);
     }
 
     pub fn graft(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
@@ -352,10 +350,6 @@ impl DispatchTree {
         }
         view_path.reverse(); // Reverse the path so it goes from the root to the view node.
         view_path
-    }
-
-    pub fn active_view_id(&self) -> Option<EntityId> {
-        self.view_stack.last().copied()
     }
 
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
