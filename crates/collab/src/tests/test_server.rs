@@ -664,7 +664,10 @@ impl TestClient {
         project: &Model<Project>,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
-        cx.add_window_view(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
+        cx.add_window_view(|cx| {
+            cx.activate_window();
+            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+        })
     }
 
     pub fn active_workspace<'a>(
