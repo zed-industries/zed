@@ -804,9 +804,21 @@ impl EditorElement {
 
             let start_row = display_row_range.start;
             let end_row = display_row_range.end;
+            // If we're in a multibuffer, row range span might include an excerpt header
+            // when we're in multibuffer.
+            // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
+            // Instead, we simply check whether the range we're dealing with includes
+            // any custom elements and if so, we stop painting the diff hunk on the first row of that custom element
+            let end_row_in_current_excerpt = layout
+                .position_map
+                .snapshot
+                .blocks_in_range(start_row..end_row)
+                .next()
+                .map(|(start_row, _)| start_row)
+                .unwrap_or(end_row);
 
             let start_y = start_row as f32 * line_height - scroll_top;
-            let end_y = end_row as f32 * line_height - scroll_top;
+            let end_y = end_row_in_current_excerpt as f32 * line_height - scroll_top;
 
             let width = 0.275 * line_height;
             let highlight_origin = bounds.origin + point(-width, start_y);
