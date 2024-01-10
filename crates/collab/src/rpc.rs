@@ -1859,11 +1859,24 @@ async fn update_buffer(
     let mut guest_connection_ids;
     let mut host_connection_id = None;
 
+    let mut requires_write_permission = false;
+
+    for op in request.operations.iter() {
+        match op.variant {
+            None | Some(proto::operation::Variant::UpdateSelections(_)) => {}
+            Some(_) => requires_write_permission = true,
+        }
+    }
+
     {
         let collaborators = session
             .db()
             .await
-            .project_collaborators_for_buffer_update(project_id, session.connection_id)
+            .project_collaborators_for_buffer_update(
+                project_id,
+                session.connection_id,
+                requires_write_permission,
+            )
             .await?;
         guest_connection_ids = Vec::with_capacity(collaborators.len() - 1);
         for collaborator in collaborators.iter() {
