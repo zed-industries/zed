@@ -1,40 +1,47 @@
 mod support;
+use support::*;
 
-// Today, I want to walk through building a tiny subset of Zed's UI in the latest version of our UI framework, GPUI.
-// We're building a titlebar, so let's start with a `Titlebar` struct.
-// If the current user is signed in, we render the avatar on the far right. Otherwise, we render a sign in button.
-// If the avatar or chevron are clicked, we deploy a popover menu with a few actions.
-//
-// ![A screenshot of the deployed menu](https://share.cleanshot.com/Q8qzQhpF)
+// Today, I want to walk through building a tiny subset of Zed's interface in the latest version of our UI framework, [GPUI](https://gpui.rs).
+// I'll start with a simple version of the titlebar at the top of the window.
 //
 // To start, let's think about modeling the above scenario in Rust's type system.
-// First, we'll import everything in GPUI so it's in scope for the rest of the post.
+// First, we'll import everything in GPUI so it's in scope for the rest of the post, along with types from a few other Zed crates.
 
 use gpui::{prelude::*, *};
-use support::h_flex;
-use theme::ActiveTheme;
-use ui::{
-    h_stack, popover_menu, Avatar, ButtonCommon, ButtonLike, ButtonStyle, Color, ContextMenu, Icon,
-    IconName, PopoverMenu, Tooltip,
-};
+use picker::*;
+use theme::*;
+use ui::*;
 
-// Next we'll define a titlebar struct, which for now has a single field representing the user menu button.
-// In practice, we have a lot more going on in our titlebar, but let's keep it simple for now.
+// Next we'll define a `Titlebar` struct, which contains a `ProjectMenuButton`.
+// The project menu button displays the name of the current project, and a menu of recent projects when clicked.
 #[derive(IntoElement)]
 pub struct Titlebar {
-    user_menu_button: UserMenuButton,
+    project_menu_button: ProjectMenuButton,
 }
 
 // Note the use of the IntoElement, derive macro above.
-// This trait allows our struct to be converted into an element for display
-// For now, the user button just has an optional avatar URL, indicating whether the current user is signed in, and also derives this trait.
+// This trait allows our struct to be converted into an element for display in a window.
+// To derive it, your type must implement the `RenderOnce` trait, which we'll discuss shortly.
+
+// The project menu button has a current project and a vector of recent projects, where every project has a name and an id.
+// Deeper in the app, we have another definition of `Project`, but this is the only data we need to render the interface.
+// Structuring the view this way will allow us to iterate rapidly on what our app looks like without pulling in too many expensive dependencies.
+
 #[derive(IntoElement)]
-pub struct UserMenuButton {
-    avatar_url: Option<SharedUrl>,
+pub struct ProjectMenuButton {
+    current: Project,
+    recent: Vec<Project>,
 }
 
-// However, in order to derive `gpui::IntoElement`, your struct must implement `gpui::RenderOnce`.
-// So lets do that now.
+pub struct Project {
+    name: SharedString,
+    id: ProjectId,
+}
+
+pub struct ProjectId(u64);
+
+// As I mentioned earlier, in order to derive `IntoElement` on a type, that type must implement `RenderOnce`.
+// Lets do that now for titlebar. Here's the scaffold.
 //
 // ```rs
 // impl RenderOnce for Titlebar {
@@ -48,32 +55,24 @@ pub struct UserMenuButton {
 // It also takes advantage of a feature new with Rust 1.75, [*return position impl trait in trait*](https://rustc-dev-guide.rust-lang.org/return-position-impl-trait-in-trait.html).
 //
 // To implement render, we express a tree of elements as a method-chained Rust expression.
-// We could have adopted a fancy macro language, but we wanted to keep things simple and pure Rust.
+// We could have adopted a fancy macro language, but we wanted to keep things simple and stick to pure Rust.
 // There's something nice about using one language, rather than trying to intermingle two, and we didn't want too many macros.
 //
 // Individual elements are constructed via method chaining, and we've adopted Tailwind CSS naming conventions for a set of chained helper methods that style elements.
 // A huge thanks to the authors of [Taffy](https://github.com/DioxusLabs/taffy), which computes a layout by interpreting these properties according to web standards.
-//
-// In the implementation below, we make titlebar a horizontal flex row, *center* its items vertically, and evenly distribute space *between* inflexible children.
-// We define the height in terms of *rems*, which stands for "root ems", another concept we've borrowed from the web.
-// It's essentially the font size of the root element, and can be used as the basis of scaling the UI.
-// If we define everything relative to this root font size, then the UI can scale off this single paramater.
-// A more principled approach to our units of measure is one of the big benefits we gained by rewriting GPUI, which is why the UI font is now scalable in preview.
-// Interestingly, for the titlebar we also need to specify a non-scalable minimum height to ensure the titlebar is tall enough to contain the fixed-size macOS traffic lights, the only UI elements we don't render ourselves.
-// We continue with a `map` statement with conditional logic to position content around the traffic lights if they are visible (when not full screen).
-// Finally, we set the background color and assign an action to zoom the window on double-click.
+// I'll walk through this code below.
 
 impl RenderOnce for Titlebar {
     fn render(self, cx: &mut gpui::WindowContext) -> impl IntoElement {
-        let titlebar = div()
+        div()
             .id("titlebar")
             .flex() //         In practice, these three chained calls are typically
             .flex_row() //     combined in a call to `.hflex()`
             .items_center() // I'm inlining them here for exposition / clarity.
-            .justify_between()
             .w_full()
             .h(rems(1.75))
             .min_h(px(32.))
+            .bg(cx.theme().colors().title_bar_background)
             .map(|this| {
                 if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
                     this.pl_2()
@@ -83,25 +82,56 @@ impl RenderOnce for Titlebar {
                     this.pl(px(80.))
                 }
             })
-            .bg(cx.theme().colors().title_bar_background) // TODO: I want to come back to this and explore an idea I have for surface-based themes if there's time.
             .on_click(|event, cx| {
                 if event.up.click_count == 2 {
                     cx.zoom_window();
                 }
-            });
-
-        titlebar
-            .child(div().id("todo"))
-            .child(self.user_menu_button)
+            })
+            .child(self.project_menu_button)
     }
 }
 
-// Are we taking method chaining too far? Maybe. It's nice to just have code be markup.
+// In the implementation above, we make titlebar a horizontal flex row and center its items vertically.
+// We make it full width, and give it a scalable height based on *rems*, which is short for "root ems", another concept we've borrowed from the web.
+// One *rem* essentially the font size of the root element, so if the root font size of the window is 16px, then 1rem = 16px.
+// We define almost everything in terms of rems, allowing the UI to scale by tweaking a single parameter.
+// A more principled approach to our units of measure is one of the big benefits we gained by rewriting GPUI, which is why the UI font is now scalable in preview.
+//
+// Interestingly, the titlebar is one place where we use a non-scalable pixel-based value in our UI, in this case for the minimum height.
+// This is because the titlebar must coexist with the only UI element in the window we don't control: the macOS traffic lights.
+// The traffic lights have a fixed size, and we want to ensure the titlebar is tall enough to fully contain them, regardless of the window's root font size.
+// After assigning the background color, we use conditional logic within the call to `map` to apply fixed padding to the left side of the titlebar whenever the traffic lights are visible.
+//
+// We also arrange to zoom the window when the titlebar is double-clicked.
+// Finally, we give our titlebar a single child, the project menu button.
+// Note that because `RenderOnce::render` moves self, we're free to move the project menu button rather than cloning it.
+
+// Now let's implement `RenderOnce` for `ProjectMenuButton`
+
+impl RenderOnce for ProjectMenuButton {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        PopoverMenu::new("project-menu")
+            .trigger(
+                Button::new("project-menu-button", self.current.name)
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
+                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+            )
+            .menu(|cx| Picker::simple(self.recent, cx)) // TODO: Build an easier picker we can just supply with data.
+    }
+}
+
+/// ------------------------------------
 
 actions!(
     zed,
     [OpenSettings, OpenTheme, SignIn, SignOut, ShareFeedback]
 );
+
+#[derive(IntoElement)]
+pub struct UserMenuButton {
+    avatar_url: Option<SharedUrl>,
+}
 
 impl RenderOnce for UserMenuButton {
     fn render(self, cx: &mut gpui::WindowContext) -> impl IntoElement {

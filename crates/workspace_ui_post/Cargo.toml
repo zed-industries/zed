@@ -8,5 +8,6 @@ path = "src/workspace_ui_post.rs"
 
 [dependencies]
 gpui = { path = "../gpui" }
-ui = { path = "../ui" }
+picker = { path = "../picker" }
 theme = { path = "../theme" }
+ui = { path = "../ui" }
