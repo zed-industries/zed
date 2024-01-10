@@ -878,16 +878,23 @@ impl EditorElement {
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
                 cx.with_element_id(Some("folds"), |cx| {
                     let snapshot = &layout.position_map.snapshot;
+
                     for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
                         let fold_range = fold.range.clone();
                         let display_range = fold.range.start.to_display_point(&snapshot)
                             ..fold.range.end.to_display_point(&snapshot);
                         debug_assert_eq!(display_range.start.row(), display_range.end.row());
                         let row = display_range.start.row();
+                        debug_assert!(row < layout.visible_display_row_range.end);
+                        let Some(line_layout) = &layout
+                            .position_map
+                            .line_layouts
+                            .get((row - layout.visible_display_row_range.start) as usize)
+                            .map(|l| &l.line)
+                        else {
+                            continue;
+                        };
 
-                        let line_layout = &layout.position_map.line_layouts
-                            [(row - layout.visible_display_row_range.start) as usize]
-                            .line;
                         let start_x = content_origin.x
                             + line_layout.x_for_index(display_range.start.column() as usize)
                             - layout.position_map.scroll_position.x;
