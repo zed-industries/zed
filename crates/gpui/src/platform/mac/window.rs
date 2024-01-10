@@ -269,6 +269,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(windowShouldClose:),
         window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
     );
+
     decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
 
     decl.add_method(
@@ -685,9 +686,6 @@ impl Drop for MacWindow {
         this.executor
             .spawn(async move {
                 unsafe {
-                    // todo!() this panic()s when you click the red close button
-                    // unless should_close returns false.
-                    // (luckliy in zed it always returns false)
                     window.close();
                 }
             })

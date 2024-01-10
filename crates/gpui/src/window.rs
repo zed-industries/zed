@@ -1904,7 +1904,16 @@ impl<'a> WindowContext<'a> {
         let mut this = self.to_async();
         self.window
             .platform_window
-            .on_should_close(Box::new(move || this.update(|_, cx| f(cx)).unwrap_or(true)))
+            .on_should_close(Box::new(move || {
+                this.update(|_, cx| {
+                    // Ensure that the window is removed from the app if it's been closed.
+                    if f(cx) {
+                        cx.remove_window();
+                    }
+                    false
+                })
+                .unwrap_or(true)
+            }))
     }
 }
 
