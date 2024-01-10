@@ -8,7 +8,6 @@ use support::*;
 // First, we'll import everything in GPUI so it's in scope for the rest of the post, along with types from a few other Zed crates.
 
 use gpui::{prelude::*, *};
-use picker::*;
 use theme::*;
 use ui::*;
 
@@ -56,19 +55,18 @@ pub struct ProjectId(u64);
 //
 // To implement render, we express a tree of elements as a method-chained Rust expression.
 // We could have adopted a fancy macro language, but we wanted to keep things simple and stick to pure Rust.
-// There's something nice about using one language, rather than trying to intermingle two, and we didn't want too many macros.
-//
-// Individual elements are constructed via method chaining, and we've adopted Tailwind CSS naming conventions for a set of chained helper methods that style elements.
-// A huge thanks to the authors of [Taffy](https://github.com/DioxusLabs/taffy), which computes a layout by interpreting these properties according to web standards.
-// I'll walk through this code below.
+// It's nice to express visual structure in the same language as data, and I find the approach no less readable than something like HTML, assuming you know a bit of Rust syntax.
+// Individual elements are constructed via method chaining, and we've adopted Tailwind CSS naming conventions for a set of chained helper methods.
+// When you apply a "classes" to an element like `Div` by chaining methods such as `flex` or `w_full`, we update its style properties.
+// These styling properties are then used to perform a web-compatible layout on the tree of elements, with the help of the excellent [taffy](https://github.com/DioxusLabs/taffy) crate.
 
 impl RenderOnce for Titlebar {
     fn render(self, cx: &mut gpui::WindowContext) -> impl IntoElement {
         div()
             .id("titlebar")
-            .flex() //         In practice, these three chained calls are typically
-            .flex_row() //     combined in a call to `.hflex()`
-            .items_center() // I'm inlining them here for exposition / clarity.
+            .flex()
+            .flex_row()
+            .items_center()
             .w_full()
             .h(rems(1.75))
             .min_h(px(32.))
@@ -77,8 +75,6 @@ impl RenderOnce for Titlebar {
                 if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
                     this.pl_2()
                 } else {
-                    // Use pixels here instead of a rem-based size because the macOS traffic
-                    // lights are a static size, and don't scale with the rest of the UI.
                     this.pl(px(80.))
                 }
             })
@@ -110,18 +106,19 @@ impl RenderOnce for Titlebar {
 
 impl RenderOnce for ProjectMenuButton {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        PopoverMenu::new("project-menu")
-            .trigger(
-                Button::new("project-menu-button", self.current.name)
-                    .style(ButtonStyle::Subtle)
-                    .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-            )
-            .menu(|cx| Picker::simple(self.recent, cx)) // TODO: Build an easier picker we can just supply with data.
+        // PopoverMenu::new("project-menu")
+        //     .trigger(
+        //         Button::new("project-menu-button", self.current.name)
+        //             .style(ButtonStyle::Subtle)
+        //             .label_size(LabelSize::Small)
+        //             .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+        //     )
+        //     .menu(|_| todo!())
+        // .menu(|cx| Picker::simple(self.recent, cx)) // TODO: Build an easier picker we can just supply with data.
     }
 }
 
-/// ------------------------------------
+// ------------------------------------
 
 actions!(
     zed,

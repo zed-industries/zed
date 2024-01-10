@@ -1,3 +1,5 @@
+mod fuzzy_picker;
+
 use editor::Editor;
 use gpui::{
     div, prelude::*, uniform_list, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
