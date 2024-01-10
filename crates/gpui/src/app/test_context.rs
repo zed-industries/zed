@@ -174,6 +174,7 @@ impl TestAppContext {
         drop(cx);
         let view = window.root_view(self).unwrap();
         let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
+        cx.run_until_parked();
         // it might be nice to try and cleanup these at the end of each test.
         (view, Box::leak(cx))
     }

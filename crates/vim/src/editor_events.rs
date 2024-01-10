@@ -82,11 +82,13 @@ mod test {
         let editor2 = cx
             .update(|cx| {
                 window2.update(cx, |_, cx| {
+                    cx.activate_window();
                     cx.focus_self();
                     cx.view().clone()
                 })
             })
             .unwrap();
+        cx.run_until_parked();
 
         cx.update(|cx| {
             let vim = Vim::read(cx);

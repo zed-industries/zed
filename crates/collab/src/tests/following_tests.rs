@@ -76,6 +76,10 @@ async fn test_basic_following(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
+    cx_b.update(|cx| {
+        assert!(cx.is_window_active());
+    });
+
     // Client A opens some editors.
     let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
     let editor_a1 = workspace_a
