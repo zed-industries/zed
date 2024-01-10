@@ -2,7 +2,7 @@ use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
     AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter, Render,
-    View, ViewContext, VisualContext,
+    Task, View, ViewContext, VisualContext, WindowContext,
 };
 use std::{any::TypeId, ops::DerefMut};
 
@@ -290,5 +290,20 @@ where
                 None
             }
         }
+    }
+}
+
+pub trait NotifyTaskExt {
+    fn detach_and_notify_err(self, cx: &mut WindowContext);
+}
+
+impl<R, E> NotifyTaskExt for Task<Result<R, E>>
+where
+    E: std::fmt::Debug + 'static,
+    R: 'static,
+{
+    fn detach_and_notify_err(self, cx: &mut WindowContext) {
+        cx.spawn(|mut cx| async move { self.await.notify_async_err(&mut cx) })
+            .detach();
     }
 }

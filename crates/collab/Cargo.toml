@@ -74,6 +74,8 @@ live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 node_runtime = { path = "../node_runtime" }
 notifications = { path = "../notifications", features = ["test-support"] }
+file_finder = { path = "../file_finder"}
+menu = { path = "../menu"}
 
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }

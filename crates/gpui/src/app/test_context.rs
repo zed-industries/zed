@@ -290,6 +290,11 @@ impl TestAppContext {
         }
     }
 
+    /// Wait until there are no more pending tasks.
+    pub fn run_until_parked(&mut self) {
+        self.background_executor.run_until_parked()
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
@@ -552,7 +557,8 @@ use derive_more::{Deref, DerefMut};
 pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
-    cx: TestAppContext,
+    /// cx is the original TestAppContext (you can more easily access this using Deref)
+    pub cx: TestAppContext,
     window: AnyWindowHandle,
 }
 

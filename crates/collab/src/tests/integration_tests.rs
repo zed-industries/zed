@@ -3065,6 +3065,7 @@ async fn test_local_settings(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
+    executor.run_until_parked();
 
     // As client B, join that project and observe the local settings.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
