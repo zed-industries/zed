@@ -282,7 +282,7 @@ impl ActiveCall {
             return Task::ready(Err(anyhow!("cannot join while on another call")));
         }
 
-        let call = if let Some(call) = self.incoming_call.1.borrow().clone() {
+        let call = if let Some(call) = self.incoming_call.0.borrow_mut().take() {
             call
         } else {
             return Task::ready(Err(anyhow!("no incoming call")));
