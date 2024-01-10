@@ -133,82 +133,6 @@ impl Render for Toolbar {
     }
 }
 
-// todo!()
-// impl View for Toolbar {
-//     fn ui_name() -> &'static str {
-//         "Toolbar"
-//     }
-
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-//         let theme = &theme::current(cx).workspace.toolbar;
-
-//         let mut primary_left_items = Vec::new();
-//         let mut primary_right_items = Vec::new();
-//         let mut secondary_item = None;
-//         let spacing = theme.item_spacing;
-//         let mut primary_items_row_count = 1;
-
-//         for (item, position) in &self.items {
-//             match *position {
-//                 ToolbarItemLocation::Hidden => {}
-
-//                 ToolbarItemLocation::PrimaryLeft { flex } => {
-//                     primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
-//                     let left_item = ChildView::new(item.as_any(), cx).aligned();
-//                     if let Some((flex, expanded)) = flex {
-//                         primary_left_items.push(left_item.flex(flex, expanded).into_any());
-//                     } else {
-//                         primary_left_items.push(left_item.into_any());
-//                     }
-//                 }
-
-//                 ToolbarItemLocation::PrimaryRight { flex } => {
-//                     primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
-//                     let right_item = ChildView::new(item.as_any(), cx).aligned().flex_float();
-//                     if let Some((flex, expanded)) = flex {
-//                         primary_right_items.push(right_item.flex(flex, expanded).into_any());
-//                     } else {
-//                         primary_right_items.push(right_item.into_any());
-//                     }
-//                 }
-
-//                 ToolbarItemLocation::Secondary => {
-//                     secondary_item = Some(
-//                         ChildView::new(item.as_any(), cx)
-//                             .constrained()
-//                             .with_height(theme.height * item.row_count(cx) as f32)
-//                             .into_any(),
-//                     );
-//                 }
-//             }
-//         }
-
-//         let container_style = theme.container;
-//         let height = theme.height * primary_items_row_count as f32;
-
-//         let mut primary_items = Flex::row().with_spacing(spacing);
-//         primary_items.extend(primary_left_items);
-//         primary_items.extend(primary_right_items);
-
-//         let mut toolbar = Flex::column();
-//         if !primary_items.is_empty() {
-//             toolbar.add_child(primary_items.constrained().with_height(height));
-//         }
-//         if let Some(secondary_item) = secondary_item {
-//             toolbar.add_child(secondary_item);
-//         }
-
-//         if toolbar.is_empty() {
-//             toolbar.into_any_named("toolbar")
-//         } else {
-//             toolbar
-//                 .contained()
-//                 .with_style(container_style)
-//                 .into_any_named("toolbar")
-//         }
-//     }
-// }
-
 impl Toolbar {
     pub fn new() -> Self {
         Self {
@@ -312,10 +236,3 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
         self.read(cx).row_count(cx)
     }
 }
-
-// todo!()
-// impl From<&dyn ToolbarItemViewHandle> for AnyViewHandle {
-//     fn from(val: &dyn ToolbarItemViewHandle) -> Self {
-//         val.as_any().clone()
-//     }
-// }

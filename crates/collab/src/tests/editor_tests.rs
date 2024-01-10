@@ -71,6 +71,7 @@ async fn test_host_disconnect(
     let workspace_b =
         cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
+    let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -85,8 +86,10 @@ async fn test_host_disconnect(
     //TODO: focus
     assert!(cx_b.update_view(&editor_b, |editor, cx| editor.is_focused(cx)));
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
-    //todo(is_edited)
-    // assert!(workspace_b.is_edited(cx_b));
+
+    cx_b.update(|cx| {
+        assert!(workspace_b_view.read(cx).is_edited());
+    });
 
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
     server.forbid_connections();
@@ -105,11 +108,11 @@ async fn test_host_disconnect(
     // Ensure client B's edited state is reset and that the whole window is blurred.
 
     workspace_b
-        .update(cx_b, |_, cx| {
+        .update(cx_b, |workspace, cx| {
             assert_eq!(cx.focused(), None);
+            assert!(!workspace.is_edited())
         })
         .unwrap();
-    // assert!(!workspace_b.is_edited(cx_b));
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b

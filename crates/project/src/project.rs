@@ -799,7 +799,7 @@ impl Project {
                 prettiers_per_worktree: HashMap::default(),
                 prettier_instances: HashMap::default(),
             };
-            this.set_role(role);
+            this.set_role(role, cx);
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
             }
@@ -1622,14 +1622,22 @@ impl Project {
         cx.notify();
     }
 
-    pub fn set_role(&mut self, role: proto::ChannelRole) {
-        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
-            *capability = if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin
-            {
+    pub fn set_role(&mut self, role: proto::ChannelRole, cx: &mut ModelContext<Self>) {
+        let new_capability =
+            if role == proto::ChannelRole::Member || role == proto::ChannelRole::Admin {
                 Capability::ReadWrite
             } else {
                 Capability::ReadOnly
             };
+        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
+            if *capability == new_capability {
+                return;
+            }
+
+            *capability = new_capability;
+        }
+        for buffer in self.opened_buffers() {
+            buffer.update(cx, |buffer, cx| buffer.set_capability(new_capability, cx));
         }
     }
 
@@ -4732,7 +4740,8 @@ impl Project {
             } else {
                 return Task::ready(Err(anyhow!("worktree not found for symbol")));
             };
-            let symbol_abs_path = worktree_abs_path.join(&symbol.path.path);
+
+            let symbol_abs_path = resolve_path(worktree_abs_path, &symbol.path.path);
             let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -6581,7 +6590,14 @@ impl Project {
                 let removed = *change == PathChange::Removed;
                 let abs_path = worktree.absolutize(path);
                 settings_contents.push(async move {
-                    (settings_dir, (!removed).then_some(fs.load(&abs_path).await))
+                    (
+                        settings_dir,
+                        if removed {
+                            None
+                        } else {
+                            Some(async move { fs.load(&abs_path?).await }.await)
+                        },
+                    )
                 });
             }
         }
@@ -8716,6 +8732,20 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     components.iter().map(|c| c.as_os_str()).collect()
+}
+
+fn resolve_path(base: &Path, path: &Path) -> PathBuf {
+    let mut result = base.to_path_buf();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                result.pop();
+            }
+            Component::CurDir => (),
+            _ => result.push(component),
+        }
+    }
+    result
 }
 
 impl Item for Buffer {

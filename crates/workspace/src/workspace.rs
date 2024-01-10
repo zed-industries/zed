@@ -537,7 +537,7 @@ impl Workspace {
         })
         .detach();
 
-        cx.on_blur_window(|this, cx| {
+        cx.on_focus_lost(|this, cx| {
             let focus_handle = this.focus_handle(cx);
             cx.focus(&focus_handle);
         })
@@ -852,6 +852,10 @@ impl Workspace {
         &self.right_dock
     }
 
+    pub fn is_edited(&self) -> bool {
+        self.window_edited
+    }
+
     pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
@@ -943,10 +947,8 @@ impl Workspace {
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
-            // todo!("focus")
-            // cx.focus(&pane);
-
             pane.update(cx, |pane, cx| {
+                pane.focus(cx);
                 loop {
                     // Retrieve the weak item handle from the history.
                     let entry = pane.nav_history_mut().pop(mode, cx)?;
@@ -1145,7 +1147,6 @@ impl Workspace {
         quitting: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        //todo!(saveing)
         let active_call = self.active_call().cloned();
         let window = cx.window_handle();
 
@@ -1631,8 +1632,7 @@ impl Workspace {
             });
         }
 
-        // todo!("focus")
-        // cx.focus_self();
+        cx.focus_self();
         cx.notify();
         self.serialize_workspace(cx);
     }
@@ -1696,27 +1696,6 @@ impl Workspace {
         }
         None
     }
-
-    // todo!("implement zoom")
-    #[allow(unused)]
-    fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
-        for pane in &self.panes {
-            pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-        }
-
-        self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        self.zoomed = None;
-        self.zoomed_position = None;
-
-        cx.notify();
-    }
-
-    //     #[cfg(any(test, feature = "test-support"))]
-    //     pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
-    //         self.zoomed.and_then(|view| view.upgrade(cx))
-    //     }
 
     fn dismiss_zoomed_items_to_reveal(
         &mut self,
@@ -2080,7 +2059,7 @@ impl Workspace {
             _ => bounding_box.center(),
         };
 
-        let distance_to_next = 8.; //todo(pane dividers styling)
+        let distance_to_next = pane_group::HANDLE_HITBOX_SIZE;
 
         let target = match direction {
             SplitDirection::Left => {
@@ -2992,7 +2971,6 @@ impl Workspace {
         cx.notify();
     }
 
-    #[allow(unused)]
     fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
         self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
@@ -3384,6 +3362,10 @@ impl Workspace {
             div = (action)(div, cx)
         }
         div
+    }
+
+    pub fn has_active_modal(&self, cx: &WindowContext<'_>) -> bool {
+        self.modal_layer.read(cx).has_active_modal()
     }
 
     pub fn active_modal<V: ManagedView + 'static>(

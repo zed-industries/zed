@@ -76,6 +76,10 @@ async fn test_basic_following(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
+    cx_b.update(|cx| {
+        assert!(cx.is_window_active());
+    });
+
     // Client A opens some editors.
     let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
     let editor_a1 = workspace_a
@@ -157,7 +161,6 @@ async fn test_basic_following(
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
         .await
         .unwrap();
-    let weak_project_c = project_c.downgrade();
     drop(project_c);
 
     // Client C also follows client A.
@@ -234,17 +237,16 @@ async fn test_basic_following(
     workspace_c.update(cx_c, |workspace, cx| {
         workspace.close_window(&Default::default(), cx);
     });
-    cx_c.update(|_| {
-        drop(workspace_c);
-    });
-    cx_b.executor().run_until_parked();
+    executor.run_until_parked();
     // are you sure you want to leave the call?
     cx_c.simulate_prompt_answer(0);
-    cx_b.executor().run_until_parked();
+    cx_c.cx.update(|_| {
+        drop(workspace_c);
+    });
     executor.run_until_parked();
+    cx_c.cx.update(|_| {});
 
     weak_workspace_c.assert_dropped();
-    weak_project_c.assert_dropped();
 
     // Clients A and B see that client B is following A, and client C is not present in the followers.
     executor.run_until_parked();
@@ -1363,8 +1365,6 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     client_a
         .fs()
@@ -1399,9 +1399,6 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
-
-    cx_a.update(|cx| collab_ui::init(&client_a.app_state, cx));
-    cx_b.update(|cx| collab_ui::init(&client_b.app_state, cx));
 
     active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))

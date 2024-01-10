@@ -19,9 +19,8 @@ use rich_text::RichText;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use theme::ActiveTheme as _;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{prelude::*, Avatar, Button, Icon, IconButton, Label, TabBar, Tooltip};
+use ui::{prelude::*, Avatar, Button, IconButton, IconName, Label, TabBar, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -48,7 +47,7 @@ pub struct ChatPanel {
     languages: Arc<LanguageRegistry>,
     message_list: ListState,
     active_chat: Option<(Model<ChannelChat>, Subscription)>,
-    input_editor: View<MessageEditor>,
+    message_editor: View<MessageEditor>,
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
@@ -120,7 +119,7 @@ impl ChatPanel {
                 message_list,
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
-                input_editor,
+                message_editor: input_editor,
                 local_timezone: cx.local_timezone(),
                 subscriptions: Vec::new(),
                 workspace: workspace_handle,
@@ -209,7 +208,7 @@ impl ChatPanel {
                 self.message_list.reset(chat.message_count());
 
                 let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
-                self.input_editor.update(cx, |editor, cx| {
+                self.message_editor.update(cx, |editor, cx| {
                     editor.set_channel(channel_id, channel_name, cx);
                 });
             };
@@ -282,12 +281,12 @@ impl ChatPanel {
                                 )),
                         )
                         .end_child(
-                            IconButton::new("notes", Icon::File)
+                            IconButton::new("notes", IconName::File)
                                 .on_click(cx.listener(Self::open_notes))
                                 .tooltip(|cx| Tooltip::text("Open notes", cx)),
                         )
                         .end_child(
-                            IconButton::new("call", Icon::AudioOn)
+                            IconButton::new("call", IconName::AudioOn)
                                 .on_click(cx.listener(Self::join_call))
                                 .tooltip(|cx| Tooltip::text("Join call", cx)),
                         ),
@@ -300,13 +299,7 @@ impl ChatPanel {
                     this
                 }
             }))
-            .child(
-                div()
-                    .z_index(1)
-                    .p_2()
-                    .bg(cx.theme().colors().background)
-                    .child(self.input_editor.clone()),
-            )
+            .child(h_stack().p_2().child(self.message_editor.clone()))
             .into_any()
     }
 
@@ -402,7 +395,7 @@ impl ChatPanel {
                     .w_8()
                     .visible_on_hover("")
                     .children(message_id_to_remove.map(|message_id| {
-                        IconButton::new(("remove", message_id), Icon::XCircle).on_click(
+                        IconButton::new(("remove", message_id), IconName::XCircle).on_click(
                             cx.listener(move |this, _, cx| {
                                 this.remove_message(message_id, cx);
                             }),
@@ -436,7 +429,7 @@ impl ChatPanel {
                 Button::new("sign-in", "Sign in")
                     .style(ButtonStyle::Filled)
                     .icon_color(Color::Muted)
-                    .icon(Icon::Github)
+                    .icon(IconName::Github)
                     .icon_position(IconPosition::Start)
                     .full_width()
                     .on_click(cx.listener(move |this, _, cx| {
@@ -469,7 +462,7 @@ impl ChatPanel {
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             let message = self
-                .input_editor
+                .message_editor
                 .update(cx, |editor, cx| editor.take_message(cx));
 
             if let Some(task) = chat
@@ -585,7 +578,7 @@ impl Render for ChatPanel {
 
 impl FocusableView for ChatPanel {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.input_editor.read(cx).focus_handle(cx)
+        self.message_editor.read(cx).focus_handle(cx)
     }
 }
 
@@ -629,12 +622,12 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         if !is_channels_feature_enabled(cx) {
             return None;
         }
 
-        Some(ui::Icon::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
+        Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

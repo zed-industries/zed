@@ -31,8 +31,8 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, Icon, IconButton, IconSize, Indicator, Label,
-    Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconName, IconSize, Indicator,
+    Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
@@ -242,87 +242,6 @@ pub struct DraggedTab {
     pub is_active: bool,
 }
 
-// pub struct DraggedItem {
-//     pub handle: Box<dyn ItemHandle>,
-//     pub pane: WeakView<Pane>,
-// }
-
-// pub enum ReorderBehavior {
-//     None,
-//     MoveAfterActive,
-//     MoveToIndex(usize),
-// }
-
-// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// enum TabBarContextMenuKind {
-//     New,
-//     Split,
-// }
-
-// struct TabBarContextMenu {
-//     kind: TabBarContextMenuKind,
-//     handle: View<ContextMenu>,
-// }
-
-// impl TabBarContextMenu {
-//     fn handle_if_kind(&self, kind: TabBarContextMenuKind) -> Option<View<ContextMenu>> {
-//         if self.kind == kind {
-//             return Some(self.handle.clone());
-//         }
-//         None
-//     }
-// }
-
-// #[allow(clippy::too_many_arguments)]
-// fn nav_button<A: Action, F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>)>(
-//     svg_path: &'static str,
-//     style: theme::Interactive<theme2::IconButton>,
-//     nav_button_height: f32,
-//     tooltip_style: TooltipStyle,
-//     enabled: bool,
-//     on_click: F,
-//     tooltip_action: A,
-//     action_name: &str,
-//     cx: &mut ViewContext<Pane>,
-// ) -> AnyElement<Pane> {
-//     MouseEventHandler::new::<A, _>(0, cx, |state, _| {
-//         let style = if enabled {
-//             style.style_for(state)
-//         } else {
-//             style.disabled_style()
-//         };
-//         Svg::new(svg_path)
-//             .with_color(style.color)
-//             .constrained()
-//             .with_width(style.icon_width)
-//             .aligned()
-//             .contained()
-//             .with_style(style.container)
-//             .constrained()
-//             .with_width(style.button_width)
-//             .with_height(nav_button_height)
-//             .aligned()
-//             .top()
-//     })
-//     .with_cursor_style(if enabled {
-//         CursorStyle::PointingHand
-//     } else {
-//         CursorStyle::default()
-//     })
-//     .on_click(MouseButton::Left, move |_, toolbar, cx| {
-//         on_click(toolbar, cx)
-//     })
-//     .with_tooltip::<A>(
-//         0,
-//         action_name.to_string(),
-//         Some(Box::new(tooltip_action)),
-//         tooltip_style,
-//         cx,
-//     )
-//     .contained()
-//     .into_any_named("nav button")
-// }
-
 impl EventEmitter<Event> for Pane {}
 
 impl Pane {
@@ -333,13 +252,6 @@ impl Pane {
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        // todo!("context menu")
-        // let pane_view_id = cx.view_id();
-        // let context_menu = cx.build_view(|cx| ContextMenu::new(pane_view_id, cx));
-        // context_menu.update(cx, |menu, _| {
-        //     menu.set_position_mode(OverlayPositionMode::Local)
-        // });
-        //
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
@@ -370,11 +282,6 @@ impl Pane {
             split_item_menu: None,
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
-            // tab_bar_context_menu: TabBarContextMenu {
-            //     kind: TabBarContextMenuKind::New,
-            //     handle: context_menu,
-            // },
-            // tab_context_menu: cx.build_view(|_| ContextMenu::new(pane_view_id, cx)),
             workspace,
             project,
             can_drop_predicate,
@@ -384,7 +291,7 @@ impl Pane {
                 h_stack()
                     .gap_2()
                     .child(
-                        IconButton::new("plus", Icon::Plus)
+                        IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
@@ -406,7 +313,7 @@ impl Pane {
                         el.child(Self::render_menu_overlay(new_item_menu))
                     })
                     .child(
-                        IconButton::new("split", Icon::Split)
+                        IconButton::new("split", IconName::Split)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
@@ -427,11 +334,11 @@ impl Pane {
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", Icon::Maximize)
+                        IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .selected(zoomed)
-                            .selected_icon(Icon::Minimize)
+                            .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&crate::ToggleZoom, cx);
                             }))
@@ -450,7 +357,6 @@ impl Pane {
     }
 
     pub fn has_focus(&self, cx: &WindowContext) -> bool {
-        // todo!(); // inline this manually
         self.focus_handle.contains_focused(cx)
     }
 
@@ -1570,7 +1476,7 @@ impl Pane {
             })
             .start_slot::<Indicator>(indicator)
             .end_slot(
-                IconButton::new("close tab", Icon::Close)
+                IconButton::new("close tab", IconName::Close)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
                     .icon_size(IconSize::XSmall)
@@ -1676,7 +1582,7 @@ impl Pane {
                     h_stack()
                         .gap_2()
                         .child(
-                            IconButton::new("navigate_backward", Icon::ArrowLeft)
+                            IconButton::new("navigate_backward", IconName::ArrowLeft)
                                 .icon_size(IconSize::Small)
                                 .on_click({
                                     let view = cx.view().clone();
@@ -1686,7 +1592,7 @@ impl Pane {
                                 .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx)),
                         )
                         .child(
-                            IconButton::new("navigate_forward", Icon::ArrowRight)
+                            IconButton::new("navigate_forward", IconName::ArrowRight)
                                 .icon_size(IconSize::Small)
                                 .on_click({
                                     let view = cx.view().clone();

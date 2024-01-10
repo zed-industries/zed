@@ -173,7 +173,11 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
 
-                if !cx.update(|cx| Self::mute_on_join(cx))? {
+                let is_read_only = this
+                    .update(&mut cx, |room, _| room.read_only())
+                    .unwrap_or(true);
+
+                if !cx.update(|cx| Self::mute_on_join(cx))? && !is_read_only {
                     this.update(&mut cx, |this, cx| this.share_microphone(cx))?
                         .await?;
                 }
@@ -620,6 +624,27 @@ impl Room {
         self.local_participant.role == proto::ChannelRole::Admin
     }
 
+    pub fn set_participant_role(
+        &mut self,
+        user_id: u64,
+        role: proto::ChannelRole,
+        cx: &ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let room_id = self.id;
+        let role = role.into();
+        cx.spawn(|_, _| async move {
+            client
+                .request(proto::SetRoomParticipantRole {
+                    room_id,
+                    user_id,
+                    role,
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+
     pub fn pending_participants(&self) -> &[Arc<User>] {
         &self.pending_participants
     }
@@ -729,9 +754,21 @@ impl Room {
                     if this.local_participant.role != role {
                         this.local_participant.role = role;
 
+                        if role == proto::ChannelRole::Guest {
+                            for project in mem::take(&mut this.shared_projects) {
+                                if let Some(project) = project.upgrade() {
+                                    this.unshare_project(project, cx).log_err();
+                                }
+                            }
+                            this.local_participant.projects.clear();
+                            if let Some(live_kit_room) = &mut this.live_kit {
+                                live_kit_room.stop_publishing(cx);
+                            }
+                        }
+
                         this.joined_projects.retain(|project| {
                             if let Some(project) = project.upgrade() {
-                                project.update(cx, |project, _| project.set_role(role));
+                                project.update(cx, |project, cx| project.set_role(role, cx));
                                 true
                             } else {
                                 false
@@ -1606,6 +1643,24 @@ impl LiveKitRoom {
         }
 
         Ok((result, old_muted))
+    }
+
+    fn stop_publishing(&mut self, cx: &mut ModelContext<Room>) {
+        if let LocalTrack::Published {
+            track_publication, ..
+        } = mem::replace(&mut self.microphone_track, LocalTrack::None)
+        {
+            self.room.unpublish_track(track_publication);
+            cx.notify();
+        }
+
+        if let LocalTrack::Published {
+            track_publication, ..
+        } = mem::replace(&mut self.screen_track, LocalTrack::None)
+        {
+            self.room.unpublish_track(track_publication);
+            cx.notify();
+        }
     }
 }
 

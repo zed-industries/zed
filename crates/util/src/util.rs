@@ -41,8 +41,8 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
     }
 }
 
-/// Removes characters from the end of the string if it's length is greater than `max_chars` and
-/// appends "..." to the string. Returns string unchanged if it's length is smaller than max_chars.
+/// Removes characters from the end of the string if its length is greater than `max_chars` and
+/// appends "..." to the string. Returns string unchanged if its length is smaller than max_chars.
 pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
@@ -53,8 +53,8 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     }
 }
 
-/// Removes characters from the front of the string if it's length is greater than `max_chars` and
-/// prepends the string with "...". Returns string unchanged if it's length is smaller than max_chars.
+/// Removes characters from the front of the string if its length is greater than `max_chars` and
+/// prepends the string with "...". Returns string unchanged if its length is smaller than max_chars.
 pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 

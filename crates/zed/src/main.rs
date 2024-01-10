@@ -16,6 +16,7 @@ use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 
+use assets::Assets;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -49,8 +50,8 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, languages, Assets, IsOnlyInstance,
-    OpenListener, OpenRequest,
+    handle_keymap_file_changes, initialize_workspace, languages, IsOnlyInstance, OpenListener,
+    OpenRequest,
 };
 
 fn main() {

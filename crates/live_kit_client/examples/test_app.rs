@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use gpui::{actions, KeyBinding};
+use gpui::{actions, KeyBinding, Menu, MenuItem};
 use live_kit_client::{
     LocalAudioTrack, LocalVideoTrack, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate, Room,
 };
@@ -26,15 +26,14 @@ fn main() {
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
 
-        // todo!()
-        // cx.set_menus(vec![Menu {
-        //     name: "Zed",
-        //     items: vec![MenuItem::Action {
-        //         name: "Quit",
-        //         action: Box::new(Quit),
-        //         os_action: None,
-        //     }],
-        // }]);
+        cx.set_menus(vec![Menu {
+            name: "Zed",
+            items: vec![MenuItem::Action {
+                name: "Quit",
+                action: Box::new(Quit),
+                os_action: None,
+            }],
+        }]);
 
         let live_kit_url = std::env::var("LIVE_KIT_URL").unwrap_or("http://localhost:7880".into());
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());

@@ -254,6 +254,7 @@ pub enum Event {
     LanguageChanged,
     Reparsed,
     DiagnosticsUpdated,
+    CapabilityChanged,
     Closed,
 }
 
@@ -629,6 +630,11 @@ impl Buffer {
         self.syntax_map
             .lock()
             .set_language_registry(language_registry);
+    }
+
+    pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
+        self.capability = capability;
+        cx.emit(Event::CapabilityChanged)
     }
 
     pub fn did_save(

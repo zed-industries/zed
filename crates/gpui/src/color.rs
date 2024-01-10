@@ -321,7 +321,7 @@ impl Hsla {
     ///
     /// Assumptions:
     /// - Alpha values are contained in the range [0, 1], with 1 as fully opaque and 0 as fully transparent.
-    /// - The relative contributions of `self` and `other` is based on `self`'s alpha value (`self.a`) and `other`'s  alpha value (`other.a`), `self` contributing `self.a * (1.0 - other.a)` and `other` contributing it's own alpha value.
+    /// - The relative contributions of `self` and `other` is based on `self`'s alpha value (`self.a`) and `other`'s  alpha value (`other.a`), `self` contributing `self.a * (1.0 - other.a)` and `other` contributing its own alpha value.
     /// - RGB color components are contained in the range [0, 1].
     /// - If `self` and `other` colors are out of the valid range, the blend operation's output and behavior is undefined.
     pub fn blend(self, other: Hsla) -> Hsla {

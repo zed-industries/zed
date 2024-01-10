@@ -384,10 +384,12 @@ impl Editor {
     ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
-        let top_row = scroll_anchor
-            .anchor
-            .to_point(&self.buffer().read(cx).snapshot(cx))
-            .row;
+        let snapshot = &self.buffer().read(cx).snapshot(cx);
+        if !scroll_anchor.anchor.is_valid(snapshot) {
+            log::warn!("Invalid scroll anchor: {:?}", scroll_anchor);
+            return;
+        }
+        let top_row = scroll_anchor.anchor.to_point(snapshot).row;
         self.scroll_manager
             .set_anchor(scroll_anchor, top_row, false, false, workspace_id, cx);
     }

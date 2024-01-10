@@ -122,12 +122,10 @@ impl PlayerColors {
 
 impl PlayerColors {
     pub fn local(&self) -> PlayerColor {
-        // todo!("use a valid color");
         *self.0.first().unwrap()
     }
 
     pub fn absent(&self) -> PlayerColor {
-        // todo!("use a valid color");
         *self.0.last().unwrap()
     }
 

@@ -983,7 +983,7 @@ impl Terminal {
         let mut terminal = if let Some(term) = term.try_lock_unfair() {
             term
         } else if self.last_synced.elapsed().as_secs_f32() > 0.25 {
-            term.lock_unfair() //It's been too long, force block
+            term.lock_unfair() // It's been too long, force block
         } else if let None = self.sync_task {
             //Skip this frame
             let delay = cx.background_executor().timer(Duration::from_millis(16));
@@ -1402,9 +1402,9 @@ fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
     clamped_row * size.columns() + clamped_col
 }
 
-///Converts an 8 bit ANSI color to it's GPUI equivalent.
-///Accepts usize for compatibility with the alacritty::Colors interface,
-///Other than that use case, should only be called with values in the [0,255] range
+/// Converts an 8 bit ANSI color to it's GPUI equivalent.
+/// Accepts `usize` for compatibility with the `alacritty::Colors` interface,
+/// Other than that use case, should only be called with values in the [0,255] range
 pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
     let colors = theme.colors();
 

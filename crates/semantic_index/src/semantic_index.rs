@@ -559,7 +559,7 @@ impl SemanticIndex {
                         .spawn(async move {
                             let mut changed_paths = BTreeMap::new();
                             for file in worktree.files(false, 0) {
-                                let absolute_path = worktree.absolutize(&file.path);
+                                let absolute_path = worktree.absolutize(&file.path)?;
 
                                 if file.is_external || file.is_ignored || file.is_symlink {
                                     continue;
@@ -1068,11 +1068,10 @@ impl SemanticIndex {
                                 return true;
                             };
 
-                        worktree_state.changed_paths.retain(|path, info| {
+                        for (path, info) in &worktree_state.changed_paths {
                             if info.is_deleted {
                                 files_to_delete.push((worktree_state.db_id, path.clone()));
-                            } else {
-                                let absolute_path = worktree.read(cx).absolutize(path);
+                            } else if let Ok(absolute_path) = worktree.read(cx).absolutize(path) {
                                 let job_handle = JobHandle::new(pending_file_count_tx);
                                 pending_files.push(PendingFile {
                                     absolute_path,
@@ -1083,9 +1082,8 @@ impl SemanticIndex {
                                     worktree_db_id: worktree_state.db_id,
                                 });
                             }
-
-                            false
-                        });
+                        }
+                        worktree_state.changed_paths.clear();
                         true
                     });
 
@@ -1250,7 +1248,7 @@ impl SemanticIndex {
 impl Drop for JobHandle {
     fn drop(&mut self) {
         if let Some(inner) = Arc::get_mut(&mut self.tx) {
-            // This is the last instance of the JobHandle (regardless of it's origin - whether it was cloned or not)
+            // This is the last instance of the JobHandle (regardless of its origin - whether it was cloned or not)
             if let Some(tx) = inner.upgrade() {
                 let mut tx = tx.lock();
                 *tx.borrow_mut() -= 1;

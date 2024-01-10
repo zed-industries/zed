@@ -539,7 +539,6 @@ fn test_clone(cx: &mut TestAppContext) {
     );
 }
 
-//todo!(editor navigate)
 #[gpui::test]
 async fn test_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -993,7 +992,6 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     });
 }
 
-//todo!(finish editor tests)
 #[gpui::test]
 fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -1259,7 +1257,6 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
     });
 }
 
-//todo!(finish editor tests)
 #[gpui::test]
 fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -1318,7 +1315,6 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
     });
 }
 
-//todo!(simulate_resize)
 #[gpui::test]
 async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
@@ -2546,7 +2542,6 @@ fn test_delete_line(cx: &mut TestAppContext) {
     });
 }
 
-//todo!(select_anchor_ranges)
 #[gpui::test]
 fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -3114,7 +3109,6 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
     });
 }
 
-//todo!(test_transpose)
 #[gpui::test]
 fn test_transpose(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -4860,7 +4854,6 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
     });
 }
 
-// todo!(select_anchor_ranges)
 #[gpui::test]
 async fn test_snippets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
@@ -6455,7 +6448,6 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
     });
 }
 
-// todo!(following)
 #[gpui::test]
 async fn test_following(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
@@ -7094,7 +7086,6 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
     );
 }
 
-// todo!(completions)
 #[gpui::test(iterations = 10)]
 async fn test_copilot(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
     // flaky

@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+/// TestPlatform implements the Platform trait for use in tests.
 pub struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
@@ -101,9 +102,12 @@ impl TestPlatform {
             })
             .detach();
     }
+
+    pub(crate) fn did_prompt_for_new_path(&self) -> bool {
+        self.prompts.borrow().new_path.len() > 0
+    }
 }
 
-// todo!("implement out what our tests needed in GPUI 1")
 impl Platform for TestPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -278,8 +282,7 @@ impl Platform for TestPlatform {
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        // todo()
-        true
+        false
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

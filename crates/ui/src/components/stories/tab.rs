@@ -27,7 +27,7 @@ impl Render for TabStory {
                 h_stack().child(
                     Tab::new("tab_1")
                         .end_slot(
-                            IconButton::new("close_button", Icon::Close)
+                            IconButton::new("close_button", IconName::Close)
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::None)
                                 .icon_size(IconSize::XSmall),

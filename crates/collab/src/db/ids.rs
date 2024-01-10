@@ -133,11 +133,27 @@ impl ChannelRole {
         }
     }
 
-    pub fn can_share_projects(&self) -> bool {
+    pub fn can_publish_to_rooms(&self) -> bool {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
             Guest | Banned => false,
+        }
+    }
+
+    pub fn can_edit_projects(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member => true,
+            Guest | Banned => false,
+        }
+    }
+
+    pub fn can_read_projects(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member | Guest => true,
+            Banned => false,
         }
     }
 }
