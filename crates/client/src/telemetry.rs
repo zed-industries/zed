@@ -37,7 +37,7 @@ struct TelemetryState {
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
     first_event_datetime: Option<DateTime<Utc>>,
-    edit_activity: EventCoalescer,
+    event_coalescer: EventCoalescer,
 }
 
 const EVENTS_URL_PATH: &'static str = "/api/events";
@@ -164,7 +164,7 @@ impl Telemetry {
             log_file: None,
             is_staff: None,
             first_event_datetime: None,
-            edit_activity: EventCoalescer::new(),
+            event_coalescer: EventCoalescer::new(),
         }));
 
         cx.observe_global::<SettingsStore>({
@@ -404,7 +404,7 @@ impl Telemetry {
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
         let mut state = self.state.lock();
-        let coalesced_duration = state.edit_activity.log_event(environment);
+        let coalesced_duration = state.event_coalescer.log_event(environment);
         drop(state);
 
         if let Some((start, end)) = coalesced_duration {
