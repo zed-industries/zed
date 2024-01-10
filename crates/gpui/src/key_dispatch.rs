@@ -144,6 +144,8 @@ impl DispatchTree {
                 if source_node.parent != Some(*source_ancestor) {
                     source_stack.pop();
                     self.pop_node();
+                } else {
+                    break;
                 }
             }
 
@@ -159,6 +161,7 @@ impl DispatchTree {
         }
 
         while !source_stack.is_empty() {
+            source_stack.pop();
             self.pop_node();
         }
 

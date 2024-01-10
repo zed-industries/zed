@@ -1,9 +1,9 @@
 use crate::{
-    point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Point,
-    ScaledPixels, StackingOrder,
+    point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, EntityId, Hsla, Pixels,
+    Point, ScaledPixels, StackingOrder,
 };
-use collections::BTreeMap;
-use std::{fmt::Debug, iter::Peekable, mem, slice};
+use collections::{BTreeMap, FxHashSet};
+use std::{fmt::Debug, iter::Peekable, slice};
 
 // Exported to metal
 pub(crate) type PointF = Point<f32>;
@@ -14,7 +14,7 @@ pub type LayerId = u32;
 pub type DrawOrder = u32;
 
 #[derive(Default)]
-pub(crate) struct SceneBuilder {
+pub struct Scene {
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
     orders_by_layer: BTreeMap<LayerId, StackingOrder>,
     shadows: Vec<Shadow>,
@@ -26,57 +26,46 @@ pub(crate) struct SceneBuilder {
     surfaces: Vec<Surface>,
 }
 
-impl SceneBuilder {
-    pub fn build(&mut self) -> Scene {
-        let mut orders = vec![0; self.layers_by_order.len()];
-        for (ix, layer_id) in self.layers_by_order.values().enumerate() {
-            orders[*layer_id as usize] = ix as u32;
-        }
+impl Scene {
+    pub fn clear(&mut self) {
         self.layers_by_order.clear();
+        self.orders_by_layer.clear();
+        self.shadows.clear();
+        self.quads.clear();
+        self.paths.clear();
+        self.underlines.clear();
+        self.monochrome_sprites.clear();
+        self.polychrome_sprites.clear();
+        self.surfaces.clear();
+    }
 
-        for shadow in &mut self.shadows {
-            shadow.order = orders[shadow.layer_id as usize];
-        }
-        self.shadows.sort_by_key(|shadow| shadow.order);
+    pub fn paths(&self) -> &[Path<ScaledPixels>] {
+        &self.paths
+    }
 
-        for quad in &mut self.quads {
-            quad.order = orders[quad.layer_id as usize];
-        }
-        self.quads.sort_by_key(|quad| quad.order);
-
-        for path in &mut self.paths {
-            path.order = orders[path.layer_id as usize];
-        }
-        self.paths.sort_by_key(|path| path.order);
-
-        for underline in &mut self.underlines {
-            underline.order = orders[underline.layer_id as usize];
-        }
-        self.underlines.sort_by_key(|underline| underline.order);
-
-        for monochrome_sprite in &mut self.monochrome_sprites {
-            monochrome_sprite.order = orders[monochrome_sprite.layer_id as usize];
-        }
-        self.monochrome_sprites.sort_by_key(|sprite| sprite.order);
-
-        for polychrome_sprite in &mut self.polychrome_sprites {
-            polychrome_sprite.order = orders[polychrome_sprite.layer_id as usize];
-        }
-        self.polychrome_sprites.sort_by_key(|sprite| sprite.order);
-
-        for surface in &mut self.surfaces {
-            surface.order = orders[surface.layer_id as usize];
-        }
-        self.surfaces.sort_by_key(|surface| surface.order);
-
-        Scene {
-            shadows: mem::take(&mut self.shadows),
-            quads: mem::take(&mut self.quads),
-            paths: mem::take(&mut self.paths),
-            underlines: mem::take(&mut self.underlines),
-            monochrome_sprites: mem::take(&mut self.monochrome_sprites),
-            polychrome_sprites: mem::take(&mut self.polychrome_sprites),
-            surfaces: mem::take(&mut self.surfaces),
+    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
+        BatchIterator {
+            shadows: &self.shadows,
+            shadows_start: 0,
+            shadows_iter: self.shadows.iter().peekable(),
+            quads: &self.quads,
+            quads_start: 0,
+            quads_iter: self.quads.iter().peekable(),
+            paths: &self.paths,
+            paths_start: 0,
+            paths_iter: self.paths.iter().peekable(),
+            underlines: &self.underlines,
+            underlines_start: 0,
+            underlines_iter: self.underlines.iter().peekable(),
+            monochrome_sprites: &self.monochrome_sprites,
+            monochrome_sprites_start: 0,
+            monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
+            polychrome_sprites: &self.polychrome_sprites,
+            polychrome_sprites_start: 0,
+            polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+            surfaces: &self.surfaces,
+            surfaces_start: 0,
+            surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
 
@@ -135,47 +124,98 @@ impl SceneBuilder {
             next_id
         }
     }
-}
 
-pub struct Scene {
-    pub shadows: Vec<Shadow>,
-    pub quads: Vec<Quad>,
-    pub paths: Vec<Path<ScaledPixels>>,
-    pub underlines: Vec<Underline>,
-    pub monochrome_sprites: Vec<MonochromeSprite>,
-    pub polychrome_sprites: Vec<PolychromeSprite>,
-    pub surfaces: Vec<Surface>,
-}
+    pub fn insert_views_from_scene(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
+        for shadow in prev_scene.shadows.drain(..) {
+            if views.contains(&EntityId::from(shadow.view_id as u64)) {
+                let order = &prev_scene.orders_by_layer[&shadow.layer_id];
+                self.insert(&order, shadow);
+            }
+        }
 
-impl Scene {
-    pub fn paths(&self) -> &[Path<ScaledPixels>] {
-        &self.paths
+        for quad in prev_scene.quads.drain(..) {
+            if views.contains(&EntityId::from(quad.view_id as u64)) {
+                let order = &prev_scene.orders_by_layer[&quad.layer_id];
+                self.insert(&order, quad);
+            }
+        }
+
+        for path in prev_scene.paths.drain(..) {
+            if views.contains(&EntityId::from(path.view_id as u64)) {
+                let order = &prev_scene.orders_by_layer[&path.layer_id];
+                self.insert(&order, path);
+            }
+        }
+
+        for underline in prev_scene.underlines.drain(..) {
+            if views.contains(&EntityId::from(underline.view_id as u64)) {
+                let order = &prev_scene.orders_by_layer[&underline.layer_id];
+                self.insert(&order, underline);
+            }
+        }
+
+        for sprite in prev_scene.monochrome_sprites.drain(..) {
+            if views.contains(&EntityId::from(sprite.view_id as u64)) {
+                let order = &prev_scene.orders_by_layer[&sprite.layer_id];
+                self.insert(&order, sprite);
+            }
+        }
+
+        for sprite in prev_scene.polychrome_sprites.drain(..) {
+            if views.contains(&EntityId::from(sprite.view_id as u64)) {
+                let order = &prev_scene.orders_by_layer[&sprite.layer_id];
+                self.insert(&order, sprite);
+            }
+        }
+
+        for surface in prev_scene.surfaces.drain(..) {
+            if views.contains(&EntityId::from(surface.view_id as u64)) {
+                let order = &prev_scene.orders_by_layer[&surface.layer_id];
+                self.insert(&order, surface);
+            }
+        }
     }
 
-    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
-        BatchIterator {
-            shadows: &self.shadows,
-            shadows_start: 0,
-            shadows_iter: self.shadows.iter().peekable(),
-            quads: &self.quads,
-            quads_start: 0,
-            quads_iter: self.quads.iter().peekable(),
-            paths: &self.paths,
-            paths_start: 0,
-            paths_iter: self.paths.iter().peekable(),
-            underlines: &self.underlines,
-            underlines_start: 0,
-            underlines_iter: self.underlines.iter().peekable(),
-            monochrome_sprites: &self.monochrome_sprites,
-            monochrome_sprites_start: 0,
-            monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
-            polychrome_sprites: &self.polychrome_sprites,
-            polychrome_sprites_start: 0,
-            polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
-            surfaces: &self.surfaces,
-            surfaces_start: 0,
-            surfaces_iter: self.surfaces.iter().peekable(),
+    pub fn finish(&mut self) {
+        let mut orders = vec![0; self.layers_by_order.len()];
+        for (ix, layer_id) in self.layers_by_order.values().enumerate() {
+            orders[*layer_id as usize] = ix as u32;
         }
+
+        for shadow in &mut self.shadows {
+            shadow.order = orders[shadow.layer_id as usize];
+        }
+        self.shadows.sort_by_key(|shadow| shadow.order);
+
+        for quad in &mut self.quads {
+            quad.order = orders[quad.layer_id as usize];
+        }
+        self.quads.sort_by_key(|quad| quad.order);
+
+        for path in &mut self.paths {
+            path.order = orders[path.layer_id as usize];
+        }
+        self.paths.sort_by_key(|path| path.order);
+
+        for underline in &mut self.underlines {
+            underline.order = orders[underline.layer_id as usize];
+        }
+        self.underlines.sort_by_key(|underline| underline.order);
+
+        for monochrome_sprite in &mut self.monochrome_sprites {
+            monochrome_sprite.order = orders[monochrome_sprite.layer_id as usize];
+        }
+        self.monochrome_sprites.sort_by_key(|sprite| sprite.order);
+
+        for polychrome_sprite in &mut self.polychrome_sprites {
+            polychrome_sprite.order = orders[polychrome_sprite.layer_id as usize];
+        }
+        self.polychrome_sprites.sort_by_key(|sprite| sprite.order);
+
+        for surface in &mut self.surfaces {
+            surface.order = orders[surface.layer_id as usize];
+        }
+        self.surfaces.sort_by_key(|surface| surface.order);
     }
 }
 

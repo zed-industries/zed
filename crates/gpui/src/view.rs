@@ -231,7 +231,7 @@ impl AnyView {
         cx.with_absolute_element_offset(origin, |cx| {
             let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
             cx.compute_layout(layout_id, available_space);
-            rendered_element.paint(cx);
+            cx.with_view_id(self.entity_id(), |cx| rendered_element.paint(cx));
         })
     }
 }

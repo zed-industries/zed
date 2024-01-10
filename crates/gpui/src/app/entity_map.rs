@@ -2,7 +2,7 @@ use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use slotmap::{SecondaryMap, SlotMap};
+use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
     any::{type_name, Any, TypeId},
     fmt::{self, Display},
@@ -20,6 +20,12 @@ use std::{
 use collections::HashMap;
 
 slotmap::new_key_type! { pub struct EntityId; }
+
+impl From<u64> for EntityId {
+    fn from(value: u64) -> Self {
+        Self(KeyData::from_ffi(value))
+    }
+}
 
 impl EntityId {
     pub fn as_u64(self) -> u64 {

@@ -7,9 +7,9 @@ use crate::{
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
-    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -289,7 +289,7 @@ pub(crate) struct Frame {
     pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
     mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
-    pub(crate) scene_builder: SceneBuilder,
+    pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
     pub(crate) next_stacking_order_id: u32,
@@ -305,7 +305,7 @@ impl Frame {
             element_states: FxHashMap::default(),
             mouse_listeners: FxHashMap::default(),
             dispatch_tree,
-            scene_builder: SceneBuilder::default(),
+            scene: Scene::default(),
             z_index_stack: StackingOrder::default(),
             next_stacking_order_id: 0,
             depth_map: Default::default(),
@@ -322,6 +322,7 @@ impl Frame {
         self.depth_map.clear();
         self.next_stacking_order_id = 0;
         self.reused_views.clear();
+        self.scene.clear();
     }
 
     fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
@@ -1028,7 +1029,7 @@ impl<'a> WindowContext<'a> {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene_builder.insert(
+            window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 Shadow {
                     view_id: view_id.as_u64() as u32,
@@ -1053,7 +1054,7 @@ impl<'a> WindowContext<'a> {
         let view_id = self.active_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Quad {
                 view_id: view_id.as_u64() as u32,
@@ -1081,7 +1082,7 @@ impl<'a> WindowContext<'a> {
         let window = &mut *self.window;
         window
             .next_frame
-            .scene_builder
+            .scene
             .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
     }
 
@@ -1106,7 +1107,7 @@ impl<'a> WindowContext<'a> {
         let view_id = self.active_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Underline {
                 view_id: view_id.as_u64() as u32,
@@ -1162,7 +1163,7 @@ impl<'a> WindowContext<'a> {
             let content_mask = self.content_mask().scale(scale_factor);
             let view_id = self.active_view_id();
             let window = &mut *self.window;
-            window.next_frame.scene_builder.insert(
+            window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 MonochromeSprite {
                     view_id: view_id.as_u64() as u32,
@@ -1216,7 +1217,7 @@ impl<'a> WindowContext<'a> {
             let view_id = self.active_view_id();
             let window = &mut *self.window;
 
-            window.next_frame.scene_builder.insert(
+            window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 PolychromeSprite {
                     view_id: view_id.as_u64() as u32,
@@ -1261,7 +1262,7 @@ impl<'a> WindowContext<'a> {
         let view_id = self.active_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             MonochromeSprite {
                 view_id: view_id.as_u64() as u32,
@@ -1300,7 +1301,7 @@ impl<'a> WindowContext<'a> {
         let view_id = self.active_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             PolychromeSprite {
                 view_id: view_id.as_u64() as u32,
@@ -1323,7 +1324,7 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask().scale(scale_factor);
         let view_id = self.active_view_id();
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Surface {
                 view_id: view_id.as_u64() as u32,
@@ -1337,6 +1338,7 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn reuse_geometry(&mut self) {
+        println!("reusing geometry");
         let view_id = self.active_view_id();
         let window = &mut self.window;
         let grafted_view_ids = window
@@ -1407,6 +1409,11 @@ impl<'a> WindowContext<'a> {
             });
         }
         self.window.dirty_views.clear();
+        self.window.next_frame.scene.insert_views_from_scene(
+            &self.window.next_frame.reused_views,
+            &mut self.window.rendered_frame.scene,
+        );
+        self.window.next_frame.scene.finish();
 
         self.window
             .next_frame
@@ -1454,8 +1461,6 @@ impl<'a> WindowContext<'a> {
                 .retain(&(), |listener| listener(&event, self));
         }
 
-        let scene = self.window.rendered_frame.scene_builder.build();
-
         // Set the cursor only if we're the active window.
         let cursor_style = self
             .window
@@ -1469,7 +1474,9 @@ impl<'a> WindowContext<'a> {
         self.window.drawing = false;
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
-        self.window.platform_window.draw(&scene);
+        self.window
+            .platform_window
+            .draw(&self.window.rendered_frame.scene);
     }
 
     /// Dispatch a mouse or keyboard event on the window.
