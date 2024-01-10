@@ -698,7 +698,7 @@ mod element {
 
             // todo!(schedule serialize)
             // workspace.schedule_serialize(cx);
-            cx.notify();
+            cx.refresh();
         }
 
         fn push_handle(

@@ -584,7 +584,7 @@ impl TerminalElement {
                     this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 
                 if handled {
-                    cx.notify();
+                    cx.refresh();
                 }
             }
         });

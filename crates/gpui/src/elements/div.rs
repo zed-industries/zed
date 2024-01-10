@@ -1027,7 +1027,7 @@ impl Interactivity {
                                                 if e.modifiers.command != command_held
                                                     && text_bounds.contains(&cx.mouse_position())
                                                 {
-                                                    cx.notify();
+                                                    cx.refresh();
                                                 }
                                             }
                                         });
@@ -1038,7 +1038,7 @@ impl Interactivity {
                                                 if phase == DispatchPhase::Capture
                                                     && bounds.contains(&event.position) != hovered
                                                 {
-                                                    cx.notify();
+                                                    cx.refresh();
                                                 }
                                             },
                                         );
@@ -1188,7 +1188,7 @@ impl Interactivity {
                                 if phase == DispatchPhase::Capture
                                     && group_bounds.contains(&event.position) != hovered
                                 {
-                                    cx.notify();
+                                    cx.refresh();
                                 }
                             });
                         }
@@ -1203,7 +1203,7 @@ impl Interactivity {
                                 if phase == DispatchPhase::Capture
                                     && bounds.contains(&event.position) != hovered
                                 {
-                                    cx.notify();
+                                    cx.refresh();
                                 }
                             });
                         }
@@ -1237,7 +1237,7 @@ impl Interactivity {
 
                                                     if can_drop {
                                                         listener(drag.value.as_ref(), cx);
-                                                        cx.notify();
+                                                        cx.refresh();
                                                         cx.stop_propagation();
                                                     }
                                                 }
@@ -1268,7 +1268,7 @@ impl Interactivity {
                                         && interactive_bounds.visibly_contains(&event.position, cx)
                                     {
                                         *pending_mouse_down.borrow_mut() = Some(event.clone());
-                                        cx.notify();
+                                        cx.refresh();
                                     }
                                 }
                             });
@@ -1299,7 +1299,7 @@ impl Interactivity {
                                                     cursor_offset,
                                                 });
                                                 pending_mouse_down.take();
-                                                cx.notify();
+                                                cx.refresh();
                                                 cx.stop_propagation();
                                             }
                                         }
@@ -1319,7 +1319,7 @@ impl Interactivity {
                                             pending_mouse_down.borrow_mut();
                                         if pending_mouse_down.is_some() {
                                             captured_mouse_down = pending_mouse_down.take();
-                                            cx.notify();
+                                            cx.refresh();
                                         }
                                     }
                                     // Fire click handlers during the bubble phase.
@@ -1413,7 +1413,7 @@ impl Interactivity {
                                                         _task: None,
                                                     },
                                                 );
-                                                cx.notify();
+                                                cx.refresh();
                                             })
                                             .ok();
                                         }
@@ -1453,7 +1453,7 @@ impl Interactivity {
                             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                                 if phase == DispatchPhase::Capture {
                                     *active_state.borrow_mut() = ElementClickedState::default();
-                                    cx.notify();
+                                    cx.refresh();
                                 }
                             });
                         } else {
@@ -1471,7 +1471,7 @@ impl Interactivity {
                                     if group || element {
                                         *active_state.borrow_mut() =
                                             ElementClickedState { group, element };
-                                        cx.notify();
+                                        cx.refresh();
                                     }
                                 }
                             });
@@ -1531,7 +1531,7 @@ impl Interactivity {
                                     }
 
                                     if *scroll_offset != old_scroll_offset {
-                                        cx.notify();
+                                        cx.refresh();
                                         cx.stop_propagation();
                                     }
                                 }

@@ -269,6 +269,7 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     pub(crate) dirty: bool,
+    pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -424,6 +425,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             active: false,
             dirty: false,
+            refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -478,8 +480,9 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
-    pub fn notify(&mut self) {
+    pub fn refresh(&mut self) {
         if !self.window.drawing {
+            self.window.refreshing = true;
             self.window.dirty = true;
         }
     }
@@ -519,7 +522,7 @@ impl<'a> WindowContext<'a> {
             self.window.focus_invalidated = true;
         }
 
-        self.notify();
+        self.refresh();
     }
 
     /// Remove focus from all elements within this context's window.
@@ -529,7 +532,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = None;
-        self.notify();
+        self.refresh();
     }
 
     pub fn disable_focus(&mut self) {
@@ -795,7 +798,7 @@ impl<'a> WindowContext<'a> {
         self.window.viewport_size = self.window.platform_window.content_size();
         self.window.bounds = self.window.platform_window.bounds();
         self.window.display_id = self.window.platform_window.display().id();
-        self.notify();
+        self.refresh();
 
         self.window
             .bounds_observers
@@ -1499,6 +1502,7 @@ impl<'a> WindowContext<'a> {
             self.platform.set_cursor_style(cursor_style);
         }
 
+        self.window.refreshing = false;
         self.window.drawing = false;
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
@@ -1641,12 +1645,12 @@ impl<'a> WindowContext<'a> {
             if event.is::<MouseMoveEvent>() {
                 // If this was a mouse move event, redraw the window so that the
                 // active drag can follow the mouse cursor.
-                self.notify();
+                self.refresh();
             } else if event.is::<MouseUpEvent>() {
                 // If this was a mouse up event, cancel the active drag and redraw
                 // the window.
                 self.active_drag = None;
-                self.notify();
+                self.refresh();
             }
         }
     }
@@ -2169,7 +2173,7 @@ impl VisualContext for WindowContext<'_> {
     {
         let view = self.new_view(build_view);
         self.window.root_view = Some(view.clone().into());
-        self.notify();
+        self.refresh();
         view
     }
 
@@ -2583,7 +2587,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         }
 
         if !self.window.drawing {
-            self.window_cx.notify();
+            self.window_cx.window.dirty = true;
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });

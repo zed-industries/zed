@@ -55,7 +55,7 @@ impl<M: ManagedView> PopoverMenu<M> {
                                     }
                                 }
                                 *menu2.borrow_mut() = None;
-                                cx.notify();
+                                cx.refresh();
                             })
                             .detach();
                             cx.focus_view(&new_menu);

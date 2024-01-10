@@ -290,6 +290,7 @@ impl Element for AnyView {
                     && cache_key.stacking_order == *cx.stacking_order()
                     && cache_key.text_style == cx.text_style()
                     && !cx.window.dirty_views.contains(&self.entity_id())
+                    && !cx.window.refreshing
                 {
                     cx.reuse_geometry();
                     return;
