@@ -1474,9 +1474,7 @@ impl<'a> WindowContext<'a> {
                 InputEvent::MouseUp(mouse_up)
             }
             InputEvent::MouseExited(mouse_exited) => {
-                // todo!("Should we record that the mouse is outside of the window somehow? Or are these global pixels?")
                 self.window.modifiers = mouse_exited.modifiers;
-
                 InputEvent::MouseExited(mouse_exited)
             }
             InputEvent::ModifiersChanged(modifiers_changed) => {

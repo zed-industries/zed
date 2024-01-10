@@ -242,7 +242,6 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    // todo!() combine_syntax_and_fuzzy_match_highlights()
                     v_stack()
                         .child(
                             LabelLike::new().child(

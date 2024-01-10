@@ -25,6 +25,7 @@ pub struct TestAppContext {
     pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
+    fn_name: Option<&'static str>,
 }
 
 impl Context for TestAppContext {
@@ -85,7 +86,7 @@ impl Context for TestAppContext {
 
 impl TestAppContext {
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
-    pub fn new(dispatcher: TestDispatcher) -> Self {
+    pub fn new(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
@@ -101,12 +102,23 @@ impl TestAppContext {
             dispatcher: dispatcher.clone(),
             test_platform: platform,
             text_system,
+            fn_name,
         }
+    }
+
+    /// The name of the test function that created this `TestAppContext`
+    pub fn test_function_name(&self) -> Option<&'static str> {
+        self.fn_name
+    }
+
+    /// Checks whether there have been any new path prompts received by the platform.
+    pub fn did_prompt_for_new_path(&self) -> bool {
+        self.test_platform.did_prompt_for_new_path()
     }
 
     /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
     pub fn new_app(&self) -> TestAppContext {
-        Self::new(self.dispatcher.clone())
+        Self::new(self.dispatcher.clone(), self.fn_name)
     }
 
     /// Simulates quitting the app.
@@ -481,7 +493,7 @@ impl<V> View<V> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (tx, mut rx) = postage::mpsc::channel(1024);
-        let timeout_duration = Duration::from_millis(100); //todo!() cx.condition_duration();
+        let timeout_duration = Duration::from_millis(100);
 
         let mut cx = cx.app.borrow_mut();
         let subscriptions = (

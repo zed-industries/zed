@@ -95,7 +95,7 @@ pub fn up_by_rows(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
-        SelectionGoal::HorizontalPosition(x) => x.into(), // todo!("Can the fields in SelectionGoal by Pixels? We should extract a geometry crate and depend on that.")
+        SelectionGoal::HorizontalPosition(x) => x.into(),
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
         SelectionGoal::HorizontalRange { end, .. } => end.into(),
         _ => map.x_for_display_point(start, text_layout_details),

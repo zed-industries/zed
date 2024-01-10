@@ -262,7 +262,6 @@ async fn test_remove_channel_message(
 
 #[track_caller]
 fn assert_messages(chat: &Model<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
-    // todo!(don't directly borrow here)
     assert_eq!(
         chat.read_with(cx, |chat, _| {
             chat.messages()

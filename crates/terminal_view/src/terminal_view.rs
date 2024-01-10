@@ -651,8 +651,10 @@ impl Render for TerminalView {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, cx| {
-                    this.deploy_context_menu(event.position, cx);
-                    cx.notify();
+                    if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
+                        this.deploy_context_menu(event.position, cx);
+                        cx.notify();
+                    }
                 }),
             )
             .child(

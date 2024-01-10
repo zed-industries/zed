@@ -852,6 +852,10 @@ impl Workspace {
         &self.right_dock
     }
 
+    pub fn is_edited(&self) -> bool {
+        self.window_edited
+    }
+
     pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
@@ -1143,7 +1147,6 @@ impl Workspace {
         quitting: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        //todo!(saveing)
         let active_call = self.active_call().cloned();
         let window = cx.window_handle();
 
@@ -1694,28 +1697,6 @@ impl Workspace {
         None
     }
 
-    // todo!("implement zoom")
-    #[allow(unused)]
-    fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
-        for pane in &self.panes {
-            pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-        }
-
-        self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        self.zoomed = None;
-        self.zoomed_position = None;
-
-        cx.notify();
-    }
-
-    // todo!()
-    //     #[cfg(any(test, feature = "test-support"))]
-    //     pub fn zoomed_view(&self, cx: &AppContext) -> Option<AnyViewHandle> {
-    //         self.zoomed.and_then(|view| view.upgrade(cx))
-    //     }
-
     fn dismiss_zoomed_items_to_reveal(
         &mut self,
         dock_to_reveal: Option<DockPosition>,
@@ -2078,7 +2059,7 @@ impl Workspace {
             _ => bounding_box.center(),
         };
 
-        let distance_to_next = 8.; //todo(pane dividers styling)
+        let distance_to_next = pane_group::HANDLE_HITBOX_SIZE;
 
         let target = match direction {
             SplitDirection::Left => {

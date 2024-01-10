@@ -1829,10 +1829,6 @@ impl Editor {
         this.end_selection(cx);
         this.scroll_manager.show_scrollbar(cx);
 
-        // todo!("use a different mechanism")
-        // let editor_created_event = EditorCreated(cx.handle());
-        // cx.emit_global(editor_created_event);
-
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));

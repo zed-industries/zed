@@ -167,15 +167,6 @@ impl DockPosition {
         }
     }
 
-    // todo!()
-    // fn to_resize_handle_side(self) -> HandleSide {
-    //     match self {
-    //         Self::Left => HandleSide::Right,
-    //         Self::Bottom => HandleSide::Top,
-    //         Self::Right => HandleSide::Left,
-    //     }
-    // }
-
     pub fn axis(&self) -> Axis {
         match self {
             Self::Left | Self::Right => Axis::Horizontal,
@@ -186,8 +177,6 @@ impl DockPosition {
 
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
-    // todo!()
-    // context_menu: View<ContextMenu>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -264,12 +253,6 @@ impl Dock {
     pub fn is_open(&self) -> bool {
         self.is_open
     }
-
-    // todo!()
-    //     pub fn has_focus(&self, cx: &WindowContext) -> bool {
-    //         self.visible_panel()
-    //             .map_or(false, |panel| panel.has_focus(cx))
-    //     }
 
     pub fn panel<T: Panel>(&self) -> Option<View<T>> {
         self.panel_entries
@@ -417,16 +400,8 @@ impl Dock {
             }),
         ];
 
-        // todo!()
-        // let dock_view_id = cx.view_id();
         self.panel_entries.push(PanelEntry {
             panel: Arc::new(panel),
-            // todo!()
-            // context_menu: cx.add_view(|cx| {
-            //     let mut menu = ContextMenu::new(dock_view_id, cx);
-            //     menu.set_position_mode(OverlayPositionMode::Local);
-            //     menu
-            // }),
             _subscriptions: subscriptions,
         });
         cx.notify()
@@ -618,7 +593,6 @@ impl PanelButtons {
 
 impl Render for PanelButtons {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // todo!()
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
