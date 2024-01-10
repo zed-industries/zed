@@ -45,7 +45,7 @@ impl Overlay {
     }
 
     /// Sets the position mode for this overlay. Local will have this
-    /// interpret it's [Overlay::position] as relative to the parent element.
+    /// interpret its [`Overlay::position`] as relative to the parent element.
     /// While Window will have it interpret the position as relative to the window.
     pub fn position_mode(mut self, mode: OverlayPositionMode) -> Self {
         self.position_mode = mode;

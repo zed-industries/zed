@@ -78,7 +78,7 @@ impl Rope {
     }
 
     pub fn slice_rows(&self, range: Range<u32>) -> Rope {
-        //This would be more efficient with a forward advance after the first, but it's fine
+        // This would be more efficient with a forward advance after the first, but it's fine.
         let start = self.point_to_offset(Point::new(range.start, 0));
         let end = self.point_to_offset(Point::new(range.end, 0));
         self.slice(start..end)

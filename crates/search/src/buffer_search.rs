@@ -423,7 +423,7 @@ impl ToolbarItemView for BufferSearchBar {
     }
 }
 
-/// Registrar inverts the dependency between search and it's downstream user, allowing said downstream user to register search action without knowing exactly what those actions are.
+/// Registrar inverts the dependency between search and its downstream user, allowing said downstream user to register search action without knowing exactly what those actions are.
 pub trait SearchActionsRegistrar {
     fn register_handler<A: Action>(
         &mut self,

@@ -74,7 +74,7 @@ As you start using the Tailwind-style conventions you will be surprised how quic
 
 **Why `50.0/360.0` in `hsla()`?**
 
-gpui [gpui::Hsla] use `0.0-1.0` for all it's values, but it is common for tools to use `0-360` for hue.
+gpui [gpui::Hsla] use `0.0-1.0` for all its values, but it is common for tools to use `0-360` for hue.
 
 This may change in the future, but this is a little trick that let's you use familiar looking values.
 
