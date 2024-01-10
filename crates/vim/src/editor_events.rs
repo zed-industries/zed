@@ -69,7 +69,7 @@ fn released(entity_id: EntityId, cx: &mut AppContext) {
 mod test {
     use crate::{test::VimTestContext, Vim};
     use editor::Editor;
-    use gpui::{Context, Entity};
+    use gpui::{Context, Entity, VisualTestContext};
     use language::Buffer;
 
     // regression test for blur called with a different active editor
@@ -99,6 +99,44 @@ mod test {
         // no panic when blurring an editor in a different window.
         cx.update_editor(|editor1, cx| {
             editor1.handle_blur(cx);
+        });
+    }
+
+    // regression test for focus_in/focus_out being called on window activation
+    #[gpui::test]
+    async fn test_focus_across_windows(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let mut cx1 = VisualTestContext::from_window(cx.window, &cx);
+        let editor1 = cx.editor.clone();
+        dbg!(editor1.entity_id());
+
+        let buffer = cx.new_model(|_| Buffer::new(0, 0, "a = 1\nb = 2\n"));
+        let (editor2, cx2) = cx.add_window_view(|cx| Editor::for_buffer(buffer, None, cx));
+
+        editor2.update(cx2, |_, cx| {
+            cx.focus_self();
+            cx.activate_window();
+        });
+        cx.run_until_parked();
+
+        cx1.update(|cx| {
+            assert_eq!(
+                Vim::read(cx).active_editor.as_ref().unwrap().entity_id(),
+                editor2.entity_id(),
+            )
+        });
+
+        cx1.update(|cx| {
+            cx.activate_window();
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            assert_eq!(
+                Vim::read(cx).active_editor.as_ref().unwrap().entity_id(),
+                editor1.entity_id(),
+            )
         });
     }
 }

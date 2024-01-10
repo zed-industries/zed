@@ -269,7 +269,7 @@ pub struct Window {
     frame_arena: Arena,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
-    blur_listeners: SubscriberSet<(), AnyObserver>,
+    focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     modifiers: Modifiers,
@@ -296,6 +296,7 @@ pub(crate) struct ElementStateBox {
 
 pub(crate) struct Frame {
     focus: Option<FocusId>,
+    window_active: bool,
     pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
     mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
@@ -311,6 +312,7 @@ impl Frame {
     fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             focus: None,
+            window_active: false,
             element_states: FxHashMap::default(),
             mouse_listeners: FxHashMap::default(),
             dispatch_tree,
@@ -417,7 +419,7 @@ impl Window {
             frame_arena: Arena::new(1024 * 1024),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
-            blur_listeners: SubscriberSet::new(),
+            focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
             modifiers,
@@ -1406,29 +1408,14 @@ impl<'a> WindowContext<'a> {
                 self.window.focus,
             );
         self.window.next_frame.focus = self.window.focus;
+        self.window.next_frame.window_active = self.window.active;
         self.window.root_view = Some(root_view);
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
+        let previous_window_active = self.window.rendered_frame.window_active;
         mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
         let current_focus_path = self.window.rendered_frame.focus_path();
-
-        if previous_focus_path != current_focus_path {
-            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
-                self.window
-                    .blur_listeners
-                    .clone()
-                    .retain(&(), |listener| listener(self));
-            }
-
-            let event = FocusEvent {
-                previous_focus_path,
-                current_focus_path,
-            };
-            self.window
-                .focus_listeners
-                .clone()
-                .retain(&(), |listener| listener(&event, self));
-        }
+        let current_window_active = self.window.rendered_frame.window_active;
 
         let scene = self.window.rendered_frame.scene_builder.build();
 
@@ -1444,6 +1431,34 @@ impl<'a> WindowContext<'a> {
 
         self.window.drawing = false;
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
+
+        if previous_focus_path != current_focus_path
+            || previous_window_active != current_window_active
+        {
+            if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+                self.window
+                    .focus_lost_listeners
+                    .clone()
+                    .retain(&(), |listener| listener(self));
+            }
+
+            let event = FocusEvent {
+                previous_focus_path: if previous_window_active {
+                    previous_focus_path
+                } else {
+                    Default::default()
+                },
+                current_focus_path: if current_window_active {
+                    current_focus_path
+                } else {
+                    Default::default()
+                },
+            };
+            self.window
+                .focus_listeners
+                .clone()
+                .retain(&(), |listener| listener(&event, self));
+        }
 
         scene
     }
@@ -2645,14 +2660,16 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
-    /// Register a listener to be called when the window loses focus.
+    /// Register a listener to be called when nothing in the window has focus.
+    /// This typically happens when the node that was focused is removed from the tree,
+    /// and this callback lets you chose a default place to restore the users focus.
     /// Returns a subscription and persists until the subscription is dropped.
-    pub fn on_blur_window(
+    pub fn on_focus_lost(
         &mut self,
         mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
-        let (subscription, activate) = self.window.blur_listeners.insert(
+        let (subscription, activate) = self.window.focus_lost_listeners.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| listener(view, cx)).is_ok()),
         );
