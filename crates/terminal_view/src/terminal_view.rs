@@ -73,6 +73,7 @@ pub fn init(cx: &mut AppContext) {
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct TerminalView {
     terminal: Model<Terminal>,
+    workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
@@ -135,6 +136,7 @@ impl TerminalView {
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let workspace_handle = workspace.clone();
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, move |this, _, event, cx| match event {
             Event::Wakeup => {
@@ -279,6 +281,7 @@ impl TerminalView {
 
         Self {
             terminal,
+            workspace: workspace_handle,
             has_new_content: true,
             has_bell: false,
             focus_handle: cx.focus_handle(),
@@ -661,6 +664,7 @@ impl Render for TerminalView {
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div().size_full().child(TerminalElement::new(
                     terminal_handle,
+                    self.workspace.clone(),
                     self.focus_handle.clone(),
                     focused,
                     self.should_show_cursor(focused, cx),

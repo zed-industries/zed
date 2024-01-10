@@ -1,7 +1,3 @@
-// TODO - Test if locking slows Zed typing down
-// TODO - Make sure to send last event on flush
-// TODO - Move code to be used as arcs in editor and terminal
-
 mod event_coalescer;
 
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
@@ -408,8 +404,8 @@ impl Telemetry {
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
         let mut state = self.state.lock();
-
         let coalesced_duration = state.edit_activity.log_event(environment);
+        drop(state);
 
         if let Some((start, end)) = coalesced_duration {
             let event = Event::Edit {
@@ -418,7 +414,6 @@ impl Telemetry {
                 milliseconds_since_first_event: self.milliseconds_since_first_event(),
             };
 
-            drop(state);
             self.report_event(event);
         }
     }
