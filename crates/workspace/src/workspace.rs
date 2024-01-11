@@ -512,6 +512,11 @@ impl Workspace {
 
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(cx);
+                    let panes_to_unfollow: Vec<View<Pane>> =
+                        this.follower_states.keys().map(|k| k.clone()).collect();
+                    for pane in panes_to_unfollow {
+                        this.unfollow(&pane, cx);
+                    }
                     cx.disable_focus();
                 }
 
