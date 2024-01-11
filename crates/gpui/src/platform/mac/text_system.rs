@@ -190,6 +190,9 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
             open_type::apply_features(&mut font, features);
+            let Some(_) = font.glyph_for_char('m') else {
+                continue;
+            };
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
             let postscript_name = font.postscript_name().unwrap();
