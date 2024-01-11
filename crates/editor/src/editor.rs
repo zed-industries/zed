@@ -1955,17 +1955,21 @@ impl Editor {
         }
     }
 
-    //     pub fn language_at<'a, T: ToOffset>(
-    //         &self,
-    //         point: T,
-    //         cx: &'a AppContext,
-    //     ) -> Option<Arc<Language>> {
-    //         self.buffer.read(cx).language_at(point, cx)
-    //     }
+    pub fn language_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<Arc<Language>> {
+        self.buffer.read(cx).language_at(point, cx)
+    }
 
-    //     pub fn file_at<'a, T: ToOffset>(&self, point: T, cx: &'a AppContext) -> Option<Arc<dyn File>> {
-    //         self.buffer.read(cx).read(cx).file_at(point).cloned()
-    //     }
+    pub fn file_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<Arc<dyn language::File>> {
+        self.buffer.read(cx).read(cx).file_at(point).cloned()
+    }
 
     pub fn active_excerpt(
         &self,
@@ -1975,15 +1979,6 @@ impl Editor {
             .read(cx)
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
-
-    //     pub fn style(&self, cx: &AppContext) -> EditorStyle {
-    //         build_style(
-    //             settings::get::<ThemeSettings>(cx),
-    //             self.get_field_editor_theme.as_deref(),
-    //             self.override_text_style.as_deref(),
-    //             cx,
-    //         )
-    //     }
 
     pub fn mode(&self) -> EditorMode {
         self.mode

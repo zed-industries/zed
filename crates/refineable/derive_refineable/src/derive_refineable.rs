@@ -69,13 +69,6 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                         path: parse_quote!(Clone),
                     }));
 
-                    // punctuated.push_punct(syn::token::Add::default());
-                    // punctuated.push_value(TypeParamBound::Trait(TraitBound {
-                    //     paren_token: None,
-                    //     modifier: syn::TraitBoundModifier::None,
-                    //     lifetimes: None,
-                    //     path: parse_quote!(Default),
-                    // }));
                     punctuated
                 },
             })
@@ -93,10 +86,6 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             predicates: type_param_bounds.into_iter().collect(),
         },
     };
-
-    // refinable_refine_assignments
-    // refinable_refined_assignments
-    // refinement_refine_assignments
 
     let refineable_refine_assignments: Vec<TokenStream2> = fields
         .iter()
