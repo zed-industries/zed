@@ -33,6 +33,7 @@ pub struct ProjectMenuButton {
     recent: Vec<Project>,
 }
 
+#[derive(Clone)]
 pub struct Project {
     name: SharedString,
     id: ProjectId,
@@ -104,28 +105,39 @@ impl RenderOnce for Titlebar {
 // Finally, we give our titlebar a single child, the project menu button.
 // Note that because `RenderOnce::render` moves self, we're free to move the project menu button rather than cloning it.
 
-// Now let's implement `RenderOnce` for `ProjectMenuButton`
+// Now let's implement `RenderOnce` for `ProjectMenuButton`.
+// Here, we use a `PopoverMenu` from Zed's `ui` crate, one of a handful of reusable components we created in the process of rebuilding Zed's UI on GPUI 2.
+// In the `render` implementation below, we give the popover a unique id, then use method chaining to associate the popover with a `trigger` and a `menu`.
+// In GPUI, any element that supports stateful mouse interactions such as click must be assigned an identifier.
+// The trigger is a `Button` component with an id of `"trigger"`.
+// Note than in GPUI, element identifiers only need to be unique within the context of the containing identifier.
 
 impl RenderOnce for ProjectMenuButton {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        let recent_projects = self.recent.clone();
         PopoverMenu::new("project-menu")
             .trigger(
-                Button::new("project-menu-button", self.current.name)
+                Button::new("trigger", self.current.name)
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::Small)
                     .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
             )
             .menu(move |cx| {
-                let items = self
-                    .recent
-                    .iter()
-                    .map(|project| FuzzyPickerItem {
-                        id: project.id.clone(),
-                        name: project.name.clone(),
+                Some(cx.new_view(|cx| {
+                    Picker::fuzzy(recent_projects.clone(), cx, |project, selected, _cx| {
+                        ListItem::new(project.id.0)
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .selected(selected)
                     })
-                    .collect();
-                Some(cx.new_view(|cx| Picker::fuzzy(items, cx, |_, _, _| div())))
+                }))
             })
+    }
+}
+
+impl FuzzyPickerItem for Project {
+    fn match_text(&self) -> SharedString {
+        self.name.clone()
     }
 }
 

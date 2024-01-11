@@ -3034,6 +3034,12 @@ impl From<usize> for ElementId {
     }
 }
 
+impl From<u64> for ElementId {
+    fn from(id: u64) -> Self {
+        ElementId::Integer(id as usize)
+    }
+}
+
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
         Self::Integer(id as usize)

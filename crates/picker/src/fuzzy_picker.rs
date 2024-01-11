@@ -1,26 +1,28 @@
 use crate::{Picker, PickerDelegate};
 use fuzzy::StringMatchCandidate;
 use gpui::{IntoElement, SharedString, ViewContext, WindowContext};
-use std::marker::PhantomData;
+
+pub trait FuzzyPickerItem: 'static + Clone {
+    fn match_text(&self) -> SharedString;
+}
 
 impl<I, E> Picker<FuzzyPickerDelegate<I, E>>
 where
-    I: 'static + Clone,
+    I: FuzzyPickerItem,
     E: 'static + IntoElement,
 {
     pub fn fuzzy(
-        items: Vec<FuzzyPickerItem<I>>,
+        items: Vec<I>,
         cx: &mut ViewContext<Picker<FuzzyPickerDelegate<I, E>>>,
-        render_match: impl 'static + Fn(usize, bool, &mut ViewContext<Self>) -> E,
+        render_match: impl 'static + Fn(&I, bool, &mut WindowContext) -> E,
     ) -> Self {
         Self::new(
             FuzzyPickerDelegate {
                 items: items.clone(),
                 matches: items,
-                render_match: Box::new(render_match),
-                item_element_type: PhantomData,
                 selected_index: 0,
                 placeholder_text: None,
+                render_match: Box::new(render_match),
                 confirm: None,
                 dismiss: None,
             },
@@ -47,31 +49,19 @@ where
     }
 }
 
-pub struct FuzzyPickerDelegate<I, E>
-where
-    I: 'static + Clone,
-    E: 'static + IntoElement,
-{
-    items: Vec<FuzzyPickerItem<I>>,
-    matches: Vec<FuzzyPickerItem<I>>,
-    render_match:
-        Box<dyn Fn(usize, bool, &mut ViewContext<'_, Picker<FuzzyPickerDelegate<I, E>>>) -> E>,
-    item_element_type: PhantomData<E>,
+pub struct FuzzyPickerDelegate<I: FuzzyPickerItem, E> {
+    items: Vec<I>,
+    matches: Vec<I>,
     selected_index: usize,
     placeholder_text: Option<SharedString>,
+    render_match: Box<dyn Fn(&I, bool, &mut WindowContext) -> E>,
     confirm: Option<Box<dyn FnOnce(I, bool, &mut WindowContext)>>,
     dismiss: Option<Box<dyn FnOnce(&mut WindowContext)>>,
 }
 
-#[derive(Clone)]
-pub struct FuzzyPickerItem<I: Clone> {
-    pub name: SharedString,
-    pub id: I,
-}
-
 impl<I, E> PickerDelegate for FuzzyPickerDelegate<I, E>
 where
-    I: 'static + Clone,
+    I: FuzzyPickerItem,
     E: 'static + IntoElement,
 {
     type ListItem = E;
@@ -104,7 +94,7 @@ where
             let candidates = items
                 .iter()
                 .enumerate()
-                .map(|(id, item)| StringMatchCandidate::new(id, item.name.to_string()))
+                .map(|(id, item)| StringMatchCandidate::new(id, item.match_text().into()))
                 .collect::<Vec<_>>();
 
             let mut fuzzy_matches = fuzzy::match_strings(
@@ -137,7 +127,7 @@ where
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(confirm) = self.confirm.take() {
-            let confirmed = self.items[self.selected_index].id.clone();
+            let confirmed = self.matches[self.selected_index].clone();
             confirm(confirmed, secondary, cx)
         }
     }
@@ -154,6 +144,6 @@ where
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        Some((self.render_match)(ix, selected, cx))
+        Some((self.render_match)(&self.matches[ix], selected, cx))
     }
 }
