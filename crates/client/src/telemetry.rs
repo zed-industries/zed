@@ -461,6 +461,9 @@ impl Telemetry {
         let mut events = mem::take(&mut state.events_queue);
         state.flush_events_task.take();
         drop(state);
+        if events.is_empty() {
+            return;
+        }
 
         let this = self.clone();
         self.executor
