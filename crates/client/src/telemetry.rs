@@ -204,7 +204,7 @@ impl Telemetry {
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
         self.report_app_event("close");
-        self.flush_events();
+        // TODO: close final edit period and make sure it's sent
         Task::ready(())
     }
 

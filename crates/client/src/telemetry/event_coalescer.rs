@@ -26,6 +26,10 @@ impl EventCoalescer {
         self.log_event_with_time(Utc::now(), environment)
     }
 
+    // pub fn close_current_period(&mut self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    //     self.environment.map(|env| self.log_event(env)).flatten()
+    // }
+
     fn log_event_with_time(
         &mut self,
         log_time: DateTime<Utc>,
