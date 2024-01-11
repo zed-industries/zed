@@ -330,33 +330,33 @@ mod tests {
     fn test_context_child_predicate_eval() {
         let predicate = KeyBindingContextPredicate::parse("a && b > c").unwrap();
         let contexts = [
-            context_set(&["e", "f"]),
-            context_set(&["c", "d"]), // match this context
             context_set(&["a", "b"]),
+            context_set(&["c", "d"]), // match this context
+            context_set(&["e", "f"]),
         ];
 
-        assert!(!predicate.eval(&contexts[0..]));
-        assert!(predicate.eval(&contexts[1..]));
-        assert!(!predicate.eval(&contexts[2..]));
+        assert!(!predicate.eval(&contexts[..=0]));
+        assert!(predicate.eval(&contexts[..=1]));
+        assert!(!predicate.eval(&contexts[..=2]));
 
         let predicate = KeyBindingContextPredicate::parse("a && b > c && !d > e").unwrap();
         let contexts = [
-            context_set(&["f"]),
-            context_set(&["e"]), // only match this context
-            context_set(&["c"]),
             context_set(&["a", "b"]),
-            context_set(&["e"]),
             context_set(&["c", "d"]),
+            context_set(&["e"]),
             context_set(&["a", "b"]),
+            context_set(&["c"]),
+            context_set(&["e"]), // only match this context
+            context_set(&["f"]),
         ];
 
-        assert!(!predicate.eval(&contexts[0..]));
-        assert!(predicate.eval(&contexts[1..]));
-        assert!(!predicate.eval(&contexts[2..]));
-        assert!(!predicate.eval(&contexts[3..]));
-        assert!(!predicate.eval(&contexts[4..]));
-        assert!(!predicate.eval(&contexts[5..]));
-        assert!(!predicate.eval(&contexts[6..]));
+        assert!(!predicate.eval(&contexts[..=0]));
+        assert!(!predicate.eval(&contexts[..=1]));
+        assert!(!predicate.eval(&contexts[..=2]));
+        assert!(!predicate.eval(&contexts[..=3]));
+        assert!(!predicate.eval(&contexts[..=4]));
+        assert!(predicate.eval(&contexts[..=5]));
+        assert!(!predicate.eval(&contexts[..=6]));
 
         fn context_set(names: &[&str]) -> KeyContext {
             let mut keymap = KeyContext::default();
