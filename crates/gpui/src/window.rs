@@ -375,10 +375,14 @@ impl Frame {
         // Reuse entries in the depth map that didn't change since the last frame.
         for (order, view_id, bounds) in prev_frame.depth_map.drain(..) {
             if self.reused_views.contains(&view_id) {
-                self.depth_map.push((order, view_id, bounds));
+                match self
+                    .depth_map
+                    .binary_search_by(|(level, _, _)| order.cmp(level))
+                {
+                    Ok(i) | Err(i) => self.depth_map.insert(i, (order, view_id, bounds)),
+                }
             }
         }
-        self.depth_map.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Retain element states for views that didn't change since the last frame.
         for (element_id, state) in prev_frame.element_states.drain() {
@@ -1052,10 +1056,10 @@ impl<'a> WindowContext<'a> {
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
         let stacking_order = self.window.next_frame.z_index_stack.clone();
         let view_id = self.parent_view_id();
-        self.window
-            .next_frame
-            .depth_map
-            .push((stacking_order, view_id, bounds));
+        let depth_map = &mut self.window.next_frame.depth_map;
+        match depth_map.binary_search_by(|(level, _, _)| stacking_order.cmp(level)) {
+            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, view_id, bounds)),
+        }
     }
 
     /// Returns true if there is no opaque layer containing the given point
