@@ -814,8 +814,13 @@ impl EditorElement {
                 .position_map
                 .snapshot
                 .blocks_in_range(start_row..end_row)
-                .next()
-                .map(|(start_row, _)| start_row)
+                .find_map(|(start_row, block)| {
+                    if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                        Some(start_row)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(end_row);
 
             let start_y = start_row as f32 * line_height - scroll_top;
