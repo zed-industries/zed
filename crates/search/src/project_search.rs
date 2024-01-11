@@ -1016,8 +1016,6 @@ impl ProjectSearchView {
             view
         };
 
-        workspace.add_item(Box::new(search.clone()), cx);
-
         search.update(cx, |search, cx| {
             if let Some(query) = query {
                 search.set_query(&query, cx);
