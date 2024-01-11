@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
+use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
     AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, ExternalPaths,
@@ -1796,23 +1797,46 @@ impl Pane {
             }
         }
         let mut to_pane = cx.view().clone();
-        let split_direction = self.drag_split_direction;
+        let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
         self.workspace
-            .update(cx, |_, cx| {
-                cx.defer(move |workspace, cx| {
-                    if let Some(split_direction) = split_direction {
-                        to_pane = workspace.split_pane(to_pane, split_direction, cx);
+            .update(cx, |workspace, cx| {
+                let fs = Arc::clone(workspace.project().read(cx).fs());
+                cx.spawn(|workspace, mut cx| async move {
+                    let mut is_file_checks = FuturesUnordered::new();
+                    for path in &paths {
+                        is_file_checks.push(fs.is_file(path))
                     }
-                    workspace
-                        .open_paths(
-                            paths,
-                            OpenVisible::OnlyDirectories,
-                            Some(to_pane.downgrade()),
-                            cx,
-                        )
-                        .detach();
-                });
+                    let mut has_files_to_open = false;
+                    while let Some(is_file) = is_file_checks.next().await {
+                        if is_file {
+                            has_files_to_open = true;
+                            break;
+                        }
+                    }
+                    drop(is_file_checks);
+                    if !has_files_to_open {
+                        split_direction = None;
+                    }
+
+                    if let Some(open_task) = workspace
+                        .update(&mut cx, |workspace, cx| {
+                            if let Some(split_direction) = split_direction {
+                                to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                            }
+                            workspace.open_paths(
+                                paths,
+                                OpenVisible::OnlyDirectories,
+                                Some(to_pane.downgrade()),
+                                cx,
+                            )
+                        })
+                        .ok()
+                    {
+                        let _opened_items: Vec<_> = open_task.await;
+                    }
+                })
+                .detach();
             })
             .log_err();
     }
