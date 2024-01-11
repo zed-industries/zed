@@ -364,28 +364,20 @@ impl TextSystem {
         self.line_layout_cache.start_frame()
     }
 
-    pub fn line_wrapper(
-        self: &Arc<Self>,
-        font: Font,
-        font_size: Pixels,
-    ) -> Result<LineWrapperHandle> {
+    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
-        let font_id = self.font_id(&font)?;
+        let font_id = self.resolve_font(&font);
         let wrappers = lock
             .entry(FontIdWithSize { font_id, font_size })
             .or_default();
-        let wrapper = wrappers.pop().map(anyhow::Ok).unwrap_or_else(|| {
-            Ok(LineWrapper::new(
-                font_id,
-                font_size,
-                self.platform_text_system.clone(),
-            ))
-        })?;
+        let wrapper = wrappers.pop().unwrap_or_else(|| {
+            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
+        });
 
-        Ok(LineWrapperHandle {
+        LineWrapperHandle {
             wrapper: Some(wrapper),
             text_system: self.clone(),
-        })
+        }
     }
 
     pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
