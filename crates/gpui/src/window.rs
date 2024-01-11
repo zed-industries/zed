@@ -1461,14 +1461,11 @@ impl<'a> WindowContext<'a> {
             self.window.focus_invalidated = false;
         }
 
-        self.text_system().start_frame();
         if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
         {
             requested_handler.handler = self.window.platform_window.take_input_handler();
         }
 
-        self.window.layout_engine.as_mut().unwrap().clear();
-        self.window.next_frame.clear();
         let root_view = self.window.root_view.take().unwrap();
 
         self.with_z_index(0, |cx| {
@@ -1528,11 +1525,6 @@ impl<'a> WindowContext<'a> {
             self.platform.set_cursor_style(cursor_style);
         }
 
-        self.window
-            .next_frame
-            .reuse_views(&mut self.window.rendered_frame);
-        self.window.next_frame.scene.finish();
-
         // Register requested input handler with the platform window.
         if let Some(requested_input) = self.window.next_frame.requested_input_handler.as_mut() {
             if let Some(handler) = requested_input.handler.take() {
@@ -1540,15 +1532,24 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        let previous_focus_path = self.window.rendered_frame.focus_path();
-        let previous_window_active = self.window.rendered_frame.window_active;
-        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
-        let current_focus_path = self.window.rendered_frame.focus_path();
-        let current_window_active = self.window.rendered_frame.window_active;
+        self.window
+            .next_frame
+            .reuse_views(&mut self.window.rendered_frame);
+        self.window.next_frame.scene.finish();
+        self.window.layout_engine.as_mut().unwrap().clear();
+        self.text_system()
+            .end_frame(&self.window.next_frame.reused_views);
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
         self.window.refreshing = false;
         self.window.drawing = false;
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
+
+        let previous_focus_path = self.window.rendered_frame.focus_path();
+        let previous_window_active = self.window.rendered_frame.window_active;
+        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
+        self.window.next_frame.clear();
+        let current_focus_path = self.window.rendered_frame.focus_path();
+        let current_window_active = self.window.rendered_frame.window_active;
 
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
@@ -2005,10 +2006,13 @@ impl<'a> WindowContext<'a> {
         view_id: EntityId,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.window.next_frame.view_stack.push(view_id);
-        let result = f(self);
-        self.window.next_frame.view_stack.pop();
-        result
+        let text_system = self.text_system().clone();
+        text_system.with_view(view_id, || {
+            self.window.next_frame.view_stack.push(view_id);
+            let result = f(self);
+            self.window.next_frame.view_stack.pop();
+            result
+        })
     }
 
     pub(crate) fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {

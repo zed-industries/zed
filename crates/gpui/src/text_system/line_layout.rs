@@ -1,5 +1,5 @@
-use crate::{px, FontId, GlyphId, Pixels, PlatformTextSystem, Point, Size};
-use collections::FxHashMap;
+use crate::{px, EntityId, FontId, GlyphId, Pixels, PlatformTextSystem, Point, Size};
+use collections::{FxHashMap, FxHashSet};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -236,6 +236,7 @@ impl WrappedLineLayout {
 }
 
 pub(crate) struct LineLayoutCache {
+    view_stack: Mutex<Vec<EntityId>>,
     previous_frame: Mutex<FxHashMap<CacheKey, Arc<LineLayout>>>,
     current_frame: RwLock<FxHashMap<CacheKey, Arc<LineLayout>>>,
     previous_frame_wrapped: Mutex<FxHashMap<CacheKey, Arc<WrappedLineLayout>>>,
@@ -246,6 +247,7 @@ pub(crate) struct LineLayoutCache {
 impl LineLayoutCache {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
+            view_stack: Mutex::default(),
             previous_frame: Mutex::default(),
             current_frame: RwLock::default(),
             previous_frame_wrapped: Mutex::default(),
@@ -254,11 +256,43 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn start_frame(&self) {
+    pub fn end_frame(&self, reused_views: &FxHashSet<EntityId>) {
+        debug_assert_eq!(self.view_stack.lock().len(), 0);
+
         let mut prev_frame = self.previous_frame.lock();
         let mut curr_frame = self.current_frame.write();
+        for (key, layout) in prev_frame.drain() {
+            if key
+                .parent_view_id
+                .map_or(false, |view_id| reused_views.contains(&view_id))
+            {
+                curr_frame.insert(key, layout);
+            }
+        }
         std::mem::swap(&mut *prev_frame, &mut *curr_frame);
-        curr_frame.clear();
+
+        let mut prev_frame_wrapped = self.previous_frame_wrapped.lock();
+        let mut curr_frame_wrapped = self.current_frame_wrapped.write();
+        for (key, layout) in prev_frame_wrapped.drain() {
+            if key
+                .parent_view_id
+                .map_or(false, |view_id| reused_views.contains(&view_id))
+            {
+                curr_frame_wrapped.insert(key, layout);
+            }
+        }
+        std::mem::swap(&mut *prev_frame_wrapped, &mut *curr_frame_wrapped);
+    }
+
+    pub fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
+        self.view_stack.lock().push(view_id);
+        let result = f();
+        self.view_stack.lock().pop();
+        result
+    }
+
+    fn parent_view_id(&self) -> Option<EntityId> {
+        self.view_stack.lock().last().copied()
     }
 
     pub fn layout_wrapped_line(
@@ -273,6 +307,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width,
+            parent_view_id: self.parent_view_id(),
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame_wrapped.upgradable_read();
@@ -301,6 +336,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
+                parent_view_id: self.parent_view_id(),
             };
             current_frame.insert(key, layout.clone());
             layout
@@ -313,6 +349,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width: None,
+            parent_view_id: self.parent_view_id(),
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -331,6 +368,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width: None,
+                parent_view_id: self.parent_view_id(),
             };
             current_frame.insert(key, layout.clone());
             layout
@@ -348,12 +386,13 @@ trait AsCacheKeyRef {
     fn as_cache_key_ref(&self) -> CacheKeyRef;
 }
 
-#[derive(Eq)]
+#[derive(Debug, Eq)]
 struct CacheKey {
     text: String,
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
+    parent_view_id: Option<EntityId>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -362,6 +401,7 @@ struct CacheKeyRef<'a> {
     font_size: Pixels,
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
+    parent_view_id: Option<EntityId>,
 }
 
 impl<'a> PartialEq for (dyn AsCacheKeyRef + 'a) {
@@ -385,6 +425,7 @@ impl AsCacheKeyRef for CacheKey {
             font_size: self.font_size,
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
+            parent_view_id: self.parent_view_id,
         }
     }
 }
