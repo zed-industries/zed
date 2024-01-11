@@ -130,7 +130,7 @@ pub enum Event {
 }
 
 #[cfg(debug_assertions)]
-const MAX_QUEUE_LEN: usize = 1;
+const MAX_QUEUE_LEN: usize = 5;
 
 #[cfg(not(debug_assertions))]
 const MAX_QUEUE_LEN: usize = 50;
