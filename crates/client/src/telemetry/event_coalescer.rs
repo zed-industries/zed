@@ -40,7 +40,7 @@ impl EventCoalescer {
         let Some(period_start) = self.period_start else {
             self.period_start = Some(log_time);
             self.environment = Some(environment);
-            return (None, self.environment);
+            return (None, None);
         };
 
         let period_end = self
@@ -68,7 +68,7 @@ impl EventCoalescer {
 
         self.period_end = Some(log_time);
 
-        (None, self.environment)
+        (None, None)
     }
 }
 
@@ -90,7 +90,7 @@ mod tests {
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
         let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(period_data, (None, Some(environment_1)));
+        assert_eq!(period_data, (None, None));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -103,7 +103,7 @@ mod tests {
             period_end += within_timeout_adjustment;
             let period_data = event_coalescer.log_event_with_time(period_end, environment_1);
 
-            assert_eq!(period_data, (None, Some(environment_1)));
+            assert_eq!(period_data, (None, None));
             assert_eq!(event_coalescer.period_start, Some(period_start));
             assert_eq!(event_coalescer.period_end, Some(period_end));
             assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -135,7 +135,7 @@ mod tests {
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
         let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(period_data, (None, Some(environment_1)));
+        assert_eq!(period_data, (None, None));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -144,7 +144,7 @@ mod tests {
         let period_end = period_start + within_timeout_adjustment;
         let period_data = event_coalescer.log_event_with_time(period_end, environment_1);
 
-        assert_eq!(period_data, (None, Some(environment_1)));
+        assert_eq!(period_data, (None, None));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, Some(period_end));
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -175,7 +175,7 @@ mod tests {
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
         let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(period_data, (None, Some(environment_1)));
+        assert_eq!(period_data, (None, None));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -212,7 +212,7 @@ mod tests {
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
         let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(period_data, (None, Some(environment_1)));
+        assert_eq!(period_data, (None, None));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
