@@ -6,7 +6,7 @@ use gpui::{
     InteractiveElementState, Interactivity, IntoElement, LayoutId, Model, ModelContext,
     ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, PlatformInputHandler, Point,
     ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle,
-    WhiteSpace, WindowContext,
+    WeakView, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -24,6 +24,7 @@ use terminal::{
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::Tooltip;
+use workspace::Workspace;
 
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
@@ -142,6 +143,7 @@ impl LayoutRect {
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
+    workspace: WeakView<Workspace>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -160,6 +162,7 @@ impl StatefulInteractiveElement for TerminalElement {}
 impl TerminalElement {
     pub fn new(
         terminal: Model<Terminal>,
+        workspace: WeakView<Workspace>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -167,6 +170,7 @@ impl TerminalElement {
     ) -> TerminalElement {
         TerminalElement {
             terminal,
+            workspace,
             focused,
             focus: focus.clone(),
             cursor_visible,
@@ -762,6 +766,7 @@ impl Element for TerminalElement {
                 .cursor
                 .as_ref()
                 .map(|cursor| cursor.bounding_rect(origin)),
+            workspace: self.workspace.clone(),
         };
 
         self.register_mouse_listeners(origin, layout.mode, bounds, cx);
@@ -831,6 +836,7 @@ impl IntoElement for TerminalElement {
 struct TerminalInputHandler {
     cx: AsyncWindowContext,
     terminal: Model<Terminal>,
+    workspace: WeakView<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -871,7 +877,14 @@ impl PlatformInputHandler for TerminalInputHandler {
             .update(|_, cx| {
                 self.terminal.update(cx, |terminal, _| {
                     terminal.input(text.into());
-                })
+                });
+
+                self.workspace
+                    .update(cx, |this, cx| {
+                        let telemetry = this.project().read(cx).client().telemetry().clone();
+                        telemetry.log_edit_event("terminal");
+                    })
+                    .ok();
             })
             .ok();
     }
