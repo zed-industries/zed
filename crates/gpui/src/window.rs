@@ -273,7 +273,6 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     modifiers: Modifiers,
-    requested_cursor_style: Option<CursorStyle>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
@@ -314,6 +313,8 @@ pub(crate) struct Frame {
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
     requested_input_handler: Option<RequestedInputHandler>,
+    cursor_styles: FxHashMap<EntityId, CursorStyle>,
+    requested_cursor_style: Option<CursorStyle>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
 }
@@ -333,6 +334,8 @@ impl Frame {
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
+            cursor_styles: FxHashMap::default(),
+            requested_cursor_style: None,
             view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
         }
@@ -346,6 +349,9 @@ impl Frame {
         self.next_stacking_order_id = 0;
         self.reused_views.clear();
         self.scene.clear();
+        self.requested_input_handler.take();
+        self.cursor_styles.clear();
+        self.requested_cursor_style.take();
         debug_assert_eq!(self.view_stack.len(), 0);
     }
 
@@ -469,7 +475,6 @@ impl Window {
             default_prevented: true,
             mouse_position,
             modifiers,
-            requested_cursor_style: None,
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
@@ -1037,7 +1042,9 @@ impl<'a> WindowContext<'a> {
 
     /// Update the cursor style at the platform level.
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
-        self.window.requested_cursor_style = Some(style)
+        let view_id = self.parent_view_id();
+        self.window.next_frame.cursor_styles.insert(view_id, style);
+        self.window.next_frame.requested_cursor_style = Some(style);
     }
 
     /// Called during painting to track which z-index is on top at each pixel position
@@ -1436,6 +1443,11 @@ impl<'a> WindowContext<'a> {
                 self.window.next_frame.requested_input_handler =
                     self.window.rendered_frame.requested_input_handler.take();
             }
+
+            if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
+                self.window.next_frame.cursor_styles.insert(view_id, style);
+                self.window.next_frame.requested_cursor_style = Some(style);
+            }
         }
     }
 
@@ -1505,6 +1517,17 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.window_active = self.window.active;
         self.window.root_view = Some(root_view);
 
+        // Set the cursor only if we're the active window.
+        let cursor_style = self
+            .window
+            .next_frame
+            .requested_cursor_style
+            .take()
+            .unwrap_or(CursorStyle::Arrow);
+        if self.is_window_active() {
+            self.platform.set_cursor_style(cursor_style);
+        }
+
         self.window
             .next_frame
             .reuse_views(&mut self.window.rendered_frame);
@@ -1522,16 +1545,6 @@ impl<'a> WindowContext<'a> {
         mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
         let current_focus_path = self.window.rendered_frame.focus_path();
         let current_window_active = self.window.rendered_frame.window_active;
-
-        // Set the cursor only if we're the active window.
-        let cursor_style = self
-            .window
-            .requested_cursor_style
-            .take()
-            .unwrap_or(CursorStyle::Arrow);
-        if self.is_window_active() {
-            self.platform.set_cursor_style(cursor_style);
-        }
 
         self.window.refreshing = false;
         self.window.drawing = false;
