@@ -125,7 +125,7 @@ struct Panic {
 // NOTE: this is called via zed.dev
 #[instrument(skip(panic))]
 async fn trace_panic(panic: Json<Panic>) -> Result<()> {
-    tracing::error!(version = %panic.version, release_channel = %panic.release_channel, backtrace_hash = %panic.backtrace_hash, text = %panic.text, insatllation_id = %panic.installation_id, "panic report");
+    tracing::error!(version = %panic.version, release_channel = %panic.release_channel, backtrace_hash = %panic.backtrace_hash, text = %panic.text, installation_id = %panic.installation_id, "panic report");
     Ok(())
 }
 
