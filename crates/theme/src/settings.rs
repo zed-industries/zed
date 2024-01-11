@@ -194,9 +194,21 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
-        root_schema
-            .definitions
-            .extend([("ThemeName".into(), theme_name_schema.into())]);
+        let available_fonts = cx
+            .text_system()
+            .all_font_families()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        let fonts_schema = SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            enum_values: Some(available_fonts),
+            ..Default::default()
+        };
+        root_schema.definitions.extend([
+            ("ThemeName".into(), theme_name_schema.into()),
+            ("FontFamilies".into(), fonts_schema.into()),
+        ]);
 
         root_schema
             .schema
@@ -204,10 +216,16 @@ impl settings::Settings for ThemeSettings {
             .as_mut()
             .unwrap()
             .properties
-            .extend([(
-                "theme".to_owned(),
-                Schema::new_ref("#/definitions/ThemeName".into()),
-            )]);
+            .extend([
+                (
+                    "theme".to_owned(),
+                    Schema::new_ref("#/definitions/ThemeName".into()),
+                ),
+                (
+                    "buffer_font_family".to_owned(),
+                    Schema::new_ref("#/definitions/FontFamilies".into()),
+                ),
+            ]);
 
         root_schema
     }
