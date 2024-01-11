@@ -1,6 +1,6 @@
 use crate::{Picker, PickerDelegate};
 use fuzzy::StringMatchCandidate;
-use gpui::{IntoElement, SharedString, ViewContext};
+use gpui::{IntoElement, SharedString, ViewContext, WindowContext};
 use std::marker::PhantomData;
 
 impl<I, R, E> Picker<FuzzyPickerDelegate<I, R, E>>
@@ -23,6 +23,8 @@ where
                 item_element_type: PhantomData,
                 selected_index: 0,
                 placeholder_text: None,
+                confirm: None,
+                dismiss: None,
             },
             cx,
         )
@@ -30,6 +32,19 @@ where
 
     pub fn placeholder_text(mut self, text: impl Into<SharedString>) -> Self {
         self.delegate.placeholder_text = Some(text.into());
+        self
+    }
+
+    pub fn on_confirm(
+        mut self,
+        confirm: impl 'static + FnOnce(I, bool, &mut WindowContext),
+    ) -> Self {
+        self.delegate.confirm = Some(Box::new(confirm));
+        self
+    }
+
+    pub fn on_dismiss(mut self, dismiss: impl 'static + FnOnce(&mut WindowContext)) -> Self {
+        self.delegate.dismiss = Some(Box::new(dismiss));
         self
     }
 }
@@ -41,6 +56,8 @@ pub struct FuzzyPickerDelegate<I: Clone, R, E> {
     item_element_type: PhantomData<E>,
     selected_index: usize,
     placeholder_text: Option<SharedString>,
+    confirm: Option<Box<dyn FnOnce(I, bool, &mut WindowContext)>>,
+    dismiss: Option<Box<dyn FnOnce(&mut WindowContext)>>,
 }
 
 #[derive(Clone)]
@@ -116,12 +133,17 @@ where
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        todo!()
+    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        if let Some(confirm) = self.confirm.take() {
+            let confirmed = self.items[self.selected_index].id.clone();
+            confirm(confirmed, secondary, cx)
+        }
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        todo!()
+        if let Some(dismiss) = self.dismiss.take() {
+            dismiss(cx);
+        }
     }
 
     fn render_match(
