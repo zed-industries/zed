@@ -240,7 +240,7 @@ impl Zed1ThemeConverter {
             editor_highlighted_line_background: convert(editor.highlighted_line_background),
             editor_line_number: convert(editor.line_number),
             editor_active_line_number: convert(editor.line_number_active),
-            editor_invisible: convert(highest.variant.default.foreground), // TODO: Is this light enough?
+            editor_invisible: convert(editor.whitespace),
             editor_wrap_guide: convert(editor.wrap_guide),
             editor_active_wrap_guide: convert(editor.active_wrap_guide),
             editor_document_highlight_read_background: convert(
