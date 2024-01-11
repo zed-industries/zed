@@ -4,20 +4,28 @@ const { spawn, execFileSync } = require("child_process");
 
 const RESOLUTION_REGEX = /(\d+) x (\d+)/;
 const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
-const RELEASE_MODE = "--release";
-
-const args = process.argv.slice(2);
 
 // Parse the number of Zed instances to spawn.
 let instanceCount = 1;
-const digitMatch = args[0]?.match(DIGIT_FLAG_REGEX);
-if (digitMatch) {
-  instanceCount = parseInt(digitMatch[1]);
-  args.shift();
-}
-const isReleaseMode = args.some((arg) => arg === RELEASE_MODE);
-if (instanceCount > 4) {
-  throw new Error("Cannot spawn more than 4 instances");
+let isReleaseMode = false;
+let isTop = false;
+
+const args = process.argv.slice(2);
+for (const arg of args) {
+  const digitMatch = arg.match(DIGIT_FLAG_REGEX);
+  if (digitMatch) {
+    instanceCount = parseInt(digitMatch[1]);
+    continue;
+  }
+
+  if (arg == "--release") {
+    isReleaseMode = true;
+    continue;
+  }
+
+  if (arg == "--top") {
+    isTop = true;
+  }
 }
 
 // Parse the resolution of the main screen
@@ -34,7 +42,11 @@ if (!mainDisplayResolution) {
   throw new Error("Could not parse screen resolution");
 }
 const screenWidth = parseInt(mainDisplayResolution[1]);
-const screenHeight = parseInt(mainDisplayResolution[2]);
+let screenHeight = parseInt(mainDisplayResolution[2]);
+
+if (isTop) {
+  screenHeight = Math.floor(screenHeight / 2);
+}
 
 // Determine the window size for each instance
 let instanceWidth = screenWidth;
