@@ -7411,6 +7411,133 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_prompting_to_save_only_on_non_multibuffer_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        let dirty_regular_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("1.txt")
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        let dirty_untitled_buffer = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_project_items(&[TestProjectItem::new_untitled(cx)])
+        });
+        let dirty_multibuffer_with_both = cx.new_view(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_singleton(false)
+                .with_label("Fake Project Search")
+                .with_project_items(&[
+                    dirty_regular_buffer.read(cx).project_items[0].clone(),
+                    dirty_untitled_buffer.read(cx).project_items[0].clone(),
+                ])
+        });
+        let multibuffer_with_both_files_id = dirty_multibuffer_with_both.item_id();
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(dirty_regular_buffer.clone()), cx);
+            workspace.add_item(Box::new(dirty_untitled_buffer.clone()), cx);
+            workspace.add_item(Box::new(dirty_multibuffer_with_both.clone()), cx);
+        });
+
+        pane.update(cx, |pane, cx| {
+            pane.activate_item(2, true, true, cx);
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                multibuffer_with_both_files_id,
+                "Should select the multibuffer in the pane"
+            );
+        });
+        // When closing both the unsaved buffer and the multibuffer that contains it, we should only prompt to save the unsaved buffer.
+        let close_all_but_multibuffer_task = pane
+            .update(cx, |pane, cx| {
+                pane.close_inactive_items(&CloseInactiveItems, cx)
+            })
+            .expect("should have inactive files to close");
+        cx.background_executor.run_until_parked();
+        assert!(
+            !cx.has_pending_prompt(),
+            "Multibuffer still has the unsaved buffer inside, so no save prompt should be shown"
+        );
+        assert!(!cx.did_prompt_for_new_path());
+        close_all_but_multibuffer_task
+            .await
+            .expect("Closing all buffers but the multibuffer failed");
+        pane.update(cx, |pane, cx| {
+            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_multibuffer_with_both.read(cx).save_count, 0);
+            assert_eq!(dirty_untitled_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_untitled_buffer.read(cx).save_as_count, 0);
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                multibuffer_with_both_files_id,
+                "Should have only the multibuffer left in the pane"
+            );
+            assert!(
+                dirty_multibuffer_with_both.read(cx).is_dirty,
+                "The multibuffer containing the unsaved buffer should still be dirty"
+            );
+        });
+
+        let close_multibuffer_task = pane
+            .update(cx, |pane, cx| {
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: Some(SaveIntent::Close),
+                    },
+                    cx,
+                )
+            })
+            .expect("should have the multibuffer to close");
+        cx.background_executor.run_until_parked();
+        assert!(
+            cx.has_pending_prompt(),
+            "Dirty multibuffer should prompt a save dialog"
+        );
+        cx.simulate_prompt_answer(0);
+        cx.background_executor.run_until_parked();
+        assert!(cx.did_prompt_for_new_path(), "Multibuffer prompt's save option should invoke the path selection for the unsaved buffer");
+        cx.simulate_new_path_selection(|_| Some(PathBuf::default()));
+        cx.background_executor.run_until_parked();
+        close_multibuffer_task
+            .await
+            .expect("Closing the multibuffer failed");
+        pane.update(cx, |pane, cx| {
+            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
+            assert_eq!(
+                dirty_multibuffer_with_both.read(cx).save_count,
+                0,
+                "Multibuffer itself should not be saved"
+            );
+            assert_eq!(
+                dirty_multibuffer_with_both.read(cx).save_as_count,
+                0,
+                "Multibuffer itself should not be saved as"
+            );
+            assert_eq!(dirty_untitled_buffer.read(cx).save_count, 0);
+            assert_eq!(
+                dirty_untitled_buffer.read(cx).save_as_count,
+                1,
+                "After the path selection, multibuffer should have been saved"
+            );
+            assert_eq!(
+                pane.items_len(),
+                0,
+                "No more items should be left in the pane"
+            );
+            assert!(pane.active_item().is_none());
+        });
+    }
+
     mod register_project_item_tests {
         use ui::Context as _;
 
