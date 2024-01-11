@@ -7677,7 +7677,6 @@ impl Editor {
                                                 scrollbar_width: cx.editor_style.scrollbar_width,
                                                 syntax: cx.editor_style.syntax.clone(),
                                                 status: cx.editor_style.status.clone(),
-                                                // todo!("what about the rest of the highlight style parts for inlays and suggestions?")
                                                 inlays_style: HighlightStyle {
                                                     color: Some(cx.theme().status().hint),
                                                     font_weight: Some(FontWeight::BOLD),
@@ -9350,7 +9349,6 @@ impl Render for Editor {
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                // todo!("what about the rest of the highlight style parts?")
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
                     font_weight: Some(FontWeight::BOLD),
