@@ -525,43 +525,4 @@ impl Render for FeedbackModal {
     }
 }
 
-// TODO: Testing of various button states, dismissal prompts, etc.
-
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-
-//     #[test]
-//     fn test_invalid_email_addresses() {
-//         let markdown = markdown.await.log_err();
-//         let buffer = project.update(&mut cx, |project, cx| {
-//             project.create_buffer("", markdown, cx)
-//         })??;
-
-//         workspace.update(&mut cx, |workspace, cx| {
-//             let system_specs = SystemSpecs::new(cx);
-
-//             workspace.toggle_modal(cx, move |cx| {
-//                 let feedback_modal = FeedbackModal::new(system_specs, project, buffer, cx);
-
-//                 assert!(!feedback_modal.can_submit());
-//                 assert!(!feedback_modal.valid_email_address(cx));
-//                 assert!(!feedback_modal.valid_character_count());
-
-//                 feedback_modal
-//                     .email_address_editor
-//                     .update(cx, |this, cx| this.set_text("a", cx));
-//                 feedback_modal.set_submission_state(cx);
-
-//                 assert!(!feedback_modal.valid_email_address(cx));
-
-//                 feedback_modal
-//                     .email_address_editor
-//                     .update(cx, |this, cx| this.set_text("a&b.com", cx));
-//                 feedback_modal.set_submission_state(cx);
-
-//                 assert!(feedback_modal.valid_email_address(cx));
-//             });
-//         })?;
-//     }
-// }
+// TODO: Testing of various button states, dismissal prompts, etc. :)

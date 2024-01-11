@@ -1906,7 +1906,8 @@ impl<'a> WindowContext<'a> {
             .platform_window
             .on_should_close(Box::new(move || {
                 this.update(|_, cx| {
-                    // Ensure that the window is removed from the app if it's been closed.
+                    // Ensure that the window is removed from the app if it's been closed
+                    // by always pre-empting the system close event.
                     if f(cx) {
                         cx.remove_window();
                     }
