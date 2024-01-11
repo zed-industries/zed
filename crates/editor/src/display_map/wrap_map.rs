@@ -1053,7 +1053,7 @@ mod tests {
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let font = font("Helvetica");
-        let _font_id = text_system.font_id(&font).unwrap();
+        let _font_id = text_system.font_id(&font);
         let font_size = px(14.0);
 
         log::info!("Tab size: {}", tab_size);
@@ -1080,7 +1080,7 @@ mod tests {
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size).unwrap();
+        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
