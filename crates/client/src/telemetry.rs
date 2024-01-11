@@ -407,7 +407,7 @@ impl Telemetry {
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
 
-        if let (Some((start, end)), Some(environment)) = period_data {
+        if let Some((start, end, environment)) = period_data {
             let event = Event::Edit {
                 duration: end.timestamp_millis() - start.timestamp_millis(),
                 environment,
