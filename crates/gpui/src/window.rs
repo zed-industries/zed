@@ -361,7 +361,7 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    fn reuse_views(&mut self, prev_frame: &mut Self) {
+    fn finish(&mut self, prev_frame: &mut Self) {
         // Reuse mouse listeners that didn't change since the last frame.
         for (type_id, listeners) in &mut prev_frame.mouse_listeners {
             let next_listeners = self.mouse_listeners.entry(*type_id).or_default();
@@ -390,6 +390,7 @@ impl Frame {
         // Reuse geometry that didn't change since the last frame.
         self.scene
             .reuse_views(&self.reused_views, &mut prev_frame.scene);
+        self.scene.finish();
     }
 }
 
@@ -1532,13 +1533,12 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        self.window
-            .next_frame
-            .reuse_views(&mut self.window.rendered_frame);
-        self.window.next_frame.scene.finish();
         self.window.layout_engine.as_mut().unwrap().clear();
         self.text_system()
-            .end_frame(&self.window.next_frame.reused_views);
+            .finish_frame(&self.window.next_frame.reused_views);
+        self.window
+            .next_frame
+            .finish(&mut self.window.rendered_frame);
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
         self.window.refreshing = false;

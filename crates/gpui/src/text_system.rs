@@ -364,12 +364,8 @@ impl TextSystem {
         Ok(lines)
     }
 
-    pub fn start_frame(&self) {
-        self.line_layout_cache.start_frame();
-    }
-
-    pub fn end_frame(&self, reused_views: &FxHashSet<EntityId>) {
-        self.line_layout_cache.end_frame(reused_views)
+    pub fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
+        self.line_layout_cache.finish_frame(reused_views)
     }
 
     pub fn line_wrapper(

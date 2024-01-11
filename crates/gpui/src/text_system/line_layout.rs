@@ -256,7 +256,7 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn end_frame(&self, reused_views: &FxHashSet<EntityId>) {
+    pub fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
         debug_assert_eq!(self.view_stack.lock().len(), 0);
 
         let mut prev_frame = self.previous_frame.lock();
