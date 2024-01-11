@@ -1225,7 +1225,12 @@ impl Room {
         };
 
         self.client.send(proto::UnshareProject { project_id })?;
-        project.update(cx, |this, cx| this.unshare(cx))
+        project.update(cx, |this, cx| this.unshare(cx))?;
+
+        if self.local_participant.active_project == Some(project.downgrade()) {
+            self.set_location(Some(&project), cx).detach_and_log_err(cx);
+        }
+        Ok(())
     }
 
     pub(crate) fn set_location(
