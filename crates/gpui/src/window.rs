@@ -1942,13 +1942,12 @@ impl<'a> WindowContext<'a> {
         focus_handle: Option<FocusHandle>,
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
-        let parent_view_id = self.parent_view_id();
         let window = &mut self.window;
         let focus_id = focus_handle.as_ref().map(|handle| handle.id);
         window
             .next_frame
             .dispatch_tree
-            .push_node(context.clone(), focus_id, parent_view_id);
+            .push_node(context.clone(), focus_id, None);
 
         let result = f(focus_handle, self);
 
@@ -1966,6 +1965,18 @@ impl<'a> WindowContext<'a> {
         let result = f(self);
         self.window.next_frame.view_stack.pop();
         result
+    }
+
+    pub(crate) fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_view_id(view_id, |cx| {
+            cx.window
+                .next_frame
+                .dispatch_tree
+                .push_node(None, None, Some(view_id));
+            let result = f(cx);
+            cx.window.next_frame.dispatch_tree.pop_node();
+            result
+        })
     }
 
     /// Update or initialize state for an element with the given id that lives across multiple

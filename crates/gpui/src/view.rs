@@ -97,7 +97,7 @@ impl<V: Render> Element for View<V> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
-        cx.with_view_id(self.entity_id(), |cx| element.take().unwrap().paint(cx));
+        cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
     }
 }
 
@@ -230,7 +230,7 @@ impl AnyView {
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
     ) {
-        cx.with_view_id(self.entity_id(), |cx| {
+        cx.paint_view(self.entity_id(), |cx| {
             cx.with_absolute_element_offset(origin, |cx| {
                 let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
                 cx.compute_layout(layout_id, available_space);
@@ -278,7 +278,7 @@ impl Element for AnyView {
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        cx.with_view_id(self.entity_id(), |cx| {
+        cx.paint_view(self.entity_id(), |cx| {
             if !self.cache {
                 state.element.take().unwrap().paint(cx);
                 return;

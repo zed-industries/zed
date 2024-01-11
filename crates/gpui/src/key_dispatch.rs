@@ -73,15 +73,6 @@ impl DispatchTree {
         focus_id: Option<FocusId>,
         view_id: Option<EntityId>,
     ) {
-        // Associate a view id to this only if it is the root node for the view.
-        let view_id = view_id.and_then(|view_id| {
-            if self.view_node_ids.contains_key(&view_id) {
-                None
-            } else {
-                Some(view_id)
-            }
-        });
-
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
