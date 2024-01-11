@@ -1429,9 +1429,6 @@ impl<'a> WindowContext<'a> {
             self.platform.set_cursor_style(cursor_style);
         }
 
-        self.window.drawing = false;
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
-
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
         {
@@ -1459,6 +1456,9 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
+
+        self.window.drawing = false;
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
         scene
     }
