@@ -60,14 +60,6 @@ jobs:
             DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
             DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
         steps:
-            - name: Install Rust
-              run: |
-                  rustup set profile minimal
-                  rustup update stable
-                  rustup target add aarch64-apple-darwin
-                  rustup target add x86_64-apple-darwin
-                  rustup target add wasm32-wasi
-
             - name: Install Node
               uses: actions/setup-node@v3
               with:
