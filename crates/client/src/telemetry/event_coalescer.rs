@@ -22,7 +22,7 @@ impl EventCoalescer {
     pub fn log_event(
         &mut self,
         environment: &'static str,
-    ) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    ) -> (Option<(DateTime<Utc>, DateTime<Utc>)>, Option<&'static str>) {
         self.log_event_with_time(Utc::now(), environment)
     }
 
@@ -34,13 +34,13 @@ impl EventCoalescer {
         &mut self,
         log_time: DateTime<Utc>,
         environment: &'static str,
-    ) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    ) -> (Option<(DateTime<Utc>, DateTime<Utc>)>, Option<&'static str>) {
         let coalesce_timeout = Duration::from_std(COALESCE_TIMEOUT).unwrap();
 
         let Some(period_start) = self.period_start else {
             self.period_start = Some(log_time);
             self.environment = Some(environment);
-            return None;
+            return (None, self.environment);
         };
 
         let period_end = self
@@ -51,18 +51,24 @@ impl EventCoalescer {
         let should_coaelesce = !within_timeout || !environment_is_same;
 
         if should_coaelesce {
+            let previous_environment = self.environment;
+
             self.period_start = Some(log_time);
             self.period_end = None;
             self.environment = Some(environment);
-            return Some((
-                period_start,
-                if within_timeout { log_time } else { period_end },
-            ));
+
+            return (
+                Some((
+                    period_start,
+                    if within_timeout { log_time } else { period_end },
+                )),
+                previous_environment,
+            );
         }
 
         self.period_end = Some(log_time);
 
-        None
+        (None, self.environment)
     }
 }
 
@@ -82,9 +88,9 @@ mod tests {
         assert_eq!(event_coalescer.environment, None);
 
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
-        let coalesced_duration = event_coalescer.log_event_with_time(period_start, environment_1);
+        let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(coalesced_duration, None);
+        assert_eq!(period_data, (None, Some(environment_1)));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -95,9 +101,9 @@ mod tests {
         // Ensure that many calls within the timeout don't start a new period
         for _ in 0..100 {
             period_end += within_timeout_adjustment;
-            let coalesced_duration = event_coalescer.log_event_with_time(period_end, environment_1);
+            let period_data = event_coalescer.log_event_with_time(period_end, environment_1);
 
-            assert_eq!(coalesced_duration, None);
+            assert_eq!(period_data, (None, Some(environment_1)));
             assert_eq!(event_coalescer.period_start, Some(period_start));
             assert_eq!(event_coalescer.period_end, Some(period_end));
             assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -106,10 +112,12 @@ mod tests {
         let exceed_timeout_adjustment = Duration::from_std(COALESCE_TIMEOUT * 2).unwrap();
         // Logging an event exceeding the timeout should start a new period
         let new_period_start = period_end + exceed_timeout_adjustment;
-        let coalesced_duration =
-            event_coalescer.log_event_with_time(new_period_start, environment_1);
+        let period_data = event_coalescer.log_event_with_time(new_period_start, environment_1);
 
-        assert_eq!(coalesced_duration, Some((period_start, period_end)));
+        assert_eq!(
+            period_data,
+            (Some((period_start, period_end)), Some(environment_1))
+        );
         assert_eq!(event_coalescer.period_start, Some(new_period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -125,18 +133,18 @@ mod tests {
         assert_eq!(event_coalescer.environment, None);
 
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
-        let coalesced_duration = event_coalescer.log_event_with_time(period_start, environment_1);
+        let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(coalesced_duration, None);
+        assert_eq!(period_data, (None, Some(environment_1)));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
 
         let within_timeout_adjustment = Duration::from_std(COALESCE_TIMEOUT / 2).unwrap();
         let period_end = period_start + within_timeout_adjustment;
-        let coalesced_duration = event_coalescer.log_event_with_time(period_end, environment_1);
+        let period_data = event_coalescer.log_event_with_time(period_end, environment_1);
 
-        assert_eq!(coalesced_duration, None);
+        assert_eq!(period_data, (None, Some(environment_1)));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, Some(period_end));
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -144,9 +152,12 @@ mod tests {
         // Logging an event within the timeout but with a different environment should start a new period
         let period_end = period_end + within_timeout_adjustment;
         let environment_2 = "environment_2";
-        let coalesced_duration = event_coalescer.log_event_with_time(period_end, environment_2);
+        let period_data = event_coalescer.log_event_with_time(period_end, environment_2);
 
-        assert_eq!(coalesced_duration, Some((period_start, period_end)));
+        assert_eq!(
+            period_data,
+            (Some((period_start, period_end)), Some(environment_1))
+        );
         assert_eq!(event_coalescer.period_start, Some(period_end));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_2));
@@ -162,9 +173,9 @@ mod tests {
         assert_eq!(event_coalescer.environment, None);
 
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
-        let coalesced_duration = event_coalescer.log_event_with_time(period_start, environment_1);
+        let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(coalesced_duration, None);
+        assert_eq!(period_data, (None, Some(environment_1)));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -172,9 +183,12 @@ mod tests {
         let within_timeout_adjustment = Duration::from_std(COALESCE_TIMEOUT / 2).unwrap();
         let period_end = period_start + within_timeout_adjustment;
         let environment_2 = "environment_2";
-        let coalesced_duration = event_coalescer.log_event_with_time(period_end, environment_2);
+        let period_data = event_coalescer.log_event_with_time(period_end, environment_2);
 
-        assert_eq!(coalesced_duration, Some((period_start, period_end)));
+        assert_eq!(
+            period_data,
+            (Some((period_start, period_end)), Some(environment_1))
+        );
         assert_eq!(event_coalescer.period_start, Some(period_end));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_2));
@@ -196,9 +210,9 @@ mod tests {
         assert_eq!(event_coalescer.environment, None);
 
         let period_start = Utc.with_ymd_and_hms(1990, 4, 12, 0, 0, 0).unwrap();
-        let coalesced_duration = event_coalescer.log_event_with_time(period_start, environment_1);
+        let period_data = event_coalescer.log_event_with_time(period_start, environment_1);
 
-        assert_eq!(coalesced_duration, None);
+        assert_eq!(period_data, (None, Some(environment_1)));
         assert_eq!(event_coalescer.period_start, Some(period_start));
         assert_eq!(event_coalescer.period_end, None);
         assert_eq!(event_coalescer.environment, Some(environment_1));
@@ -206,14 +220,17 @@ mod tests {
         let exceed_timeout_adjustment = Duration::from_std(COALESCE_TIMEOUT * 2).unwrap();
         let period_end = period_start + exceed_timeout_adjustment;
         let environment_2 = "environment_2";
-        let coalesced_duration = event_coalescer.log_event_with_time(period_end, environment_2);
+        let period_data = event_coalescer.log_event_with_time(period_end, environment_2);
 
         assert_eq!(
-            coalesced_duration,
-            Some((
-                period_start,
-                period_start + SIMULATED_DURATION_FOR_SINGLE_EVENT
-            ))
+            period_data,
+            (
+                Some((
+                    period_start,
+                    period_start + SIMULATED_DURATION_FOR_SINGLE_EVENT
+                )),
+                Some(environment_1)
+            )
         );
         assert_eq!(event_coalescer.period_start, Some(period_end));
         assert_eq!(event_coalescer.period_end, None);
