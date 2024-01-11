@@ -167,8 +167,8 @@ impl PlatformWindow for TestWindow {
         self.0.lock().input_handler = Some(input_handler);
     }
 
-    fn clear_input_handler(&mut self) {
-        self.0.lock().input_handler = None;
+    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>> {
+        self.0.lock().input_handler.take()
     }
 
     fn prompt(

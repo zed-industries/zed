@@ -145,7 +145,7 @@ pub trait PlatformWindow {
     fn modifiers(&self) -> Modifiers;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
-    fn clear_input_handler(&mut self);
+    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>>;
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);

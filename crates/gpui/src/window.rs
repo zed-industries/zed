@@ -296,6 +296,11 @@ pub(crate) struct ElementStateBox {
     type_name: &'static str,
 }
 
+struct RequestedInputHandler {
+    view_id: EntityId,
+    handler: Option<Box<dyn PlatformInputHandler>>,
+}
+
 pub(crate) struct Frame {
     focus: Option<FocusId>,
     window_active: bool,
@@ -308,6 +313,7 @@ pub(crate) struct Frame {
     pub(crate) next_stacking_order_id: u32,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
+    requested_input_handler: Option<RequestedInputHandler>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
 }
@@ -323,9 +329,10 @@ impl Frame {
             scene: Scene::default(),
             z_index_stack: StackingOrder::default(),
             next_stacking_order_id: 0,
-            depth_map: Default::default(),
+            depth_map: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            requested_input_handler: None,
             view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
         }
@@ -947,7 +954,7 @@ impl<'a> WindowContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
         let order = self.window.next_frame.z_index_stack.clone();
         self.window
             .next_frame
@@ -1036,7 +1043,7 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
         let stacking_order = self.window.next_frame.z_index_stack.clone();
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
         self.window
             .next_frame
             .depth_map
@@ -1093,7 +1100,7 @@ impl<'a> WindowContext<'a> {
     ) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
         let window = &mut *self.window;
         for shadow in shadows {
             let mut shadow_bounds = bounds;
@@ -1121,7 +1128,7 @@ impl<'a> WindowContext<'a> {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1144,7 +1151,7 @@ impl<'a> WindowContext<'a> {
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
 
         path.content_mask = content_mask;
         path.color = color.into();
@@ -1174,7 +1181,7 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1231,7 +1238,7 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id().unwrap();
+            let view_id = self.parent_view_id();
             let window = &mut *self.window;
             window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
@@ -1284,7 +1291,7 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id().unwrap();
+            let view_id = self.parent_view_id();
             let window = &mut *self.window;
 
             window.next_frame.scene.insert(
@@ -1329,7 +1336,7 @@ impl<'a> WindowContext<'a> {
                     Ok((params.size, Cow::Owned(bytes)))
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1368,7 +1375,7 @@ impl<'a> WindowContext<'a> {
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
         window.next_frame.scene.insert(
@@ -1392,7 +1399,7 @@ impl<'a> WindowContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id().unwrap();
+        let view_id = self.parent_view_id();
         let window = &mut *self.window;
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
@@ -1408,14 +1415,27 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn reuse_view(&mut self) {
-        let view_id = self.parent_view_id().unwrap();
-        let window = &mut self.window;
-        let grafted_view_ids = window
+        let view_id = self.parent_view_id();
+        let grafted_view_ids = self
+            .window
             .next_frame
             .dispatch_tree
-            .graft(view_id, &mut window.rendered_frame.dispatch_tree);
+            .graft(view_id, &mut self.window.rendered_frame.dispatch_tree);
         for view_id in grafted_view_ids {
-            assert!(window.next_frame.reused_views.insert(view_id));
+            assert!(self.window.next_frame.reused_views.insert(view_id));
+
+            // Reuse the previous input handler if it was associated with one of
+            // the views grafted from the tree in the previous frame.
+            if self
+                .window
+                .rendered_frame
+                .requested_input_handler
+                .as_ref()
+                .map_or(false, |requested| requested.view_id == view_id)
+            {
+                self.window.next_frame.requested_input_handler =
+                    self.window.rendered_frame.requested_input_handler.take();
+            }
         }
     }
 
@@ -1430,7 +1450,11 @@ impl<'a> WindowContext<'a> {
         }
 
         self.text_system().start_frame();
-        self.window.platform_window.clear_input_handler();
+        if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
+        {
+            requested_handler.handler = self.window.platform_window.take_input_handler();
+        }
+
         self.window.layout_engine.as_mut().unwrap().clear();
         self.window.next_frame.clear();
         let root_view = self.window.root_view.take().unwrap();
@@ -1485,6 +1509,13 @@ impl<'a> WindowContext<'a> {
             .next_frame
             .reuse_views(&mut self.window.rendered_frame);
         self.window.next_frame.scene.finish();
+
+        // Register requested input handler with the platform window.
+        if let Some(requested_input) = self.window.next_frame.requested_input_handler.as_mut() {
+            if let Some(handler) = requested_input.handler.take() {
+                self.window.platform_window.set_input_handler(handler);
+            }
+        }
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;
@@ -2054,7 +2085,7 @@ impl<'a> WindowContext<'a> {
                 result
             } else {
                 let (result, state) = f(None, cx);
-                let parent_view_id = cx.parent_view_id().unwrap();
+                let parent_view_id = cx.parent_view_id();
                 cx.window_mut()
                     .next_frame
                     .element_states
@@ -2072,8 +2103,13 @@ impl<'a> WindowContext<'a> {
         })
     }
 
-    fn parent_view_id(&self) -> Option<EntityId> {
-        self.window.next_frame.view_stack.last().copied()
+    fn parent_view_id(&self) -> EntityId {
+        *self
+            .window
+            .next_frame
+            .view_stack
+            .last()
+            .expect("a view should always be on the stack while drawing")
     }
 
     /// Set an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
@@ -2087,9 +2123,11 @@ impl<'a> WindowContext<'a> {
         input_handler: impl PlatformInputHandler,
     ) {
         if focus_handle.is_focused(self) {
-            self.window
-                .platform_window
-                .set_input_handler(Box::new(input_handler));
+            let view_id = self.parent_view_id();
+            self.window.next_frame.requested_input_handler = Some(RequestedInputHandler {
+                view_id,
+                handler: Some(Box::new(input_handler)),
+            })
         }
     }
 
