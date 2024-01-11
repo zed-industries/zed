@@ -3,23 +3,21 @@ use fuzzy::StringMatchCandidate;
 use gpui::{IntoElement, SharedString, ViewContext, WindowContext};
 use std::marker::PhantomData;
 
-impl<I, R, E> Picker<FuzzyPickerDelegate<I, R, E>>
+impl<I, E> Picker<FuzzyPickerDelegate<I, E>>
 where
     I: 'static + Clone,
-    R: 'static
-        + Fn(usize, bool, &mut ViewContext<'_, Picker<FuzzyPickerDelegate<I, R, E>>>) -> Option<E>,
     E: 'static + IntoElement,
 {
     pub fn fuzzy(
         items: Vec<FuzzyPickerItem<I>>,
-        cx: &mut ViewContext<Picker<FuzzyPickerDelegate<I, R, E>>>,
-        render_match: R,
+        cx: &mut ViewContext<Picker<FuzzyPickerDelegate<I, E>>>,
+        render_match: impl 'static + Fn(usize, bool, &mut ViewContext<Self>) -> E,
     ) -> Self {
         Self::new(
             FuzzyPickerDelegate {
                 items: items.clone(),
                 matches: items,
-                render_item: render_match,
+                render_match: Box::new(render_match),
                 item_element_type: PhantomData,
                 selected_index: 0,
                 placeholder_text: None,
@@ -49,10 +47,15 @@ where
     }
 }
 
-pub struct FuzzyPickerDelegate<I: Clone, R, E> {
+pub struct FuzzyPickerDelegate<I, E>
+where
+    I: 'static + Clone,
+    E: 'static + IntoElement,
+{
     items: Vec<FuzzyPickerItem<I>>,
     matches: Vec<FuzzyPickerItem<I>>,
-    render_item: R,
+    render_match:
+        Box<dyn Fn(usize, bool, &mut ViewContext<'_, Picker<FuzzyPickerDelegate<I, E>>>) -> E>,
     item_element_type: PhantomData<E>,
     selected_index: usize,
     placeholder_text: Option<SharedString>,
@@ -62,14 +65,13 @@ pub struct FuzzyPickerDelegate<I: Clone, R, E> {
 
 #[derive(Clone)]
 pub struct FuzzyPickerItem<I: Clone> {
-    name: SharedString,
-    id: I,
+    pub name: SharedString,
+    pub id: I,
 }
 
-impl<I, R, E> PickerDelegate for FuzzyPickerDelegate<I, R, E>
+impl<I, E> PickerDelegate for FuzzyPickerDelegate<I, E>
 where
     I: 'static + Clone,
-    R: 'static + Fn(usize, bool, &mut ViewContext<Picker<Self>>) -> Option<E>,
     E: 'static + IntoElement,
 {
     type ListItem = E;
@@ -152,6 +154,6 @@ where
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        (self.render_item)(ix, selected, cx)
+        Some((self.render_match)(ix, selected, cx))
     }
 }

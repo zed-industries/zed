@@ -1,4 +1,5 @@
 mod support;
+use picker::*;
 use support::*;
 
 // Today, I want to walk through building a tiny subset of Zed's interface in the latest version of our UI framework, [GPUI](https://gpui.rs).
@@ -37,6 +38,7 @@ pub struct Project {
     id: ProjectId,
 }
 
+#[derive(Clone)]
 pub struct ProjectId(u64);
 
 // As I mentioned earlier, in order to derive `IntoElement` on a type, that type must implement `RenderOnce`.
@@ -106,15 +108,29 @@ impl RenderOnce for Titlebar {
 
 impl RenderOnce for ProjectMenuButton {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        // PopoverMenu::new("project-menu")
-        //     .trigger(
-        //         Button::new("project-menu-button", self.current.name)
-        //             .style(ButtonStyle::Subtle)
-        //             .label_size(LabelSize::Small)
-        //             .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-        //     )
-        //     .menu(|_| todo!())
-        // .menu(|cx| Picker::simple(self.recent, cx)) // TODO: Build an easier picker we can just supply with data.
+        PopoverMenu::new("project-menu")
+            .trigger(
+                Button::new("project-menu-button", self.current.name)
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::Small)
+                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
+            )
+            .menu(move |cx| {
+                Some(cx.new_view(|cx| {
+                    Picker::fuzzy(
+                        self.recent
+                            .iter()
+                            .map(|project| FuzzyPickerItem {
+                                id: project.id.clone(),
+                                name: project.name.clone(),
+                            })
+                            .collect(),
+                        cx,
+                        |_, _, _| div(),
+                    )
+                }))
+            })
+        // TODO: Build an easier picker we can just supply with data.
     }
 }
 

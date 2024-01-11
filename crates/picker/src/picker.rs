@@ -1,4 +1,5 @@
 mod fuzzy_picker;
+pub use fuzzy_picker::*;
 
 use editor::Editor;
 use gpui::{
