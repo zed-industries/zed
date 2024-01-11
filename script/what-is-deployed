@@ -4,15 +4,10 @@ set -eu
 source script/lib/deploy-helpers.sh
 
 if [[ $# < 1 ]]; then
-  echo "Usage: $0 <production|staging|preview> (nightly is not yet supported)"
+  echo "Usage: $0 <production|preview|nightly|staging>"
   exit 1
 fi
 environment=$1
-
-if [[ ${environment} == "nightly" ]]; then
-  echo "nightly is not yet supported"
-  exit 1
-fi
 
 export_vars_for_environment ${environment}
 target_zed_kube_cluster

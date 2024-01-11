@@ -87,10 +87,14 @@ This means that when releasing a new version of Zed that has changes to the RPC 
 
 1. This script will make local changes only, and print out a shell command that you can use to push the branch and tag.
 1. Pushing the new tag will trigger a CI build that, when finished will upload a new versioned docker image to the DigitalOcean docker registry.
-1. Once that CI job completes, you will be able to run the following command to deploy that docker image. The script takes two arguments: an environment (`production`, `preview`, or `staging`), and a version number (e.g. `0.10.1`).
+1. If needing a migration:
+   - First check that the migration is valid. The database serves both preview and stable simultaneously, so new columns need to have defaults and old tables or columns can't be dropped.
+   - Then use `script/deploy-migration` <release channel> <version number> (production, staging, preview, nightly). ex: `script/deploy-migration preview 0.19.0`
+    - If there is an 'Error: container is waiting to start', you can review logs manually with: `kubectl --namespace <enviroment> logs <pod name>` to make sure the mgiration ran successfully.
+1. Once that CI job completes, you will be able to run the following command to deploy that docker image. The script takes two arguments: an environment (`production`, `preview`, or `staging`), and a version number (e.g. `0.10.1`):
 
-   ```
-   script/deploy preview 0.10.1
-   ```
+```
+script/deploy preview 0.10.1
+```
 
 1. This command should complete quickly, updating the given environment to use the given version number of the `collab` server.
