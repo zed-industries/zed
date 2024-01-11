@@ -2269,11 +2269,9 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        let jump_handler = cx.listener_for(&self.editor, move |editor, _, cx| {
+                        cx.listener_for(&self.editor, move |editor, _, cx| {
                             editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
-                        });
-
-                        jump_handler
+                        })
                     });
 
                     let element = if *starts_new_buffer {
@@ -2353,34 +2351,25 @@ impl EditorElement {
                                     .text_color(cx.theme().colors().editor_line_number)
                                     .child("..."),
                             )
-                            .map(|this| {
-                                if let Some(jump_handler) = jump_handler {
-                                    this.child(
-                                        ButtonLike::new("jump to collapsed context")
-                                            .style(ButtonStyle::Transparent)
-                                            .full_width()
-                                            .on_click(jump_handler)
-                                            .tooltip(|cx| {
-                                                Tooltip::for_action(
-                                                    "Jump to Buffer",
-                                                    &OpenExcerpts,
-                                                    cx,
-                                                )
-                                            })
-                                            .child(
-                                                div()
-                                                    .h_px()
-                                                    .w_full()
-                                                    .bg(cx.theme().colors().border_variant)
-                                                    .group_hover("", |style| {
-                                                        style.bg(cx.theme().colors().border)
-                                                    }),
-                                            ),
+                            .child(
+                                ButtonLike::new("jump to collapsed context")
+                                    .style(ButtonStyle::Transparent)
+                                    .full_width()
+                                    .child(
+                                        div()
+                                            .h_px()
+                                            .w_full()
+                                            .bg(cx.theme().colors().border_variant)
+                                            .group_hover("", |style| {
+                                                style.bg(cx.theme().colors().border)
+                                            }),
                                     )
-                                } else {
-                                    this.child(div().size_full().bg(gpui::green()))
-                                }
-                            })
+                                    .when_some(jump_handler, |this, jump_handler| {
+                                        this.on_click(jump_handler).tooltip(|cx| {
+                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
+                                        })
+                                    }),
+                            )
                     };
                     element.into_any()
                 }
