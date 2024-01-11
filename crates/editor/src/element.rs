@@ -809,13 +809,18 @@ impl EditorElement {
             // the hunk might include the rows of that header.
             // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
             // Instead, we simply check whether the range we're dealing with includes
-            // any custom elements and if so, we stop painting the diff hunk on the first row of that custom element.
+            // any excerpt headers and if so, we stop painting the diff hunk on the first row of that header.
             let end_row_in_current_excerpt = layout
                 .position_map
                 .snapshot
                 .blocks_in_range(start_row..end_row)
-                .next()
-                .map(|(start_row, _)| start_row)
+                .find_map(|(start_row, block)| {
+                    if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                        Some(start_row)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(end_row);
 
             let start_y = start_row as f32 * line_height - scroll_top;
@@ -878,16 +883,23 @@ impl EditorElement {
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
                 cx.with_element_id(Some("folds"), |cx| {
                     let snapshot = &layout.position_map.snapshot;
+
                     for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
                         let fold_range = fold.range.clone();
                         let display_range = fold.range.start.to_display_point(&snapshot)
                             ..fold.range.end.to_display_point(&snapshot);
                         debug_assert_eq!(display_range.start.row(), display_range.end.row());
                         let row = display_range.start.row();
+                        debug_assert!(row < layout.visible_display_row_range.end);
+                        let Some(line_layout) = &layout
+                            .position_map
+                            .line_layouts
+                            .get((row - layout.visible_display_row_range.start) as usize)
+                            .map(|l| &l.line)
+                        else {
+                            continue;
+                        };
 
-                        let line_layout = &layout.position_map.line_layouts
-                            [(row - layout.visible_display_row_range.start) as usize]
-                            .line;
                         let start_x = content_origin.x
                             + line_layout.x_for_index(display_range.start.column() as usize)
                             - layout.position_map.scroll_position.x;
@@ -1010,7 +1022,6 @@ impl EditorElement {
                                         .chars_at(cursor_position)
                                         .next()
                                         .and_then(|(character, _)| {
-                                            // todo!() currently shape_line panics if text conatins newlines
                                             let text = if character == '\n' {
                                                 SharedString::from(" ")
                                             } else {

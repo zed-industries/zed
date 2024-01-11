@@ -2,13 +2,13 @@ use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     link_go_to_definition::{InlayHighlight, RangeInEditor},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
-    ExcerptId, RangeToAnchorExt,
+    ExcerptId, Hover, RangeToAnchorExt,
 };
 use futures::FutureExt;
 use gpui::{
-    actions, div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, Model,
-    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
-    Task, ViewContext, WeakView,
+    div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
+    ViewContext, WeakView,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 
@@ -26,8 +26,6 @@ pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
-
-actions!(editor, [Hover]);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {

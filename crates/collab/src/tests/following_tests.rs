@@ -1,5 +1,5 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
-use call::ActiveCall;
+use call::{ActiveCall, ParticipantLocation};
 use collab_ui::notifications::project_shared_notification::ProjectSharedNotification;
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
@@ -1569,6 +1569,59 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 }
 
 #[gpui::test]
+async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let (client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+
+    let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
+    client_a
+        .host_workspace(&workspace_a, channel_id, cx_a)
+        .await;
+    let (workspace_b, cx_b) = client_b.join_workspace(channel_id, cx_b).await;
+
+    cx_a.simulate_keystrokes("cmd-p 2 enter");
+    cx_a.run_until_parked();
+
+    let editor_a = workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx).unwrap()
+    });
+    let editor_b = workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx).unwrap()
+    });
+
+    // b should follow a to position 1
+    editor_a.update(cx_a, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([1..1]))
+    });
+    cx_a.run_until_parked();
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.selections.ranges(cx), vec![1..1])
+    });
+
+    // a unshares the project
+    cx_a.update(|cx| {
+        let project = workspace_a.read(cx).project().clone();
+        ActiveCall::global(cx).update(cx, |call, cx| {
+            call.unshare_project(project, cx).unwrap();
+        })
+    });
+    cx_a.run_until_parked();
+
+    // b should not follow a to position 2
+    editor_a.update(cx_a, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([2..2]))
+    });
+    cx_a.run_until_parked();
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.selections.ranges(cx), vec![1..1])
+    });
+    cx_b.update(|cx| {
+        let room = ActiveCall::global(cx).read(cx).room().unwrap().read(cx);
+        let participant = room.remote_participants().get(&client_a.id()).unwrap();
+        assert_eq!(participant.location, ParticipantLocation::UnsharedProject)
+    })
+}
+
+#[gpui::test]
 async fn test_following_into_excluded_file(
     mut cx_a: &mut TestAppContext,
     mut cx_b: &mut TestAppContext,
@@ -1592,9 +1645,6 @@ async fn test_following_into_excluded_file(
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
     let peer_id_a = client_a.peer_id().unwrap();
-
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     client_a
         .fs()

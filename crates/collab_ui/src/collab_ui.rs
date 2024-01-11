@@ -111,7 +111,6 @@ fn notification_window_options(
     let screen_bounds = screen.bounds();
     let size: Size<GlobalPixels> = window_size.into();
 
-    // todo!() use content bounds instead of screen.bounds and get rid of magics in point's 2nd argument.
     let bounds = gpui::Bounds::<GlobalPixels> {
         origin: screen_bounds.upper_right()
             - point(

@@ -1429,9 +1429,6 @@ impl<'a> WindowContext<'a> {
             self.platform.set_cursor_style(cursor_style);
         }
 
-        self.window.drawing = false;
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
-
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
         {
@@ -1459,6 +1456,9 @@ impl<'a> WindowContext<'a> {
                 .clone()
                 .retain(&(), |listener| listener(&event, self));
         }
+
+        self.window.drawing = false;
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
         scene
     }
@@ -1904,7 +1904,17 @@ impl<'a> WindowContext<'a> {
         let mut this = self.to_async();
         self.window
             .platform_window
-            .on_should_close(Box::new(move || this.update(|_, cx| f(cx)).unwrap_or(true)))
+            .on_should_close(Box::new(move || {
+                this.update(|_, cx| {
+                    // Ensure that the window is removed from the app if it's been closed
+                    // by always pre-empting the system close event.
+                    if f(cx) {
+                        cx.remove_window();
+                    }
+                    false
+                })
+                .unwrap_or(true)
+            }))
     }
 }
 

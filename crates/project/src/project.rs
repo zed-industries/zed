@@ -130,7 +130,7 @@ pub struct Project {
     next_diagnostic_group_id: usize,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
-    client_state: Option<ProjectClientState>,
+    client_state: ProjectClientState,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -254,8 +254,10 @@ enum WorktreeHandle {
     Weak(WeakModel<Worktree>),
 }
 
+#[derive(Debug)]
 enum ProjectClientState {
-    Local {
+    Local,
+    Shared {
         remote_id: u64,
         updates_tx: mpsc::UnboundedSender<LocalProjectUpdate>,
         _send_updates: Task<Result<()>>,
@@ -657,7 +659,7 @@ impl Project {
                 local_buffer_ids_by_entry_id: Default::default(),
                 buffer_snapshots: Default::default(),
                 join_project_response_message_id: 0,
-                client_state: None,
+                client_state: ProjectClientState::Local,
                 opened_buffer: watch::channel(),
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
@@ -756,12 +758,12 @@ impl Project {
                     cx.on_app_quit(Self::shutdown_language_servers),
                 ],
                 client: client.clone(),
-                client_state: Some(ProjectClientState::Remote {
+                client_state: ProjectClientState::Remote {
                     sharing_has_stopped: false,
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
-                }),
+                },
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
@@ -828,16 +830,16 @@ impl Project {
 
     fn release(&mut self, cx: &mut AppContext) {
         match &self.client_state {
-            Some(ProjectClientState::Local { .. }) => {
+            ProjectClientState::Local => {}
+            ProjectClientState::Shared { .. } => {
                 let _ = self.unshare_internal(cx);
             }
-            Some(ProjectClientState::Remote { remote_id, .. }) => {
+            ProjectClientState::Remote { remote_id, .. } => {
                 let _ = self.client.send(proto::LeaveProject {
                     project_id: *remote_id,
                 });
                 self.disconnected_from_host_internal(cx);
             }
-            _ => {}
         }
     }
 
@@ -1058,21 +1060,22 @@ impl Project {
     }
 
     pub fn remote_id(&self) -> Option<u64> {
-        match self.client_state.as_ref()? {
-            ProjectClientState::Local { remote_id, .. }
-            | ProjectClientState::Remote { remote_id, .. } => Some(*remote_id),
+        match self.client_state {
+            ProjectClientState::Local => None,
+            ProjectClientState::Shared { remote_id, .. }
+            | ProjectClientState::Remote { remote_id, .. } => Some(remote_id),
         }
     }
 
     pub fn replica_id(&self) -> ReplicaId {
-        match &self.client_state {
-            Some(ProjectClientState::Remote { replica_id, .. }) => *replica_id,
+        match self.client_state {
+            ProjectClientState::Remote { replica_id, .. } => replica_id,
             _ => 0,
         }
     }
 
     fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(ProjectClientState::Local { updates_tx, .. }) = &mut self.client_state {
+        if let ProjectClientState::Shared { updates_tx, .. } = &mut self.client_state {
             updates_tx
                 .unbounded_send(LocalProjectUpdate::WorktreesChanged)
                 .ok();
@@ -1362,7 +1365,7 @@ impl Project {
     }
 
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
-        if self.client_state.is_some() {
+        if !matches!(self.client_state, ProjectClientState::Local) {
             return Err(anyhow!("project was already shared"));
         }
         self.client_subscriptions.push(
@@ -1423,7 +1426,7 @@ impl Project {
 
         let (updates_tx, mut updates_rx) = mpsc::unbounded();
         let client = self.client.clone();
-        self.client_state = Some(ProjectClientState::Local {
+        self.client_state = ProjectClientState::Shared {
             remote_id: project_id,
             updates_tx,
             _send_updates: cx.spawn(move |this, mut cx| async move {
@@ -1508,7 +1511,7 @@ impl Project {
                 }
                 Ok(())
             }),
-        });
+        };
 
         self.metadata_changed(cx);
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
@@ -1578,7 +1581,8 @@ impl Project {
             return Err(anyhow!("attempted to unshare a remote project"));
         }
 
-        if let Some(ProjectClientState::Local { remote_id, .. }) = self.client_state.take() {
+        if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
+            self.client_state = ProjectClientState::Local;
             self.collaborators.clear();
             self.shared_buffers.clear();
             self.client_subscriptions.clear();
@@ -1629,23 +1633,23 @@ impl Project {
             } else {
                 Capability::ReadOnly
             };
-        if let Some(ProjectClientState::Remote { capability, .. }) = &mut self.client_state {
+        if let ProjectClientState::Remote { capability, .. } = &mut self.client_state {
             if *capability == new_capability {
                 return;
             }
 
             *capability = new_capability;
-        }
-        for buffer in self.opened_buffers() {
-            buffer.update(cx, |buffer, cx| buffer.set_capability(new_capability, cx));
+            for buffer in self.opened_buffers() {
+                buffer.update(cx, |buffer, cx| buffer.set_capability(new_capability, cx));
+            }
         }
     }
 
     fn disconnected_from_host_internal(&mut self, cx: &mut AppContext) {
-        if let Some(ProjectClientState::Remote {
+        if let ProjectClientState::Remote {
             sharing_has_stopped,
             ..
-        }) = &mut self.client_state
+        } = &mut self.client_state
         {
             *sharing_has_stopped = true;
 
@@ -1684,18 +1688,18 @@ impl Project {
 
     pub fn is_disconnected(&self) -> bool {
         match &self.client_state {
-            Some(ProjectClientState::Remote {
+            ProjectClientState::Remote {
                 sharing_has_stopped,
                 ..
-            }) => *sharing_has_stopped,
+            } => *sharing_has_stopped,
             _ => false,
         }
     }
 
     pub fn capability(&self) -> Capability {
         match &self.client_state {
-            Some(ProjectClientState::Remote { capability, .. }) => *capability,
-            Some(ProjectClientState::Local { .. }) | None => Capability::ReadWrite,
+            ProjectClientState::Remote { capability, .. } => *capability,
+            ProjectClientState::Shared { .. } | ProjectClientState::Local => Capability::ReadWrite,
         }
     }
 
@@ -1705,8 +1709,8 @@ impl Project {
 
     pub fn is_local(&self) -> bool {
         match &self.client_state {
-            Some(ProjectClientState::Remote { .. }) => false,
-            _ => true,
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Remote { .. } => false,
         }
     }
 
@@ -6165,8 +6169,8 @@ impl Project {
 
     pub fn is_shared(&self) -> bool {
         match &self.client_state {
-            Some(ProjectClientState::Local { .. }) => true,
-            _ => false,
+            ProjectClientState::Shared { .. } => true,
+            ProjectClientState::Local | ProjectClientState::Remote { .. } => false,
         }
     }
 
@@ -7954,7 +7958,7 @@ impl Project {
         cx: &mut AppContext,
     ) -> u64 {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(ProjectClientState::Local { updates_tx, .. }) = &self.client_state {
+        if let ProjectClientState::Shared { updates_tx, .. } = &self.client_state {
             updates_tx
                 .unbounded_send(LocalProjectUpdate::CreateBufferForPeer { peer_id, buffer_id })
                 .ok();
@@ -8003,21 +8007,21 @@ impl Project {
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let project_id = match self.client_state.as_ref() {
-            Some(ProjectClientState::Remote {
+        let project_id = match self.client_state {
+            ProjectClientState::Remote {
                 sharing_has_stopped,
                 remote_id,
                 ..
-            }) => {
-                if *sharing_has_stopped {
+            } => {
+                if sharing_has_stopped {
                     return Task::ready(Err(anyhow!(
                         "can't synchronize remote buffers on a readonly project"
                     )));
                 } else {
-                    *remote_id
+                    remote_id
                 }
             }
-            Some(ProjectClientState::Local { .. }) | None => {
+            ProjectClientState::Shared { .. } | ProjectClientState::Local => {
                 return Task::ready(Err(anyhow!(
                     "can't synchronize remote buffers on a local project"
                 )))

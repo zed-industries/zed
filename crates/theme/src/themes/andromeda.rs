@@ -69,7 +69,7 @@ pub fn andromeda() -> UserThemeFamily {
                     editor_highlighted_line_background: Some(rgba(0x21242bff).into()),
                     editor_line_number: Some(rgba(0xf7f7f859).into()),
                     editor_active_line_number: Some(rgba(0xf7f7f8ff).into()),
-                    editor_invisible: Some(rgba(0xaca8aeff).into()),
+                    editor_invisible: Some(rgba(0x64646dff).into()),
                     editor_wrap_guide: Some(rgba(0xf7f7f80d).into()),
                     editor_active_wrap_guide: Some(rgba(0xf7f7f81a).into()),
                     editor_document_highlight_read_background: Some(rgba(0x11a7931a).into()),

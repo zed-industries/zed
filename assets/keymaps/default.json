@@ -412,7 +412,8 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
-      "cmd-k m": "language_selector::Toggle"
+      "cmd-k m": "language_selector::Toggle",
+      "escape": "workspace::Unfollow"
     }
   },
   // Bindings from Sublime Text

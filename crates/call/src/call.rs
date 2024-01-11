@@ -239,7 +239,8 @@ impl ActiveCall {
             if result.is_ok() {
                 this.update(&mut cx, |this, cx| this.report_call_event("invite", cx))?;
             } else {
-                // TODO: Resport collaboration error
+                //TODO: report collaboration error
+                log::error!("invite failed: {:?}", result);
             }
 
             this.update(&mut cx, |this, cx| {
@@ -282,7 +283,7 @@ impl ActiveCall {
             return Task::ready(Err(anyhow!("cannot join while on another call")));
         }
 
-        let call = if let Some(call) = self.incoming_call.1.borrow().clone() {
+        let call = if let Some(call) = self.incoming_call.0.borrow_mut().take() {
             call
         } else {
             return Task::ready(Err(anyhow!("no incoming call")));

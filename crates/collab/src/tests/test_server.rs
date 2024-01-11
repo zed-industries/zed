@@ -113,6 +113,20 @@ impl TestServer {
         }
     }
 
+    pub async fn start2(
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) -> (TestClient, TestClient, u64) {
+        let mut server = Self::start(cx_a.executor()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        let channel_id = server
+            .make_channel("a", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
+            .await;
+
+        (client_a, client_b, channel_id)
+    }
+
     pub async fn reset(&self) {
         self.app_state.db.reset();
         let epoch = self
@@ -619,12 +633,47 @@ impl TestClient {
                 "/a",
                 json!({
                     "1.txt": "one\none\none",
-                    "2.txt": "two\ntwo\ntwo",
-                    "3.txt": "three\nthree\nthree",
+                    "2.js": "function two() { return 2; }",
+                    "3.rs": "mod test",
                 }),
             )
             .await;
         self.build_local_project("/a", cx).await.0
+    }
+
+    pub async fn host_workspace(
+        &self,
+        workspace: &View<Workspace>,
+        channel_id: u64,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|cx| {
+            let active_call = ActiveCall::global(cx);
+            active_call.update(cx, |call, cx| call.join_channel(channel_id, cx))
+        })
+        .await
+        .unwrap();
+        cx.update(|cx| {
+            let active_call = ActiveCall::global(cx);
+            let project = workspace.read(cx).project().clone();
+            active_call.update(cx, |call, cx| call.share_project(project, cx))
+        })
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+    }
+
+    pub async fn join_workspace<'a>(
+        &'a self,
+        channel_id: u64,
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        self.active_workspace(cx)
     }
 
     pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> Model<Project> {
@@ -664,6 +713,17 @@ impl TestClient {
         project: &Model<Project>,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        cx.add_window_view(|cx| {
+            cx.activate_window();
+            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+        })
+    }
+
+    pub async fn build_test_workspace<'a>(
+        &'a self,
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        let project = self.build_test_project(cx).await;
         cx.add_window_view(|cx| {
             cx.activate_window();
             Workspace::new(0, project.clone(), self.app_state.clone(), cx)

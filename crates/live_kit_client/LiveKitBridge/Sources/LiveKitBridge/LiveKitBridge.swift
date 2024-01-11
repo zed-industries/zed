@@ -12,6 +12,8 @@ class LKRoomDelegate: RoomDelegate {
     var onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void
     var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void
     var onDidUnsubscribeFromRemoteVideoTrack: @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
+    var onDidPublishOrUnpublishLocalAudioTrack: @convention(c) (UnsafeRawPointer, UnsafeRawPointer, Bool) -> Void
+    var onDidPublishOrUnpublishLocalVideoTrack: @convention(c) (UnsafeRawPointer, UnsafeRawPointer, Bool) -> Void
 
     init(
         data: UnsafeRawPointer,
@@ -21,7 +23,10 @@ class LKRoomDelegate: RoomDelegate {
         onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
         onActiveSpeakersChanged: @convention(c) (UnsafeRawPointer, CFArray) -> Void,
         onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
-        onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void)
+        onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
+        onDidPublishOrUnpublishLocalAudioTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer, Bool) -> Void,
+        onDidPublishOrUnpublishLocalVideoTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer, Bool) -> Void
+    )
     {
         self.data = data
         self.onDidDisconnect = onDidDisconnect
@@ -31,6 +36,8 @@ class LKRoomDelegate: RoomDelegate {
         self.onDidUnsubscribeFromRemoteVideoTrack = onDidUnsubscribeFromRemoteVideoTrack
         self.onMuteChangedFromRemoteAudioTrack = onMuteChangedFromRemoteAudioTrack
         self.onActiveSpeakersChanged = onActiveSpeakersChanged
+        self.onDidPublishOrUnpublishLocalAudioTrack = onDidPublishOrUnpublishLocalAudioTrack
+        self.onDidPublishOrUnpublishLocalVideoTrack = onDidPublishOrUnpublishLocalVideoTrack
     }
 
     func room(_ room: Room, didUpdate connectionState: ConnectionState, oldValue: ConnectionState) {
@@ -63,6 +70,22 @@ class LKRoomDelegate: RoomDelegate {
             self.onDidUnsubscribeFromRemoteVideoTrack(self.data, participant.identity as CFString, track.sid! as CFString)
         } else if track.kind == .audio {
             self.onDidUnsubscribeFromRemoteAudioTrack(self.data, participant.identity as CFString, track.sid! as CFString)
+        }
+    }
+
+    func room(_ room: Room, localParticipant: LocalParticipant, didPublish publication: LocalTrackPublication) {
+        if publication.kind == .video {
+            self.onDidPublishOrUnpublishLocalVideoTrack(self.data, Unmanaged.passUnretained(publication).toOpaque(), true)
+        } else if publication.kind == .audio {
+            self.onDidPublishOrUnpublishLocalAudioTrack(self.data, Unmanaged.passUnretained(publication).toOpaque(), true)
+        }
+    }
+
+    func room(_ room: Room, localParticipant: LocalParticipant, didUnpublish publication: LocalTrackPublication) {
+        if publication.kind == .video {
+            self.onDidPublishOrUnpublishLocalVideoTrack(self.data, Unmanaged.passUnretained(publication).toOpaque(), false)
+        } else if publication.kind == .audio {
+            self.onDidPublishOrUnpublishLocalAudioTrack(self.data, Unmanaged.passUnretained(publication).toOpaque(), false)
         }
     }
 }
@@ -109,7 +132,9 @@ public func LKRoomDelegateCreate(
     onMuteChangedFromRemoteAudioTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, Bool) -> Void,
     onActiveSpeakerChanged: @escaping @convention(c) (UnsafeRawPointer, CFArray) -> Void,
     onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString, UnsafeRawPointer) -> Void,
-    onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void
+    onDidUnsubscribeFromRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, CFString, CFString) -> Void,
+    onDidPublishOrUnpublishLocalAudioTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer, Bool) -> Void,
+    onDidPublishOrUnpublishLocalVideoTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer, Bool) -> Void
 ) -> UnsafeMutableRawPointer {
     let delegate = LKRoomDelegate(
         data: data,
@@ -119,7 +144,9 @@ public func LKRoomDelegateCreate(
         onMuteChangedFromRemoteAudioTrack: onMuteChangedFromRemoteAudioTrack,
         onActiveSpeakersChanged: onActiveSpeakerChanged,
         onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack,
-        onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack
+        onDidUnsubscribeFromRemoteVideoTrack: onDidUnsubscribeFromRemoteVideoTrack,
+        onDidPublishOrUnpublishLocalAudioTrack: onDidPublishOrUnpublishLocalAudioTrack,
+        onDidPublishOrUnpublishLocalVideoTrack: onDidPublishOrUnpublishLocalVideoTrack
     )
     return Unmanaged.passRetained(delegate).toOpaque()
 }
@@ -292,6 +319,14 @@ public func LKLocalTrackPublicationSetMute(
     }
 }
 
+@_cdecl("LKLocalTrackPublicationIsMuted")
+public func LKLocalTrackPublicationIsMuted(
+    publication: UnsafeRawPointer
+) -> Bool {
+    let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+    return publication.muted
+}
+
 @_cdecl("LKRemoteTrackPublicationSetEnabled")
 public func LKRemoteTrackPublicationSetEnabled(
     publication: UnsafeRawPointer,
@@ -322,6 +357,15 @@ public func LKRemoteTrackPublicationGetSid(
     publication: UnsafeRawPointer
 ) -> CFString {
     let publication = Unmanaged<RemoteTrackPublication>.fromOpaque(publication).takeUnretainedValue()
+
+    return publication.sid as CFString
+}
+
+@_cdecl("LKLocalTrackPublicationGetSid")
+public func LKLocalTrackPublicationGetSid(
+    publication: UnsafeRawPointer
+) -> CFString {
+    let publication = Unmanaged<LocalTrackPublication>.fromOpaque(publication).takeUnretainedValue()
 
     return publication.sid as CFString
 }
