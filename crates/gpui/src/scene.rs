@@ -13,6 +13,30 @@ pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 pub type LayerId = u32;
 pub type DrawOrder = u32;
 
+#[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(C)]
+pub struct ViewId {
+    low_bits: u32,
+    high_bits: u32,
+}
+
+impl From<EntityId> for ViewId {
+    fn from(value: EntityId) -> Self {
+        let value = value.as_u64();
+        Self {
+            low_bits: value as u32,
+            high_bits: (value >> 32) as u32,
+        }
+    }
+}
+
+impl From<ViewId> for EntityId {
+    fn from(value: ViewId) -> Self {
+        let value = (value.low_bits as u64) | ((value.high_bits as u64) << 32);
+        value.into()
+    }
+}
+
 #[derive(Default)]
 pub struct Scene {
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
@@ -127,49 +151,49 @@ impl Scene {
 
     pub fn reuse_views(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
         for shadow in prev_scene.shadows.drain(..) {
-            if views.contains(&EntityId::from(shadow.view_id as u64)) {
+            if views.contains(&shadow.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&shadow.layer_id];
                 self.insert(&order, shadow);
             }
         }
 
         for quad in prev_scene.quads.drain(..) {
-            if views.contains(&EntityId::from(quad.view_id as u64)) {
+            if views.contains(&quad.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&quad.layer_id];
                 self.insert(&order, quad);
             }
         }
 
         for path in prev_scene.paths.drain(..) {
-            if views.contains(&EntityId::from(path.view_id as u64)) {
+            if views.contains(&path.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&path.layer_id];
                 self.insert(&order, path);
             }
         }
 
         for underline in prev_scene.underlines.drain(..) {
-            if views.contains(&EntityId::from(underline.view_id as u64)) {
+            if views.contains(&underline.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&underline.layer_id];
                 self.insert(&order, underline);
             }
         }
 
         for sprite in prev_scene.monochrome_sprites.drain(..) {
-            if views.contains(&EntityId::from(sprite.view_id as u64)) {
+            if views.contains(&sprite.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&sprite.layer_id];
                 self.insert(&order, sprite);
             }
         }
 
         for sprite in prev_scene.polychrome_sprites.drain(..) {
-            if views.contains(&EntityId::from(sprite.view_id as u64)) {
+            if views.contains(&sprite.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&sprite.layer_id];
                 self.insert(&order, sprite);
             }
         }
 
         for surface in prev_scene.surfaces.drain(..) {
-            if views.contains(&EntityId::from(surface.view_id as u64)) {
+            if views.contains(&surface.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&surface.layer_id];
                 self.insert(&order, surface);
             }
@@ -470,7 +494,7 @@ pub(crate) enum PrimitiveBatch<'a> {
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct Quad {
-    pub view_id: u32,
+    pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
@@ -502,7 +526,7 @@ impl From<Quad> for Primitive {
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct Underline {
-    pub view_id: u32,
+    pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
@@ -533,7 +557,7 @@ impl From<Underline> for Primitive {
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct Shadow {
-    pub view_id: u32,
+    pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
@@ -564,7 +588,7 @@ impl From<Shadow> for Primitive {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct MonochromeSprite {
-    pub view_id: u32,
+    pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
@@ -597,7 +621,7 @@ impl From<MonochromeSprite> for Primitive {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct PolychromeSprite {
-    pub view_id: u32,
+    pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
@@ -630,7 +654,7 @@ impl From<PolychromeSprite> for Primitive {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Surface {
-    pub view_id: u32,
+    pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
@@ -662,7 +686,7 @@ pub(crate) struct PathId(pub(crate) usize);
 #[derive(Debug)]
 pub struct Path<P: Clone + Default + Debug> {
     pub(crate) id: PathId,
-    pub(crate) view_id: u32,
+    pub(crate) view_id: ViewId,
     layer_id: LayerId,
     order: DrawOrder,
     pub(crate) bounds: Bounds<P>,
@@ -678,9 +702,9 @@ impl Path<Pixels> {
     pub fn new(start: Point<Pixels>) -> Self {
         Self {
             id: PathId(0),
-            view_id: 0,
-            layer_id: 0,
-            order: 0,
+            view_id: ViewId::default(),
+            layer_id: LayerId::default(),
+            order: DrawOrder::default(),
             vertices: Vec::new(),
             start,
             current: start,

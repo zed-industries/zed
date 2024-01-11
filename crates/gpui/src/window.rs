@@ -1102,7 +1102,7 @@ impl<'a> WindowContext<'a> {
             window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 Shadow {
-                    view_id: view_id.as_u64() as u32,
+                    view_id: view_id.into(),
                     layer_id: 0,
                     order: 0,
                     bounds: shadow_bounds.scale(scale_factor),
@@ -1127,7 +1127,7 @@ impl<'a> WindowContext<'a> {
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Quad {
-                view_id: view_id.as_u64() as u32,
+                view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,
                 bounds: quad.bounds.scale(scale_factor),
@@ -1148,7 +1148,7 @@ impl<'a> WindowContext<'a> {
 
         path.content_mask = content_mask;
         path.color = color.into();
-        path.view_id = view_id.as_u64() as u32;
+        path.view_id = view_id.into();
         let window = &mut *self.window;
         window
             .next_frame
@@ -1180,7 +1180,7 @@ impl<'a> WindowContext<'a> {
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Underline {
-                view_id: view_id.as_u64() as u32,
+                view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -1236,7 +1236,7 @@ impl<'a> WindowContext<'a> {
             window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 MonochromeSprite {
-                    view_id: view_id.as_u64() as u32,
+                    view_id: view_id.into(),
                     layer_id: 0,
                     order: 0,
                     bounds,
@@ -1290,7 +1290,7 @@ impl<'a> WindowContext<'a> {
             window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 PolychromeSprite {
-                    view_id: view_id.as_u64() as u32,
+                    view_id: view_id.into(),
                     layer_id: 0,
                     order: 0,
                     bounds,
@@ -1335,7 +1335,7 @@ impl<'a> WindowContext<'a> {
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             MonochromeSprite {
-                view_id: view_id.as_u64() as u32,
+                view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,
                 bounds,
@@ -1374,7 +1374,7 @@ impl<'a> WindowContext<'a> {
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             PolychromeSprite {
-                view_id: view_id.as_u64() as u32,
+                view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,
                 bounds,
@@ -1397,7 +1397,7 @@ impl<'a> WindowContext<'a> {
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Surface {
-                view_id: view_id.as_u64() as u32,
+                view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,
                 bounds,
