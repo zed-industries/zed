@@ -1180,7 +1180,7 @@ impl Database {
             .await?;
 
         let room_id = if let Some(room) = room {
-            if let Some(env) = room.enviroment {
+            if let Some(env) = room.environment {
                 if &env != environment {
                     Err(anyhow!("must join using the {} release", env))?;
                 }
@@ -1190,7 +1190,7 @@ impl Database {
             let result = room::Entity::insert(room::ActiveModel {
                 channel_id: ActiveValue::Set(Some(channel_id)),
                 live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
-                enviroment: ActiveValue::Set(Some(environment.to_string())),
+                environment: ActiveValue::Set(Some(environment.to_string())),
                 ..Default::default()
             })
             .exec(&*tx)

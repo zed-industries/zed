@@ -28,7 +28,7 @@ use gpui::{
     AnchorCorner, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners,
     CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Hsla, InteractiveBounds,
     InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollWheelEvent, ShapedLine,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
     SharedString, Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun,
     TextStyle, View, ViewContext, WindowContext,
 };
@@ -581,41 +581,6 @@ impl EditorElement {
         }
     }
 
-    fn scroll(
-        editor: &mut Editor,
-        event: &ScrollWheelEvent,
-        position_map: &PositionMap,
-        bounds: &InteractiveBounds,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        if !bounds.visibly_contains(&event.position, cx) {
-            return;
-        }
-
-        let line_height = position_map.line_height;
-        let max_glyph_width = position_map.em_width;
-        let (delta, axis) = match event.delta {
-            gpui::ScrollDelta::Pixels(mut pixels) => {
-                //Trackpad
-                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
-                (pixels, axis)
-            }
-
-            gpui::ScrollDelta::Lines(lines) => {
-                //Not trackpad
-                let pixels = point(lines.x * max_glyph_width, lines.y * line_height);
-                (pixels, None)
-            }
-        };
-
-        let scroll_position = position_map.snapshot.scroll_position();
-        let x = f32::from((scroll_position.x * max_glyph_width - delta.x) / max_glyph_width);
-        let y = f32::from((scroll_position.y * line_height - delta.y) / line_height);
-        let scroll_position = point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
-        editor.scroll(scroll_position, axis, cx);
-        cx.stop_propagation();
-    }
-
     fn paint_background(
         &self,
         gutter_bounds: Bounds<Pixels>,
@@ -839,9 +804,27 @@ impl EditorElement {
 
             let start_row = display_row_range.start;
             let end_row = display_row_range.end;
+            // If we're in a multibuffer, row range span might include an
+            // excerpt header, so if we were to draw the marker straight away,
+            // the hunk might include the rows of that header.
+            // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
+            // Instead, we simply check whether the range we're dealing with includes
+            // any excerpt headers and if so, we stop painting the diff hunk on the first row of that header.
+            let end_row_in_current_excerpt = layout
+                .position_map
+                .snapshot
+                .blocks_in_range(start_row..end_row)
+                .find_map(|(start_row, block)| {
+                    if matches!(block, TransformBlock::ExcerptHeader { .. }) {
+                        Some(start_row)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(end_row);
 
             let start_y = start_row as f32 * line_height - scroll_top;
-            let end_y = end_row as f32 * line_height - scroll_top;
+            let end_y = end_row_in_current_excerpt as f32 * line_height - scroll_top;
 
             let width = 0.275 * line_height;
             let highlight_origin = bounds.origin + point(-width, start_y);
@@ -900,16 +883,23 @@ impl EditorElement {
                 let fold_corner_radius = 0.15 * layout.position_map.line_height;
                 cx.with_element_id(Some("folds"), |cx| {
                     let snapshot = &layout.position_map.snapshot;
+
                     for fold in snapshot.folds_in_range(layout.visible_anchor_range.clone()) {
                         let fold_range = fold.range.clone();
                         let display_range = fold.range.start.to_display_point(&snapshot)
                             ..fold.range.end.to_display_point(&snapshot);
                         debug_assert_eq!(display_range.start.row(), display_range.end.row());
                         let row = display_range.start.row();
+                        debug_assert!(row < layout.visible_display_row_range.end);
+                        let Some(line_layout) = &layout
+                            .position_map
+                            .line_layouts
+                            .get((row - layout.visible_display_row_range.start) as usize)
+                            .map(|l| &l.line)
+                        else {
+                            continue;
+                        };
 
-                        let line_layout = &layout.position_map.line_layouts
-                            [(row - layout.visible_display_row_range.start) as usize]
-                            .line;
                         let start_x = content_origin.x
                             + line_layout.x_for_index(display_range.start.column() as usize)
                             - layout.position_map.scroll_position.x;
@@ -1032,7 +1022,6 @@ impl EditorElement {
                                         .chars_at(cursor_position)
                                         .next()
                                         .and_then(|(character, _)| {
-                                            // todo!() currently shape_line panics if text conatins newlines
                                             let text = if character == '\n' {
                                                 SharedString::from(" ")
                                             } else {
@@ -2280,11 +2269,9 @@ impl EditorElement {
                             .map_or(range.context.start, |primary| primary.start);
                         let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
-                        let jump_handler = cx.listener_for(&self.editor, move |editor, _, cx| {
+                        cx.listener_for(&self.editor, move |editor, _, cx| {
                             editor.jump(jump_path.clone(), jump_position, jump_anchor, cx);
-                        });
-
-                        jump_handler
+                        })
                     });
 
                     let element = if *starts_new_buffer {
@@ -2364,34 +2351,25 @@ impl EditorElement {
                                     .text_color(cx.theme().colors().editor_line_number)
                                     .child("..."),
                             )
-                            .map(|this| {
-                                if let Some(jump_handler) = jump_handler {
-                                    this.child(
-                                        ButtonLike::new("jump to collapsed context")
-                                            .style(ButtonStyle::Transparent)
-                                            .full_width()
-                                            .on_click(jump_handler)
-                                            .tooltip(|cx| {
-                                                Tooltip::for_action(
-                                                    "Jump to Buffer",
-                                                    &OpenExcerpts,
-                                                    cx,
-                                                )
-                                            })
-                                            .child(
-                                                div()
-                                                    .h_px()
-                                                    .w_full()
-                                                    .bg(cx.theme().colors().border_variant)
-                                                    .group_hover("", |style| {
-                                                        style.bg(cx.theme().colors().border)
-                                                    }),
-                                            ),
+                            .child(
+                                ButtonLike::new("jump to collapsed context")
+                                    .style(ButtonStyle::Transparent)
+                                    .full_width()
+                                    .child(
+                                        div()
+                                            .h_px()
+                                            .w_full()
+                                            .bg(cx.theme().colors().border_variant)
+                                            .group_hover("", |style| {
+                                                style.bg(cx.theme().colors().border)
+                                            }),
                                     )
-                                } else {
-                                    this.child(div().size_full().bg(gpui::green()))
-                                }
-                            })
+                                    .when_some(jump_handler, |this, jump_handler| {
+                                        this.on_click(jump_handler).tooltip(|cx| {
+                                            Tooltip::for_action("Jump to Buffer", &OpenExcerpts, cx)
+                                        })
+                                    }),
+                            )
                     };
                     element.into_any()
                 }
@@ -2450,6 +2428,64 @@ impl EditorElement {
         )
     }
 
+    fn paint_scroll_wheel_listener(
+        &mut self,
+        interactive_bounds: &InteractiveBounds,
+        layout: &LayoutState,
+        cx: &mut WindowContext,
+    ) {
+        cx.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+            let interactive_bounds = interactive_bounds.clone();
+            let mut delta = ScrollDelta::default();
+
+            move |event: &ScrollWheelEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble
+                    && interactive_bounds.visibly_contains(&event.position, cx)
+                {
+                    delta = delta.coalesce(event.delta);
+                    editor.update(cx, |editor, cx| {
+                        let position = event.position;
+                        let position_map: &PositionMap = &position_map;
+                        let bounds = &interactive_bounds;
+                        if !bounds.visibly_contains(&position, cx) {
+                            return;
+                        }
+
+                        let line_height = position_map.line_height;
+                        let max_glyph_width = position_map.em_width;
+                        let (delta, axis) = match delta {
+                            gpui::ScrollDelta::Pixels(mut pixels) => {
+                                //Trackpad
+                                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+                                (pixels, axis)
+                            }
+
+                            gpui::ScrollDelta::Lines(lines) => {
+                                //Not trackpad
+                                let pixels =
+                                    point(lines.x * max_glyph_width, lines.y * line_height);
+                                (pixels, None)
+                            }
+                        };
+
+                        let scroll_position = position_map.snapshot.scroll_position();
+                        let x = f32::from(
+                            (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width,
+                        );
+                        let y =
+                            f32::from((scroll_position.y * line_height - delta.y) / line_height);
+                        let scroll_position =
+                            point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
+                        editor.scroll(scroll_position, axis, cx);
+                        cx.stop_propagation();
+                    });
+                }
+            }
+        });
+    }
+
     fn paint_mouse_listeners(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -2463,21 +2499,7 @@ impl EditorElement {
             stacking_order: cx.stacking_order().clone(),
         };
 
-        cx.on_mouse_event({
-            let position_map = layout.position_map.clone();
-            let editor = self.editor.clone();
-            let interactive_bounds = interactive_bounds.clone();
-
-            move |event: &ScrollWheelEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
-                {
-                    editor.update(cx, |editor, cx| {
-                        Self::scroll(editor, event, &position_map, &interactive_bounds, cx)
-                    });
-                }
-            }
-        });
+        self.paint_scroll_wheel_listener(&interactive_bounds, layout, cx);
 
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();

@@ -283,3 +283,76 @@ impl DispatchTree {
         *self.node_stack.last().unwrap()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{rc::Rc, sync::Arc};
+
+    use parking_lot::Mutex;
+
+    use crate::{Action, ActionRegistry, DispatchTree, KeyBinding, KeyContext, Keymap};
+
+    #[derive(PartialEq, Eq)]
+    struct TestAction;
+
+    impl Action for TestAction {
+        fn name(&self) -> &'static str {
+            "test::TestAction"
+        }
+
+        fn debug_name() -> &'static str
+        where
+            Self: ::std::marker::Sized,
+        {
+            "test::TestAction"
+        }
+
+        fn partial_eq(&self, action: &dyn Action) -> bool {
+            action
+                .as_any()
+                .downcast_ref::<Self>()
+                .map_or(false, |a| self == a)
+        }
+
+        fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {
+            Box::new(TestAction)
+        }
+
+        fn as_any(&self) -> &dyn ::std::any::Any {
+            self
+        }
+
+        fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>
+        where
+            Self: Sized,
+        {
+            Ok(Box::new(TestAction))
+        }
+    }
+
+    #[test]
+    fn test_keybinding_for_action_bounds() {
+        let keymap = Keymap::new(vec![KeyBinding::new(
+            "cmd-n",
+            TestAction,
+            Some("ProjectPanel"),
+        )]);
+
+        let mut registry = ActionRegistry::default();
+
+        registry.load_action::<TestAction>();
+
+        let keymap = Arc::new(Mutex::new(keymap));
+
+        let tree = DispatchTree::new(keymap, Rc::new(registry));
+
+        let contexts = vec![
+            KeyContext::parse("Workspace").unwrap(),
+            KeyContext::parse("ProjectPanel").unwrap(),
+        ];
+
+        let keybinding = tree.bindings_for_action(&TestAction, &contexts);
+
+        assert!(keybinding[0].action.partial_eq(&TestAction))
+    }
+}

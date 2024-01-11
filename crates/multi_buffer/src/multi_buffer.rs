@@ -80,6 +80,7 @@ pub enum Event {
     Reloaded,
     DiffBaseChanged,
     LanguageChanged,
+    CapabilityChanged,
     Reparsed,
     Saved,
     FileHandleChanged,
@@ -1404,7 +1405,7 @@ impl MultiBuffer {
 
     fn on_buffer_event(
         &mut self,
-        _: Model<Buffer>,
+        buffer: Model<Buffer>,
         event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1421,6 +1422,10 @@ impl MultiBuffer {
             language::Event::Reparsed => Event::Reparsed,
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             language::Event::Closed => Event::Closed,
+            language::Event::CapabilityChanged => {
+                self.capability = buffer.read(cx).capability();
+                Event::CapabilityChanged
+            }
 
             //
             language::Event::Operation(_) => return,

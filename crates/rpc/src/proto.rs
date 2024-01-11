@@ -283,6 +283,7 @@ messages!(
     (UsersResponse, Foreground),
     (LspExtExpandMacro, Background),
     (LspExtExpandMacroResponse, Background),
+    (SetRoomParticipantRole, Foreground),
 );
 
 request_messages!(
@@ -367,6 +368,7 @@ request_messages!(
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
+    (SetRoomParticipantRole, Ack),
 );
 
 entity_messages!(

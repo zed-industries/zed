@@ -132,7 +132,7 @@ else
     cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
 fi
 
-#todo!(The app identifier has been set to 'Dev', but the channel is nightly, RATIONALIZE ALL OF THIS MESS)
+# Note: The app identifier for our development builds is the same as the app identifier for nightly.
 cp crates/${zed_crate}/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then

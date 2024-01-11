@@ -112,7 +112,7 @@ impl Database {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
                 live_kit_room: ActiveValue::set(live_kit_room.into()),
-                enviroment: ActiveValue::set(Some(release_channel.to_string())),
+                environment: ActiveValue::set(Some(release_channel.to_string())),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -299,28 +299,28 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
-        enviroment: &str,
+        environment: &str,
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelIdAndEnviroment {
+            enum QueryChannelIdAndEnvironment {
                 ChannelId,
-                Enviroment,
+                Environment,
             }
 
             let (channel_id, release_channel): (Option<ChannelId>, Option<String>) =
                 room::Entity::find()
                     .select_only()
                     .column(room::Column::ChannelId)
-                    .column(room::Column::Enviroment)
+                    .column(room::Column::Environment)
                     .filter(room::Column::Id.eq(room_id))
-                    .into_values::<_, QueryChannelIdAndEnviroment>()
+                    .into_values::<_, QueryChannelIdAndEnvironment>()
                     .one(&*tx)
                     .await?
                     .ok_or_else(|| anyhow!("no such room"))?;
 
             if let Some(release_channel) = release_channel {
-                if &release_channel != enviroment {
+                if &release_channel != environment {
                     Err(anyhow!("must join using the {} release", release_channel))?;
                 }
             }
@@ -1000,6 +1000,46 @@ impl Database {
             } else {
                 Err(anyhow!("could not update room participant location"))?
             }
+        })
+        .await
+    }
+
+    pub async fn set_room_participant_role(
+        &self,
+        admin_id: UserId,
+        room_id: RoomId,
+        user_id: UserId,
+        role: ChannelRole,
+    ) -> Result<RoomGuard<proto::Room>> {
+        self.room_transaction(room_id, |tx| async move {
+            room_participant::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(admin_id))
+                        .add(room_participant::Column::Role.eq(ChannelRole::Admin)),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("only admins can set participant role"))?;
+
+            let result = room_participant::Entity::update_many()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(user_id)),
+                )
+                .set(room_participant::ActiveModel {
+                    role: ActiveValue::set(Some(ChannelRole::from(role))),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+
+            if result.rows_affected != 1 {
+                Err(anyhow!("could not update room participant role"))?;
+            }
+            Ok(self.get_room(room_id, &tx).await?)
         })
         .await
     }

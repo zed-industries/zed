@@ -53,6 +53,25 @@ async fn main() -> Result<()> {
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
 
+            if config.is_development() {
+                // sanity check database url so even if we deploy a busted ZED_ENVIRONMENT to production
+                // we do not run
+                if config.database_url != "postgres://postgres@localhost/zed" {
+                    panic!("about to run development migrations on a non-development database?")
+                }
+                let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
+                let db_options = db::ConnectOptions::new(config.database_url.clone());
+                let db = Database::new(db_options, Executor::Production).await?;
+
+                let migrations = db.migrate(&migrations_path, false).await?;
+                for (migration, duration) in migrations {
+                    println!(
+                        "Ran {} {} {:?}",
+                        migration.version, migration.description, duration
+                    );
+                }
+            }
+
             let state = AppState::new(config).await?;
 
             let listener = TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))

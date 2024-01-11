@@ -39,6 +39,7 @@ impl<M: ManagedView> RightClickMenu<M> {
     }
 }
 
+/// Creates a [`RightClickMenu`]
 pub fn right_click_menu<M: ManagedView>(id: impl Into<ElementId>) -> RightClickMenu<M> {
     RightClickMenu {
         id: id.into(),

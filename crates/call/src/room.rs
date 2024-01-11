@@ -15,10 +15,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task, WeakModel,
 };
 use language::LanguageRegistry;
-use live_kit_client::{
-    LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrackUpdate,
-    RemoteVideoTrackUpdate,
-};
+use live_kit_client::{LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RoomUpdate};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
@@ -131,11 +128,11 @@ impl Room {
                 }
             });
 
-            let _maintain_video_tracks = cx.spawn({
+            let _handle_updates = cx.spawn({
                 let room = room.clone();
                 move |this, mut cx| async move {
-                    let mut track_video_changes = room.remote_video_track_updates();
-                    while let Some(track_change) = track_video_changes.next().await {
+                    let mut updates = room.updates();
+                    while let Some(update) = updates.next().await {
                         let this = if let Some(this) = this.upgrade() {
                             this
                         } else {
@@ -143,26 +140,7 @@ impl Room {
                         };
 
                         this.update(&mut cx, |this, cx| {
-                            this.remote_video_track_updated(track_change, cx).log_err()
-                        })
-                        .ok();
-                    }
-                }
-            });
-
-            let _maintain_audio_tracks = cx.spawn({
-                let room = room.clone();
-                |this, mut cx| async move {
-                    let mut track_audio_changes = room.remote_audio_track_updates();
-                    while let Some(track_change) = track_audio_changes.next().await {
-                        let this = if let Some(this) = this.upgrade() {
-                            this
-                        } else {
-                            break;
-                        };
-
-                        this.update(&mut cx, |this, cx| {
-                            this.remote_audio_track_updated(track_change, cx).log_err()
+                            this.live_kit_room_updated(update, cx).log_err()
                         })
                         .ok();
                     }
@@ -173,7 +151,11 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
 
-                if !cx.update(|cx| Self::mute_on_join(cx))? {
+                let is_read_only = this
+                    .update(&mut cx, |room, _| room.read_only())
+                    .unwrap_or(true);
+
+                if !cx.update(|cx| Self::mute_on_join(cx))? && !is_read_only {
                     this.update(&mut cx, |this, cx| this.share_microphone(cx))?
                         .await?;
                 }
@@ -191,7 +173,7 @@ impl Room {
                 deafened: false,
                 speaking: false,
                 _maintain_room,
-                _maintain_tracks: [_maintain_video_tracks, _maintain_audio_tracks],
+                _handle_updates,
             })
         } else {
             None
@@ -620,6 +602,27 @@ impl Room {
         self.local_participant.role == proto::ChannelRole::Admin
     }
 
+    pub fn set_participant_role(
+        &mut self,
+        user_id: u64,
+        role: proto::ChannelRole,
+        cx: &ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let room_id = self.id;
+        let role = role.into();
+        cx.spawn(|_, _| async move {
+            client
+                .request(proto::SetRoomParticipantRole {
+                    room_id,
+                    user_id,
+                    role,
+                })
+                .await
+                .map(|_| ())
+        })
+    }
+
     pub fn pending_participants(&self) -> &[Arc<User>] {
         &self.pending_participants
     }
@@ -729,9 +732,21 @@ impl Room {
                     if this.local_participant.role != role {
                         this.local_participant.role = role;
 
+                        if role == proto::ChannelRole::Guest {
+                            for project in mem::take(&mut this.shared_projects) {
+                                if let Some(project) = project.upgrade() {
+                                    this.unshare_project(project, cx).log_err();
+                                }
+                            }
+                            this.local_participant.projects.clear();
+                            if let Some(live_kit_room) = &mut this.live_kit {
+                                live_kit_room.stop_publishing(cx);
+                            }
+                        }
+
                         this.joined_projects.retain(|project| {
                             if let Some(project) = project.upgrade() {
-                                project.update(cx, |project, _| project.set_role(role));
+                                project.update(cx, |project, cx| project.set_role(role, cx));
                                 true
                             } else {
                                 false
@@ -840,8 +855,8 @@ impl Room {
                                     .remote_audio_track_publications(&user.id.to_string());
 
                                 for track in video_tracks {
-                                    this.remote_video_track_updated(
-                                        RemoteVideoTrackUpdate::Subscribed(track),
+                                    this.live_kit_room_updated(
+                                        RoomUpdate::SubscribedToRemoteVideoTrack(track),
                                         cx,
                                     )
                                     .log_err();
@@ -850,8 +865,8 @@ impl Room {
                                 for (track, publication) in
                                     audio_tracks.iter().zip(publications.iter())
                                 {
-                                    this.remote_audio_track_updated(
-                                        RemoteAudioTrackUpdate::Subscribed(
+                                    this.live_kit_room_updated(
+                                        RoomUpdate::SubscribedToRemoteAudioTrack(
                                             track.clone(),
                                             publication.clone(),
                                         ),
@@ -942,13 +957,13 @@ impl Room {
         }
     }
 
-    fn remote_video_track_updated(
+    fn live_kit_room_updated(
         &mut self,
-        change: RemoteVideoTrackUpdate,
+        update: RoomUpdate,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        match change {
-            RemoteVideoTrackUpdate::Subscribed(track) => {
+        match update {
+            RoomUpdate::SubscribedToRemoteVideoTrack(track) => {
                 let user_id = track.publisher_id().parse()?;
                 let track_id = track.sid().to_string();
                 let participant = self
@@ -960,7 +975,8 @@ impl Room {
                     participant_id: participant.peer_id,
                 });
             }
-            RemoteVideoTrackUpdate::Unsubscribed {
+
+            RoomUpdate::UnsubscribedFromRemoteVideoTrack {
                 publisher_id,
                 track_id,
             } => {
@@ -974,19 +990,8 @@ impl Room {
                     participant_id: participant.peer_id,
                 });
             }
-        }
 
-        cx.notify();
-        Ok(())
-    }
-
-    fn remote_audio_track_updated(
-        &mut self,
-        change: RemoteAudioTrackUpdate,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        match change {
-            RemoteAudioTrackUpdate::ActiveSpeakersChanged { speakers } => {
+            RoomUpdate::ActiveSpeakersChanged { speakers } => {
                 let mut speaker_ids = speakers
                     .into_iter()
                     .filter_map(|speaker_sid| speaker_sid.parse().ok())
@@ -1008,9 +1013,9 @@ impl Room {
                         }
                     }
                 }
-                cx.notify();
             }
-            RemoteAudioTrackUpdate::MuteChanged { track_id, muted } => {
+
+            RoomUpdate::RemoteAudioTrackMuteChanged { track_id, muted } => {
                 let mut found = false;
                 for participant in &mut self.remote_participants.values_mut() {
                     for track in participant.audio_tracks.values() {
@@ -1024,10 +1029,9 @@ impl Room {
                         break;
                     }
                 }
-
-                cx.notify();
             }
-            RemoteAudioTrackUpdate::Subscribed(track, publication) => {
+
+            RoomUpdate::SubscribedToRemoteAudioTrack(track, publication) => {
                 let user_id = track.publisher_id().parse()?;
                 let track_id = track.sid().to_string();
                 let participant = self
@@ -1041,7 +1045,8 @@ impl Room {
                     participant_id: participant.peer_id,
                 });
             }
-            RemoteAudioTrackUpdate::Unsubscribed {
+
+            RoomUpdate::UnsubscribedFromRemoteAudioTrack {
                 publisher_id,
                 track_id,
             } => {
@@ -1054,6 +1059,28 @@ impl Room {
                 cx.emit(Event::RemoteAudioTracksChanged {
                     participant_id: participant.peer_id,
                 });
+            }
+
+            RoomUpdate::LocalAudioTrackUnpublished { publication } => {
+                log::info!("unpublished audio track {}", publication.sid());
+                if let Some(room) = &mut self.live_kit {
+                    room.microphone_track = LocalTrack::None;
+                }
+            }
+
+            RoomUpdate::LocalVideoTrackUnpublished { publication } => {
+                log::info!("unpublished video track {}", publication.sid());
+                if let Some(room) = &mut self.live_kit {
+                    room.screen_track = LocalTrack::None;
+                }
+            }
+
+            RoomUpdate::LocalAudioTrackPublished { publication } => {
+                log::info!("published audio track {}", publication.sid());
+            }
+
+            RoomUpdate::LocalVideoTrackPublished { publication } => {
+                log::info!("published video track {}", publication.sid());
             }
         }
 
@@ -1198,7 +1225,12 @@ impl Room {
         };
 
         self.client.send(proto::UnshareProject { project_id })?;
-        project.update(cx, |this, cx| this.unshare(cx))
+        project.update(cx, |this, cx| this.unshare(cx))?;
+
+        if self.local_participant.active_project == Some(project.downgrade()) {
+            self.set_location(Some(&project), cx).detach_and_log_err(cx);
+        }
+        Ok(())
     }
 
     pub(crate) fn set_location(
@@ -1560,7 +1592,7 @@ struct LiveKitRoom {
     speaking: bool,
     next_publish_id: usize,
     _maintain_room: Task<()>,
-    _maintain_tracks: [Task<()>; 2],
+    _handle_updates: Task<()>,
 }
 
 impl LiveKitRoom {
@@ -1606,6 +1638,24 @@ impl LiveKitRoom {
         }
 
         Ok((result, old_muted))
+    }
+
+    fn stop_publishing(&mut self, cx: &mut ModelContext<Room>) {
+        if let LocalTrack::Published {
+            track_publication, ..
+        } = mem::replace(&mut self.microphone_track, LocalTrack::None)
+        {
+            self.room.unpublish_track(track_publication);
+            cx.notify();
+        }
+
+        if let LocalTrack::Published {
+            track_publication, ..
+        } = mem::replace(&mut self.screen_track, LocalTrack::None)
+        {
+            self.room.unpublish_track(track_publication);
+            cx.notify();
+        }
     }
 }
 

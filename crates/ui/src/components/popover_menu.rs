@@ -119,6 +119,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 }
 
+/// Creates a [`PopoverMenu`]
 pub fn popover_menu<M: ManagedView>(id: impl Into<ElementId>) -> PopoverMenu<M> {
     PopoverMenu {
         id: id.into(),

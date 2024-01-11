@@ -202,6 +202,7 @@ impl Server {
             .add_request_handler(join_room)
             .add_request_handler(rejoin_room)
             .add_request_handler(leave_room)
+            .add_request_handler(set_room_participant_role)
             .add_request_handler(call)
             .add_request_handler(cancel_call)
             .add_message_handler(decline_call)
@@ -1258,6 +1259,50 @@ async fn leave_room(
     Ok(())
 }
 
+async fn set_room_participant_role(
+    request: proto::SetRoomParticipantRole,
+    response: Response<proto::SetRoomParticipantRole>,
+    session: Session,
+) -> Result<()> {
+    let (live_kit_room, can_publish) = {
+        let room = session
+            .db()
+            .await
+            .set_room_participant_role(
+                session.user_id,
+                RoomId::from_proto(request.room_id),
+                UserId::from_proto(request.user_id),
+                ChannelRole::from(request.role()),
+            )
+            .await?;
+
+        let live_kit_room = room.live_kit_room.clone();
+        let can_publish = ChannelRole::from(request.role()).can_publish_to_rooms();
+        room_updated(&room, &session.peer);
+        (live_kit_room, can_publish)
+    };
+
+    if let Some(live_kit) = session.live_kit_client.as_ref() {
+        live_kit
+            .update_participant(
+                live_kit_room.clone(),
+                request.user_id.to_string(),
+                live_kit_server::proto::ParticipantPermission {
+                    can_subscribe: true,
+                    can_publish,
+                    can_publish_data: can_publish,
+                    hidden: false,
+                    recorder: false,
+                },
+            )
+            .await
+            .trace_err();
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
 async fn call(
     request: proto::Call,
     response: Response<proto::Call>,
@@ -1814,11 +1859,24 @@ async fn update_buffer(
     let mut guest_connection_ids;
     let mut host_connection_id = None;
 
+    let mut requires_write_permission = false;
+
+    for op in request.operations.iter() {
+        match op.variant {
+            None | Some(proto::operation::Variant::UpdateSelections(_)) => {}
+            Some(_) => requires_write_permission = true,
+        }
+    }
+
     {
         let collaborators = session
             .db()
             .await
-            .project_collaborators_for_buffer_update(project_id, session.connection_id)
+            .project_collaborators_for_buffer_update(
+                project_id,
+                session.connection_id,
+                requires_write_permission,
+            )
             .await?;
         guest_connection_ids = Vec::with_capacity(collaborators.len() - 1);
         for collaborator in collaborators.iter() {

@@ -103,6 +103,12 @@ pub struct Config {
     pub zed_environment: Arc<str>,
 }
 
+impl Config {
+    pub fn is_development(&self) -> bool {
+        self.zed_environment == "development".into()
+    }
+}
+
 #[derive(Default, Deserialize)]
 pub struct MigrateConfig {
     pub database_url: String,

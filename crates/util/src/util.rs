@@ -41,8 +41,8 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
     }
 }
 
-/// Removes characters from the end of the string if it's length is greater than `max_chars` and
-/// appends "..." to the string. Returns string unchanged if it's length is smaller than max_chars.
+/// Removes characters from the end of the string if its length is greater than `max_chars` and
+/// appends "..." to the string. Returns string unchanged if its length is smaller than max_chars.
 pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
@@ -53,8 +53,8 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     }
 }
 
-/// Removes characters from the front of the string if it's length is greater than `max_chars` and
-/// prepends the string with "...". Returns string unchanged if it's length is smaller than max_chars.
+/// Removes characters from the front of the string if its length is greater than `max_chars` and
+/// prepends the string with "...". Returns string unchanged if its length is smaller than max_chars.
 pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
     debug_assert!(max_chars >= 5);
 
@@ -137,6 +137,8 @@ pub trait ResultExt<E> {
     type Ok;
 
     fn log_err(self) -> Option<Self::Ok>;
+    /// Assert that this result should never be an error in development or tests.
+    fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
     fn inspect_error(self, func: impl FnOnce(&E)) -> Self;
 }
@@ -157,6 +159,14 @@ where
                 None
             }
         }
+    }
+
+    #[track_caller]
+    fn debug_assert_ok(self, reason: &str) -> Self {
+        if let Err(error) = &self {
+            debug_panic!("{reason} - {error:?}");
+        }
+        self
     }
 
     fn warn_on_err(self) -> Option<T> {

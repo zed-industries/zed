@@ -1,3 +1,5 @@
+//! The prelude of this crate. When building UI in Zed you almost always want to import this.
+
 pub use gpui::prelude::*;
 pub use gpui::{
     div, px, relative, rems, AbsoluteLength, DefiniteLength, Div, Element, ElementId,

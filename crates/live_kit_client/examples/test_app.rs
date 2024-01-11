@@ -1,10 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use gpui::{actions, KeyBinding};
-use live_kit_client::{
-    LocalAudioTrack, LocalVideoTrack, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate, Room,
-};
+use gpui::{actions, KeyBinding, Menu, MenuItem};
+use live_kit_client::{LocalAudioTrack, LocalVideoTrack, Room, RoomUpdate};
 use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -26,15 +24,14 @@ fn main() {
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
 
-        // todo!()
-        // cx.set_menus(vec![Menu {
-        //     name: "Zed",
-        //     items: vec![MenuItem::Action {
-        //         name: "Quit",
-        //         action: Box::new(Quit),
-        //         os_action: None,
-        //     }],
-        // }]);
+        cx.set_menus(vec![Menu {
+            name: "Zed",
+            items: vec![MenuItem::Action {
+                name: "Quit",
+                action: Box::new(Quit),
+                os_action: None,
+            }],
+        }]);
 
         let live_kit_url = std::env::var("LIVE_KIT_URL").unwrap_or("http://localhost:7880".into());
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());
@@ -61,12 +58,12 @@ fn main() {
             let room_b = Room::new();
             room_b.connect(&live_kit_url, &user2_token).await.unwrap();
 
-            let mut audio_track_updates = room_b.remote_audio_track_updates();
+            let mut room_updates = room_b.updates();
             let audio_track = LocalAudioTrack::create();
             let audio_track_publication = room_a.publish_audio_track(audio_track).await.unwrap();
 
-            if let RemoteAudioTrackUpdate::Subscribed(track, _) =
-                audio_track_updates.next().await.unwrap()
+            if let RoomUpdate::SubscribedToRemoteAudioTrack(track, _) =
+                room_updates.next().await.unwrap()
             {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
                 assert_eq!(remote_tracks.len(), 1);
@@ -79,8 +76,8 @@ fn main() {
             audio_track_publication.set_mute(true).await.unwrap();
 
             println!("waiting for mute changed!");
-            if let RemoteAudioTrackUpdate::MuteChanged { track_id, muted } =
-                audio_track_updates.next().await.unwrap()
+            if let RoomUpdate::RemoteAudioTrackMuteChanged { track_id, muted } =
+                room_updates.next().await.unwrap()
             {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
                 assert_eq!(remote_tracks[0].sid(), track_id);
@@ -91,8 +88,8 @@ fn main() {
 
             audio_track_publication.set_mute(false).await.unwrap();
 
-            if let RemoteAudioTrackUpdate::MuteChanged { track_id, muted } =
-                audio_track_updates.next().await.unwrap()
+            if let RoomUpdate::RemoteAudioTrackMuteChanged { track_id, muted } =
+                room_updates.next().await.unwrap()
             {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
                 assert_eq!(remote_tracks[0].sid(), track_id);
@@ -111,13 +108,13 @@ fn main() {
             room_a.unpublish_track(audio_track_publication);
 
             // Clear out any active speakers changed messages
-            let mut next = audio_track_updates.next().await.unwrap();
-            while let RemoteAudioTrackUpdate::ActiveSpeakersChanged { speakers } = next {
+            let mut next = room_updates.next().await.unwrap();
+            while let RoomUpdate::ActiveSpeakersChanged { speakers } = next {
                 println!("Speakers changed: {:?}", speakers);
-                next = audio_track_updates.next().await.unwrap();
+                next = room_updates.next().await.unwrap();
             }
 
-            if let RemoteAudioTrackUpdate::Unsubscribed {
+            if let RoomUpdate::UnsubscribedFromRemoteAudioTrack {
                 publisher_id,
                 track_id,
             } = next
@@ -129,7 +126,6 @@ fn main() {
                 panic!("unexpected message");
             }
 
-            let mut video_track_updates = room_b.remote_video_track_updates();
             let displays = room_a.display_sources().await.unwrap();
             let display = displays.into_iter().next().unwrap();
 
@@ -137,8 +133,8 @@ fn main() {
             let local_video_track_publication =
                 room_a.publish_video_track(local_video_track).await.unwrap();
 
-            if let RemoteVideoTrackUpdate::Subscribed(track) =
-                video_track_updates.next().await.unwrap()
+            if let RoomUpdate::SubscribedToRemoteVideoTrack(track) =
+                room_updates.next().await.unwrap()
             {
                 let remote_video_tracks = room_b.remote_video_tracks("test-participant-1");
                 assert_eq!(remote_video_tracks.len(), 1);
@@ -153,10 +149,10 @@ fn main() {
                 .pop()
                 .unwrap();
             room_a.unpublish_track(local_video_track_publication);
-            if let RemoteVideoTrackUpdate::Unsubscribed {
+            if let RoomUpdate::UnsubscribedFromRemoteVideoTrack {
                 publisher_id,
                 track_id,
-            } = video_track_updates.next().await.unwrap()
+            } = room_updates.next().await.unwrap()
             {
                 assert_eq!(publisher_id, "test-participant-1");
                 assert_eq!(remote_video_track.sid(), track_id);

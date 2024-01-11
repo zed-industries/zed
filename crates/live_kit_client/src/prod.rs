@@ -1,3 +1,4 @@
+use crate::{ConnectionState, RoomUpdate, Sid};
 use anyhow::{anyhow, Context, Result};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
@@ -76,6 +77,16 @@ extern "C" {
             publisher_id: CFStringRef,
             track_id: CFStringRef,
         ),
+        on_did_publish_or_unpublish_local_audio_track: extern "C" fn(
+            callback_data: *mut c_void,
+            publication: swift::LocalTrackPublication,
+            is_published: bool,
+        ),
+        on_did_publish_or_unpublish_local_video_track: extern "C" fn(
+            callback_data: *mut c_void,
+            publication: swift::LocalTrackPublication,
+            is_published: bool,
+        ),
     ) -> swift::RoomDelegate;
 
     fn LKRoomCreate(delegate: swift::RoomDelegate) -> swift::Room;
@@ -151,42 +162,31 @@ extern "C" {
         callback_data: *mut c_void,
     );
 
+    fn LKLocalTrackPublicationIsMuted(publication: swift::LocalTrackPublication) -> bool;
     fn LKRemoteTrackPublicationIsMuted(publication: swift::RemoteTrackPublication) -> bool;
+    fn LKLocalTrackPublicationGetSid(publication: swift::LocalTrackPublication) -> CFStringRef;
     fn LKRemoteTrackPublicationGetSid(publication: swift::RemoteTrackPublication) -> CFStringRef;
 }
 
-pub type Sid = String;
-
-#[derive(Clone, Eq, PartialEq)]
-pub enum ConnectionState {
-    Disconnected,
-    Connected { url: String, token: String },
-}
-
 pub struct Room {
-    native_room: Mutex<swift::Room>,
+    native_room: swift::Room,
     connection: Mutex<(
         watch::Sender<ConnectionState>,
         watch::Receiver<ConnectionState>,
     )>,
-    remote_audio_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteAudioTrackUpdate>>>,
-    remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<RemoteVideoTrackUpdate>>>,
-    _delegate: Mutex<RoomDelegate>,
+    update_subscribers: Mutex<Vec<mpsc::UnboundedSender<RoomUpdate>>>,
+    _delegate: RoomDelegate,
 }
-
-trait AssertSendSync: Send {}
-impl AssertSendSync for Room {}
 
 impl Room {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak_room| {
             let delegate = RoomDelegate::new(weak_room.clone());
             Self {
-                native_room: Mutex::new(unsafe { LKRoomCreate(delegate.native_delegate) }),
+                native_room: unsafe { LKRoomCreate(delegate.native_delegate) },
                 connection: Mutex::new(watch::channel_with(ConnectionState::Disconnected)),
-                remote_audio_track_subscribers: Default::default(),
-                remote_video_track_subscribers: Default::default(),
-                _delegate: Mutex::new(delegate),
+                update_subscribers: Default::default(),
+                _delegate: delegate,
             }
         })
     }
@@ -201,7 +201,7 @@ impl Room {
         let (did_connect, tx, rx) = Self::build_done_callback();
         unsafe {
             LKRoomConnect(
-                *self.native_room.lock(),
+                self.native_room,
                 url.as_concrete_TypeRef(),
                 token.as_concrete_TypeRef(),
                 did_connect,
@@ -271,7 +271,7 @@ impl Room {
         }
         unsafe {
             LKRoomPublishVideoTrack(
-                *self.native_room.lock(),
+                self.native_room,
                 track.0,
                 callback,
                 Box::into_raw(Box::new(tx)) as *mut c_void,
@@ -301,7 +301,7 @@ impl Room {
         }
         unsafe {
             LKRoomPublishAudioTrack(
-                *self.native_room.lock(),
+                self.native_room,
                 track.0,
                 callback,
                 Box::into_raw(Box::new(tx)) as *mut c_void,
@@ -312,14 +312,14 @@ impl Room {
 
     pub fn unpublish_track(&self, publication: LocalTrackPublication) {
         unsafe {
-            LKRoomUnpublishTrack(*self.native_room.lock(), publication.0);
+            LKRoomUnpublishTrack(self.native_room, publication.0);
         }
     }
 
     pub fn remote_video_tracks(&self, participant_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
         unsafe {
             let tracks = LKRoomVideoTracksForRemoteParticipant(
-                *self.native_room.lock(),
+                self.native_room,
                 CFString::new(participant_id).as_concrete_TypeRef(),
             );
 
@@ -348,7 +348,7 @@ impl Room {
     pub fn remote_audio_tracks(&self, participant_id: &str) -> Vec<Arc<RemoteAudioTrack>> {
         unsafe {
             let tracks = LKRoomAudioTracksForRemoteParticipant(
-                *self.native_room.lock(),
+                self.native_room,
                 CFString::new(participant_id).as_concrete_TypeRef(),
             );
 
@@ -380,7 +380,7 @@ impl Room {
     ) -> Vec<Arc<RemoteTrackPublication>> {
         unsafe {
             let tracks = LKRoomAudioTrackPublicationsForRemoteParticipant(
-                *self.native_room.lock(),
+                self.native_room,
                 CFString::new(participant_id).as_concrete_TypeRef(),
             );
 
@@ -400,15 +400,9 @@ impl Room {
         }
     }
 
-    pub fn remote_audio_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteAudioTrackUpdate> {
+    pub fn updates(&self) -> mpsc::UnboundedReceiver<RoomUpdate> {
         let (tx, rx) = mpsc::unbounded();
-        self.remote_audio_track_subscribers.lock().push(tx);
-        rx
-    }
-
-    pub fn remote_video_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteVideoTrackUpdate> {
-        let (tx, rx) = mpsc::unbounded();
-        self.remote_video_track_subscribers.lock().push(tx);
+        self.update_subscribers.lock().push(tx);
         rx
     }
 
@@ -419,8 +413,8 @@ impl Room {
     ) {
         let track = Arc::new(track);
         let publication = Arc::new(publication);
-        self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::Subscribed(
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::SubscribedToRemoteAudioTrack(
                 track.clone(),
                 publication.clone(),
             ))
@@ -429,8 +423,8 @@ impl Room {
     }
 
     fn did_unsubscribe_from_remote_audio_track(&self, publisher_id: String, track_id: String) {
-        self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::Unsubscribed {
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::UnsubscribedFromRemoteAudioTrack {
                 publisher_id: publisher_id.clone(),
                 track_id: track_id.clone(),
             })
@@ -439,8 +433,8 @@ impl Room {
     }
 
     fn mute_changed_from_remote_audio_track(&self, track_id: String, muted: bool) {
-        self.remote_audio_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteAudioTrackUpdate::MuteChanged {
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::RemoteAudioTrackMuteChanged {
                 track_id: track_id.clone(),
                 muted,
             })
@@ -448,29 +442,26 @@ impl Room {
         });
     }
 
-    // A vec of publisher IDs
     fn active_speakers_changed(&self, speakers: Vec<String>) {
-        self.remote_audio_track_subscribers
-            .lock()
-            .retain(move |tx| {
-                tx.unbounded_send(RemoteAudioTrackUpdate::ActiveSpeakersChanged {
-                    speakers: speakers.clone(),
-                })
-                .is_ok()
-            });
+        self.update_subscribers.lock().retain(move |tx| {
+            tx.unbounded_send(RoomUpdate::ActiveSpeakersChanged {
+                speakers: speakers.clone(),
+            })
+            .is_ok()
+        });
     }
 
     fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
         let track = Arc::new(track);
-        self.remote_video_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteVideoTrackUpdate::Subscribed(track.clone()))
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::SubscribedToRemoteVideoTrack(track.clone()))
                 .is_ok()
         });
     }
 
     fn did_unsubscribe_from_remote_video_track(&self, publisher_id: String, track_id: String) {
-        self.remote_video_track_subscribers.lock().retain(|tx| {
-            tx.unbounded_send(RemoteVideoTrackUpdate::Unsubscribed {
+        self.update_subscribers.lock().retain(|tx| {
+            tx.unbounded_send(RoomUpdate::UnsubscribedFromRemoteVideoTrack {
                 publisher_id: publisher_id.clone(),
                 track_id: track_id.clone(),
             })
@@ -508,23 +499,23 @@ impl Room {
 impl Drop for Room {
     fn drop(&mut self) {
         unsafe {
-            let native_room = &*self.native_room.lock();
-            LKRoomDisconnect(*native_room);
-            CFRelease(native_room.0);
+            LKRoomDisconnect(self.native_room);
+            CFRelease(self.native_room.0);
         }
     }
 }
 
 struct RoomDelegate {
     native_delegate: swift::RoomDelegate,
-    _weak_room: Weak<Room>,
+    weak_room: *mut c_void,
 }
 
 impl RoomDelegate {
     fn new(weak_room: Weak<Room>) -> Self {
+        let weak_room = weak_room.into_raw() as *mut c_void;
         let native_delegate = unsafe {
             LKRoomDelegateCreate(
-                weak_room.as_ptr() as *mut c_void,
+                weak_room,
                 Self::on_did_disconnect,
                 Self::on_did_subscribe_to_remote_audio_track,
                 Self::on_did_unsubscribe_from_remote_audio_track,
@@ -532,11 +523,13 @@ impl RoomDelegate {
                 Self::on_active_speakers_changed,
                 Self::on_did_subscribe_to_remote_video_track,
                 Self::on_did_unsubscribe_from_remote_video_track,
+                Self::on_did_publish_or_unpublish_local_audio_track,
+                Self::on_did_publish_or_unpublish_local_video_track,
             )
         };
         Self {
             native_delegate,
-            _weak_room: weak_room,
+            weak_room,
         }
     }
 
@@ -645,12 +638,53 @@ impl RoomDelegate {
         }
         let _ = Weak::into_raw(room);
     }
+
+    extern "C" fn on_did_publish_or_unpublish_local_audio_track(
+        room: *mut c_void,
+        publication: swift::LocalTrackPublication,
+        is_published: bool,
+    ) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        if let Some(room) = room.upgrade() {
+            let publication = LocalTrackPublication::new(publication);
+            let update = if is_published {
+                RoomUpdate::LocalAudioTrackPublished { publication }
+            } else {
+                RoomUpdate::LocalAudioTrackUnpublished { publication }
+            };
+            room.update_subscribers
+                .lock()
+                .retain(|tx| tx.unbounded_send(update.clone()).is_ok());
+        }
+        let _ = Weak::into_raw(room);
+    }
+
+    extern "C" fn on_did_publish_or_unpublish_local_video_track(
+        room: *mut c_void,
+        publication: swift::LocalTrackPublication,
+        is_published: bool,
+    ) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        if let Some(room) = room.upgrade() {
+            let publication = LocalTrackPublication::new(publication);
+            let update = if is_published {
+                RoomUpdate::LocalVideoTrackPublished { publication }
+            } else {
+                RoomUpdate::LocalVideoTrackUnpublished { publication }
+            };
+            room.update_subscribers
+                .lock()
+                .retain(|tx| tx.unbounded_send(update.clone()).is_ok());
+        }
+        let _ = Weak::into_raw(room);
+    }
 }
 
 impl Drop for RoomDelegate {
     fn drop(&mut self) {
         unsafe {
             CFRelease(self.native_delegate.0);
+            let _ = Weak::from_raw(self.weak_room);
         }
     }
 }
@@ -693,6 +727,10 @@ impl LocalTrackPublication {
         Self(native_track_publication)
     }
 
+    pub fn sid(&self) -> String {
+        unsafe { CFString::wrap_under_get_rule(LKLocalTrackPublicationGetSid(self.0)).to_string() }
+    }
+
     pub fn set_mute(&self, muted: bool) -> impl Future<Output = Result<()>> {
         let (tx, rx) = futures::channel::oneshot::channel();
 
@@ -717,6 +755,19 @@ impl LocalTrackPublication {
 
         async move { rx.await.unwrap() }
     }
+
+    pub fn is_muted(&self) -> bool {
+        unsafe { LKLocalTrackPublicationIsMuted(self.0) }
+    }
+}
+
+impl Clone for LocalTrackPublication {
+    fn clone(&self) -> Self {
+        unsafe {
+            CFRetain(self.0 .0);
+        }
+        Self(self.0)
+    }
 }
 
 impl Drop for LocalTrackPublication {
@@ -725,31 +776,22 @@ impl Drop for LocalTrackPublication {
     }
 }
 
-pub struct RemoteTrackPublication {
-    native_publication: Mutex<swift::RemoteTrackPublication>,
-}
+pub struct RemoteTrackPublication(swift::RemoteTrackPublication);
 
 impl RemoteTrackPublication {
     pub fn new(native_track_publication: swift::RemoteTrackPublication) -> Self {
         unsafe {
             CFRetain(native_track_publication.0);
         }
-        Self {
-            native_publication: Mutex::new(native_track_publication),
-        }
+        Self(native_track_publication)
     }
 
     pub fn sid(&self) -> String {
-        unsafe {
-            CFString::wrap_under_get_rule(LKRemoteTrackPublicationGetSid(
-                *self.native_publication.lock(),
-            ))
-            .to_string()
-        }
+        unsafe { CFString::wrap_under_get_rule(LKRemoteTrackPublicationGetSid(self.0)).to_string() }
     }
 
     pub fn is_muted(&self) -> bool {
-        unsafe { LKRemoteTrackPublicationIsMuted(*self.native_publication.lock()) }
+        unsafe { LKRemoteTrackPublicationIsMuted(self.0) }
     }
 
     pub fn set_enabled(&self, enabled: bool) -> impl Future<Output = Result<()>> {
@@ -767,7 +809,7 @@ impl RemoteTrackPublication {
 
         unsafe {
             LKRemoteTrackPublicationSetEnabled(
-                *self.native_publication.lock(),
+                self.0,
                 enabled,
                 complete_callback,
                 Box::into_raw(Box::new(tx)) as *mut c_void,
@@ -780,13 +822,13 @@ impl RemoteTrackPublication {
 
 impl Drop for RemoteTrackPublication {
     fn drop(&mut self) {
-        unsafe { CFRelease((*self.native_publication.lock()).0) }
+        unsafe { CFRelease(self.0 .0) }
     }
 }
 
 #[derive(Debug)]
 pub struct RemoteAudioTrack {
-    native_track: Mutex<swift::RemoteAudioTrack>,
+    native_track: swift::RemoteAudioTrack,
     sid: Sid,
     publisher_id: String,
 }
@@ -797,7 +839,7 @@ impl RemoteAudioTrack {
             CFRetain(native_track.0);
         }
         Self {
-            native_track: Mutex::new(native_track),
+            native_track,
             sid,
             publisher_id,
         }
@@ -822,13 +864,16 @@ impl RemoteAudioTrack {
 
 impl Drop for RemoteAudioTrack {
     fn drop(&mut self) {
-        unsafe { CFRelease(self.native_track.lock().0) }
+        // todo: uncomment this `CFRelease`, unless we find that it was causing
+        // the crash in the `livekit.multicast` thread.
+        //
+        // unsafe { CFRelease(self.native_track.0) }
     }
 }
 
 #[derive(Debug)]
 pub struct RemoteVideoTrack {
-    native_track: Mutex<swift::RemoteVideoTrack>,
+    native_track: swift::RemoteVideoTrack,
     sid: Sid,
     publisher_id: String,
 }
@@ -839,7 +884,7 @@ impl RemoteVideoTrack {
             CFRetain(native_track.0);
         }
         Self {
-            native_track: Mutex::new(native_track),
+            native_track,
             sid,
             publisher_id,
         }
@@ -888,7 +933,7 @@ impl RemoteVideoTrack {
                 on_frame,
                 on_drop,
             );
-            LKVideoTrackAddRenderer(*self.native_track.lock(), renderer);
+            LKVideoTrackAddRenderer(self.native_track, renderer);
             rx
         }
     }
@@ -896,20 +941,8 @@ impl RemoteVideoTrack {
 
 impl Drop for RemoteVideoTrack {
     fn drop(&mut self) {
-        unsafe { CFRelease(self.native_track.lock().0) }
+        unsafe { CFRelease(self.native_track.0) }
     }
-}
-
-pub enum RemoteVideoTrackUpdate {
-    Subscribed(Arc<RemoteVideoTrack>),
-    Unsubscribed { publisher_id: Sid, track_id: Sid },
-}
-
-pub enum RemoteAudioTrackUpdate {
-    ActiveSpeakersChanged { speakers: Vec<Sid> },
-    MuteChanged { track_id: Sid, muted: bool },
-    Subscribed(Arc<RemoteAudioTrack>, Arc<RemoteTrackPublication>),
-    Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
 pub struct MacOSDisplay(swift::MacOSDisplay);

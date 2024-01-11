@@ -101,6 +101,10 @@ impl ModalLayer {
         let active_modal = self.active_modal.as_ref()?;
         active_modal.modal.view().downcast::<V>().ok()
     }
+
+    pub fn has_active_modal(&self) -> bool {
+        self.active_modal.is_some()
+    }
 }
 
 impl Render for ModalLayer {

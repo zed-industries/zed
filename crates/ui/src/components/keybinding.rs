@@ -58,10 +58,7 @@ impl KeyBinding {
         focus: &FocusHandle,
         cx: &mut WindowContext,
     ) -> Option<Self> {
-        let key_binding = cx
-            .bindings_for_action_when_focused(action, focus)
-            .last()
-            .cloned()?;
+        let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
         Some(Self::new(key_binding))
     }
 

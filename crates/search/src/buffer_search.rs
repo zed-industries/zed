@@ -43,7 +43,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|editor: &mut Workspace, _| BufferSearchBar::register(editor))
+    cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
         .detach();
 }
 
@@ -111,7 +111,7 @@ impl Render for BufferSearchBar {
         if self.query_editor.read(cx).placeholder_text().is_none() {
             let query_focus_handle = self.query_editor.focus_handle(cx);
             let up_keystrokes = cx
-                .bindings_for_action_when_focused(&PreviousHistoryQuery {}, &query_focus_handle)
+                .bindings_for_action_in(&PreviousHistoryQuery {}, &query_focus_handle)
                 .into_iter()
                 .next()
                 .map(|binding| {
@@ -122,7 +122,7 @@ impl Render for BufferSearchBar {
                         .collect::<Vec<_>>()
                 });
             let down_keystrokes = cx
-                .bindings_for_action_when_focused(&NextHistoryQuery {}, &query_focus_handle)
+                .bindings_for_action_in(&NextHistoryQuery {}, &query_focus_handle)
                 .into_iter()
                 .next()
                 .map(|binding| {
@@ -423,7 +423,7 @@ impl ToolbarItemView for BufferSearchBar {
     }
 }
 
-/// Registrar inverts the dependency between search and it's downstream user, allowing said downstream user to register search action without knowing exactly what those actions are.
+/// Registrar inverts the dependency between search and its downstream user, allowing said downstream user to register search action without knowing exactly what those actions are.
 pub trait SearchActionsRegistrar {
     fn register_handler<A: Action>(
         &mut self,
@@ -479,6 +479,11 @@ impl SearchActionsRegistrar for Workspace {
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     ) {
         self.register_action(move |workspace, action: &A, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+
             let pane = workspace.active_pane();
             pane.update(cx, move |this, cx| {
                 this.toolbar().update(cx, move |this, cx| {
@@ -539,11 +544,11 @@ impl BufferSearchBar {
             this.select_all_matches(action, cx);
         });
         registrar.register_handler(|this, _: &editor::Cancel, cx| {
-            if !this.dismissed {
+            if this.dismissed {
+                cx.propagate();
+            } else {
                 this.dismiss(&Dismiss, cx);
-                return;
             }
-            cx.propagate();
         });
         registrar.register_handler(|this, deploy, cx| {
             this.deploy(deploy, cx);
@@ -1125,7 +1130,6 @@ mod tests {
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        // todo! osiewicz: these tests asserted on background color as well, that should be brought back.
         let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
             background_highlights
                 .into_iter()
@@ -1390,7 +1394,6 @@ mod tests {
             })
             .await
             .unwrap();
-        // todo! osiewicz: these tests previously asserted on background color highlights; that should be introduced back.
         let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
             background_highlights
                 .into_iter()

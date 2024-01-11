@@ -1003,7 +1003,7 @@ impl Interactivity {
                                 if let Some(text) = cx
                                     .text_system()
                                     .shape_text(
-                                        &element_id,
+                                        element_id.into(),
                                         FONT_SIZE,
                                         &[cx.text_style().to_run(str_len)],
                                         None,
@@ -1055,22 +1055,11 @@ impl Interactivity {
                                                     };
 
                                                     eprintln!(
-                                                        "This element is created at:\n{}:{}:{}",
-                                                        location.file(),
+                                                        "This element was created at:\n{}:{}:{}",
+                                                        dir.join(location.file()).to_string_lossy(),
                                                         location.line(),
                                                         location.column()
                                                     );
-
-                                                    std::process::Command::new("zed")
-                                                        .arg(format!(
-                                                            "{}/{}:{}:{}",
-                                                            dir.to_string_lossy(),
-                                                            location.file(),
-                                                            location.line(),
-                                                            location.column()
-                                                        ))
-                                                        .spawn()
-                                                        .ok();
                                                 }
                                             }
                                         });

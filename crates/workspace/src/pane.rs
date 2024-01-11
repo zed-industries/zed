@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
+use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
     AsyncWindowContext, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter, ExternalPaths,
@@ -242,87 +243,6 @@ pub struct DraggedTab {
     pub is_active: bool,
 }
 
-// pub struct DraggedItem {
-//     pub handle: Box<dyn ItemHandle>,
-//     pub pane: WeakView<Pane>,
-// }
-
-// pub enum ReorderBehavior {
-//     None,
-//     MoveAfterActive,
-//     MoveToIndex(usize),
-// }
-
-// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// enum TabBarContextMenuKind {
-//     New,
-//     Split,
-// }
-
-// struct TabBarContextMenu {
-//     kind: TabBarContextMenuKind,
-//     handle: View<ContextMenu>,
-// }
-
-// impl TabBarContextMenu {
-//     fn handle_if_kind(&self, kind: TabBarContextMenuKind) -> Option<View<ContextMenu>> {
-//         if self.kind == kind {
-//             return Some(self.handle.clone());
-//         }
-//         None
-//     }
-// }
-
-// #[allow(clippy::too_many_arguments)]
-// fn nav_button<A: Action, F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>)>(
-//     svg_path: &'static str,
-//     style: theme::Interactive<theme2::IconButton>,
-//     nav_button_height: f32,
-//     tooltip_style: TooltipStyle,
-//     enabled: bool,
-//     on_click: F,
-//     tooltip_action: A,
-//     action_name: &str,
-//     cx: &mut ViewContext<Pane>,
-// ) -> AnyElement<Pane> {
-//     MouseEventHandler::new::<A, _>(0, cx, |state, _| {
-//         let style = if enabled {
-//             style.style_for(state)
-//         } else {
-//             style.disabled_style()
-//         };
-//         Svg::new(svg_path)
-//             .with_color(style.color)
-//             .constrained()
-//             .with_width(style.icon_width)
-//             .aligned()
-//             .contained()
-//             .with_style(style.container)
-//             .constrained()
-//             .with_width(style.button_width)
-//             .with_height(nav_button_height)
-//             .aligned()
-//             .top()
-//     })
-//     .with_cursor_style(if enabled {
-//         CursorStyle::PointingHand
-//     } else {
-//         CursorStyle::default()
-//     })
-//     .on_click(MouseButton::Left, move |_, toolbar, cx| {
-//         on_click(toolbar, cx)
-//     })
-//     .with_tooltip::<A>(
-//         0,
-//         action_name.to_string(),
-//         Some(Box::new(tooltip_action)),
-//         tooltip_style,
-//         cx,
-//     )
-//     .contained()
-//     .into_any_named("nav button")
-// }
-
 impl EventEmitter<Event> for Pane {}
 
 impl Pane {
@@ -333,18 +253,11 @@ impl Pane {
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        // todo!("context menu")
-        // let pane_view_id = cx.view_id();
-        // let context_menu = cx.build_view(|cx| ContextMenu::new(pane_view_id, cx));
-        // context_menu.update(cx, |menu, _| {
-        //     menu.set_position_mode(OverlayPositionMode::Local)
-        // });
-        //
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
-            cx.on_focus_in(&focus_handle, move |this, cx| this.focus_in(cx)),
-            cx.on_focus_out(&focus_handle, move |this, cx| this.focus_out(cx)),
+            cx.on_focus_in(&focus_handle, Pane::focus_in),
+            cx.on_focus_out(&focus_handle, Pane::focus_out),
         ];
 
         let handle = cx.view().downgrade();
@@ -370,11 +283,6 @@ impl Pane {
             split_item_menu: None,
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
-            // tab_bar_context_menu: TabBarContextMenu {
-            //     kind: TabBarContextMenuKind::New,
-            //     handle: context_menu,
-            // },
-            // tab_context_menu: cx.build_view(|_| ContextMenu::new(pane_view_id, cx)),
             workspace,
             project,
             can_drop_predicate,
@@ -450,7 +358,6 @@ impl Pane {
     }
 
     pub fn has_focus(&self, cx: &WindowContext) -> bool {
-        // todo!(); // inline this manually
         self.focus_handle.contains_focused(cx)
     }
 
@@ -1890,23 +1797,46 @@ impl Pane {
             }
         }
         let mut to_pane = cx.view().clone();
-        let split_direction = self.drag_split_direction;
+        let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
         self.workspace
-            .update(cx, |_, cx| {
-                cx.defer(move |workspace, cx| {
-                    if let Some(split_direction) = split_direction {
-                        to_pane = workspace.split_pane(to_pane, split_direction, cx);
+            .update(cx, |workspace, cx| {
+                let fs = Arc::clone(workspace.project().read(cx).fs());
+                cx.spawn(|workspace, mut cx| async move {
+                    let mut is_file_checks = FuturesUnordered::new();
+                    for path in &paths {
+                        is_file_checks.push(fs.is_file(path))
                     }
-                    workspace
-                        .open_paths(
-                            paths,
-                            OpenVisible::OnlyDirectories,
-                            Some(to_pane.downgrade()),
-                            cx,
-                        )
-                        .detach();
-                });
+                    let mut has_files_to_open = false;
+                    while let Some(is_file) = is_file_checks.next().await {
+                        if is_file {
+                            has_files_to_open = true;
+                            break;
+                        }
+                    }
+                    drop(is_file_checks);
+                    if !has_files_to_open {
+                        split_direction = None;
+                    }
+
+                    if let Some(open_task) = workspace
+                        .update(&mut cx, |workspace, cx| {
+                            if let Some(split_direction) = split_direction {
+                                to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                            }
+                            workspace.open_paths(
+                                paths,
+                                OpenVisible::OnlyDirectories,
+                                Some(to_pane.downgrade()),
+                                cx,
+                            )
+                        })
+                        .ok()
+                    {
+                        let _opened_items: Vec<_> = open_task.await;
+                    }
+                })
+                .detach();
             })
             .log_err();
     }

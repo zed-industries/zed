@@ -12,7 +12,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use ui::{prelude::*, Button};
 
-const HANDLE_HITBOX_SIZE: f32 = 4.0;
+pub const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
@@ -268,15 +268,6 @@ impl Member {
                         )
                     })
                     .into_any()
-
-                // let el = div()
-                //     .flex()
-                //     .flex_1()
-                //     .gap_px()
-                //     .w_full()
-                //     .h_full()
-                //     .bg(cx.theme().colors().editor)
-                //     .children();
             }
             Member::Axis(axis) => axis
                 .render(

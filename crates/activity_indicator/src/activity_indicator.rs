@@ -77,9 +77,6 @@ impl ActivityIndicator {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
 
-            // cx.observe_active_labeled_tasks(|_, cx| cx.notify())
-            //     .detach();
-
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
@@ -287,15 +284,6 @@ impl ActivityIndicator {
                 AutoUpdateStatus::Idle => Default::default(),
             };
         }
-
-        // todo!(show active tasks)
-        // if let Some(most_recent_active_task) = cx.active_labeled_tasks().last() {
-        //     return Content {
-        //         icon: None,
-        //         message: most_recent_active_task.to_string(),
-        //         on_click: None,
-        //     };
-        // }
 
         Default::default()
     }

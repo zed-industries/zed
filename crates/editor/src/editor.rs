@@ -1829,10 +1829,6 @@ impl Editor {
         this.end_selection(cx);
         this.scroll_manager.show_scrollbar(cx);
 
-        // todo!("use a different mechanism")
-        // let editor_created_event = EditorCreated(cx.handle());
-        // cx.emit_global(editor_created_event);
-
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
@@ -7054,7 +7050,7 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest::<usize>(cx);
 
-        // If there is an active Diagnostic Popover. Jump to it's diagnostic instead.
+        // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
@@ -7681,7 +7677,6 @@ impl Editor {
                                                 scrollbar_width: cx.editor_style.scrollbar_width,
                                                 syntax: cx.editor_style.syntax.clone(),
                                                 status: cx.editor_style.status.clone(),
-                                                // todo!("what about the rest of the highlight style parts for inlays and suggestions?")
                                                 inlays_style: HighlightStyle {
                                                     color: Some(cx.theme().status().hint),
                                                     font_weight: Some(FontWeight::BOLD),
@@ -8682,6 +8677,10 @@ impl Editor {
                         }
                     }
                 }
+
+                let Some(project) = &self.project else { return };
+                let telemetry = project.read(cx).client().telemetry().clone();
+                telemetry.log_edit_event("editor");
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
@@ -9350,7 +9349,6 @@ impl Render for Editor {
                 scrollbar_width: px(12.),
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                // todo!("what about the rest of the highlight style parts?")
                 inlays_style: HighlightStyle {
                     color: Some(cx.theme().status().hint),
                     font_weight: Some(FontWeight::BOLD),

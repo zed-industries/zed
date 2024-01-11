@@ -65,6 +65,9 @@ impl TextSystem {
         }
     }
 
+    pub fn all_font_families(&self) -> Vec<String> {
+        self.platform_text_system.all_font_families()
+    }
     pub fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.platform_text_system.add_fonts(fonts)
     }
@@ -258,7 +261,7 @@ impl TextSystem {
 
     pub fn shape_text(
         &self,
-        text: &str, // todo!("pass a SharedString and preserve it when passed a single line?")
+        text: SharedString,
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
@@ -268,8 +271,8 @@ impl TextSystem {
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
-        for line_text in text.split('\n') {
-            let line_text = SharedString::from(line_text.to_string());
+
+        let mut process_line = |line_text: SharedString| {
             let line_end = line_start + line_text.len();
 
             let mut last_font: Option<Font> = None;
@@ -335,6 +338,24 @@ impl TextSystem {
             }
 
             font_runs.clear();
+        };
+
+        let mut split_lines = text.split('\n');
+        let mut processed = false;
+
+        if let Some(first_line) = split_lines.next() {
+            if let Some(second_line) = split_lines.next() {
+                processed = true;
+                process_line(first_line.to_string().into());
+                process_line(second_line.to_string().into());
+                for line_text in split_lines {
+                    process_line(line_text.to_string().into());
+                }
+            }
+        }
+
+        if !processed {
+            process_line(text);
         }
 
         self.font_runs_pool.lock().push(font_runs);
@@ -346,28 +367,20 @@ impl TextSystem {
         self.line_layout_cache.start_frame()
     }
 
-    pub fn line_wrapper(
-        self: &Arc<Self>,
-        font: Font,
-        font_size: Pixels,
-    ) -> Result<LineWrapperHandle> {
+    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
-        let font_id = self.font_id(&font)?;
+        let font_id = self.resolve_font(&font);
         let wrappers = lock
             .entry(FontIdWithSize { font_id, font_size })
             .or_default();
-        let wrapper = wrappers.pop().map(anyhow::Ok).unwrap_or_else(|| {
-            Ok(LineWrapper::new(
-                font_id,
-                font_size,
-                self.platform_text_system.clone(),
-            ))
-        })?;
+        let wrapper = wrappers.pop().unwrap_or_else(|| {
+            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
+        });
 
-        Ok(LineWrapperHandle {
+        LineWrapperHandle {
             wrapper: Some(wrapper),
             text_system: self.clone(),
-        })
+        }
     }
 
     pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {

@@ -2,13 +2,12 @@ use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
     actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div,
     EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Render, Styled,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use language::{Buffer, OwnedSyntaxLayerInfo};
-use settings::Settings;
 use std::{mem, ops::Range};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{h_stack, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
@@ -34,8 +33,6 @@ pub fn init(cx: &mut AppContext) {
 pub struct SyntaxTreeView {
     workspace_handle: WeakView<Workspace>,
     editor: Option<EditorState>,
-    mouse_y: Option<Pixels>,
-    line_height: Option<Pixels>,
     list_scroll_handle: UniformListScrollHandle,
     selected_descendant_ix: Option<usize>,
     hovered_descendant_ix: Option<usize>,
@@ -70,8 +67,6 @@ impl SyntaxTreeView {
             workspace_handle: workspace_handle.clone(),
             list_scroll_handle: UniformListScrollHandle::new(),
             editor: None,
-            mouse_y: None,
-            line_height: None,
             hovered_descendant_ix: None,
             selected_descendant_ix: None,
             focus_handle: cx.focus_handle(),
@@ -208,39 +203,6 @@ impl SyntaxTreeView {
         Some(())
     }
 
-    fn handle_click(&mut self, y: Pixels, cx: &mut ViewContext<SyntaxTreeView>) -> Option<()> {
-        let line_height = self.line_height?;
-        let ix = ((self.list_scroll_handle.scroll_top() + y) / line_height) as usize;
-
-        self.update_editor_with_range_for_descendant_ix(ix, cx, |editor, mut range, cx| {
-            // Put the cursor at the beginning of the node.
-            mem::swap(&mut range.start, &mut range.end);
-
-            editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
-                selections.select_ranges(vec![range]);
-            });
-        });
-        Some(())
-    }
-
-    fn hover_state_changed(&mut self, cx: &mut ViewContext<SyntaxTreeView>) {
-        if let Some((y, line_height)) = self.mouse_y.zip(self.line_height) {
-            let ix = ((self.list_scroll_handle.scroll_top() + y) / line_height) as usize;
-            if self.hovered_descendant_ix != Some(ix) {
-                self.hovered_descendant_ix = Some(ix);
-                self.update_editor_with_range_for_descendant_ix(ix, cx, |editor, range, cx| {
-                    editor.clear_background_highlights::<Self>(cx);
-                    editor.highlight_background::<Self>(
-                        vec![range],
-                        |theme| theme.editor_document_highlight_write_background,
-                        cx,
-                    );
-                });
-                cx.notify();
-            }
-        }
-    }
-
     fn update_editor_with_range_for_descendant_ix(
         &self,
         descendant_ix: usize,
@@ -306,15 +268,6 @@ impl SyntaxTreeView {
 
 impl Render for SyntaxTreeView {
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let line_height = cx
-            .text_style()
-            .line_height_in_pixels(settings.buffer_font_size(cx));
-        if Some(line_height) != self.line_height {
-            self.line_height = Some(line_height);
-            self.hover_state_changed(cx);
-        }
-
         let mut rendered = div().flex_1();
 
         if let Some(layer) = self
@@ -345,12 +298,51 @@ impl Render for SyntaxTreeView {
                                 break;
                             }
                         } else {
-                            items.push(Self::render_node(
-                                &cursor,
-                                depth,
-                                Some(descendant_ix) == this.selected_descendant_ix,
-                                cx,
-                            ));
+                            items.push(
+                                Self::render_node(
+                                    &cursor,
+                                    depth,
+                                    Some(descendant_ix) == this.selected_descendant_ix,
+                                    cx,
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |tree_view, _: &MouseDownEvent, cx| {
+                                        tree_view.update_editor_with_range_for_descendant_ix(
+                                            descendant_ix,
+                                            cx,
+                                            |editor, mut range, cx| {
+                                                // Put the cursor at the beginning of the node.
+                                                mem::swap(&mut range.start, &mut range.end);
+
+                                                editor.change_selections(
+                                                    Some(Autoscroll::newest()),
+                                                    cx,
+                                                    |selections| {
+                                                        selections.select_ranges(vec![range]);
+                                                    },
+                                                );
+                                            },
+                                        );
+                                    }),
+                                )
+                                .on_mouse_move(cx.listener(
+                                    move |tree_view, _: &MouseMoveEvent, cx| {
+                                        if tree_view.hovered_descendant_ix != Some(descendant_ix) {
+                                            tree_view.hovered_descendant_ix = Some(descendant_ix);
+                                            tree_view.update_editor_with_range_for_descendant_ix(descendant_ix, cx, |editor, range, cx| {
+                                                editor.clear_background_highlights::<Self>(cx);
+                                                editor.highlight_background::<Self>(
+                                                    vec![range],
+                                                    |theme| theme.editor_document_highlight_write_background,
+                                                    cx,
+                                                );
+                                            });
+                                            cx.notify();
+                                        }
+                                    },
+                                )),
+                            );
                             descendant_ix += 1;
                             if cursor.goto_first_child() {
                                 depth += 1;
@@ -364,16 +356,6 @@ impl Render for SyntaxTreeView {
             )
             .size_full()
             .track_scroll(self.list_scroll_handle.clone())
-            .on_mouse_move(cx.listener(move |tree_view, event: &MouseMoveEvent, cx| {
-                tree_view.mouse_y = Some(event.position.y);
-                tree_view.hover_state_changed(cx);
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |tree_view, event: &MouseDownEvent, cx| {
-                    tree_view.handle_click(event.position.y, cx);
-                }),
-            )
             .text_bg(cx.theme().colors().background);
 
             rendered = rendered.child(

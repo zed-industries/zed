@@ -1015,7 +1015,6 @@ pub mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let _test_platform = &cx.test_platform;
         let mut tab_size = rng.gen_range(1..=4);
         let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);

@@ -1,9 +1,12 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
-use call::ActiveCall;
-use collab_ui::notifications::project_shared_notification::ProjectSharedNotification;
+use call::{ActiveCall, ParticipantLocation};
+use collab_ui::{
+    channel_view::ChannelView,
+    notifications::project_shared_notification::ProjectSharedNotification,
+};
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, BackgroundExecutor, Context, SharedString, TestAppContext, View, VisualContext,
+    point, BackgroundExecutor, Context, Entity, SharedString, TestAppContext, View, VisualContext,
     VisualTestContext,
 };
 use language::Capability;
@@ -75,6 +78,10 @@ async fn test_basic_following(
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    cx_b.update(|cx| {
+        assert!(cx.is_window_active());
+    });
 
     // Client A opens some editors.
     let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
@@ -157,7 +164,6 @@ async fn test_basic_following(
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
         .await
         .unwrap();
-    let weak_project_c = project_c.downgrade();
     drop(project_c);
 
     // Client C also follows client A.
@@ -234,17 +240,16 @@ async fn test_basic_following(
     workspace_c.update(cx_c, |workspace, cx| {
         workspace.close_window(&Default::default(), cx);
     });
-    cx_c.update(|_| {
-        drop(workspace_c);
-    });
-    cx_b.executor().run_until_parked();
+    executor.run_until_parked();
     // are you sure you want to leave the call?
     cx_c.simulate_prompt_answer(0);
-    cx_b.executor().run_until_parked();
+    cx_c.cx.update(|_| {
+        drop(workspace_c);
+    });
     executor.run_until_parked();
+    cx_c.cx.update(|_| {});
 
     weak_workspace_c.assert_dropped();
-    weak_project_c.assert_dropped();
 
     // Clients A and B see that client B is following A, and client C is not present in the followers.
     executor.run_until_parked();
@@ -1363,8 +1368,6 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     client_a
         .fs()
@@ -1399,9 +1402,6 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
-
-    cx_a.update(|cx| collab_ui::init(&client_a.app_state, cx));
-    cx_b.update(|cx| collab_ui::init(&client_b.app_state, cx));
 
     active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -1572,6 +1572,59 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 }
 
 #[gpui::test]
+async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let (client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+
+    let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
+    client_a
+        .host_workspace(&workspace_a, channel_id, cx_a)
+        .await;
+    let (workspace_b, cx_b) = client_b.join_workspace(channel_id, cx_b).await;
+
+    cx_a.simulate_keystrokes("cmd-p 2 enter");
+    cx_a.run_until_parked();
+
+    let editor_a = workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx).unwrap()
+    });
+    let editor_b = workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx).unwrap()
+    });
+
+    // b should follow a to position 1
+    editor_a.update(cx_a, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([1..1]))
+    });
+    cx_a.run_until_parked();
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.selections.ranges(cx), vec![1..1])
+    });
+
+    // a unshares the project
+    cx_a.update(|cx| {
+        let project = workspace_a.read(cx).project().clone();
+        ActiveCall::global(cx).update(cx, |call, cx| {
+            call.unshare_project(project, cx).unwrap();
+        })
+    });
+    cx_a.run_until_parked();
+
+    // b should not follow a to position 2
+    editor_a.update(cx_a, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([2..2]))
+    });
+    cx_a.run_until_parked();
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.selections.ranges(cx), vec![1..1])
+    });
+    cx_b.update(|cx| {
+        let room = ActiveCall::global(cx).read(cx).room().unwrap().read(cx);
+        let participant = room.remote_participants().get(&client_a.id()).unwrap();
+        assert_eq!(participant.location, ParticipantLocation::UnsharedProject)
+    })
+}
+
+#[gpui::test]
 async fn test_following_into_excluded_file(
     mut cx_a: &mut TestAppContext,
     mut cx_b: &mut TestAppContext,
@@ -1595,9 +1648,6 @@ async fn test_following_into_excluded_file(
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
     let peer_id_a = client_a.peer_id().unwrap();
-
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     client_a
         .fs()
@@ -1774,4 +1824,168 @@ fn pane_summaries(workspace: &View<Workspace>, cx: &mut VisualTestContext) -> Ve
             })
             .collect()
     })
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_following_to_channel_notes_without_a_shared_project(
+    deterministic: BackgroundExecutor,
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
+    mut cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(deterministic.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+    cx_c.update(editor::init);
+    cx_a.update(collab_ui::channel_view::init);
+    cx_b.update(collab_ui::channel_view::init);
+    cx_c.update(collab_ui::channel_view::init);
+
+    let channel_1_id = server
+        .make_channel(
+            "channel-1",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+    let channel_2_id = server
+        .make_channel(
+            "channel-2",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    // Clients A, B, and C join a channel.
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+    for (call, cx) in [
+        (&active_call_a, &mut cx_a),
+        (&active_call_b, &mut cx_b),
+        (&active_call_c, &mut cx_c),
+    ] {
+        call.update(*cx, |call, cx| call.join_channel(channel_1_id, cx))
+            .await
+            .unwrap();
+    }
+    deterministic.run_until_parked();
+
+    // Clients A, B, and C all open their own unshared projects.
+    client_a
+        .fs()
+        .insert_tree("/a", json!({ "1.txt": "" }))
+        .await;
+    client_b.fs().insert_tree("/b", json!({})).await;
+    client_c.fs().insert_tree("/c", json!({})).await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
+    let (project_c, _) = client_b.build_local_project("/c", cx_c).await;
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let (_workspace_c, _cx_c) = client_c.build_workspace(&project_c, cx_c);
+
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    // Client A opens the notes for channel 1.
+    let channel_notes_1_a = cx_a
+        .update(|cx| ChannelView::open(channel_1_id, workspace_a.clone(), cx))
+        .await
+        .unwrap();
+    channel_notes_1_a.update(cx_a, |notes, cx| {
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
+        notes.editor.update(cx, |editor, cx| {
+            editor.insert("Hello from A.", cx);
+            editor.change_selections(None, cx, |selections| {
+                selections.select_ranges(vec![3..4]);
+            });
+        });
+    });
+
+    // Client B follows client A.
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace
+                .start_following(client_a.peer_id().unwrap(), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // Client B is taken to the notes for channel 1, with the same
+    // text selected as client A.
+    deterministic.run_until_parked();
+    let channel_notes_1_b = workspace_b.update(cx_b, |workspace, cx| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_a.peer_id().unwrap())
+        );
+        workspace
+            .active_item(cx)
+            .expect("no active item")
+            .downcast::<ChannelView>()
+            .expect("active item is not a channel view")
+    });
+    channel_notes_1_b.update(cx_b, |notes, cx| {
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
+        let editor = notes.editor.read(cx);
+        assert_eq!(editor.text(cx), "Hello from A.");
+        assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+    });
+
+    //  Client A opens the notes for channel 2.
+    let channel_notes_2_a = cx_a
+        .update(|cx| ChannelView::open(channel_2_id, workspace_a.clone(), cx))
+        .await
+        .unwrap();
+    channel_notes_2_a.update(cx_a, |notes, cx| {
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
+    });
+
+    // Client B is taken to the notes for channel 2.
+    deterministic.run_until_parked();
+    let channel_notes_2_b = workspace_b.update(cx_b, |workspace, cx| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_a.peer_id().unwrap())
+        );
+        workspace
+            .active_item(cx)
+            .expect("no active item")
+            .downcast::<ChannelView>()
+            .expect("active item is not a channel view")
+    });
+    channel_notes_2_b.update(cx_b, |notes, cx| {
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
+    });
+
+    // Client A opens a local buffer in their unshared project.
+    let _unshared_editor_a1 = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id, "1.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // This does not send any leader update message to client B.
+    // If it did, an error would occur on client B, since this buffer
+    // is not shared with them.
+    deterministic.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        assert_eq!(
+            workspace.active_item(cx).expect("no active item").item_id(),
+            channel_notes_2_b.entity_id()
+        );
+    });
 }

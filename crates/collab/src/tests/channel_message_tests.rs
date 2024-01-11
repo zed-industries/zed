@@ -1,7 +1,9 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use channel::{ChannelChat, ChannelMessageId, MessageParams};
+use collab_ui::chat_panel::ChatPanel;
 use gpui::{BackgroundExecutor, Model, TestAppContext};
 use rpc::Notification;
+use workspace::dock::Panel;
 
 #[gpui::test]
 async fn test_basic_channel_messages(
@@ -262,7 +264,6 @@ async fn test_remove_channel_message(
 
 #[track_caller]
 fn assert_messages(chat: &Model<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
-    // todo!(don't directly borrow here)
     assert_eq!(
         chat.read_with(cx, |chat, _| {
             chat.messages()
@@ -274,135 +275,135 @@ fn assert_messages(chat: &Model<ChannelChat>, messages: &[&str], cx: &mut TestAp
     );
 }
 
-//todo!(collab_ui)
-// #[gpui::test]
-// async fn test_channel_message_changes(
-//     executor: BackgroundExecutor,
-//     cx_a: &mut TestAppContext,
-//     cx_b: &mut TestAppContext,
-// ) {
-//     let mut server = TestServer::start(&executor).await;
-//     let client_a = server.create_client(cx_a, "user_a").await;
-//     let client_b = server.create_client(cx_b, "user_b").await;
+#[gpui::test]
+async fn test_channel_message_changes(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
 
-//     let channel_id = server
-//         .make_channel(
-//             "the-channel",
-//             None,
-//             (&client_a, cx_a),
-//             &mut [(&client_b, cx_b)],
-//         )
-//         .await;
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
+        .await;
 
-//     // Client A sends a message, client B should see that there is a new message.
-//     let channel_chat_a = client_a
-//         .channel_store()
-//         .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
-//         .await
-//         .unwrap();
+    // Client A sends a message, client B should see that there is a new message.
+    let channel_chat_a = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
 
-//     channel_chat_a
-//         .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
-//         .await
-//         .unwrap();
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
+        .await
+        .unwrap();
 
-//     executor.run_until_parked();
+    executor.run_until_parked();
 
-//     let b_has_messages = cx_b.read_with(|cx| {
-//         client_b
-//             .channel_store()
-//             .read(cx)
-//             .has_new_messages(channel_id)
-//             .unwrap()
-//     });
+    let b_has_messages = cx_b.update(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
 
-//     assert!(b_has_messages);
+    assert!(b_has_messages);
 
-//     // Opening the chat should clear the changed flag.
-//     cx_b.update(|cx| {
-//         collab_ui::init(&client_b.app_state, cx);
-//     });
-//     let project_b = client_b.build_empty_local_project(cx_b);
-//     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-//     let chat_panel_b = workspace_b.update(cx_b, |workspace, cx| ChatPanel::new(workspace, cx));
-//     chat_panel_b
-//         .update(cx_b, |chat_panel, cx| {
-//             chat_panel.set_active(true, cx);
-//             chat_panel.select_channel(channel_id, None, cx)
-//         })
-//         .await
-//         .unwrap();
+    // Opening the chat should clear the changed flag.
+    cx_b.update(|cx| {
+        collab_ui::init(&client_b.app_state, cx);
+    });
+    let project_b = client_b.build_empty_local_project(cx_b);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-//     executor.run_until_parked();
+    let chat_panel_b = workspace_b.update(cx_b, |workspace, cx| ChatPanel::new(workspace, cx));
+    chat_panel_b
+        .update(cx_b, |chat_panel, cx| {
+            chat_panel.set_active(true, cx);
+            chat_panel.select_channel(channel_id, None, cx)
+        })
+        .await
+        .unwrap();
 
-//     let b_has_messages = cx_b.read_with(|cx| {
-//         client_b
-//             .channel_store()
-//             .read(cx)
-//             .has_new_messages(channel_id)
-//             .unwrap()
-//     });
+    executor.run_until_parked();
 
-//     assert!(!b_has_messages);
+    let b_has_messages = cx_b.update(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
 
-//     // Sending a message while the chat is open should not change the flag.
-//     channel_chat_a
-//         .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
-//         .await
-//         .unwrap();
+    assert!(!b_has_messages);
 
-//     executor.run_until_parked();
+    // Sending a message while the chat is open should not change the flag.
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
+        .await
+        .unwrap();
 
-//     let b_has_messages = cx_b.read_with(|cx| {
-//         client_b
-//             .channel_store()
-//             .read(cx)
-//             .has_new_messages(channel_id)
-//             .unwrap()
-//     });
+    executor.run_until_parked();
 
-//     assert!(!b_has_messages);
+    let b_has_messages = cx_b.update(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
 
-//     // Sending a message while the chat is closed should change the flag.
-//     chat_panel_b.update(cx_b, |chat_panel, cx| {
-//         chat_panel.set_active(false, cx);
-//     });
+    assert!(!b_has_messages);
 
-//     // Sending a message while the chat is open should not change the flag.
-//     channel_chat_a
-//         .update(cx_a, |c, cx| c.send_message("three".into(), cx).unwrap())
-//         .await
-//         .unwrap();
+    // Sending a message while the chat is closed should change the flag.
+    chat_panel_b.update(cx_b, |chat_panel, cx| {
+        chat_panel.set_active(false, cx);
+    });
 
-//     executor.run_until_parked();
+    // Sending a message while the chat is open should not change the flag.
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("three".into(), cx).unwrap())
+        .await
+        .unwrap();
 
-//     let b_has_messages = cx_b.read_with(|cx| {
-//         client_b
-//             .channel_store()
-//             .read(cx)
-//             .has_new_messages(channel_id)
-//             .unwrap()
-//     });
+    executor.run_until_parked();
 
-//     assert!(b_has_messages);
+    let b_has_messages = cx_b.update(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
 
-//     // Closing the chat should re-enable change tracking
-//     cx_b.update(|_| drop(chat_panel_b));
+    assert!(b_has_messages);
 
-//     channel_chat_a
-//         .update(cx_a, |c, cx| c.send_message("four".into(), cx).unwrap())
-//         .await
-//         .unwrap();
+    // Closing the chat should re-enable change tracking
+    cx_b.update(|_| drop(chat_panel_b));
 
-//     executor.run_until_parked();
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("four".into(), cx).unwrap())
+        .await
+        .unwrap();
 
-//     let b_has_messages = cx_b.read_with(|cx| {
-//         client_b
-//             .channel_store()
-//             .read(cx)
-//             .has_new_messages(channel_id)
-//             .unwrap()
-//     });
+    executor.run_until_parked();
 
-//     assert!(b_has_messages);
-// }
+    let b_has_messages = cx_b.update(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
+
+    assert!(b_has_messages);
+}

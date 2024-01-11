@@ -178,6 +178,20 @@ impl ScrollDelta {
             ScrollDelta::Lines(delta) => point(line_height * delta.x, line_height * delta.y),
         }
     }
+
+    pub fn coalesce(self, other: ScrollDelta) -> ScrollDelta {
+        match (self, other) {
+            (ScrollDelta::Pixels(px_a), ScrollDelta::Pixels(px_b)) => {
+                ScrollDelta::Pixels(px_a + px_b)
+            }
+
+            (ScrollDelta::Lines(lines_a), ScrollDelta::Lines(lines_b)) => {
+                ScrollDelta::Lines(lines_a + lines_b)
+            }
+
+            _ => other,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

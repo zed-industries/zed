@@ -1248,7 +1248,7 @@ impl SemanticIndex {
 impl Drop for JobHandle {
     fn drop(&mut self) {
         if let Some(inner) = Arc::get_mut(&mut self.tx) {
-            // This is the last instance of the JobHandle (regardless of it's origin - whether it was cloned or not)
+            // This is the last instance of the JobHandle (regardless of its origin - whether it was cloned or not)
             if let Some(tx) = inner.upgrade() {
                 let mut tx = tx.lock();
                 *tx.borrow_mut() -= 1;

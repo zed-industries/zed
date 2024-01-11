@@ -49,7 +49,7 @@ impl Database {
             if !participant
                 .role
                 .unwrap_or(ChannelRole::Member)
-                .can_share_projects()
+                .can_publish_to_rooms()
             {
                 return Err(anyhow!("guests cannot share projects"))?;
             }
@@ -883,6 +883,7 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
+        requires_write: bool,
     ) -> Result<RoomGuard<Vec<ProjectCollaborator>>> {
         let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
@@ -893,9 +894,10 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no such room"))?;
 
-            if !current_participant
-                .role
-                .map_or(false, |role| role.can_edit_projects())
+            if requires_write
+                && !current_participant
+                    .role
+                    .map_or(false, |role| role.can_edit_projects())
             {
                 Err(anyhow!("not authorized to edit projects"))?;
             }

@@ -20,7 +20,11 @@ use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use rpc::{proto::ChannelRole, RECEIVE_TIMEOUT};
+use rpc::{
+    proto::{self, ChannelRole},
+    RECEIVE_TIMEOUT,
+};
+use serde_json::json;
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -107,6 +111,20 @@ impl TestServer {
             _test_db: test_db,
             test_live_kit_server: live_kit_server,
         }
+    }
+
+    pub async fn start2(
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) -> (TestClient, TestClient, u64) {
+        let mut server = Self::start(cx_a.executor()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        let channel_id = server
+            .make_channel("a", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
+            .await;
+
+        (client_a, client_b, channel_id)
     }
 
     pub async fn reset(&self) {
@@ -228,12 +246,16 @@ impl TestServer {
             Project::init(&client, cx);
             client::init(&client, cx);
             language::init(cx);
-            editor::init_settings(cx);
+            editor::init(cx);
             workspace::init(app_state.clone(), cx);
             audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
             channel::init(&client, user_store.clone(), cx);
             notifications::init(client.clone(), user_store, cx);
+            collab_ui::init(&app_state, cx);
+            file_finder::init(cx);
+            menu::init();
+            settings::KeymapFile::load_asset("keymaps/default.json", cx).unwrap();
         });
 
         client
@@ -347,6 +369,31 @@ impl TestServer {
                 .await
                 .unwrap();
         }
+
+        channel_id
+    }
+
+    pub async fn make_public_channel(
+        &self,
+        channel: &str,
+        client: &TestClient,
+        cx: &mut TestAppContext,
+    ) -> u64 {
+        let channel_id = self
+            .make_channel(channel, None, (client, cx), &mut [])
+            .await;
+
+        client
+            .channel_store()
+            .update(cx, |channel_store, cx| {
+                channel_store.set_channel_visibility(
+                    channel_id,
+                    proto::ChannelVisibility::Public,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
 
         channel_id
     }
@@ -580,6 +627,55 @@ impl TestClient {
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
+    pub async fn build_test_project(&self, cx: &mut TestAppContext) -> Model<Project> {
+        self.fs()
+            .insert_tree(
+                "/a",
+                json!({
+                    "1.txt": "one\none\none",
+                    "2.js": "function two() { return 2; }",
+                    "3.rs": "mod test",
+                }),
+            )
+            .await;
+        self.build_local_project("/a", cx).await.0
+    }
+
+    pub async fn host_workspace(
+        &self,
+        workspace: &View<Workspace>,
+        channel_id: u64,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|cx| {
+            let active_call = ActiveCall::global(cx);
+            active_call.update(cx, |call, cx| call.join_channel(channel_id, cx))
+        })
+        .await
+        .unwrap();
+        cx.update(|cx| {
+            let active_call = ActiveCall::global(cx);
+            let project = workspace.read(cx).project().clone();
+            active_call.update(cx, |call, cx| call.share_project(project, cx))
+        })
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+    }
+
+    pub async fn join_workspace<'a>(
+        &'a self,
+        channel_id: u64,
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        self.active_workspace(cx)
+    }
+
     pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> Model<Project> {
         cx.update(|cx| {
             Project::local(
@@ -617,7 +713,33 @@ impl TestClient {
         project: &Model<Project>,
         cx: &'a mut TestAppContext,
     ) -> (View<Workspace>, &'a mut VisualTestContext) {
-        cx.add_window_view(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
+        cx.add_window_view(|cx| {
+            cx.activate_window();
+            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+        })
+    }
+
+    pub async fn build_test_workspace<'a>(
+        &'a self,
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        let project = self.build_test_project(cx).await;
+        cx.add_window_view(|cx| {
+            cx.activate_window();
+            Workspace::new(0, project.clone(), self.app_state.clone(), cx)
+        })
+    }
+
+    pub fn active_workspace<'a>(
+        &'a self,
+        cx: &'a mut TestAppContext,
+    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+        let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+
+        let view = window.root_view(cx).unwrap();
+        let cx = Box::new(VisualTestContext::from_window(*window.deref(), cx));
+        // it might be nice to try and cleanup these at the end of each test.
+        (view, Box::leak(cx))
     }
 }
 
