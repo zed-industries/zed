@@ -519,6 +519,62 @@ impl FileFinderDelegate {
 
         (file_name, file_name_positions, full_path, path_positions)
     }
+
+    fn lookup_absolute_path(
+        &self,
+        query: PathLikeWithPosition<FileSearchQuery>,
+        cx: &mut ViewContext<'_, Picker<Self>>,
+    ) -> Task<()> {
+        cx.spawn(|picker, mut cx| async move {
+            let Some((project, fs)) = picker
+                .update(&mut cx, |picker, cx| {
+                    let fs = Arc::clone(&picker.delegate.project.read(cx).fs());
+                    (picker.delegate.project.clone(), fs)
+                })
+                .log_err()
+            else {
+                return;
+            };
+
+            let query_path = Path::new(query.path_like.path_query());
+            let mut path_matches = Vec::new();
+            match fs.metadata(query_path).await.log_err() {
+                Some(Some(_metadata)) => {
+                    let update_result = project
+                        .update(&mut cx, |project, cx| {
+                            if let Some((worktree, relative_path)) =
+                                project.find_local_worktree(query_path, cx)
+                            {
+                                path_matches.push(PathMatch {
+                                    score: 0.0,
+                                    positions: Vec::new(),
+                                    worktree_id: worktree.read(cx).id().to_usize(),
+                                    path: Arc::from(relative_path),
+                                    path_prefix: "".into(),
+                                    distance_to_relative_ancestor: usize::MAX,
+                                });
+                            }
+                        })
+                        .log_err();
+                    if update_result.is_none() {
+                        return;
+                    }
+                }
+                Some(None) => {}
+                None => return,
+            }
+
+            picker
+                .update(&mut cx, |picker, cx| {
+                    let picker_delegate = &mut picker.delegate;
+                    let search_id = util::post_inc(&mut picker_delegate.search_count);
+                    picker_delegate.set_search_matches(search_id, false, query, path_matches, cx);
+
+                    anyhow::Ok(())
+                })
+                .log_err();
+        })
+    }
 }
 
 impl PickerDelegate for FileFinderDelegate {
@@ -588,7 +644,12 @@ impl PickerDelegate for FileFinderDelegate {
                 })
             })
             .expect("infallible");
-            self.spawn_search(query, cx)
+
+            if Path::new(query.path_like.path_query()).is_absolute() {
+                self.lookup_absolute_path(query, cx)
+            } else {
+                self.spawn_search(query, cx)
+            }
         }
     }
 
@@ -816,6 +877,68 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_absolute_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1.txt": "",
+                        "b": {
+                            "file2.txt": "",
+                        },
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+
+        let (picker, workspace, cx) = build_find_picker(project, cx);
+
+        let matching_abs_path = "/root/a/b/file2.txt";
+        picker
+            .update(cx, |picker, cx| {
+                picker
+                    .delegate
+                    .update_matches(matching_abs_path.to_string(), cx)
+            })
+            .await;
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                collect_search_results(picker),
+                vec![PathBuf::from("a/b/file2.txt")],
+                "Matching abs path should be the only match"
+            )
+        });
+        cx.dispatch_action(SelectNext);
+        cx.dispatch_action(Confirm);
+        cx.read(|cx| {
+            let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+            assert_eq!(active_editor.read(cx).title(cx), "file2.txt");
+        });
+
+        let mismatching_abs_path = "/root/a/b/file1.txt";
+        picker
+            .update(cx, |picker, cx| {
+                picker
+                    .delegate
+                    .update_matches(mismatching_abs_path.to_string(), cx)
+            })
+            .await;
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                collect_search_results(picker),
+                Vec::<PathBuf>::new(),
+                "Mismatching abs path should produce no matches"
+            )
+        });
     }
 
     #[gpui::test]
