@@ -5147,6 +5147,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "fuzzy",
  "gpui",
  "menu",
  "parking_lot 0.11.2",

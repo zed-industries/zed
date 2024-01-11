@@ -1,13 +1,13 @@
 use editor::{scroll::autoscroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task,
-    View, ViewContext, WeakView,
+    actions, rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, SharedString,
+    StyledText, Task, View, ViewContext, WeakView,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol};
-use std::{borrow::Cow, cmp::Reverse, sync::Arc};
+use std::{borrow::Cow, cmp::Reverse};
 use theme::ActiveTheme;
 use util::ResultExt;
 use workspace::{
@@ -106,7 +106,7 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self) -> SharedString {
         "Search project symbols...".into()
     }
 

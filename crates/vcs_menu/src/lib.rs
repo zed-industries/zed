@@ -1,3 +1,5 @@
+use std::ops::Not;
+
 use anyhow::{anyhow, bail, Result};
 use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -7,7 +9,6 @@ use gpui::{
     Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
-use std::{ops::Not, sync::Arc};
 use ui::{
     h_stack, v_stack, Button, ButtonCommon, Clickable, HighlightedLabel, Label, LabelCommon,
     LabelSize, ListItem, ListItemSpacing, Selectable,
@@ -136,7 +137,7 @@ impl BranchListDelegate {
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self) -> SharedString {
         "Select branch...".into()
     }
 

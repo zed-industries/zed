@@ -272,7 +272,7 @@ pub struct ChannelModalDelegate {
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self) -> SharedString {
         "Search collaborator by username...".into()
     }
 

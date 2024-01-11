@@ -12,10 +12,7 @@ use language::Outline;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use std::{
-    cmp::{self, Reverse},
-    sync::Arc,
-};
+use std::cmp::{self, Reverse};
 
 use theme::{color_alpha, ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem, ListItemSpacing};
@@ -157,7 +154,7 @@ impl OutlineViewDelegate {
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self) -> SharedString {
         "Search buffer symbols...".into()
     }
 

@@ -9,7 +9,6 @@ use gpui::{
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::paths::PathExt;
 use workspace::{ModalView, Workspace, WorkspaceLocation, WORKSPACE_DB};
@@ -138,7 +137,7 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self) -> SharedString {
         "Recent Projects...".into()
     }
 

@@ -1,7 +1,4 @@
-use std::{
-    cmp::{self, Reverse},
-    sync::Arc,
-};
+use std::cmp::{self, Reverse};
 
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -146,7 +143,7 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self) -> Arc<str> {
+    fn placeholder_text(&self) -> SharedString {
         "Execute a command...".into()
     }
 

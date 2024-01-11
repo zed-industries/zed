@@ -34,7 +34,7 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
-    fn placeholder_text(&self) -> Arc<str>;
+    fn placeholder_text(&self) -> SharedString;
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>);

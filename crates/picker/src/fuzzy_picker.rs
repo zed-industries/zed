@@ -1,61 +1,76 @@
-use std::marker::PhantomData;
-
-use gpui::{IntoElement, SharedString, ViewContext};
-
 use crate::{Picker, PickerDelegate};
+use fuzzy::StringMatchCandidate;
+use gpui::{IntoElement, SharedString, ViewContext};
+use std::marker::PhantomData;
 
 impl<I, R, E> Picker<FuzzyPickerDelegate<I, R, E>>
 where
-    I: 'static,
-    R: 'static + Fn(usize, bool, &mut ViewContext<Picker<Self>>) -> E,
+    I: 'static + Clone,
+    R: 'static
+        + Fn(usize, bool, &mut ViewContext<'_, Picker<FuzzyPickerDelegate<I, R, E>>>) -> Option<E>,
     E: 'static + IntoElement,
 {
-    fn fuzzy(
+    pub fn fuzzy(
         items: Vec<FuzzyPickerItem<I>>,
         cx: &mut ViewContext<Picker<FuzzyPickerDelegate<I, R, E>>>,
         render_match: R,
     ) -> Self {
         Self::new(
             FuzzyPickerDelegate {
-                items,
-                render_match,
+                items: items.clone(),
+                matches: items,
+                render_item: render_match,
                 item_element_type: PhantomData,
+                selected_index: 0,
+                placeholder_text: None,
             },
             cx,
         )
     }
+
+    pub fn placeholder_text(mut self, text: impl Into<SharedString>) -> Self {
+        self.delegate.placeholder_text = Some(text.into());
+        self
+    }
 }
 
-pub struct FuzzyPickerDelegate<I, R, E> {
+pub struct FuzzyPickerDelegate<I: Clone, R, E> {
     items: Vec<FuzzyPickerItem<I>>,
-    render_match: R,
+    matches: Vec<FuzzyPickerItem<I>>,
+    render_item: R,
     item_element_type: PhantomData<E>,
+    selected_index: usize,
+    placeholder_text: Option<SharedString>,
 }
 
-pub struct FuzzyPickerItem<I> {
+#[derive(Clone)]
+pub struct FuzzyPickerItem<I: Clone> {
     name: SharedString,
     id: I,
 }
 
-impl<I: 'static, R: 'static + Fn(), E: 'static + IntoElement> PickerDelegate
-    for FuzzyPickerDelegate<I, R, E>
+impl<I, R, E> PickerDelegate for FuzzyPickerDelegate<I, R, E>
+where
+    I: 'static + Clone,
+    R: 'static + Fn(usize, bool, &mut ViewContext<Picker<Self>>) -> Option<E>,
+    E: 'static + IntoElement,
 {
     type ListItem = E;
 
     fn match_count(&self) -> usize {
-        todo!()
+        self.items.len()
     }
 
     fn selected_index(&self) -> usize {
-        todo!()
+        self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
-        todo!()
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+        self.selected_index = ix;
     }
 
-    fn placeholder_text(&self) -> std::sync::Arc<str> {
-        todo!()
+    fn placeholder_text(&self) -> SharedString {
+        self.placeholder_text.clone().unwrap_or_default()
     }
 
     fn update_matches(
@@ -63,10 +78,45 @@ impl<I: 'static, R: 'static + Fn(), E: 'static + IntoElement> PickerDelegate
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        todo!()
+        let items = self.items.clone();
+        cx.spawn(move |this, mut cx| async move {
+            let query = query.trim_start();
+            let smart_case = query.chars().any(|c| c.is_uppercase());
+            let candidates = items
+                .iter()
+                .enumerate()
+                .map(|(id, item)| StringMatchCandidate::new(id, item.name.to_string()))
+                .collect::<Vec<_>>();
+
+            let mut fuzzy_matches = fuzzy::match_strings(
+                candidates.as_slice(),
+                query,
+                smart_case,
+                100,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+
+            this.update(&mut cx, |this, _cx| {
+                fuzzy_matches.sort_unstable_by_key(|m| m.candidate_id);
+                let max_score = 0.;
+                this.delegate.matches = fuzzy_matches
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, m)| {
+                        if m.score > max_score {
+                            this.delegate.selected_index = ix;
+                        }
+                        items[m.candidate_id].clone()
+                    })
+                    .collect();
+            })
+            .ok();
+        })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         todo!()
     }
 
@@ -80,6 +130,6 @@ impl<I: 'static, R: 'static + Fn(), E: 'static + IntoElement> PickerDelegate
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        todo!()
+        (self.render_item)(ix, selected, cx)
     }
 }
