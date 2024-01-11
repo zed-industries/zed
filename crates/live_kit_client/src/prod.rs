@@ -864,7 +864,10 @@ impl RemoteAudioTrack {
 
 impl Drop for RemoteAudioTrack {
     fn drop(&mut self) {
-        unsafe { CFRelease(self.native_track.0) }
+        // todo: uncomment this `CFRelease`, unless we find that it was causing
+        // the crash in the `livekit.multicast` thread.
+        //
+        // unsafe { CFRelease(self.native_track.0) }
     }
 }
 
