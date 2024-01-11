@@ -28,4 +28,8 @@ pub enum RoomUpdate {
     SubscribedToRemoteAudioTrack(Arc<RemoteAudioTrack>, Arc<RemoteTrackPublication>),
     UnsubscribedFromRemoteVideoTrack { publisher_id: Sid, track_id: Sid },
     UnsubscribedFromRemoteAudioTrack { publisher_id: Sid, track_id: Sid },
+    LocalAudioTrackPublished { publication: LocalTrackPublication },
+    LocalAudioTrackUnpublished { publication: LocalTrackPublication },
+    LocalVideoTrackPublished { publication: LocalTrackPublication },
+    LocalVideoTrackUnpublished { publication: LocalTrackPublication },
 }

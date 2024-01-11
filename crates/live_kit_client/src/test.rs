@@ -8,7 +8,14 @@ use live_kit_server::{proto, token};
 use media::core_video::CVImageBuffer;
 use parking_lot::Mutex;
 use postage::watch;
-use std::{future::Future, mem, sync::Arc};
+use std::{
+    future::Future,
+    mem,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
+};
 
 static SERVERS: Mutex<BTreeMap<String, Arc<TestServer>>> = Mutex::new(BTreeMap::new());
 
@@ -176,7 +183,11 @@ impl TestServer {
         }
     }
 
-    async fn publish_video_track(&self, token: String, local_track: LocalVideoTrack) -> Result<()> {
+    async fn publish_video_track(
+        &self,
+        token: String,
+        local_track: LocalVideoTrack,
+    ) -> Result<Sid> {
         self.executor.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
@@ -198,8 +209,9 @@ impl TestServer {
             return Err(anyhow!("user is not allowed to publish"));
         }
 
+        let sid = nanoid::nanoid!(17);
         let track = Arc::new(RemoteVideoTrack {
-            sid: nanoid::nanoid!(17),
+            sid: sid.clone(),
             publisher_id: identity.clone(),
             frames_rx: local_track.frames_rx.clone(),
         });
@@ -217,14 +229,14 @@ impl TestServer {
             }
         }
 
-        Ok(())
+        Ok(sid)
     }
 
     async fn publish_audio_track(
         &self,
         token: String,
         _local_track: &LocalAudioTrack,
-    ) -> Result<()> {
+    ) -> Result<Sid> {
         self.executor.simulate_random_delay().await;
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
@@ -246,8 +258,9 @@ impl TestServer {
             return Err(anyhow!("user is not allowed to publish"));
         }
 
+        let sid = nanoid::nanoid!(17);
         let track = Arc::new(RemoteAudioTrack {
-            sid: nanoid::nanoid!(17),
+            sid: sid.clone(),
             publisher_id: identity.clone(),
         });
 
@@ -269,7 +282,7 @@ impl TestServer {
             }
         }
 
-        Ok(())
+        Ok(sid)
     }
 
     fn video_tracks(&self, token: String) -> Result<Vec<Arc<RemoteVideoTrack>>> {
@@ -425,10 +438,14 @@ impl Room {
         let this = self.clone();
         let track = track.clone();
         async move {
-            this.test_server()
+            let sid = this
+                .test_server()
                 .publish_video_track(this.token(), track)
                 .await?;
-            Ok(LocalTrackPublication)
+            Ok(LocalTrackPublication {
+                muted: Default::default(),
+                sid,
+            })
         }
     }
     pub fn publish_audio_track(
@@ -438,10 +455,14 @@ impl Room {
         let this = self.clone();
         let track = track.clone();
         async move {
-            this.test_server()
+            let sid = this
+                .test_server()
                 .publish_audio_track(this.token(), &track)
                 .await?;
-            Ok(LocalTrackPublication)
+            Ok(LocalTrackPublication {
+                muted: Default::default(),
+                sid,
+            })
         }
     }
 
@@ -536,11 +557,27 @@ impl Drop for Room {
     }
 }
 
-pub struct LocalTrackPublication;
+#[derive(Clone)]
+pub struct LocalTrackPublication {
+    sid: String,
+    muted: Arc<AtomicBool>,
+}
 
 impl LocalTrackPublication {
-    pub fn set_mute(&self, _mute: bool) -> impl Future<Output = Result<()>> {
-        async { Ok(()) }
+    pub fn set_mute(&self, mute: bool) -> impl Future<Output = Result<()>> {
+        let muted = self.muted.clone();
+        async move {
+            muted.store(mute, SeqCst);
+            Ok(())
+        }
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(SeqCst)
+    }
+
+    pub fn sid(&self) -> String {
+        self.sid.clone()
     }
 }
 

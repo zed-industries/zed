@@ -77,6 +77,16 @@ extern "C" {
             publisher_id: CFStringRef,
             track_id: CFStringRef,
         ),
+        on_did_publish_or_unpublish_local_audio_track: extern "C" fn(
+            callback_data: *mut c_void,
+            publication: swift::LocalTrackPublication,
+            is_published: bool,
+        ),
+        on_did_publish_or_unpublish_local_video_track: extern "C" fn(
+            callback_data: *mut c_void,
+            publication: swift::LocalTrackPublication,
+            is_published: bool,
+        ),
     ) -> swift::RoomDelegate;
 
     fn LKRoomCreate(delegate: swift::RoomDelegate) -> swift::Room;
@@ -152,7 +162,9 @@ extern "C" {
         callback_data: *mut c_void,
     );
 
+    fn LKLocalTrackPublicationIsMuted(publication: swift::LocalTrackPublication) -> bool;
     fn LKRemoteTrackPublicationIsMuted(publication: swift::RemoteTrackPublication) -> bool;
+    fn LKLocalTrackPublicationGetSid(publication: swift::LocalTrackPublication) -> CFStringRef;
     fn LKRemoteTrackPublicationGetSid(publication: swift::RemoteTrackPublication) -> CFStringRef;
 }
 
@@ -511,6 +523,8 @@ impl RoomDelegate {
                 Self::on_active_speakers_changed,
                 Self::on_did_subscribe_to_remote_video_track,
                 Self::on_did_unsubscribe_from_remote_video_track,
+                Self::on_did_publish_or_unpublish_local_audio_track,
+                Self::on_did_publish_or_unpublish_local_video_track,
             )
         };
         Self {
@@ -624,6 +638,46 @@ impl RoomDelegate {
         }
         let _ = Weak::into_raw(room);
     }
+
+    extern "C" fn on_did_publish_or_unpublish_local_audio_track(
+        room: *mut c_void,
+        publication: swift::LocalTrackPublication,
+        is_published: bool,
+    ) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        if let Some(room) = room.upgrade() {
+            let publication = LocalTrackPublication::new(publication);
+            let update = if is_published {
+                RoomUpdate::LocalAudioTrackPublished { publication }
+            } else {
+                RoomUpdate::LocalAudioTrackUnpublished { publication }
+            };
+            room.update_subscribers
+                .lock()
+                .retain(|tx| tx.unbounded_send(update.clone()).is_ok());
+        }
+        let _ = Weak::into_raw(room);
+    }
+
+    extern "C" fn on_did_publish_or_unpublish_local_video_track(
+        room: *mut c_void,
+        publication: swift::LocalTrackPublication,
+        is_published: bool,
+    ) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        if let Some(room) = room.upgrade() {
+            let publication = LocalTrackPublication::new(publication);
+            let update = if is_published {
+                RoomUpdate::LocalVideoTrackPublished { publication }
+            } else {
+                RoomUpdate::LocalVideoTrackUnpublished { publication }
+            };
+            room.update_subscribers
+                .lock()
+                .retain(|tx| tx.unbounded_send(update.clone()).is_ok());
+        }
+        let _ = Weak::into_raw(room);
+    }
 }
 
 impl Drop for RoomDelegate {
@@ -673,6 +727,10 @@ impl LocalTrackPublication {
         Self(native_track_publication)
     }
 
+    pub fn sid(&self) -> String {
+        unsafe { CFString::wrap_under_get_rule(LKLocalTrackPublicationGetSid(self.0)).to_string() }
+    }
+
     pub fn set_mute(&self, muted: bool) -> impl Future<Output = Result<()>> {
         let (tx, rx) = futures::channel::oneshot::channel();
 
@@ -696,6 +754,19 @@ impl LocalTrackPublication {
         }
 
         async move { rx.await.unwrap() }
+    }
+
+    pub fn is_muted(&self) -> bool {
+        unsafe { LKLocalTrackPublicationIsMuted(self.0) }
+    }
+}
+
+impl Clone for LocalTrackPublication {
+    fn clone(&self) -> Self {
+        unsafe {
+            CFRetain(self.0 .0);
+        }
+        Self(self.0)
     }
 }
 

@@ -1060,6 +1060,28 @@ impl Room {
                     participant_id: participant.peer_id,
                 });
             }
+
+            RoomUpdate::LocalAudioTrackUnpublished { publication } => {
+                log::info!("unpublished audio track {}", publication.sid());
+                if let Some(room) = &mut self.live_kit {
+                    room.microphone_track = LocalTrack::None;
+                }
+            }
+
+            RoomUpdate::LocalVideoTrackUnpublished { publication } => {
+                log::info!("unpublished video track {}", publication.sid());
+                if let Some(room) = &mut self.live_kit {
+                    room.screen_track = LocalTrack::None;
+                }
+            }
+
+            RoomUpdate::LocalAudioTrackPublished { publication } => {
+                log::info!("published audio track {}", publication.sid());
+            }
+
+            RoomUpdate::LocalVideoTrackPublished { publication } => {
+                log::info!("published video track {}", publication.sid());
+            }
         }
 
         cx.notify();
