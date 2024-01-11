@@ -2,23 +2,22 @@ name: "Check formatting"
 description: "Checks code formatting use cargo fmt"
 
 runs:
-  using: "composite"
-  steps:
-    - name: Install Rust
-      shell: bash -euxo pipefail {0}
-      run: |
-        rustup set profile minimal
-        rustup update stable
-        rustup component add clippy
+    using: "composite"
+    steps:
+        - name: Install Rust
+          shell: bash -euxo pipefail {0}
+          run: |
+              rustup set profile minimal
+              rustup update stable
 
-    - name: cargo fmt
-      shell: bash -euxo pipefail {0}
-      run: cargo fmt --all -- --check
+        - name: cargo fmt
+          shell: bash -euxo pipefail {0}
+          run: cargo fmt --all -- --check
 
-    - name: cargo clippy
-      shell: bash -euxo pipefail {0}
-      # clippy.toml is not currently supporting specifying allowed lints
-      # so specify those here, and disable the rest until Zed's workspace
-      # will have more fixes & suppression for the standard lint set
-      run: |
-        CARGO_LOG=debug cargo -vvv clippy --workspace --all-features -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
+        - name: cargo clippy
+          shell: bash -euxo pipefail {0}
+          # clippy.toml is not currently supporting specifying allowed lints
+          # so specify those here, and disable the rest until Zed's workspace
+          # will have more fixes & suppression for the standard lint set
+          run: |
+              cargo clippy --workspace --all-features --all-targets -- -A clippy::all -D clippy::dbg_macro -D clippy::todo

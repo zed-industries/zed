@@ -8242,6 +8242,7 @@ pub(crate) fn update_test_project_settings(
 }
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
+    dbg!("(???????????");
     _ = cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
