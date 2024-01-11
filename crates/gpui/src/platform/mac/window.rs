@@ -1114,7 +1114,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                                 // we don't match cmd/fn because they don't seem to use IME
                                 modifiers: Default::default(),
                                 key: ime_text.clone().unwrap(),
-                                ime_key: None, // todo!("handle IME key")
+                                ime_key: None,
                             },
                         };
                         handled = callback(InputEvent::KeyDown(event_with_ime_text));
@@ -1568,6 +1568,9 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 replacement_range,
                 text: text.to_string(),
             });
+            if text.to_string().to_ascii_lowercase() != pending_key_down.0.keystroke.key {
+                pending_key_down.0.keystroke.ime_key = Some(text.to_string());
+            }
             window_state.lock().pending_key_down = Some(pending_key_down);
         }
     }
