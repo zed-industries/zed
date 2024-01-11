@@ -65,6 +65,9 @@ impl TextSystem {
         }
     }
 
+    pub fn all_font_families(&self) -> Vec<String> {
+        self.platform_text_system.all_font_families()
+    }
     pub fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.platform_text_system.add_fonts(fonts)
     }
