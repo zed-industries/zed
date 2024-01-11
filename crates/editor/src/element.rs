@@ -1017,7 +1017,6 @@ impl EditorElement {
                                         .chars_at(cursor_position)
                                         .next()
                                         .and_then(|(character, _)| {
-                                            // todo!() currently shape_line panics if text conatins newlines
                                             let text = if character == '\n' {
                                                 SharedString::from(" ")
                                             } else {

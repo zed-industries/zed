@@ -1043,7 +1043,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
-        // todo!() this test is flaky
+        // todo this test is flaky
         init_test(cx);
 
         cx.background_executor.set_block_on_ticks(0..=50);

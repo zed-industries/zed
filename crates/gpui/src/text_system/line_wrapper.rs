@@ -137,7 +137,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, TestAppContext, TestDispatcher};
+    use crate::{font, TestAppContext, TestDispatcher, TextRun, WrapBoundary};
     use rand::prelude::*;
 
     #[test]
@@ -206,75 +206,70 @@ mod tests {
         });
     }
 
-    // todo!("move this to a test on TextSystem::layout_text")
-    // todo! repeat this test
-    // #[test]
-    // fn test_wrap_shaped_line() {
-    //     App::test().run(|cx| {
-    //         let text_system = cx.text_system().clone();
+    // For compatibility with the test macro
+    use crate as gpui;
 
-    //         let normal = TextRun {
-    //             len: 0,
-    //             font: font("Helvetica"),
-    //             color: Default::default(),
-    //             underline: Default::default(),
-    //         };
-    //         let bold = TextRun {
-    //             len: 0,
-    //             font: font("Helvetica").bold(),
-    //             color: Default::default(),
-    //             underline: Default::default(),
-    //         };
+    #[crate::test]
+    fn test_wrap_shaped_line(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let text_system = cx.text_system().clone();
 
-    //         impl TextRun {
-    //             fn with_len(&self, len: usize) -> Self {
-    //                 let mut this = self.clone();
-    //                 this.len = len;
-    //                 this
-    //             }
-    //         }
+            let normal = TextRun {
+                len: 0,
+                font: font("Helvetica"),
+                color: Default::default(),
+                underline: Default::default(),
+                background_color: None,
+            };
+            let bold = TextRun {
+                len: 0,
+                font: font("Helvetica").bold(),
+                color: Default::default(),
+                underline: Default::default(),
+                background_color: None,
+            };
 
-    //         let text = "aa bbb cccc ddddd eeee".into();
-    //         let lines = text_system
-    //             .layout_text(
-    //                 &text,
-    //                 px(16.),
-    //                 &[
-    //                     normal.with_len(4),
-    //                     bold.with_len(5),
-    //                     normal.with_len(6),
-    //                     bold.with_len(1),
-    //                     normal.with_len(7),
-    //                 ],
-    //                 None,
-    //             )
-    //             .unwrap();
-    //         let line = &lines[0];
+            impl TextRun {
+                fn with_len(&self, len: usize) -> Self {
+                    let mut this = self.clone();
+                    this.len = len;
+                    this
+                }
+            }
 
-    //         let mut wrapper = LineWrapper::new(
-    //             text_system.font_id(&normal.font).unwrap(),
-    //             px(16.),
-    //             text_system.platform_text_system.clone(),
-    //         );
-    //         assert_eq!(
-    //             wrapper
-    //                 .wrap_shaped_line(&text, &line, px(72.))
-    //                 .collect::<Vec<_>>(),
-    //             &[
-    //                 ShapedBoundary {
-    //                     run_ix: 1,
-    //                     glyph_ix: 3
-    //                 },
-    //                 ShapedBoundary {
-    //                     run_ix: 2,
-    //                     glyph_ix: 3
-    //                 },
-    //                 ShapedBoundary {
-    //                     run_ix: 4,
-    //                     glyph_ix: 2
-    //                 }
-    //             ],
-    //         );
-    //     });
-    // }
+            let text = "aa bbb cccc ddddd eeee".into();
+            let lines = text_system
+                .shape_text(
+                    text,
+                    px(16.),
+                    &[
+                        normal.with_len(4),
+                        bold.with_len(5),
+                        normal.with_len(6),
+                        bold.with_len(1),
+                        normal.with_len(7),
+                    ],
+                    Some(px(72.)),
+                )
+                .unwrap();
+
+            assert_eq!(
+                lines[0].layout.wrap_boundaries(),
+                &[
+                    WrapBoundary {
+                        run_ix: 1,
+                        glyph_ix: 3
+                    },
+                    WrapBoundary {
+                        run_ix: 2,
+                        glyph_ix: 3
+                    },
+                    WrapBoundary {
+                        run_ix: 4,
+                        glyph_ix: 2
+                    }
+                ],
+            );
+        });
+    }
 }
