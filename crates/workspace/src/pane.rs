@@ -1002,6 +1002,34 @@ impl Pane {
                     .iter()
                     .any(|id| saved_project_items_ids.insert(*id));
 
+                // TODO kb
+                // * all dirty buffers without a project path should be saved when they are closed (due to another file select prompt needed)
+                // * dirty multibuffers should only propose saving if there are some files inside it that are dirty and not open in the pane
+                // (can we even check that?)
+                // * dirty singletons should close without a prompt if there's a dirty multibuffer open with the same file (as it works now already)
+                // * when closing multiple buffers and mentioning their filenames, omit multibuffers that contain all the files that are dirty and nothing else
+                cx.update(|_, cx| {
+                    dbg!((
+                        item.tab_tooltip_text(cx).map(|t| t.to_string()),
+                        item.item_id(),
+                        item.is_dirty(cx),
+                        item.is_singleton(cx),
+                        item.project_path(cx),
+                        save_intent,
+                        should_save,
+                    ));
+                    if !item.is_singleton(cx) {
+                        let multibuffer_model_ids = item.project_item_model_ids(cx);
+                        dbg!(&multibuffer_model_ids);
+                        item.for_each_project_item(cx, &mut |id, item| {
+                            if multibuffer_model_ids.contains(dbg!(&id)) {
+                                dbg!(item.entry_id(cx));
+                            }
+                        });
+                    }
+                })
+                .unwrap();
+
                 if should_save
                     && !Self::save_item(
                         project.clone(),
