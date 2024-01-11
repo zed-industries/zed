@@ -2608,11 +2608,20 @@ impl Workspace {
                         let cx = &cx;
                         move |item| {
                             let item = item.to_followable_item_handle(cx)?;
-                            if (project_id.is_none() || project_id != follower_project_id)
-                                && item.is_project_item(cx)
+
+                            // If the item belongs to a particular project, then it should
+                            // only be included if this project is shared, and the follower
+                            // is in thie project.
+                            //
+                            // Some items, like channel notes, do not belong to a particular
+                            // project, so they should be included regardless of whether the
+                            // current project is shared, or what project the follower is in.
+                            if item.is_project_item(cx)
+                                && (project_id.is_none() || project_id != follower_project_id)
                             {
                                 return None;
                             }
+
                             let id = item.remote_id(client, cx)?.to_proto();
                             let variant = item.to_state_proto(cx)?;
                             Some(proto::View {
@@ -2790,8 +2799,12 @@ impl Workspace {
         update: proto::update_followers::Variant,
         cx: &mut WindowContext,
     ) -> Option<()> {
+        // If this update only applies to for followers in the current project,
+        // then skip it unless this project is shared. If it applies to all
+        // followers, regardless of project, then set `project_id` to none,
+        // indicating that it goes to all followers.
         let project_id = if project_only {
-            self.project.read(cx).remote_id()
+            Some(self.project.read(cx).remote_id()?)
         } else {
             None
         };
