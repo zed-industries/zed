@@ -809,7 +809,7 @@ impl EditorElement {
             // the hunk might include the rows of that header.
             // Making the range inclusive doesn't quite cut it, as we rely on the exclusivity for the soft wrap.
             // Instead, we simply check whether the range we're dealing with includes
-            // any custom elements and if so, we stop painting the diff hunk on the first row of that custom element.
+            // any excerpt headers and if so, we stop painting the diff hunk on the first row of that header.
             let end_row_in_current_excerpt = layout
                 .position_map
                 .snapshot
