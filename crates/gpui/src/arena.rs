@@ -31,7 +31,7 @@ pub struct Arena {
 impl Arena {
     pub fn new(size_in_bytes: usize) -> Self {
         unsafe {
-            let layout = alloc::Layout::from_size_align(size_in_bytes, 1).unwrap();
+            let layout = alloc::Layout::from_size_align(size_in_bytes, 8).unwrap();
             let start = alloc::alloc(layout);
             let end = start.add(size_in_bytes);
             Self {
