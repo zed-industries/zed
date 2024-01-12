@@ -102,7 +102,7 @@ impl Render for CollabTitlebarItem {
                                 peer_id,
                                 true,
                                 room.is_speaking(),
-                                room.is_muted(cx),
+                                room.is_muted(),
                                 &room,
                                 project_id,
                                 &current_user,
@@ -168,7 +168,7 @@ impl Render for CollabTitlebarItem {
                         let project = self.project.read(cx);
                         let is_local = project.is_local();
                         let is_shared = is_local && project.is_shared();
-                        let is_muted = room.is_muted(cx);
+                        let is_muted = room.is_muted();
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
                         let read_only = room.read_only();
