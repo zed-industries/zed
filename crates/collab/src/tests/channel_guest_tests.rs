@@ -104,12 +104,10 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     });
     assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
     assert!(editor_b.update(cx_b, |e, cx| e.read_only(cx)));
-    assert!(dbg!(
-        room_b
-            .update(cx_b, |room, cx| room.share_microphone(cx))
-            .await
-    )
-    .is_err());
+    assert!(room_b
+        .update(cx_b, |room, cx| room.share_microphone(cx))
+        .await
+        .is_err());
 
     // B is promoted
     active_call_a

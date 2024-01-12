@@ -1545,9 +1545,6 @@ impl<'a> WindowContext<'a> {
             .finish(&mut self.window.rendered_frame);
         ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
 
-        self.window.refreshing = false;
-        self.window.drawing = false;
-
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;
         mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
@@ -1586,6 +1583,8 @@ impl<'a> WindowContext<'a> {
         self.window
             .platform_window
             .draw(&self.window.rendered_frame.scene);
+        self.window.refreshing = false;
+        self.window.drawing = false;
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -2158,7 +2157,17 @@ impl<'a> WindowContext<'a> {
         let mut this = self.to_async();
         self.window
             .platform_window
-            .on_should_close(Box::new(move || this.update(|_, cx| f(cx)).unwrap_or(true)))
+            .on_should_close(Box::new(move || {
+                this.update(|_, cx| {
+                    // Ensure that the window is removed from the app if it's been closed
+                    // by always pre-empting the system close event.
+                    if f(cx) {
+                        cx.remove_window();
+                    }
+                    false
+                })
+                .unwrap_or(true)
+            }))
     }
 }
 

@@ -1130,7 +1130,6 @@ mod tests {
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        // todo! osiewicz: these tests asserted on background color as well, that should be brought back.
         let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
             background_highlights
                 .into_iter()
@@ -1395,7 +1394,6 @@ mod tests {
             })
             .await
             .unwrap();
-        // todo! osiewicz: these tests previously asserted on background color highlights; that should be introduced back.
         let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
             background_highlights
                 .into_iter()

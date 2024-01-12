@@ -1015,9 +1015,6 @@ impl ProjectSearchView {
             workspace.add_item(Box::new(view.clone()), cx);
             view
         };
-
-        workspace.add_item(Box::new(search.clone()), cx);
-
         search.update(cx, |search, cx| {
             if let Some(query) = query {
                 search.set_query(&query, cx);
@@ -1984,6 +1981,7 @@ pub mod tests {
     use semantic_index::semantic_index_settings::SemanticIndexSettings;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
+    use workspace::DeploySearch;
 
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
@@ -3106,6 +3104,124 @@ pub mod tests {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_deploy_search_with_multiple_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.update(cx, |this, cx| {
+            this.worktrees().next().unwrap().read(cx).id()
+        });
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let panes: Vec<_> = window
+            .update(cx, |this, _| this.panes().to_owned())
+            .unwrap();
+        assert_eq!(panes.len(), 1);
+        let first_pane = panes.get(0).cloned().unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 0);
+        window
+            .update(cx, |workspace, cx| {
+                workspace.open_path(
+                    (worktree_id, "one.rs"),
+                    Some(first_pane.downgrade()),
+                    true,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 1);
+        let second_pane = window
+            .update(cx, |workspace, cx| {
+                workspace.split_and_clone(first_pane.clone(), workspace::SplitDirection::Right, cx)
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
+        assert!(window
+            .update(cx, |_, cx| second_pane
+                .focus_handle(cx)
+                .contains_focused(cx))
+            .unwrap());
+        let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
+        window
+            .update(cx, {
+                let search_bar = search_bar.clone();
+                let pane = first_pane.clone();
+                move |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+                }
+            })
+            .unwrap();
+        window
+            .update(cx, {
+                let search_bar = search_bar.clone();
+                let pane = second_pane.clone();
+                move |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+
+                    ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
+                }
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 2);
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 1);
+        window
+            .update(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane(), &second_pane);
+                second_pane.update(cx, |this, cx| {
+                    assert_eq!(this.active_item_index(), 1);
+                    this.activate_prev_item(false, cx);
+                    assert_eq!(this.active_item_index(), 0);
+                });
+                workspace.activate_pane_in_direction(workspace::SplitDirection::Left, cx);
+            })
+            .unwrap();
+        window
+            .update(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane(), &first_pane);
+                assert_eq!(first_pane.read(cx).items_len(), 1);
+                assert_eq!(second_pane.read(cx).items_len(), 2);
+            })
+            .unwrap();
+        cx.dispatch_action(window.into(), DeploySearch);
+
+        // We should have same # of items in workspace, the only difference being that
+        // the search we've deployed previously should now be focused.
+        window
+            .update(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane(), &second_pane);
+                second_pane.update(cx, |this, _| {
+                    assert_eq!(this.active_item_index(), 1);
+                    assert_eq!(this.items_len(), 2);
+                });
+                first_pane.update(cx, |this, cx| {
+                    assert!(!cx.focus_handle().contains_focused(cx));
+                    assert_eq!(this.items_len(), 1);
                 });
             })
             .unwrap();

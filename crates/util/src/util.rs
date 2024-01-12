@@ -137,6 +137,8 @@ pub trait ResultExt<E> {
     type Ok;
 
     fn log_err(self) -> Option<Self::Ok>;
+    /// Assert that this result should never be an error in development or tests.
+    fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
     fn inspect_error(self, func: impl FnOnce(&E)) -> Self;
 }
@@ -157,6 +159,14 @@ where
                 None
             }
         }
+    }
+
+    #[track_caller]
+    fn debug_assert_ok(self, reason: &str) -> Self {
+        if let Err(error) = &self {
+            debug_panic!("{reason} - {error:?}");
+        }
+        self
     }
 
     fn warn_on_err(self) -> Option<T> {
@@ -234,6 +244,7 @@ where
     }
 }
 
+#[must_use]
 pub struct LogErrorFuture<F>(F, log::Level, core::panic::Location<'static>);
 
 impl<F, T, E> Future for LogErrorFuture<F>

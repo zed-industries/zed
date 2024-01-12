@@ -978,8 +978,12 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
         if let Some(event) = InputEvent::from_native(native_event, None) {
             let platform = get_mac_platform(this);
-            if let Some(callback) = platform.0.lock().event.as_mut() {
-                if !callback(event) {
+            let mut lock = platform.0.lock();
+            if let Some(mut callback) = lock.event.take() {
+                drop(lock);
+                let result = callback(event);
+                platform.0.lock().event.get_or_insert(callback);
+                if !result {
                     return;
                 }
             }
@@ -1004,30 +1008,42 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
 extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
     if !has_open_windows {
         let platform = unsafe { get_mac_platform(this) };
-        if let Some(callback) = platform.0.lock().reopen.as_mut() {
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.reopen.take() {
+            drop(lock);
             callback();
+            platform.0.lock().reopen.get_or_insert(callback);
         }
     }
 }
 
 extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
-    if let Some(callback) = platform.0.lock().become_active.as_mut() {
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.become_active.take() {
+        drop(lock);
         callback();
+        platform.0.lock().become_active.get_or_insert(callback);
     }
 }
 
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
-    if let Some(callback) = platform.0.lock().resign_active.as_mut() {
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.resign_active.take() {
+        drop(lock);
         callback();
+        platform.0.lock().resign_active.get_or_insert(callback);
     }
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
-    if let Some(callback) = platform.0.lock().quit.as_mut() {
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.quit.take() {
+        drop(lock);
         callback();
+        platform.0.lock().quit.get_or_insert(callback);
     }
 }
 
@@ -1047,22 +1063,27 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             .collect::<Vec<_>>()
     };
     let platform = unsafe { get_mac_platform(this) };
-    if let Some(callback) = platform.0.lock().open_urls.as_mut() {
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.open_urls.take() {
+        drop(lock);
         callback(urls);
+        platform.0.lock().open_urls.get_or_insert(callback);
     }
 }
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
         let platform = get_mac_platform(this);
-        let mut platform = platform.0.lock();
-        if let Some(mut callback) = platform.menu_command.take() {
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
-            if let Some(action) = platform.menu_actions.get(index) {
-                callback(action.as_ref());
+            if let Some(action) = lock.menu_actions.get(index) {
+                let action = action.boxed_clone();
+                drop(lock);
+                callback(&*action);
             }
-            platform.menu_command = Some(callback);
+            platform.0.lock().menu_command.get_or_insert(callback);
         }
     }
 }
@@ -1071,14 +1092,20 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
     unsafe {
         let mut result = false;
         let platform = get_mac_platform(this);
-        let mut platform = platform.0.lock();
-        if let Some(mut callback) = platform.validate_menu_command.take() {
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.validate_menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;
-            if let Some(action) = platform.menu_actions.get(index) {
+            if let Some(action) = lock.menu_actions.get(index) {
+                let action = action.boxed_clone();
+                drop(lock);
                 result = callback(action.as_ref());
             }
-            platform.validate_menu_command = Some(callback);
+            platform
+                .0
+                .lock()
+                .validate_menu_command
+                .get_or_insert(callback);
         }
         result
     }
@@ -1087,10 +1114,11 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
 extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let platform = get_mac_platform(this);
-        let mut platform = platform.0.lock();
-        if let Some(mut callback) = platform.will_open_menu.take() {
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.will_open_menu.take() {
+            drop(lock);
             callback();
-            platform.will_open_menu = Some(callback);
+            platform.0.lock().will_open_menu.get_or_insert(callback);
         }
     }
 }

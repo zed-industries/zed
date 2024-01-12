@@ -11,7 +11,6 @@ use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
-use util::ResultExt;
 
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<u32>;
@@ -154,26 +153,24 @@ impl WrapMap {
 
         if let Some(wrap_width) = self.wrap_width {
             let mut new_snapshot = self.snapshot.clone();
-            let mut edits = Patch::default();
+
             let text_system = cx.text_system().clone();
             let (font, font_size) = self.font_with_size.clone();
             let task = cx.background_executor().spawn(async move {
-                if let Some(mut line_wrapper) = text_system.line_wrapper(font, font_size).log_err()
-                {
-                    let tab_snapshot = new_snapshot.tab_snapshot.clone();
-                    let range = TabPoint::zero()..tab_snapshot.max_point();
-                    edits = new_snapshot
-                        .update(
-                            tab_snapshot,
-                            &[TabEdit {
-                                old: range.clone(),
-                                new: range.clone(),
-                            }],
-                            wrap_width,
-                            &mut line_wrapper,
-                        )
-                        .await;
-                }
+                let mut line_wrapper = text_system.line_wrapper(font, font_size);
+                let tab_snapshot = new_snapshot.tab_snapshot.clone();
+                let range = TabPoint::zero()..tab_snapshot.max_point();
+                let edits = new_snapshot
+                    .update(
+                        tab_snapshot,
+                        &[TabEdit {
+                            old: range.clone(),
+                            new: range.clone(),
+                        }],
+                        wrap_width,
+                        &mut line_wrapper,
+                    )
+                    .await;
                 (new_snapshot, edits)
             });
 
@@ -245,15 +242,12 @@ impl WrapMap {
                 let (font, font_size) = self.font_with_size.clone();
                 let update_task = cx.background_executor().spawn(async move {
                     let mut edits = Patch::default();
-                    if let Some(mut line_wrapper) =
-                        text_system.line_wrapper(font, font_size).log_err()
-                    {
-                        for (tab_snapshot, tab_edits) in pending_edits {
-                            let wrap_edits = snapshot
-                                .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
-                                .await;
-                            edits = edits.compose(&wrap_edits);
-                        }
+                    let mut line_wrapper = text_system.line_wrapper(font, font_size);
+                    for (tab_snapshot, tab_edits) in pending_edits {
+                        let wrap_edits = snapshot
+                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                            .await;
+                        edits = edits.compose(&wrap_edits);
                     }
                     (snapshot, edits)
                 });
@@ -1043,7 +1037,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
-        // todo!() this test is flaky
+        // todo this test is flaky
         init_test(cx);
 
         cx.background_executor.set_block_on_ticks(0..=50);
@@ -1059,7 +1053,7 @@ mod tests {
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let font = font("Helvetica");
-        let _font_id = text_system.font_id(&font).unwrap();
+        let _font_id = text_system.font_id(&font);
         let font_size = px(14.0);
 
         log::info!("Tab size: {}", tab_size);
@@ -1086,7 +1080,7 @@ mod tests {
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size).unwrap();
+        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 

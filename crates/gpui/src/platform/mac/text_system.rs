@@ -190,6 +190,9 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
             open_type::apply_features(&mut font, features);
+            let Some(_) = font.glyph_for_char('m') else {
+                continue;
+            };
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
             let postscript_name = font.postscript_name().unwrap();
@@ -592,169 +595,49 @@ impl From<FontStyle> for FontkitStyle {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::AppContext;
-//     use font_kit::properties::{Style, Weight};
-//     use platform::FontSystem as _;
+#[cfg(test)]
+mod tests {
+    use crate::{font, px, FontRun, MacTextSystem, PlatformTextSystem};
 
-//     #[crate::test(self, retries = 5)]
-//     fn test_layout_str(_: &mut AppContext) {
-//         // This is failing intermittently on CI and we don't have time to figure it out
-//         let fonts = FontSystem::new();
-//         let menlo = fonts.load_family("Menlo", &Default::default()).unwrap();
-//         let menlo_regular = RunStyle {
-//             font_id: fonts.select_font(&menlo, &Properties::new()).unwrap(),
-//             color: Default::default(),
-//             underline: Default::default(),
-//         };
-//         let menlo_italic = RunStyle {
-//             font_id: fonts
-//                 .select_font(&menlo, Properties::new().style(Style::Italic))
-//                 .unwrap(),
-//             color: Default::default(),
-//             underline: Default::default(),
-//         };
-//         let menlo_bold = RunStyle {
-//             font_id: fonts
-//                 .select_font(&menlo, Properties::new().weight(Weight::BOLD))
-//                 .unwrap(),
-//             color: Default::default(),
-//             underline: Default::default(),
-//         };
-//         assert_ne!(menlo_regular, menlo_italic);
-//         assert_ne!(menlo_regular, menlo_bold);
-//         assert_ne!(menlo_italic, menlo_bold);
+    #[test]
+    fn test_wrap_line() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
-//         let line = fonts.layout_line(
-//             "hello world",
-//             16.0,
-//             &[(2, menlo_bold), (4, menlo_italic), (5, menlo_regular)],
-//         );
-//         assert_eq!(line.runs.len(), 3);
-//         assert_eq!(line.runs[0].font_id, menlo_bold.font_id);
-//         assert_eq!(line.runs[0].glyphs.len(), 2);
-//         assert_eq!(line.runs[1].font_id, menlo_italic.font_id);
-//         assert_eq!(line.runs[1].glyphs.len(), 4);
-//         assert_eq!(line.runs[2].font_id, menlo_regular.font_id);
-//         assert_eq!(line.runs[2].glyphs.len(), 5);
-//     }
+        let line = "one two three four five\n";
+        let wrap_boundaries = fonts.wrap_line(line, font_id, px(16.), px(64.0));
+        assert_eq!(wrap_boundaries, &["one two ".len(), "one two three ".len()]);
 
-//     #[test]
-//     fn test_glyph_offsets() -> crate::Result<()> {
-//         let fonts = FontSystem::new();
-//         let zapfino = fonts.load_family("Zapfino", &Default::default())?;
-//         let zapfino_regular = RunStyle {
-//             font_id: fonts.select_font(&zapfino, &Properties::new())?,
-//             color: Default::default(),
-//             underline: Default::default(),
-//         };
-//         let menlo = fonts.load_family("Menlo", &Default::default())?;
-//         let menlo_regular = RunStyle {
-//             font_id: fonts.select_font(&menlo, &Properties::new())?,
-//             color: Default::default(),
-//             underline: Default::default(),
-//         };
+        let line = "aaa ααα ✋✋✋ 🎉🎉🎉\n";
+        let wrap_boundaries = fonts.wrap_line(line, font_id, px(16.), px(64.0));
+        assert_eq!(
+            wrap_boundaries,
+            &["aaa ααα ".len(), "aaa ααα ✋✋✋ ".len(),]
+        );
+    }
 
-//         let text = "This is, m𐍈re 𐍈r less, Zapfino!𐍈";
-//         let line = fonts.layout_line(
-//             text,
-//             16.0,
-//             &[
-//                 (9, zapfino_regular),
-//                 (13, menlo_regular),
-//                 (text.len() - 22, zapfino_regular),
-//             ],
-//         );
-//         assert_eq!(
-//             line.runs
-//                 .iter()
-//                 .flat_map(|r| r.glyphs.iter())
-//                 .map(|g| g.index)
-//                 .collect::<Vec<_>>(),
-//             vec![0, 2, 4, 5, 7, 8, 9, 10, 14, 15, 16, 17, 21, 22, 23, 24, 26, 27, 28, 29, 36, 37],
-//         );
-//         Ok(())
-//     }
+    #[test]
+    fn test_layout_line_bom_char() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let line = "\u{feff}";
+        let mut style = FontRun {
+            font_id,
+            len: line.len(),
+        };
 
-//     #[test]
-//     #[ignore]
-//     fn test_rasterize_glyph() {
-//         use std::{fs::File, io::BufWriter, path::Path};
+        let layout = fonts.layout_line(line, px(16.), &[style]);
+        assert_eq!(layout.len, line.len());
+        assert!(layout.runs.is_empty());
 
-//         let fonts = FontSystem::new();
-//         let font_ids = fonts.load_family("Fira Code", &Default::default()).unwrap();
-//         let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
-//         let glyph_id = fonts.glyph_for_char(font_id, 'G').unwrap();
-
-//         const VARIANTS: usize = 1;
-//         for i in 0..VARIANTS {
-//             let variant = i as f32 / VARIANTS as f32;
-//             let (bounds, bytes) = fonts
-//                 .rasterize_glyph(
-//                     font_id,
-//                     16.0,
-//                     glyph_id,
-//                     vec2f(variant, variant),
-//                     2.,
-//                     RasterizationOptions::Alpha,
-//                 )
-//                 .unwrap();
-
-//             let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
-//             let path = Path::new(&name);
-//             let file = File::create(path).unwrap();
-//             let w = &mut BufWriter::new(file);
-
-//             let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
-//             encoder.set_color(png::ColorType::Grayscale);
-//             encoder.set_depth(png::BitDepth::Eight);
-//             let mut writer = encoder.write_header().unwrap();
-//             writer.write_image_data(&bytes).unwrap();
-//         }
-//     }
-
-//     #[test]
-//     fn test_wrap_line() {
-//         let fonts = FontSystem::new();
-//         let font_ids = fonts.load_family("Helvetica", &Default::default()).unwrap();
-//         let font_id = fonts.select_font(&font_ids, &Default::default()).unwrap();
-
-//         let line = "one two three four five\n";
-//         let wrap_boundaries = fonts.wrap_line(line, font_id, 16., 64.0);
-//         assert_eq!(wrap_boundaries, &["one two ".len(), "one two three ".len()]);
-
-//         let line = "aaa ααα ✋✋✋ 🎉🎉🎉\n";
-//         let wrap_boundaries = fonts.wrap_line(line, font_id, 16., 64.0);
-//         assert_eq!(
-//             wrap_boundaries,
-//             &["aaa ααα ".len(), "aaa ααα ✋✋✋ ".len(),]
-//         );
-//     }
-
-//     #[test]
-//     fn test_layout_line_bom_char() {
-//         let fonts = FontSystem::new();
-//         let font_ids = fonts.load_family("Helvetica", &Default::default()).unwrap();
-//         let style = RunStyle {
-//             font_id: fonts.select_font(&font_ids, &Default::default()).unwrap(),
-//             color: Default::default(),
-//             underline: Default::default(),
-//         };
-
-//         let line = "\u{feff}";
-//         let layout = fonts.layout_line(line, 16., &[(line.len(), style)]);
-//         assert_eq!(layout.len, line.len());
-//         assert!(layout.runs.is_empty());
-
-//         let line = "a\u{feff}b";
-//         let layout = fonts.layout_line(line, 16., &[(line.len(), style)]);
-//         assert_eq!(layout.len, line.len());
-//         assert_eq!(layout.runs.len(), 1);
-//         assert_eq!(layout.runs[0].glyphs.len(), 2);
-//         assert_eq!(layout.runs[0].glyphs[0].id, 68); // a
-//                                                      // There's no glyph for \u{feff}
-//         assert_eq!(layout.runs[0].glyphs[1].id, 69); // b
-//     }
-// }
+        let line = "a\u{feff}b";
+        style.len = line.len();
+        let layout = fonts.layout_line(line, px(16.), &[style]);
+        assert_eq!(layout.len, line.len());
+        assert_eq!(layout.runs.len(), 1);
+        assert_eq!(layout.runs[0].glyphs.len(), 2);
+        assert_eq!(layout.runs[0].glyphs[0].id, 68u32.into()); // a
+                                                               // There's no glyph for \u{feff}
+        assert_eq!(layout.runs[0].glyphs[1].id, 69u32.into()); // b
+    }
+}

@@ -82,7 +82,9 @@ impl FollowableItem for Editor {
 
         let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
-            let mut buffers = futures::future::try_join_all(buffers).await?;
+            let mut buffers = futures::future::try_join_all(buffers)
+                .await
+                .debug_assert_ok("leaders don't share views for unshared buffers")?;
             let editor = pane.update(&mut cx, |pane, cx| {
                 let mut editors = pane.items_of_type::<Self>();
                 editors.find(|editor| {

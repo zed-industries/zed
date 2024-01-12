@@ -170,7 +170,7 @@ impl ActionRegistry {
 macro_rules! actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
         $(
-            #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, gpui::private::serde_derive::Deserialize)]
+            #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, gpui::private::serde_derive::Deserialize)]
             #[serde(crate = "gpui::private::serde")]
             pub struct $name;
 
