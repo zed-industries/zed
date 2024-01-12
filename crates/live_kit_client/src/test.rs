@@ -262,6 +262,7 @@ impl TestServer {
         let track = Arc::new(RemoteAudioTrack {
             sid: sid.clone(),
             publisher_id: identity.clone(),
+            running: AtomicBool::new(true),
         });
 
         let publication = Arc::new(RemoteTrackPublication);
@@ -644,6 +645,7 @@ impl RemoteVideoTrack {
 pub struct RemoteAudioTrack {
     sid: Sid,
     publisher_id: Sid,
+    running: AtomicBool,
 }
 
 impl RemoteAudioTrack {
@@ -655,12 +657,12 @@ impl RemoteAudioTrack {
         &self.publisher_id
     }
 
-    pub fn enable(&self) -> impl Future<Output = Result<()>> {
-        async { Ok(()) }
+    pub fn start(&self) {
+        self.running.store(true, SeqCst);
     }
 
-    pub fn disable(&self) -> impl Future<Output = Result<()>> {
-        async { Ok(()) }
+    pub fn stop(&self) {
+        self.running.store(false, SeqCst);
     }
 }
 
