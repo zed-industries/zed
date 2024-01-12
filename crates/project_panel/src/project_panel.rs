@@ -221,10 +221,10 @@ impl ProjectPanel {
             })
             .detach();
 
-            // cx.observe_global::<FileAssociations, _>(|_, cx| {
-            //     cx.notify();
-            // })
-            // .detach();
+            cx.observe_global::<FileAssociations>(|_, cx| {
+                cx.notify();
+            })
+            .detach();
 
             let mut this = Self {
                 project: project.clone(),
@@ -292,16 +292,16 @@ impl ProjectPanel {
                 }
                 &Event::SplitEntry { entry_id } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-                        if let Some(_entry) = worktree.read(cx).entry_for_id(entry_id) {
-                            // workspace
-                            //     .split_path(
-                            //         ProjectPath {
-                            //             worktree_id: worktree.read(cx).id(),
-                            //             path: entry.path.clone(),
-                            //         },
-                            //         cx,
-                            //     )
-                            //     .detach_and_log_err(cx);
+                        if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            workspace
+                                .split_path(
+                                    ProjectPath {
+                                        worktree_id: worktree.read(cx).id(),
+                                        path: entry.path.clone(),
+                                    },
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
                         }
                     }
                 }
@@ -788,10 +788,6 @@ impl ProjectPanel {
                     cx.notify();
                 }
             }
-
-            // cx.update_global(|drag_and_drop: &mut DragAndDrop<Workspace>, cx| {
-            //     drag_and_drop.cancel_dragging::<ProjectEntryId>(cx);
-            // })
         }
     }
 

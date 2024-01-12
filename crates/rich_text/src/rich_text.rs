@@ -1,3 +1,4 @@
+use anyhow::bail;
 use futures::FutureExt;
 use gpui::{
     AnyElement, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
@@ -85,31 +86,6 @@ impl RichText {
         })
         .into_any_element()
     }
-
-    // pub fn add_mention(
-    //     &mut self,
-    //     range: Range<usize>,
-    //     is_current_user: bool,
-    //     mention_style: HighlightStyle,
-    // ) -> anyhow::Result<()> {
-    //     if range.end > self.text.len() {
-    //         bail!(
-    //             "Mention in range {range:?} is outside of bounds for a message of length {}",
-    //             self.text.len()
-    //         );
-    //     }
-
-    //     if is_current_user {
-    //         self.region_ranges.push(range.clone());
-    //         self.regions.push(RenderedRegion {
-    //             background_kind: Some(BackgroundKind::Mention),
-    //             link_url: None,
-    //         });
-    //     }
-    //     self.highlights
-    //         .push((range, Highlight::Highlight(mention_style)));
-    //     Ok(())
-    // }
 }
 
 pub fn render_markdown_mut(
@@ -272,13 +248,6 @@ pub fn render_markdown(
     language_registry: &Arc<LanguageRegistry>,
     language: Option<&Arc<Language>>,
 ) -> RichText {
-    // let mut data = RichText {
-    //     text: Default::default(),
-    //     highlights: Default::default(),
-    //     region_ranges: Default::default(),
-    //     regions: Default::default(),
-    // };
-
     let mut text = String::new();
     let mut highlights = Vec::new();
     let mut link_ranges = Vec::new();

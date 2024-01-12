@@ -1418,8 +1418,6 @@ async fn test_channel_moving(
 ) {
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
-    // let client_b = server.create_client(cx_b, "user_b").await;
-    // let client_c = server.create_client(cx_c, "user_c").await;
 
     let channels = server
         .make_channel_tree(

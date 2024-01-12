@@ -1648,7 +1648,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
-        //crate::project_search::tests::init_test(cx);
         init_globals(cx);
         let buffer_text = r#"
         A regular expression (shortened as regex or regexp;[1] also referred to as
