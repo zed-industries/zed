@@ -18,7 +18,7 @@ use smallvec::SmallVec;
 use std::{ffi::c_void, mem, ptr, sync::Arc};
 
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
-const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
+const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value. []
 
 pub(crate) struct MetalRenderer {
     layer: metal::MetalLayer,
@@ -429,6 +429,13 @@ impl MetalRenderer {
 
         let shadow_bytes_len = std::mem::size_of_val(shadows);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+
+        let next_offset = *offset + shadow_bytes_len;
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
         unsafe {
             ptr::copy_nonoverlapping(
                 shadows.as_ptr() as *const u8,
@@ -436,12 +443,6 @@ impl MetalRenderer {
                 shadow_bytes_len,
             );
         }
-
-        let next_offset = *offset + shadow_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
 
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
@@ -489,15 +490,15 @@ impl MetalRenderer {
 
         let quad_bytes_len = std::mem::size_of_val(quads);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
-        unsafe {
-            ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
-        }
 
         let next_offset = *offset + quad_bytes_len;
         assert!(
             next_offset <= INSTANCE_BUFFER_SIZE,
             "instance buffer exhausted"
         );
+        unsafe {
+            ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
+        }
 
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
@@ -586,22 +587,32 @@ impl MetalRenderer {
                 command_encoder
                     .set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
+                // hypothesis: sprites.as_ptr() does something bogus sometimes?
+                //
                 let sprite_bytes_len = mem::size_of::<MonochromeSprite>() * sprites.len();
-                let buffer_contents =
-                    unsafe { (self.instances.contents() as *mut u8).add(*offset) };
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        sprites.as_ptr() as *const u8,
-                        buffer_contents,
-                        sprite_bytes_len,
-                    );
-                }
-
                 let next_offset = *offset + sprite_bytes_len;
                 assert!(
                     next_offset <= INSTANCE_BUFFER_SIZE,
                     "instance buffer exhausted"
                 );
+                let buffer_contents =
+                    unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+
+                // buffer_contents.len() < spite_bytes_len must be out of range.
+                // PANIC HERE!
+                let next_offset = *offset + sprite_bytes_len;
+                assert!(
+                    next_offset <= INSTANCE_BUFFER_SIZE,
+                    "instance buffer exhausted"
+                );
+
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        sprites.as_ptr() as *const u8, //src
+                        buffer_contents,               //dest
+                        sprite_bytes_len,              // count
+                    );
+                }
 
                 command_encoder.draw_primitives_instanced(
                     metal::MTLPrimitiveType::Triangle,
@@ -723,6 +734,13 @@ impl MetalRenderer {
 
         let sprite_bytes_len = std::mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+
+        let next_offset = *offset + sprite_bytes_len;
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
         unsafe {
             ptr::copy_nonoverlapping(
                 sprites.as_ptr() as *const u8,
@@ -730,12 +748,6 @@ impl MetalRenderer {
                 sprite_bytes_len,
             );
         }
-
-        let next_offset = *offset + sprite_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
 
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
@@ -794,6 +806,12 @@ impl MetalRenderer {
 
         let sprite_bytes_len = std::mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+
+        let next_offset = *offset + sprite_bytes_len;
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
         unsafe {
             ptr::copy_nonoverlapping(
                 sprites.as_ptr() as *const u8,
@@ -801,12 +819,6 @@ impl MetalRenderer {
                 sprite_bytes_len,
             );
         }
-
-        let next_offset = *offset + sprite_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
 
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
