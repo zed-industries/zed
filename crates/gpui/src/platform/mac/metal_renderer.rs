@@ -18,7 +18,7 @@ use smallvec::SmallVec;
 use std::{ffi::c_void, mem, ptr, sync::Arc};
 
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
-const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value. []
+const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub(crate) struct MetalRenderer {
     layer: metal::MetalLayer,
@@ -337,10 +337,7 @@ impl MetalRenderer {
         for (texture_id, vertices) in vertices_by_texture_id {
             align_offset(offset);
             let next_offset = *offset + vertices.len() * mem::size_of::<PathVertex<ScaledPixels>>();
-            assert!(
-                next_offset <= INSTANCE_BUFFER_SIZE,
-                "instance buffer exhausted"
-            );
+            self.assert_instance_buffer_bounds(next_offset, vertices.len(), "Path Vertexes");
 
             let render_pass_descriptor = metal::RenderPassDescriptor::new();
             let color_attachment = render_pass_descriptor
@@ -431,10 +428,7 @@ impl MetalRenderer {
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + shadow_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
+        self.assert_instance_buffer_bounds(next_offset, shadows.len(), "Shadows");
 
         unsafe {
             ptr::copy_nonoverlapping(
@@ -492,10 +486,8 @@ impl MetalRenderer {
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + quad_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
+        self.assert_instance_buffer_bounds(next_offset, quads.len(), "Quads");
+
         unsafe {
             ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
         }
@@ -587,30 +579,18 @@ impl MetalRenderer {
                 command_encoder
                     .set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-                // hypothesis: sprites.as_ptr() does something bogus sometimes?
-                //
                 let sprite_bytes_len = mem::size_of::<MonochromeSprite>() * sprites.len();
                 let next_offset = *offset + sprite_bytes_len;
-                assert!(
-                    next_offset <= INSTANCE_BUFFER_SIZE,
-                    "instance buffer exhausted"
-                );
+                self.assert_instance_buffer_bounds(next_offset, sprites.len(), "Path Sprites");
+
                 let buffer_contents =
                     unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
-                // buffer_contents.len() < spite_bytes_len must be out of range.
-                // PANIC HERE!
-                let next_offset = *offset + sprite_bytes_len;
-                assert!(
-                    next_offset <= INSTANCE_BUFFER_SIZE,
-                    "instance buffer exhausted"
-                );
-
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        sprites.as_ptr() as *const u8, //src
-                        buffer_contents,               //dest
-                        sprite_bytes_len,              // count
+                        sprites.as_ptr() as *const u8,
+                        buffer_contents,
+                        sprite_bytes_len,
                     );
                 }
 
@@ -672,10 +652,7 @@ impl MetalRenderer {
         }
 
         let next_offset = *offset + quad_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
+        self.assert_instance_buffer_bounds(next_offset, underlines.len(), "Underlines");
 
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
@@ -736,10 +713,7 @@ impl MetalRenderer {
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + sprite_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
+        self.assert_instance_buffer_bounds(next_offset, sprites.len(), "Monoschrome Sprites");
 
         unsafe {
             ptr::copy_nonoverlapping(
@@ -808,10 +782,8 @@ impl MetalRenderer {
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + sprite_bytes_len;
-        assert!(
-            next_offset <= INSTANCE_BUFFER_SIZE,
-            "instance buffer exhausted"
-        );
+        self.assert_instance_buffer_bounds(next_offset, sprites.len(), "Polychrome Sprites");
+
         unsafe {
             ptr::copy_nonoverlapping(
                 sprites.as_ptr() as *const u8,
@@ -886,10 +858,7 @@ impl MetalRenderer {
 
             align_offset(offset);
             let next_offset = *offset + mem::size_of::<Surface>();
-            assert!(
-                next_offset <= INSTANCE_BUFFER_SIZE,
-                "instance buffer exhausted"
-            );
+            self.assert_instance_buffer_bounds(next_offset, 1, "Surface");
 
             command_encoder.set_vertex_buffer(
                 SurfaceInputIndex::Surfaces as u64,
@@ -925,6 +894,15 @@ impl MetalRenderer {
             command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
             *offset = next_offset;
         }
+    }
+
+    fn assert_instance_buffer_bounds(&self, next_offset: usize, count: usize, item: &'static str) {
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted attempting to copy {} of {}",
+            count,
+            item
+        );
     }
 }
 
