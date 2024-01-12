@@ -28,7 +28,6 @@ pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum Event {
     RoomJoined {
         channel_id: Option<u64>,
-        role: proto::ChannelRole,
     },
     ParticipantLocationChanged {
         participant_id: proto::PeerId,
@@ -53,7 +52,9 @@ pub enum Event {
     RemoteProjectInvitationDiscarded {
         project_id: u64,
     },
-    Left,
+    Left {
+        channel_id: Option<u64>,
+    },
 }
 
 pub struct Room {
@@ -361,7 +362,9 @@ impl Room {
 
     pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
-        cx.emit(Event::Left);
+        cx.emit(Event::Left {
+            channel_id: self.channel_id(),
+        });
         self.leave_internal(cx)
     }
 
@@ -600,6 +603,14 @@ impl Room {
         self.remote_participants
             .get(&user_id)
             .map(|participant| participant.role)
+    }
+
+    pub fn contains_guests(&self) -> bool {
+        self.local_participant.role == proto::ChannelRole::Guest
+            || self
+                .remote_participants
+                .values()
+                .any(|p| p.role == proto::ChannelRole::Guest)
     }
 
     pub fn local_participant_is_admin(&self) -> bool {

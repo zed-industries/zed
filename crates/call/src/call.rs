@@ -442,10 +442,8 @@ impl ActiveCall {
                         .location
                         .as_ref()
                         .and_then(|location| location.upgrade());
-                    let (channel_id, role) = room.update(cx, |room, _| {
-                        (room.channel_id(), room.local_participant().role)
-                    });
-                    cx.emit(Event::RoomJoined { channel_id, role });
+                    let channel_id = room.read(cx).channel_id();
+                    cx.emit(Event::RoomJoined { channel_id });
                     room.update(cx, |room, cx| room.set_location(location.as_ref(), cx))
                 }
             } else {
