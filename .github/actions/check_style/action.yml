@@ -19,9 +19,11 @@ runs:
     - name: Find modified migrations
       shell: bash -euxo pipefail {0}
       run: |
+        cargo install squawk --git https://github.com/sbdchd/squawk --tag v0.26.0
         modified_migrations=$(git diff --name-only origin/$GITHUB_BASE_REF...origin/$GITHUB_HEAD_REF 'crate/collab/migrations/*.sql')
-        echo "::set-output name=file_names::$modified_migrations"
-      id: modified-migrations
-    - uses: sbdchd/squawk-action@v1
-      with:
-        pattern: ${{ steps.modified-migrations.outputs.file_names }}
+
+        SQUAWK_GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+        SQUAWK_GITHUB_REPO_OWNER=$(echo $GITHUB_REPOSITORY | awk -F/ '{print $1}')
+        SQUAWK_GITHUB_REPO_NAME=$(echo $GITHUB_REPOSITORY | awk -F/ '{print $2}')
+        SQUAWK_GITHUB_PR_NUMBER=$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')
+        squawk upload-to-github $(modified_migrations)
