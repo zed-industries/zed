@@ -978,12 +978,31 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, &mut WindowContext),
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
+        let z_index = style.z_index.unwrap_or(0);
+
+        let paint_hover_group_handler = |cx: &mut WindowContext| {
+            let hover_group_bounds = self
+                .group_hover_style
+                .as_ref()
+                .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
+
+            if let Some(group_bounds) = hover_group_bounds {
+                let hovered = group_bounds.contains(&cx.mouse_position());
+                cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture
+                        && group_bounds.contains(&event.position) != hovered
+                    {
+                        cx.notify();
+                    }
+                });
+            }
+        };
 
         if style.visibility == Visibility::Hidden {
+            cx.with_z_index(z_index, |cx| paint_hover_group_handler(cx));
             return;
         }
 
-        let z_index = style.z_index.unwrap_or(0);
         cx.with_z_index(z_index, |cx| {
             style.paint(bounds, cx, |cx| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
@@ -1166,21 +1185,7 @@ impl Interactivity {
                             })
                         }
 
-                        let hover_group_bounds = self
-                            .group_hover_style
-                            .as_ref()
-                            .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
-
-                        if let Some(group_bounds) = hover_group_bounds {
-                            let hovered = group_bounds.contains(&cx.mouse_position());
-                            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                                if phase == DispatchPhase::Capture
-                                    && group_bounds.contains(&event.position) != hovered
-                                {
-                                    cx.notify();
-                                }
-                            });
-                        }
+                        paint_hover_group_handler(cx);
 
                         if self.hover_style.is_some()
                             || self.base_style.mouse_cursor.is_some()
