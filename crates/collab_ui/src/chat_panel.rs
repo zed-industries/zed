@@ -1,6 +1,6 @@
 use crate::{channel_view::ChannelView, is_channels_feature_enabled, ChatPanelSettings};
 use anyhow::Result;
-use call::ActiveCall;
+use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
 use client::Client;
 use collections::HashMap;
@@ -138,6 +138,18 @@ impl ChatPanel {
                         cx.emit(Event::DockPositionChanged);
                     }
                     cx.notify();
+                },
+            ));
+            this.subscriptions.push(cx.subscribe(
+                &ActiveCall::global(cx),
+                move |this: &mut Self, _, event: &room::Event, cx| match event {
+                    room::Event::RoomJoined { channel_id } => {
+                        if let Some(channel_id) = channel_id {
+                            this.select_channel(*channel_id, None, cx)
+                                .detach_and_log_err(cx)
+                        }
+                    }
+                    _ => {}
                 },
             ));
 
