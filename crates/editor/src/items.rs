@@ -16,7 +16,7 @@ use language::{
     Point, SelectionGoal,
 };
 use project::repository::GitFileStatus;
-use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
+use project::{search::SearchQuery, FormatTrigger, Project, ProjectItem as _, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::ItemSettings;
@@ -637,7 +637,7 @@ impl Item for Editor {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.buffer
             .read(cx)

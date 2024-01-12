@@ -1023,7 +1023,7 @@ impl Pane {
                         dbg!(&multibuffer_model_ids);
                         item.for_each_project_item(cx, &mut |id, item| {
                             if multibuffer_model_ids.contains(dbg!(&id)) {
-                                dbg!(item.entry_id(cx));
+                                dbg!(item.entry_id(cx), item.is_dirty());
                             }
                         });
                     }

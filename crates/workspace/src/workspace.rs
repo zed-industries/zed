@@ -2119,7 +2119,7 @@ impl Workspace {
     where
         T: ProjectItem,
     {
-        use project::Item as _;
+        use project::ProjectItem as _;
 
         let entry_id = project_item.read(cx).entry_id(cx);
         if let Some(item) = entry_id
