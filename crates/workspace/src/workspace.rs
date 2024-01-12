@@ -314,12 +314,12 @@ impl Global for ProjectItemOpeners {}
 pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     let builders = cx.default_global::<ProjectItemOpeners>();
     builders.push(|project, project_path, cx| {
-        let project_item = <I::Item as project::Item>::try_open(&project, project_path, cx)?;
+        let project_item = <I::Item as project::ProjectItem>::try_open(&project, project_path, cx)?;
         let project = project.clone();
         Some(cx.spawn(|cx| async move {
             let project_item = project_item.await?;
             let project_entry_id: Option<ProjectEntryId> =
-                project_item.read_with(&cx, |item, cx| project::Item::entry_id(item, cx))?;
+                project_item.read_with(&cx, |item, cx| project::ProjectItem::entry_id(item, cx))?;
             let build_workspace_item = Box::new(|cx: &mut ViewContext<Pane>| {
                 Box::new(cx.new_view(|cx| I::for_project_item(project, project_item, cx)))
                     as Box<dyn ItemHandle>
@@ -5887,9 +5887,13 @@ mod tests {
         });
         let multibuffer_with_both_files_id = dirty_multibuffer_with_both.item_id();
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(dirty_regular_buffer.clone()), cx);
-            workspace.add_item(Box::new(dirty_untitled_buffer.clone()), cx);
-            workspace.add_item(Box::new(dirty_multibuffer_with_both.clone()), cx);
+            workspace.add_item(pane.clone(), Box::new(dirty_regular_buffer.clone()), cx);
+            workspace.add_item(pane.clone(), Box::new(dirty_untitled_buffer.clone()), cx);
+            workspace.add_item(
+                pane.clone(),
+                Box::new(dirty_multibuffer_with_both.clone()),
+                cx,
+            );
         });
 
         pane.update(cx, |pane, cx| {
@@ -5903,7 +5907,12 @@ mod tests {
         // When closing both the unsaved buffer and the multibuffer that contains it, we should only prompt to save the unsaved buffer.
         let close_all_but_multibuffer_task = pane
             .update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems, cx)
+                pane.close_inactive_items(
+                    &CloseInactiveItems {
+                        save_intent: Some(SaveIntent::Close),
+                    },
+                    cx,
+                )
             })
             .expect("should have inactive files to close");
         cx.background_executor.run_until_parked();
@@ -5995,7 +6004,7 @@ mod tests {
         // Model
         struct TestPngItem {}
 
-        impl project::Item for TestPngItem {
+        impl project::ProjectItem for TestPngItem {
             fn try_open(
                 _project: &Model<Project>,
                 path: &ProjectPath,
@@ -6014,6 +6023,10 @@ mod tests {
 
             fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
                 None
+            }
+
+            fn is_dirty(&self) -> bool {
+                false
             }
         }
 
@@ -6062,7 +6075,7 @@ mod tests {
         // Model
         struct TestIpynbItem {}
 
-        impl project::Item for TestIpynbItem {
+        impl project::ProjectItem for TestIpynbItem {
             fn try_open(
                 _project: &Model<Project>,
                 path: &ProjectPath,
@@ -6081,6 +6094,10 @@ mod tests {
 
             fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
                 None
+            }
+
+            fn is_dirty(&self) -> bool {
+                false
             }
         }
 

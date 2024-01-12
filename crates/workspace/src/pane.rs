@@ -977,9 +977,7 @@ impl Pane {
                 let (item_ix, mut project_item_ids) = pane.update(&mut cx, |pane, cx| {
                     (pane.index_for_item(&*item), item.project_item_model_ids(cx))
                 })?;
-                let item_ix = if let Some(ix) = item_ix {
-                    ix
-                } else {
+                let Some(item_ix) = item_ix else {
                     continue;
                 };
 
@@ -1008,7 +1006,7 @@ impl Pane {
                 // (can we even check that?)
                 // * dirty singletons should close without a prompt if there's a dirty multibuffer open with the same file (as it works now already)
                 // * when closing multiple buffers and mentioning their filenames, omit multibuffers that contain all the files that are dirty and nothing else
-                cx.update(|_, cx| {
+                cx.update(|cx| {
                     dbg!((
                         item.tab_tooltip_text(cx).map(|t| t.to_string()),
                         item.item_id(),
