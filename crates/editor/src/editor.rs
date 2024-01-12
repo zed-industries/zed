@@ -5443,6 +5443,10 @@ impl Editor {
     }
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         self.transact(cx, |this, cx| {
             if let Some(item) = cx.read_from_clipboard() {
                 let clipboard_text = Cow::Borrowed(item.text());
@@ -5515,6 +5519,10 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.change_selections(None, cx, |s| {
@@ -5529,6 +5537,10 @@ impl Editor {
     }
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
             {
