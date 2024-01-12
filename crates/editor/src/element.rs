@@ -3404,14 +3404,16 @@ mod tests {
             })
             .unwrap();
         let state = cx
-            .update_window(window.into(), |_, cx| {
-                element.compute_layout(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    cx,
-                )
+            .update_window(window.into(), |view, cx| {
+                cx.with_view_id(view.entity_id(), |cx| {
+                    element.compute_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        cx,
+                    )
+                })
             })
             .unwrap();
 
@@ -3496,14 +3498,16 @@ mod tests {
         });
 
         let state = cx
-            .update_window(window.into(), |_, cx| {
-                element.compute_layout(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    cx,
-                )
+            .update_window(window.into(), |view, cx| {
+                cx.with_view_id(view.entity_id(), |cx| {
+                    element.compute_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        cx,
+                    )
+                })
             })
             .unwrap();
         assert_eq!(state.selections.len(), 1);
@@ -3558,14 +3562,16 @@ mod tests {
 
         let mut element = EditorElement::new(&editor, style);
         let state = cx
-            .update_window(window.into(), |_, cx| {
-                element.compute_layout(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    cx,
-                )
+            .update_window(window.into(), |view, cx| {
+                cx.with_view_id(view.entity_id(), |cx| {
+                    element.compute_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        cx,
+                    )
+                })
             })
             .unwrap();
         let size = state.position_map.size;
@@ -3582,8 +3588,8 @@ mod tests {
 
         // Don't panic.
         let bounds = Bounds::<Pixels>::new(Default::default(), size);
-        cx.update_window(window.into(), |_, cx| {
-            element.paint(bounds, &mut (), cx);
+        cx.update_window(window.into(), |view, cx| {
+            cx.paint_view(view.entity_id(), |cx| element.paint(bounds, &mut (), cx))
         })
         .unwrap()
     }
