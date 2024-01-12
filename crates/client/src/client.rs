@@ -1371,10 +1371,7 @@ fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
     })
 }
 
-async fn write_credentials_to_keychain(
-    credentials: Credentials,
-    cx: &AsyncAppContext,
-) -> Result<()> {
+fn write_credentials_to_keychain(credentials: Credentials, cx: &AsyncAppContext) -> Result<()> {
     cx.update(move |cx| {
         cx.write_credentials(
             &ZED_SERVER_URL,
@@ -1384,7 +1381,7 @@ async fn write_credentials_to_keychain(
     })?
 }
 
-async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
+fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
     cx.update(move |cx| cx.delete_credentials(&ZED_SERVER_URL))?
 }
 
