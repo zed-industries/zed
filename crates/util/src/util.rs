@@ -244,6 +244,7 @@ where
     }
 }
 
+#[must_use]
 pub struct LogErrorFuture<F>(F, log::Level, core::panic::Location<'static>);
 
 impl<F, T, E> Future for LogErrorFuture<F>
