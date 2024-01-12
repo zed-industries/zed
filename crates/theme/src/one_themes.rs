@@ -7,6 +7,10 @@ use crate::{
     ThemeColors, ThemeFamily, ThemeStyles,
 };
 
+// Note: This theme family is not the one you see in Zed at the moment.
+// This is a from-scratch rebuild that Nate started work on. We currently
+// only use this in the tests, and the One family from the `themes/` directory
+// is what gets loaded into Zed when running it.
 pub fn one_family() -> ThemeFamily {
     ThemeFamily {
         id: "one".to_string(),
@@ -75,7 +79,7 @@ pub(crate) fn one_dark() -> Theme {
                 tab_bar_background: bg,
                 tab_inactive_background: bg,
                 tab_active_background: editor,
-                search_match_background: bg, // todo!(this was inserted by Mikayla)
+                search_match_background: bg,
 
                 editor_background: editor,
                 editor_gutter_background: editor,
