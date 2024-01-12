@@ -868,6 +868,7 @@ impl Drop for RemoteAudioTrack {
         // the crash in the `livekit.multicast` thread.
         //
         // unsafe { CFRelease(self.native_track.0) }
+        let _ = self.native_track;
     }
 }
 
