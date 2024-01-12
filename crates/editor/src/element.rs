@@ -3595,7 +3595,7 @@ mod tests {
 
         // Don't panic.
         let bounds = Bounds::<Pixels>::new(Default::default(), size);
-        cx.update_window(window.into(), |view, cx| element.paint(bounds, &mut (), cx))
+        cx.update_window(window.into(), |_, cx| element.paint(bounds, &mut (), cx))
             .unwrap()
     }
 
