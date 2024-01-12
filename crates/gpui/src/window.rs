@@ -2009,24 +2009,34 @@ impl<'a> WindowContext<'a> {
     pub fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
         let text_system = self.text_system().clone();
         text_system.with_view(view_id, || {
-            self.window.next_frame.view_stack.push(view_id);
-            let result = f(self);
-            self.window.next_frame.view_stack.pop();
-            result
+            if self.window.next_frame.view_stack.last() == Some(&view_id) {
+                return f(self);
+            } else {
+                self.window.next_frame.view_stack.push(view_id);
+                let result = f(self);
+                self.window.next_frame.view_stack.pop();
+                result
+            }
         })
     }
 
     /// Invoke the given function with the given view id present on the view stack.
     /// This is a fairly low-level method used to paint views.
     pub fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.with_view_id(view_id, |cx| {
-            cx.window
-                .next_frame
-                .dispatch_tree
-                .push_node(None, None, Some(view_id));
-            let result = f(cx);
-            cx.window.next_frame.dispatch_tree.pop_node();
-            result
+        let text_system = self.text_system().clone();
+        text_system.with_view(view_id, || {
+            if self.window.next_frame.view_stack.last() == Some(&view_id) {
+                return f(self);
+            } else {
+                self.window.next_frame.view_stack.push(view_id);
+                self.window
+                    .next_frame
+                    .dispatch_tree
+                    .push_node(None, None, Some(view_id));
+                let result = f(self);
+                self.window.next_frame.view_stack.pop();
+                result
+            }
         })
     }
 
