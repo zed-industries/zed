@@ -125,7 +125,7 @@ use parking_lot::{Mutex, RwLock};
 use project::{
     lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
-    CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Item, Location,
+    CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, ProjectItem, Location,
     LocationLink, Project, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;

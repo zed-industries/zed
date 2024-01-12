@@ -114,7 +114,7 @@ impl ImageItem {
     }
 }
 
-impl crate::Item for ImageItem {
+impl project::ProjectItem for ImageItem {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -150,6 +150,10 @@ impl crate::Item for ImageItem {
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
         Some(self.project_path(cx).clone())
+    }
+
+    fn is_dirty(&self) -> bool {
+        false
     }
 }
 

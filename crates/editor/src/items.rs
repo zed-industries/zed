@@ -22,7 +22,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
 use project::{
-    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Item as _,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, ProjectItem as _,
     Project, ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
@@ -665,7 +665,7 @@ impl Item for Editor {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.buffer
             .read(cx)

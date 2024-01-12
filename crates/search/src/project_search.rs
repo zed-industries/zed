@@ -449,7 +449,7 @@ impl Item for ProjectSearchView {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.results_editor.for_each_project_item(cx, f)
     }
