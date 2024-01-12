@@ -16,6 +16,7 @@ use menu::Confirm;
 use message_editor::MessageEditor;
 use project::Fs;
 use rich_text::RichText;
+use rpc::proto;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -143,10 +144,14 @@ impl ChatPanel {
             this.subscriptions.push(cx.subscribe(
                 &ActiveCall::global(cx),
                 move |this: &mut Self, _, event: &room::Event, cx| match event {
-                    room::Event::RoomJoined { channel_id } => {
+                    room::Event::RoomJoined { channel_id, role } => {
                         if let Some(channel_id) = channel_id {
                             this.select_channel(*channel_id, None, cx)
-                                .detach_and_log_err(cx)
+                                .detach_and_log_err(cx);
+
+                            if *role == proto::ChannelRole::Guest {
+                                cx.emit(PanelEvent::Activate)
+                            }
                         }
                     }
                     _ => {}

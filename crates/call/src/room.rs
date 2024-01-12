@@ -28,6 +28,7 @@ pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum Event {
     RoomJoined {
         channel_id: Option<u64>,
+        role: proto::ChannelRole,
     },
     ParticipantLocationChanged {
         participant_id: proto::PeerId,
