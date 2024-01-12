@@ -2,16 +2,26 @@ name: "Check formatting"
 description: "Checks code formatting use cargo fmt"
 
 runs:
-    using: "composite"
-    steps:
-        - name: cargo fmt
-          shell: bash -euxo pipefail {0}
-          run: cargo fmt --all -- --check
+  using: "composite"
+  steps:
+    - name: cargo fmt
+      shell: bash -euxo pipefail {0}
+      run: cargo fmt --all -- --check
 
-        - name: cargo clippy
-          shell: bash -euxo pipefail {0}
-          # clippy.toml is not currently supporting specifying allowed lints
-          # so specify those here, and disable the rest until Zed's workspace
-          # will have more fixes & suppression for the standard lint set
-          run: |
-              cargo clippy --workspace --all-features --all-targets -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
+    - name: cargo clippy
+      shell: bash -euxo pipefail {0}
+      # clippy.toml is not currently supporting specifying allowed lints
+      # so specify those here, and disable the rest until Zed's workspace
+      # will have more fixes & suppression for the standard lint set
+      run: |
+        cargo clippy --workspace --all-features --all-targets -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
+
+    - name: Find modified migrations
+      shell: bash -euxo pipefail {0}
+      run: |
+        modified_migrations=$(git diff --name-only origin/$GITHUB_BASE_REF...origin/$GITHUB_HEAD_REF 'crate/collab/migrations/*.sql')
+        echo "::set-output name=file_names::$modified_migrations"
+      id: modified-migrations
+    - uses: sbdchd/squawk-action@v1
+      with:
+        pattern: ${{ steps.modified-migrations.outputs.file_names }}
