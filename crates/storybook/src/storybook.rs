@@ -21,11 +21,6 @@ use crate::assets::Assets;
 use crate::story_selector::{ComponentStory, StorySelector};
 pub use indoc::indoc;
 
-// gpui::actions! {
-//     storybook,
-//     [ToggleInspector]
-// }
-
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {

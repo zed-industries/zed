@@ -3324,36 +3324,6 @@ impl Workspace {
         workspace
     }
 
-    //     fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
-    //         let dock = match position {
-    //             DockPosition::Left => &self.left_dock,
-    //             DockPosition::Right => &self.right_dock,
-    //             DockPosition::Bottom => &self.bottom_dock,
-    //         };
-    //         let active_panel = dock.read(cx).visible_panel()?;
-    //         let element = if Some(active_panel.id()) == self.zoomed.as_ref().map(|zoomed| zoomed.id()) {
-    //             dock.read(cx).render_placeholder(cx)
-    //         } else {
-    //             ChildView::new(dock, cx).into_any()
-    //         };
-
-    //         Some(
-    //             element
-    //                 .constrained()
-    //                 .dynamically(move |constraint, _, cx| match position {
-    //                     DockPosition::Left | DockPosition::Right => SizeConstraint::new(
-    //                         Vector2F::new(20., constraint.min.y()),
-    //                         Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
-    //                     ),
-    //                     DockPosition::Bottom => SizeConstraint::new(
-    //                         Vector2F::new(constraint.min.x(), 20.),
-    //                         Vector2F::new(constraint.max.x(), cx.window_size().y() * 0.8),
-    //                     ),
-    //                 })
-    //                 .into_any(),
-    //         )
-    //     }
-    // }
     pub fn register_action<A: Action>(
         &mut self,
         callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,

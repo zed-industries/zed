@@ -809,27 +809,6 @@ pub mod test {
         Edit,
     }
 
-    // impl Clone for TestItem {
-    //     fn clone(&self) -> Self {
-    //         Self {
-    //             state: self.state.clone(),
-    //             label: self.label.clone(),
-    //             save_count: self.save_count,
-    //             save_as_count: self.save_as_count,
-    //             reload_count: self.reload_count,
-    //             is_dirty: self.is_dirty,
-    //             is_singleton: self.is_singleton,
-    //             has_conflict: self.has_conflict,
-    //             project_items: self.project_items.clone(),
-    //             nav_history: None,
-    //             tab_descriptions: None,
-    //             tab_detail: Default::default(),
-    //             workspace_id: self.workspace_id,
-    //             focus_handle: self.focus_handle.clone(),
-    //         }
-    //     }
-    // }
-
     impl TestProjectItem {
         pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Model<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));

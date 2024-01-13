@@ -2043,7 +2043,7 @@ impl CollabPanel {
                         }),
                 )
                 .start_slot(
-                    // todo!() handle contacts with no avatar
+                    // todo handle contacts with no avatar
                     Avatar::new(contact.user.avatar_uri.clone())
                         .availability_indicator(if online { Some(!busy) } else { None }),
                 )
