@@ -14,6 +14,7 @@ use sysinfo::{
 };
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
+#[cfg(not(debug_assertions))]
 use util::ResultExt;
 use util::{channel::ReleaseChannel, TryFutureExt};
 
@@ -168,6 +169,7 @@ impl Telemetry {
             event_coalescer: EventCoalescer::new(),
         }));
 
+        #[cfg(not(debug_assertions))]
         cx.background_executor()
             .spawn({
                 let state = state.clone();
