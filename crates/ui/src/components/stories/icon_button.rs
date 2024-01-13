@@ -117,55 +117,5 @@ impl Render for IconButtonStory {
         )
         .children(vec![StorySection::new().children(buttons)])
         .into_element()
-
-        // Story::container()
-        //     .child(Story::title_for::<IconButton>())
-        //     .child(Story::label("Default"))
-        //     .child(div().w_8().child(IconButton::new("icon_a", Icon::Hash)))
-        //     .child(Story::label("Selected"))
-        //     .child(
-        //         div()
-        //             .w_8()
-        //             .child(IconButton::new("icon_a", Icon::Hash).selected(true)),
-        //     )
-        //     .child(Story::label("Selected with `selected_icon`"))
-        //     .child(
-        //         div().w_8().child(
-        //             IconButton::new("icon_a", Icon::AudioOn)
-        //                 .selected(true)
-        //                 .selected_icon(Icon::AudioOff),
-        //         ),
-        //     )
-        //     .child(Story::label("Disabled"))
-        //     .child(
-        //         div()
-        //             .w_8()
-        //             .child(IconButton::new("icon_a", Icon::Hash).disabled(true)),
-        //     )
-        //     .child(Story::label("With `on_click`"))
-        //     .child(
-        //         div()
-        //             .w_8()
-        //             .child(
-        //                 IconButton::new("with_on_click", Icon::Ai).on_click(|_event, _cx| {
-        //                     println!("Clicked!");
-        //                 }),
-        //             ),
-        //     )
-        //     .child(Story::label("With `tooltip`"))
-        //     .child(
-        //         div().w_8().child(
-        //             IconButton::new("with_tooltip", Icon::MessageBubbles)
-        //                 .tooltip(|cx| Tooltip::text("Open messages", cx)),
-        //         ),
-        //     )
-        //     .child(Story::label("Selected with `tooltip`"))
-        //     .child(
-        //         div().w_8().child(
-        //             IconButton::new("selected_with_tooltip", Icon::InlayHint)
-        //                 .selected(true)
-        //                 .tooltip(|cx| Tooltip::text("Toggle inlay hints", cx)),
-        //         ),
-        //     )
     }
 }

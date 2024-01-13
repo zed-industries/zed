@@ -1677,8 +1677,6 @@ fn elixir_lang() -> Arc<Language> {
 
 #[gpui::test]
 fn test_subtract_ranges() {
-    // collapsed_ranges: Vec<Range<usize>>, keep_ranges: Vec<Range<usize>>
-
     assert_eq!(
         subtract_ranges(&[0..5, 10..21], &[0..1, 4..5]),
         vec![1..4, 10..21]

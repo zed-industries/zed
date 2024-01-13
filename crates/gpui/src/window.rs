@@ -3137,13 +3137,6 @@ impl AnyWindowHandle {
     }
 }
 
-// #[cfg(any(test, feature = "test-support"))]
-// impl From<SmallVec<[u32; 16]>> for StackingOrder {
-//     fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
-//         StackingOrder(small_vec)
-//     }
-// }
-
 /// An identifier for an [`Element`](crate::Element).
 ///
 /// Can be constructed with a string, a number, or both, as well

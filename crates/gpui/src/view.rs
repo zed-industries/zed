@@ -60,16 +60,6 @@ impl<V: 'static> View<V> {
         self.model.read(cx)
     }
 
-    // pub fn render_with<E>(&self, component: E) -> RenderViewWith<E, V>
-    // where
-    //     E: 'static + Element,
-    // {
-    //     RenderViewWith {
-    //         view: self.clone(),
-    //         element: Some(component),
-    //     }
-    // }
-
     pub fn focus_handle(&self, cx: &AppContext) -> FocusHandle
     where
         V: FocusableView,

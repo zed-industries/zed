@@ -99,20 +99,6 @@ pub trait Item {
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
-// Language server state is stored across 3 collections:
-//     language_servers =>
-//         a mapping from unique server id to LanguageServerState which can either be a task for a
-//         server in the process of starting, or a running server with adapter and language server arcs
-//     language_server_ids => a mapping from worktreeId and server name to the unique server id
-//     language_server_statuses => a mapping from unique server id to the current server status
-//
-// Multiple worktrees can map to the same language server for example when you jump to the definition
-// of a file in the standard library. So language_server_ids is used to look up which server is active
-// for a given worktree and language server name
-//
-// When starting a language server, first the id map is checked to make sure a server isn't already available
-// for that worktree. If there is one, it finishes early. Otherwise, a new id is allocated and and
-// the Starting variant of LanguageServerState is stored in the language_servers map.
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,

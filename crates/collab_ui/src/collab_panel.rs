@@ -1426,14 +1426,6 @@ impl CollabPanel {
         self.toggle_channel_collapsed(id, cx)
     }
 
-    //     fn toggle_channel_collapsed_action(
-    //         &mut self,
-    //         action: &ToggleCollapse,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.toggle_channel_collapsed(action.location, cx);
-    //     }
-
     fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         match self.collapsed_channels.binary_search(&channel_id) {
             Ok(ix) => {
@@ -1910,7 +1902,6 @@ impl CollabPanel {
         let mut channel_link = None;
         let mut channel_tooltip_text = None;
         let mut channel_icon = None;
-        // let mut is_dragged_over = false;
 
         let text = match section {
             Section::ActiveCall => {
@@ -2052,7 +2043,7 @@ impl CollabPanel {
                         }),
                 )
                 .start_slot(
-                    // todo!() handle contacts with no avatar
+                    // todo handle contacts with no avatar
                     Avatar::new(contact.user.avatar_uri.clone())
                         .availability_indicator(if online { Some(!busy) } else { None }),
                 )

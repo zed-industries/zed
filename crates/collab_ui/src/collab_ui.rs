@@ -41,10 +41,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     chat_panel::init(cx);
     notification_panel::init(cx);
     notifications::init(&app_state, cx);
-
-    // cx.add_global_action(toggle_screen_sharing);
-    // cx.add_global_action(toggle_mute);
-    // cx.add_global_action(toggle_deafen);
 }
 
 pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
@@ -130,34 +126,6 @@ fn notification_window_options(
         display_id: Some(screen.id()),
     }
 }
-
-// fn render_avatar<T: 'static>(
-//     avatar: Option<Arc<ImageData>>,
-//     avatar_style: &AvatarStyle,
-//     container: ContainerStyle,
-// ) -> AnyElement<T> {
-//     avatar
-//         .map(|avatar| {
-//             Image::from_data(avatar)
-//                 .with_style(avatar_style.image)
-//                 .aligned()
-//                 .contained()
-//                 .with_corner_radius(avatar_style.outer_corner_radius)
-//                 .constrained()
-//                 .with_width(avatar_style.outer_width)
-//                 .with_height(avatar_style.outer_width)
-//                 .into_any()
-//         })
-//         .unwrap_or_else(|| {
-//             Empty::new()
-//                 .constrained()
-//                 .with_width(avatar_style.outer_width)
-//                 .into_any()
-//         })
-//         .contained()
-//         .with_style(container)
-//         .into_any()
-// }
 
 fn is_channels_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
     cx.is_staff() || cx.has_flag::<ChannelsAlpha>()

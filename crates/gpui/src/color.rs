@@ -355,16 +355,6 @@ impl Hsla {
     }
 }
 
-// impl From<Hsla> for Rgba {
-//     fn from(value: Hsla) -> Self {
-//         let h = value.h;
-//         let s = value.s;
-//         let l = value.l;
-
-//         let c = (1 - |2L - 1|) X s
-//     }
-// }
-
 impl From<Rgba> for Hsla {
     fn from(color: Rgba) -> Self {
         let r = color.r;
