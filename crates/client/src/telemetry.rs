@@ -14,6 +14,7 @@ use sysinfo::{
 };
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
+use util::ResultExt;
 use util::{channel::ReleaseChannel, TryFutureExt};
 
 use self::event_coalescer::EventCoalescer;
@@ -166,6 +167,19 @@ impl Telemetry {
             first_event_datetime: None,
             event_coalescer: EventCoalescer::new(),
         }));
+
+        cx.background_executor()
+            .spawn({
+                let state = state.clone();
+                async move {
+                    if let Some(tempfile) =
+                        NamedTempFile::new_in(util::paths::CONFIG_DIR.as_path()).log_err()
+                    {
+                        state.lock().log_file = Some(tempfile);
+                    }
+                }
+            })
+            .detach();
 
         cx.observe_global::<SettingsStore>({
             let state = state.clone();
