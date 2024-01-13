@@ -59,6 +59,7 @@ pub struct ChatPanel {
     subscriptions: Vec<gpui::Subscription>,
     is_scrolled_to_bottom: bool,
     markdown_data: HashMap<ChannelMessageId, RichText>,
+    focus_handle: FocusHandle,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -126,6 +127,7 @@ impl ChatPanel {
                 active: false,
                 width: None,
                 markdown_data: Default::default(),
+                focus_handle: cx.focus_handle(),
             };
 
             let mut old_dock_position = this.position(cx);
@@ -490,6 +492,7 @@ impl EventEmitter<Event> for ChatPanel {}
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
+            .track_focus(&self.focus_handle)
             .full()
             .on_action(cx.listener(Self::send))
             .child(
@@ -559,7 +562,11 @@ impl Render for ChatPanel {
 
 impl FocusableView for ChatPanel {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.message_editor.read(cx).focus_handle(cx)
+        if self.active_chat.is_some() {
+            self.message_editor.read(cx).focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
