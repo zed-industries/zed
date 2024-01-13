@@ -600,6 +600,9 @@ fn possible_open_targets(
 
 pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
     let query = query.as_str();
+    if query == "." {
+        return None;
+    }
     let searcher = RegexSearch::new(&query);
     searcher.ok()
 }
