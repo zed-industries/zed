@@ -1,4 +1,3 @@
-use anyhow::bail;
 use futures::FutureExt;
 use gpui::{
     AnyElement, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
