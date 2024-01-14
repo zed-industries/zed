@@ -59,7 +59,7 @@ impl TextSystem {
             fallback_font_stack: smallvec![
                 // TODO: This is currently Zed-specific.
                 // We should allow GPUI users to provide their own fallback font stack.
-                font("Zed Mono"),
+                font("Zed Sans"),
                 font("Helvetica")
             ],
         }
