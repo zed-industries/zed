@@ -144,7 +144,7 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<u64>>> {
-        if message.text.is_empty() {
+        if message.text.trim().is_empty() {
             Err(anyhow!("message body can't be empty"))?;
         }
 
@@ -174,6 +174,8 @@ impl ChannelChat {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
         let outgoing_messages_lock = self.outgoing_messages_lock.clone();
+
+        // todo - handle messages that fail to send (e.g. >1024 chars)
         Ok(cx.spawn(move |this, mut cx| async move {
             let outgoing_message_guard = outgoing_messages_lock.lock().await;
             let request = rpc.request(proto::SendChannelMessage {

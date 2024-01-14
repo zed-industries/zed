@@ -8,8 +8,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, list, prelude::*, px, Action, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView, ListOffset, ListScrollEvent,
-    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    ClickEvent, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    ListOffset, ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -22,7 +23,8 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    prelude::*, Avatar, Button, IconButton, IconName, Key, KeyBinding, Label, TabBar, Tooltip,
+    popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, Key, KeyBinding,
+    Label, TabBar, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -60,6 +62,7 @@ pub struct ChatPanel {
     is_scrolled_to_bottom: bool,
     markdown_data: HashMap<ChannelMessageId, RichText>,
     focus_handle: FocusHandle,
+    open_context_menu: Option<(u64, Subscription)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -128,6 +131,7 @@ impl ChatPanel {
                 width: None,
                 markdown_data: Default::default(),
                 focus_handle: cx.focus_handle(),
+                open_context_menu: None,
             };
 
             let mut old_dock_position = this.position(cx);
@@ -348,48 +352,98 @@ impl ChatPanel {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
+        let this = cx.view().clone();
 
         v_stack()
             .w_full()
-            .id(element_id)
             .relative()
             .overflow_hidden()
-            .group("")
             .when(!is_continuation_from_previous, |this| {
-                this.child(
+                this.pt_3().child(
                     h_stack()
-                        .gap_2()
-                        .child(Avatar::new(message.sender.avatar_uri.clone()))
-                        .child(Label::new(message.sender.github_login.clone()))
+                        .child(
+                            div().absolute().child(
+                                Avatar::new(message.sender.avatar_uri.clone())
+                                    .size(cx.rem_size() * 1.5),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .pl(cx.rem_size() * 1.5 + px(6.0))
+                                .pr(px(8.0))
+                                .font_weight(FontWeight::BOLD)
+                                .child(Label::new(message.sender.github_login.clone())),
+                        )
                         .child(
                             Label::new(format_timestamp(
                                 message.timestamp,
                                 now,
                                 self.local_timezone,
                             ))
+                            .size(LabelSize::Small)
                             .color(Color::Muted),
                         ),
                 )
             })
-            .when(!is_continuation_to_next, |this|
-                // HACK: This should really be a margin, but margins seem to get collapsed.
-                this.pb_2())
-            .child(text.element("body".into(), cx))
+            .when(is_continuation_from_previous, |this| this.pt_1())
             .child(
-                div()
-                    .absolute()
-                    .top_1()
-                    .right_2()
-                    .w_8()
-                    .visible_on_hover("")
-                    .children(message_id_to_remove.map(|message_id| {
-                        IconButton::new(("remove", message_id), IconName::XCircle).on_click(
-                            cx.listener(move |this, _, cx| {
-                                this.remove_message(message_id, cx);
-                            }),
-                        )
-                    })),
+                v_stack()
+                    .w_full()
+                    .text_ui_sm()
+                    .id(element_id)
+                    .group("")
+                    .child(text.element("body".into(), cx))
+                    .child(
+                        div()
+                            .absolute()
+                            .z_index(1)
+                            .right_0()
+                            .w_6()
+                            .bg(cx.theme().colors().panel_background)
+                            .when(!self.has_open_menu(message_id_to_remove), |el| {
+                                el.visible_on_hover("")
+                            })
+                            .children(message_id_to_remove.map(|message_id| {
+                                popover_menu(("menu", message_id))
+                                    .trigger(IconButton::new(
+                                        ("trigger", message_id),
+                                        IconName::Ellipsis,
+                                    ))
+                                    .menu(move |cx| {
+                                        Some(Self::render_message_menu(&this, message_id, cx))
+                                    })
+                            })),
+                    ),
             )
+    }
+
+    fn has_open_menu(&self, message_id: Option<u64>) -> bool {
+        match self.open_context_menu.as_ref() {
+            Some((id, _)) => Some(*id) == message_id,
+            None => false,
+        }
+    }
+
+    fn render_message_menu(
+        this: &View<Self>,
+        message_id: u64,
+        cx: &mut WindowContext,
+    ) -> View<ContextMenu> {
+        let menu = {
+            let this = this.clone();
+            ContextMenu::build(cx, move |menu, _| {
+                menu.entry("Delete message", None, move |cx| {
+                    this.update(cx, |this, cx| this.remove_message(message_id, cx))
+                })
+            })
+        };
+        this.update(cx, |this, cx| {
+            let subscription = cx.subscribe(&menu, |this: &mut Self, _, _: &DismissEvent, _| {
+                this.open_context_menu = None;
+            });
+            this.open_context_menu = Some((message_id, subscription));
+        });
+        menu
     }
 
     fn render_markdown_with_mentions(

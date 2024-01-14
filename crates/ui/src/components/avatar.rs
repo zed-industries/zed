@@ -26,6 +26,7 @@ pub enum AvatarShape {
 #[derive(IntoElement)]
 pub struct Avatar {
     image: Img,
+    size: Option<Pixels>,
     border_color: Option<Hsla>,
     is_available: Option<bool>,
 }
@@ -36,7 +37,7 @@ impl RenderOnce for Avatar {
             self = self.shape(AvatarShape::Circle);
         }
 
-        let size = cx.rem_size();
+        let size = self.size.unwrap_or_else(|| cx.rem_size());
 
         div()
             .size(size + px(2.))
@@ -78,6 +79,7 @@ impl Avatar {
             image: img(src),
             is_available: None,
             border_color: None,
+            size: None,
         }
     }
 
@@ -122,6 +124,12 @@ impl Avatar {
 
     pub fn availability_indicator(mut self, is_available: impl Into<Option<bool>>) -> Self {
         self.is_available = is_available.into();
+        self
+    }
+
+    /// Size overrides the avatar size. By default they are 1rem.
+    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+        self.size = size.into();
         self
     }
 }
