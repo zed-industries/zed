@@ -256,6 +256,7 @@ impl Database {
                     message_id = result.last_insert_id;
                     let mentioned_user_ids =
                         mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
+
                     let mentions = mentions
                         .iter()
                         .filter_map(|mention| {

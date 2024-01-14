@@ -39,6 +39,7 @@ pub struct RichText {
 
 /// Allows one to specify extra links to the rendered markdown, which can be used
 /// for e.g. mentions.
+#[derive(Debug)]
 pub struct Mention {
     pub range: Range<usize>,
     pub is_self_mention: bool,
@@ -138,20 +139,21 @@ pub fn render_markdown_mut(
                 if let Some(language) = &current_language {
                     render_code(text, highlights, t.as_ref(), language);
                 } else {
-                    if let Some(mention) = mentions.first() {
-                        if source_range.contains_inclusive(&mention.range) {
-                            mentions = &mentions[1..];
-                            let range = (prev_len + mention.range.start - source_range.start)
-                                ..(prev_len + mention.range.end - source_range.start);
-                            highlights.push((
-                                range.clone(),
-                                if mention.is_self_mention {
-                                    Highlight::SelfMention
-                                } else {
-                                    Highlight::Mention
-                                },
-                            ));
+                    while let Some(mention) = mentions.first() {
+                        if !source_range.contains_inclusive(&mention.range) {
+                            break;
                         }
+                        mentions = &mentions[1..];
+                        let range = (prev_len + mention.range.start - source_range.start)
+                            ..(prev_len + mention.range.end - source_range.start);
+                        highlights.push((
+                            range.clone(),
+                            if mention.is_self_mention {
+                                Highlight::SelfMention
+                            } else {
+                                Highlight::Mention
+                            },
+                        ));
                     }
 
                     text.push_str(t.as_ref());
