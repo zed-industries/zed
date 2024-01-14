@@ -1,6 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
@@ -245,18 +245,6 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
             };
             this.update_visible_entries(None, cx);
-
-            // Update the dock position when the setting changes.
-            let mut old_dock_position = this.position(cx);
-            ProjectPanelSettings::register(cx);
-            cx.observe_global::<SettingsStore>(move |this, cx| {
-                let new_dock_position = this.position(cx);
-                if new_dock_position != old_dock_position {
-                    old_dock_position = new_dock_position;
-                    cx.emit(PanelEvent::ChangePosition);
-                }
-            })
-            .detach();
 
             this
         });

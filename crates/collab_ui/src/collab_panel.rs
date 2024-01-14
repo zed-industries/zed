@@ -26,7 +26,7 @@ use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use rpc::proto::{self, PeerId};
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
@@ -253,19 +253,6 @@ impl CollabPanel {
             };
 
             this.update_entries(false, cx);
-
-            // Update the dock position when the setting changes.
-            let mut old_dock_position = this.position(cx);
-            this.subscriptions.push(cx.observe_global::<SettingsStore>(
-                move |this: &mut Self, cx| {
-                    let new_dock_position = this.position(cx);
-                    if new_dock_position != old_dock_position {
-                        old_dock_position = new_dock_position;
-                        cx.emit(PanelEvent::ChangePosition);
-                    }
-                    cx.notify();
-                },
-            ));
 
             let active_call = ActiveCall::global(cx);
             this.subscriptions

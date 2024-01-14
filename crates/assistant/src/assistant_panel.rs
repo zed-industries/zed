@@ -40,7 +40,7 @@ use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset a
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::{
     cell::Cell,
     cmp,
@@ -165,7 +165,7 @@ impl AssistantPanel {
                     cx.on_focus_in(&focus_handle, Self::focus_in).detach();
                     cx.on_focus_out(&focus_handle, Self::focus_out).detach();
 
-                    let mut this = Self {
+                    Self {
                         workspace: workspace_handle,
                         active_editor_index: Default::default(),
                         prev_active_editor_index: Default::default(),
@@ -190,20 +190,7 @@ impl AssistantPanel {
                         _watch_saved_conversations,
                         semantic_index,
                         retrieve_context_in_next_inline_assist: false,
-                    };
-
-                    let mut old_dock_position = this.position(cx);
-                    this.subscriptions =
-                        vec![cx.observe_global::<SettingsStore>(move |this, cx| {
-                            let new_dock_position = this.position(cx);
-                            if new_dock_position != old_dock_position {
-                                old_dock_position = new_dock_position;
-                                cx.emit(PanelEvent::ChangePosition);
-                            }
-                            cx.notify();
-                        })];
-
-                    this
+                    }
                 })
             })
         })
@@ -3133,6 +3120,7 @@ mod tests {
     use crate::MessageId;
     use ai::test::FakeCompletionProvider;
     use gpui::AppContext;
+    use settings::SettingsStore;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
