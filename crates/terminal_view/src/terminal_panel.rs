@@ -11,7 +11,7 @@ use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
 use ui::{h_stack, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};

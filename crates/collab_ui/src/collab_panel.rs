@@ -26,7 +26,7 @@ use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use rpc::proto::{self, PeerId};
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};

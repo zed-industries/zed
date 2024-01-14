@@ -1,4 +1,4 @@
-use crate::{collab_panel, is_channels_feature_enabled, ChatPanelSettings, CollabPanel};
+use crate::{collab_panel, is_channels_feature_enabled, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
@@ -7,24 +7,22 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, Action, AnyElement, AppContext, AsyncWindowContext,
-    ClickEvent, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    ListOffset, ListScrollEvent, ListState, Model, Render, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView,
+    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, DismissEvent,
+    ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight, ListOffset, ListScrollEvent,
+    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
 use message_editor::MessageEditor;
 use project::Fs;
 use rich_text::RichText;
-use rpc::proto;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, Key, KeyBinding,
-    Label, TabBar, Tooltip,
+    popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label,
+    TabBar,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -279,7 +277,7 @@ impl ChatPanel {
 
     fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let active_chat = &self.active_chat.as_ref().unwrap().0;
-        let (message, is_continuation_from_previous, is_continuation_to_next, is_admin) =
+        let (message, is_continuation_from_previous, is_admin) =
             active_chat.update(cx, |active_chat, cx| {
                 let is_admin = self
                     .channel_store
@@ -288,13 +286,9 @@ impl ChatPanel {
 
                 let last_message = active_chat.message(ix.saturating_sub(1));
                 let this_message = active_chat.message(ix).clone();
-                let next_message =
-                    active_chat.message(ix.saturating_add(1).min(active_chat.message_count() - 1));
 
                 let is_continuation_from_previous = last_message.id != this_message.id
                     && last_message.sender.id == this_message.sender.id;
-                let is_continuation_to_next = this_message.id != next_message.id
-                    && this_message.sender.id == next_message.sender.id;
 
                 if let ChannelMessageId::Saved(id) = this_message.id {
                     if this_message
@@ -306,12 +300,7 @@ impl ChatPanel {
                     }
                 }
 
-                (
-                    this_message,
-                    is_continuation_from_previous,
-                    is_continuation_to_next,
-                    is_admin,
-                )
+                (this_message, is_continuation_from_previous, is_admin)
             });
 
         let _is_pending = message.is_pending();
