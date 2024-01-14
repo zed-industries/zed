@@ -246,18 +246,6 @@ impl ProjectPanel {
             };
             this.update_visible_entries(None, cx);
 
-            // Update the dock position when the setting changes.
-            let mut old_dock_position = this.position(cx);
-            ProjectPanelSettings::register(cx);
-            cx.observe_global::<SettingsStore>(move |this, cx| {
-                let new_dock_position = this.position(cx);
-                if new_dock_position != old_dock_position {
-                    old_dock_position = new_dock_position;
-                    cx.emit(PanelEvent::ChangePosition);
-                }
-            })
-            .detach();
-
             this
         });
 

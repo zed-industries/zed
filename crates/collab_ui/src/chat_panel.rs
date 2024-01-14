@@ -127,17 +127,6 @@ impl ChatPanel {
                 open_context_menu: None,
             };
 
-            let mut old_dock_position = this.position(cx);
-            this.subscriptions.push(cx.observe_global::<SettingsStore>(
-                move |this: &mut Self, cx| {
-                    let new_dock_position = this.position(cx);
-                    if new_dock_position != old_dock_position {
-                        old_dock_position = new_dock_position;
-                        cx.emit(PanelEvent::ChangePosition);
-                    }
-                    cx.notify();
-                },
-            ));
             this.subscriptions.push(cx.subscribe(
                 &ActiveCall::global(cx),
                 move |this: &mut Self, call, event: &room::Event, cx| match event {

@@ -192,17 +192,6 @@ impl AssistantPanel {
                         retrieve_context_in_next_inline_assist: false,
                     };
 
-                    let mut old_dock_position = this.position(cx);
-                    this.subscriptions =
-                        vec![cx.observe_global::<SettingsStore>(move |this, cx| {
-                            let new_dock_position = this.position(cx);
-                            if new_dock_position != old_dock_position {
-                                old_dock_position = new_dock_position;
-                                cx.emit(PanelEvent::ChangePosition);
-                            }
-                            cx.notify();
-                        })];
-
                     this
                 })
             })
