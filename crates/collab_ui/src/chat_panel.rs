@@ -70,13 +70,6 @@ struct SerializedChatPanel {
     width: Option<Pixels>,
 }
 
-#[derive(Debug)]
-pub enum Event {
-    DockPositionChanged,
-    Focus,
-    Dismissed,
-}
-
 actions!(chat_panel, [ToggleFocus]);
 
 impl ChatPanel {
@@ -140,7 +133,7 @@ impl ChatPanel {
                     let new_dock_position = this.position(cx);
                     if new_dock_position != old_dock_position {
                         old_dock_position = new_dock_position;
-                        cx.emit(Event::DockPositionChanged);
+                        cx.emit(PanelEvent::ChangePosition);
                     }
                     cx.notify();
                 },
@@ -541,8 +534,6 @@ impl ChatPanel {
     }
 }
 
-impl EventEmitter<Event> for ChatPanel {}
-
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
@@ -662,7 +653,7 @@ impl Panel for ChatPanel {
         if active {
             self.acknowledge_last_message(cx);
             if !is_channels_feature_enabled(cx) {
-                cx.emit(Event::Dismissed);
+                cx.emit(PanelEvent::Close);
             }
         }
     }
