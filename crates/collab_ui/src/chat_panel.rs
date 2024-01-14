@@ -112,7 +112,7 @@ impl ChatPanel {
                 if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
                     this.load_more_messages(cx);
                 }
-                this.is_scrolled_to_bottom = event.visible_range.end == event.count;
+                this.is_scrolled_to_bottom = !event.is_scrolled;
             }));
 
             let mut this = Self {
@@ -567,7 +567,7 @@ impl Render for ChatPanel {
                     ),
                 ),
             )
-            .child(div().flex_grow().px_2().py_1().map(|this| {
+            .child(div().flex_grow().px_2().pt_1().map(|this| {
                 if self.active_chat.is_some() {
                     this.child(list(self.message_list.clone()).full())
                 } else {
@@ -597,19 +597,26 @@ impl Render for ChatPanel {
                     )
                 }
             }))
-            .child(h_stack().p_2().map(|el| {
-                if self.active_chat.is_some() {
-                    el.child(self.message_editor.clone())
-                } else {
-                    el.child(
-                        div()
-                            .rounded_md()
-                            .h_7()
-                            .w_full()
-                            .bg(cx.theme().colors().editor_background),
-                    )
-                }
-            }))
+            .child(
+                h_stack()
+                    .when(!self.is_scrolled_to_bottom, |el| {
+                        el.border_t_1().border_color(cx.theme().colors().border)
+                    })
+                    .p_2()
+                    .map(|el| {
+                        if self.active_chat.is_some() {
+                            el.child(self.message_editor.clone())
+                        } else {
+                            el.child(
+                                div()
+                                    .rounded_md()
+                                    .h_7()
+                                    .w_full()
+                                    .bg(cx.theme().colors().editor_background),
+                            )
+                        }
+                    }),
+            )
             .into_any()
     }
 }
