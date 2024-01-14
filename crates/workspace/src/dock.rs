@@ -743,8 +743,9 @@ pub mod test {
             true
         }
 
-        fn set_position(&mut self, position: DockPosition, _: &mut ViewContext<Self>) {
+        fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
             self.position = position;
+            cx.update_global::<SettingsStore, _>(|_, _| {});
         }
 
         fn size(&self, _: &WindowContext) -> Pixels {
