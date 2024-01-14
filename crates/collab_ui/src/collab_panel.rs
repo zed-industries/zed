@@ -12,7 +12,6 @@ use client::{Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
-use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
@@ -265,10 +264,6 @@ impl CollabPanel {
                 }));
             this.subscriptions
                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
-            this.subscriptions
-                .push(cx.observe_flag::<ChannelsAlpha, _>(move |_, this, cx| {
-                    this.update_entries(true, cx)
-                }));
             this.subscriptions.push(cx.subscribe(
                 &this.channel_store,
                 |this, _channel_store, e, cx| match e {
@@ -504,115 +499,118 @@ impl CollabPanel {
 
         let mut request_entries = Vec::new();
 
-        if cx.has_flag::<ChannelsAlpha>() {
-            self.entries.push(ListEntry::Header(Section::Channels));
+        self.entries.push(ListEntry::Header(Section::Channels));
 
-            if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(channel_store.ordered_channels().enumerate().map(
-                        |(ix, (_, channel))| StringMatchCandidate {
+        if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    channel_store
+                        .ordered_channels()
+                        .enumerate()
+                        .map(|(ix, (_, channel))| StringMatchCandidate {
                             id: ix,
                             string: channel.name.clone().into(),
                             char_bag: channel.name.chars().collect(),
-                        },
-                    ));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                if let Some(state) = &self.channel_editing_state {
-                    if matches!(state, ChannelEditingState::Create { location: None, .. }) {
-                        self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            if let Some(state) = &self.channel_editing_state {
+                if matches!(state, ChannelEditingState::Create { location: None, .. }) {
+                    self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                }
+            }
+            let mut collapse_depth = None;
+            for mat in matches {
+                let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
+                let depth = channel.parent_path.len();
+
+                if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
+                    collapse_depth = Some(depth);
+                } else if let Some(collapsed_depth) = collapse_depth {
+                    if depth > collapsed_depth {
+                        continue;
+                    }
+                    if self.is_channel_collapsed(channel.id) {
+                        collapse_depth = Some(depth);
+                    } else {
+                        collapse_depth = None;
                     }
                 }
-                let mut collapse_depth = None;
-                for mat in matches {
-                    let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
-                    let depth = channel.parent_path.len();
 
-                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
-                        collapse_depth = Some(depth);
-                    } else if let Some(collapsed_depth) = collapse_depth {
-                        if depth > collapsed_depth {
-                            continue;
-                        }
-                        if self.is_channel_collapsed(channel.id) {
-                            collapse_depth = Some(depth);
-                        } else {
-                            collapse_depth = None;
-                        }
-                    }
+                let has_children = channel_store
+                    .channel_at_index(mat.candidate_id + 1)
+                    .map_or(false, |next_channel| {
+                        next_channel.parent_path.ends_with(&[channel.id])
+                    });
 
-                    let has_children = channel_store
-                        .channel_at_index(mat.candidate_id + 1)
-                        .map_or(false, |next_channel| {
-                            next_channel.parent_path.ends_with(&[channel.id])
+                match &self.channel_editing_state {
+                    Some(ChannelEditingState::Create {
+                        location: parent_id,
+                        ..
+                    }) if *parent_id == Some(channel.id) => {
+                        self.entries.push(ListEntry::Channel {
+                            channel: channel.clone(),
+                            depth,
+                            has_children: false,
                         });
-
-                    match &self.channel_editing_state {
-                        Some(ChannelEditingState::Create {
-                            location: parent_id,
-                            ..
-                        }) if *parent_id == Some(channel.id) => {
-                            self.entries.push(ListEntry::Channel {
-                                channel: channel.clone(),
-                                depth,
-                                has_children: false,
-                            });
-                            self.entries
-                                .push(ListEntry::ChannelEditor { depth: depth + 1 });
-                        }
-                        Some(ChannelEditingState::Rename {
-                            location: parent_id,
-                            ..
-                        }) if parent_id == &channel.id => {
-                            self.entries.push(ListEntry::ChannelEditor { depth });
-                        }
-                        _ => {
-                            self.entries.push(ListEntry::Channel {
-                                channel: channel.clone(),
-                                depth,
-                                has_children,
-                            });
-                        }
+                        self.entries
+                            .push(ListEntry::ChannelEditor { depth: depth + 1 });
+                    }
+                    Some(ChannelEditingState::Rename {
+                        location: parent_id,
+                        ..
+                    }) if parent_id == &channel.id => {
+                        self.entries.push(ListEntry::ChannelEditor { depth });
+                    }
+                    _ => {
+                        self.entries.push(ListEntry::Channel {
+                            channel: channel.clone(),
+                            depth,
+                            has_children,
+                        });
                     }
                 }
             }
+        }
 
-            let channel_invites = channel_store.channel_invitations();
-            if !channel_invites.is_empty() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
-                        StringMatchCandidate {
-                            id: ix,
-                            string: channel.name.clone().into(),
-                            char_bag: channel.name.chars().collect(),
-                        }
-                    }));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                request_entries.extend(matches.iter().map(|mat| {
-                    ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())
-                }));
-
-                if !request_entries.is_empty() {
-                    self.entries
-                        .push(ListEntry::Header(Section::ChannelInvites));
-                    if !self.collapsed_sections.contains(&Section::ChannelInvites) {
-                        self.entries.append(&mut request_entries);
+        let channel_invites = channel_store.channel_invitations();
+        if !channel_invites.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
+                    StringMatchCandidate {
+                        id: ix,
+                        string: channel.name.clone().into(),
+                        char_bag: channel.name.chars().collect(),
                     }
+                }));
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())),
+            );
+
+            if !request_entries.is_empty() {
+                self.entries
+                    .push(ListEntry::Header(Section::ChannelInvites));
+                if !self.collapsed_sections.contains(&Section::ChannelInvites) {
+                    self.entries.append(&mut request_entries);
                 }
             }
         }
