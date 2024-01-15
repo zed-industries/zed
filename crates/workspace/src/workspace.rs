@@ -1779,8 +1779,6 @@ impl Workspace {
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         if let Some(text) = item.telemetry_event_text(cx) {
-            dbg!("workspace");
-            dbg!(&text);
             self.client()
                 .telemetry()
                 .report_app_event(format!("{}: open", text));
