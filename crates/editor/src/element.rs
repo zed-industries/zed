@@ -388,7 +388,9 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let modifiers = event.modifiers;
 
-        if gutter_bounds.contains(&event.position) {
+        if cx.default_prevented() {
+            return;
+        } else if gutter_bounds.contains(&event.position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_bounds.contains(&event.position) {
             return;
