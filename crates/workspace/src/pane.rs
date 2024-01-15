@@ -32,8 +32,8 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconName, IconSize, Indicator,
-    Label, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
+    IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_stack, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
@@ -1341,6 +1341,7 @@ impl Pane {
             .start_slot::<Indicator>(indicator)
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
+                    .shape(IconButtonShape::Square)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
                     .icon_size(IconSize::XSmall)
