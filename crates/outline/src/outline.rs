@@ -64,7 +64,7 @@ impl ModalView for OutlineView {
 
 impl Render for OutlineView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack().w(rems(34.)).child(self.picker.clone())
+        v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 

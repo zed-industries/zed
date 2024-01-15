@@ -21,7 +21,7 @@ use settings::Settings;
 use std::{any::Any, sync::Arc};
 use theme::ThemeSettings;
 
-use ui::{h_stack, prelude::*, Icon, IconButton, IconName, ToggleButton, Tooltip};
+use ui::{h_flex, prelude::*, Icon, IconButton, IconName, ToggleButton, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -186,7 +186,7 @@ impl Render for BufferSearchBar {
         } else {
             cx.theme().colors().border
         };
-        h_stack()
+        h_flex()
             .w_full()
             .gap_2()
             .key_context(key_context)
@@ -216,7 +216,7 @@ impl Render for BufferSearchBar {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
             .child(
-                h_stack()
+                h_flex()
                     .flex_1()
                     .px_2()
                     .py_1()
@@ -243,11 +243,11 @@ impl Render for BufferSearchBar {
                     })),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_2()
                     .flex_none()
                     .child(
-                        h_stack()
+                        h_flex()
                             .child(
                                 ToggleButton::new("search-mode-text", SearchMode::Text.label())
                                     .style(ButtonStyle::Filled)
@@ -303,12 +303,12 @@ impl Render for BufferSearchBar {
                     }),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_0p5()
                     .flex_1()
                     .when(self.replace_enabled, |this| {
                         this.child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 // We're giving this a fixed height to match the height of the search input,
                                 // which has an icon inside that is increasing its height.
@@ -346,7 +346,7 @@ impl Render for BufferSearchBar {
                     }),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_0p5()
                     .flex_none()
                     .child(

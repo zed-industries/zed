@@ -11,7 +11,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 
-use ui::{h_stack, prelude::*, v_stack, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
+use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -84,7 +84,7 @@ impl FocusableView for CommandPalette {
 
 impl Render for CommandPalette {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack().w(rems(34.)).child(self.picker.clone())
+        v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -311,7 +311,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    h_stack()
+                    h_flex()
                         .w_full()
                         .justify_between()
                         .child(HighlightedLabel::new(

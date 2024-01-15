@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
-use ui::{h_stack, prelude::*, v_stack, Avatar, Button, Icon, IconButton, IconName, Label};
+use ui::{h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -251,13 +251,13 @@ impl NotificationPanel {
                         .rounded_full()
                 }))
                 .child(
-                    v_stack()
+                    v_flex()
                         .gap_1()
                         .size_full()
                         .overflow_hidden()
                         .child(Label::new(text.clone()))
                         .child(
-                            h_stack()
+                            h_flex()
                                 .child(
                                     Label::new(format_timestamp(
                                         timestamp,
@@ -276,7 +276,7 @@ impl NotificationPanel {
                                     )))
                                 } else if needs_response {
                                     Some(
-                                        h_stack()
+                                        h_flex()
                                             .flex_grow()
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
@@ -541,10 +541,10 @@ impl NotificationPanel {
 
 impl Render for NotificationPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .size_full()
             .child(
-                h_stack()
+                h_flex()
                     .justify_between()
                     .px_2()
                     .py_1()
@@ -558,7 +558,7 @@ impl Render for NotificationPanel {
             .map(|this| {
                 if self.client.user_id().is_none() {
                     this.child(
-                        v_stack()
+                        v_flex()
                             .gap_2()
                             .p_4()
                             .child(
@@ -592,7 +592,7 @@ impl Render for NotificationPanel {
                     )
                 } else if self.notification_list.item_count() == 0 {
                     this.child(
-                        v_stack().p_4().child(
+                        v_flex().p_4().child(
                             div().flex().w_full().items_center().child(
                                 Label::new("You have no notifications.")
                                     .color(Color::Muted)
@@ -711,7 +711,7 @@ impl Render for NotificationToast {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let user = self.actor.clone();
 
-        h_stack()
+        h_flex()
             .id("notification_panel_toast")
             .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
             .child(Label::new(self.text.clone()))

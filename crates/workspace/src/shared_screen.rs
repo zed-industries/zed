@@ -12,7 +12,7 @@ use gpui::{
     WindowContext,
 };
 use std::sync::{Arc, Weak};
-use ui::{h_stack, prelude::*, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, Icon, IconName, Label};
 
 pub enum Event {
     Close,
@@ -98,7 +98,7 @@ impl Item for SharedScreen {
         selected: bool,
         _: &WindowContext<'_>,
     ) -> gpui::AnyElement {
-        h_stack()
+        h_flex()
             .gap_1()
             .child(Icon::new(IconName::Screen))
             .child(

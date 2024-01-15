@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{h_stack, Icon, IconName, IconSize, Label};
+use crate::{h_flex, Icon, IconName, IconSize, Label};
 
 #[derive(IntoElement)]
 pub struct ListSubHeader {
@@ -25,7 +25,7 @@ impl ListSubHeader {
 
 impl RenderOnce for ListSubHeader {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        h_stack().flex_1().w_full().relative().py_1().child(
+        h_flex().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
                 .when(self.inset, |this| this.px_2())

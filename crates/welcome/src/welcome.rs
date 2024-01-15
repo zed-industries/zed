@@ -60,8 +60,8 @@ pub struct WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        h_stack().full().track_focus(&self.focus_handle).child(
-            v_stack()
+        h_flex().full().track_focus(&self.focus_handle).child(
+            v_flex()
                 .w_96()
                 .gap_4()
                 .mx_auto()
@@ -74,12 +74,12 @@ impl Render for WelcomePage {
                         .mx_auto(),
                 )
                 .child(
-                    h_stack()
+                    h_flex()
                         .justify_center()
                         .child(Label::new("Code at the speed of thought")),
                 )
                 .child(
-                    v_stack()
+                    v_flex()
                         .gap_2()
                         .child(
                             Button::new("choose-theme", "Choose a theme")
@@ -129,7 +129,7 @@ impl Render for WelcomePage {
                         ),
                 )
                 .child(
-                    v_stack()
+                    v_flex()
                         .p_3()
                         .gap_2()
                         .bg(cx.theme().colors().elevated_surface_background)
@@ -137,7 +137,7 @@ impl Render for WelcomePage {
                         .border_color(cx.theme().colors().border)
                         .rounded_md()
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_2()
                                 .child(
                                     Checkbox::new(
@@ -163,7 +163,7 @@ impl Render for WelcomePage {
                                 .child(Label::new("Enable vim mode")),
                         )
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_2()
                                 .child(
                                     Checkbox::new(
@@ -201,7 +201,7 @@ impl Render for WelcomePage {
                                 .child(Label::new("Send anonymous usage data")),
                         )
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_2()
                                 .child(
                                     Checkbox::new(

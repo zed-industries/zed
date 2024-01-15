@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, prelude::*, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -654,11 +654,11 @@ impl Item for ProjectDiagnosticsEditor {
                 })
                 .into_any_element()
         } else {
-            h_stack()
+            h_flex()
                 .gap_1()
                 .when(self.summary.error_count > 0, |then| {
                     then.child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::XCircle).color(Color::Error))
                             .child(Label::new(self.summary.error_count.to_string()).color(
@@ -672,7 +672,7 @@ impl Item for ProjectDiagnosticsEditor {
                 })
                 .when(self.summary.warning_count > 0, |then| {
                     then.child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
                             .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
                             .child(Label::new(self.summary.warning_count.to_string()).color(
@@ -796,7 +796,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let message: SharedString = message.into();
     Arc::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
-        h_stack()
+        h_flex()
             .id("diagnostic header")
             .py_2()
             .pl_10()
@@ -805,7 +805,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .justify_between()
             .gap_2()
             .child(
-                h_stack()
+                h_flex()
                     .gap_3()
                     .map(|stack| {
                         stack.child(
@@ -824,7 +824,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                         )
                     })
                     .child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
                             .child(
                                 StyledText::new(message.clone()).with_highlights(
@@ -844,7 +844,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                     ),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .when_some(diagnostic.source.as_ref(), |stack, source| {
                         stack.child(

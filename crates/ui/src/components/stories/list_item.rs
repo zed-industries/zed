@@ -60,7 +60,7 @@ impl Render for ListItemStory {
                 ListItem::new("with_end_hover_slot")
                     .child("Hello, world!")
                     .end_slot(
-                        h_stack()
+                        h_flex()
                             .gap_2()
                             .child(Avatar::new(SharedUrl::from(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",

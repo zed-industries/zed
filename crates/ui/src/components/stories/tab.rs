@@ -13,10 +13,10 @@ impl Render for TabStory {
         Story::container()
             .child(Story::title_for::<Tab>())
             .child(Story::label("Default"))
-            .child(h_stack().child(Tab::new("tab_1").child("Tab 1")))
+            .child(h_flex().child(Tab::new("tab_1").child("Tab 1")))
             .child(Story::label("With indicator"))
             .child(
-                h_stack().child(
+                h_flex().child(
                     Tab::new("tab_1")
                         .start_slot(Indicator::dot().color(Color::Warning))
                         .child("Tab 1"),
@@ -24,7 +24,7 @@ impl Render for TabStory {
             )
             .child(Story::label("With close button"))
             .child(
-                h_stack().child(
+                h_flex().child(
                     Tab::new("tab_1")
                         .end_slot(
                             IconButton::new("close_button", IconName::Close)
@@ -38,13 +38,13 @@ impl Render for TabStory {
             )
             .child(Story::label("List of tabs"))
             .child(
-                h_stack()
+                h_flex()
                     .child(Tab::new("tab_1").child("Tab 1"))
                     .child(Tab::new("tab_2").child("Tab 2")),
             )
             .child(Story::label("List of tabs with first tab selected"))
             .child(
-                h_stack()
+                h_flex()
                     .child(
                         Tab::new("tab_1")
                             .selected(true)
@@ -65,7 +65,7 @@ impl Render for TabStory {
             )
             .child(Story::label("List of tabs with last tab selected"))
             .child(
-                h_stack()
+                h_flex()
                     .child(
                         Tab::new("tab_1")
                             .position(TabPosition::First)
@@ -90,7 +90,7 @@ impl Render for TabStory {
             )
             .child(Story::label("List of tabs with second tab selected"))
             .child(
-                h_stack()
+                h_flex()
                     .child(
                         Tab::new("tab_1")
                             .position(TabPosition::First)

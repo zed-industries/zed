@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::v_stack;
+use crate::v_flex;
 use gpui::{
     div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled, WindowContext,
 };
@@ -43,10 +43,10 @@ impl RenderOnce for Popover {
         div()
             .flex()
             .gap_1()
-            .child(v_stack().elevation_2(cx).px_1().children(self.children))
+            .child(v_flex().elevation_2(cx).px_1().children(self.children))
             .when_some(self.aside, |this, aside| {
                 this.child(
-                    v_stack()
+                    v_flex()
                         .elevation_2(cx)
                         .bg(cx.theme().colors().surface_background)
                         .px_1()

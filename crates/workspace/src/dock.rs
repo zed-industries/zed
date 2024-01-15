@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{h_stack, ContextMenu, IconButton, Tooltip};
+use ui::{h_flex, ContextMenu, IconButton, Tooltip};
 use ui::{prelude::*, right_click_menu};
 
 const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
@@ -682,7 +682,7 @@ impl Render for PanelButtons {
                 )
             });
 
-        h_stack().gap_0p5().children(buttons)
+        h_flex().gap_0p5().children(buttons)
     }
 }
 

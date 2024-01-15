@@ -3,7 +3,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 
 use crate::prelude::*;
-use crate::{h_stack, v_stack, Color, KeyBinding, Label, LabelSize, StyledExt};
+use crate::{h_flex, v_flex, Color, KeyBinding, Label, LabelSize, StyledExt};
 
 pub struct Tooltip {
     title: SharedString,
@@ -73,7 +73,7 @@ impl Render for Tooltip {
         overlay().child(
             // padding to avoid mouse cursor
             div().pl_2().pt_2p5().child(
-                v_stack()
+                v_flex()
                     .elevation_2(cx)
                     .font(ui_font)
                     .text_ui()
@@ -81,7 +81,7 @@ impl Render for Tooltip {
                     .py_1()
                     .px_2()
                     .child(
-                        h_stack()
+                        h_flex()
                             .gap_4()
                             .child(self.title.clone())
                             .when_some(self.key_binding.clone(), |this, key_binding| {

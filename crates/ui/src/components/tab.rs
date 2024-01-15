@@ -135,7 +135,7 @@ impl RenderOnce for Tab {
             })
             .cursor_pointer()
             .child(
-                h_stack()
+                h_flex()
                     .group("")
                     .relative()
                     .h_full()
@@ -145,7 +145,7 @@ impl RenderOnce for Tab {
                     // .hover(|style| style.bg(tab_hover_bg))
                     // .active(|style| style.bg(tab_active_bg))
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_3()
                             .h_3()
                             .justify_center()
@@ -157,7 +157,7 @@ impl RenderOnce for Tab {
                             .children(self.start_slot),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_3()
                             .h_3()
                             .justify_center()

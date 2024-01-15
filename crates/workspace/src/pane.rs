@@ -35,7 +35,7 @@ use ui::{
     prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
     IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
-use ui::{v_stack, ContextMenu};
+use ui::{v_flex, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -271,7 +271,7 @@ impl Pane {
             custom_drop_handle: None,
             can_split: true,
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-                h_stack()
+                h_flex()
                     .gap_2()
                     .child(
                         IconButton::new("plus", IconName::Plus)
@@ -1444,7 +1444,7 @@ impl Pane {
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(self.display_nav_history_buttons, |tab_bar| {
                 tab_bar.start_child(
-                    h_stack()
+                    h_flex()
                         .gap_2()
                         .child(
                             IconButton::new("navigate_backward", IconName::ArrowLeft)
@@ -1718,7 +1718,7 @@ impl FocusableView for Pane {
 
 impl Render for Pane {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
             .size_full()

@@ -103,7 +103,7 @@ impl RenderOnce for Checkbox {
             ),
         };
 
-        h_stack()
+        h_flex()
             .id(self.id)
             // Rather than adding `px_1()` to add some space around the checkbox,
             // we use a larger parent element to create a slightly larger
