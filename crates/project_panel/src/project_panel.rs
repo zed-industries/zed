@@ -1,6 +1,6 @@
 pub mod file_associations;
 mod project_panel_settings;
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
@@ -221,10 +221,10 @@ impl ProjectPanel {
             })
             .detach();
 
-            // cx.observe_global::<FileAssociations, _>(|_, cx| {
-            //     cx.notify();
-            // })
-            // .detach();
+            cx.observe_global::<FileAssociations>(|_, cx| {
+                cx.notify();
+            })
+            .detach();
 
             let mut this = Self {
                 project: project.clone(),
@@ -245,18 +245,6 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
             };
             this.update_visible_entries(None, cx);
-
-            // Update the dock position when the setting changes.
-            let mut old_dock_position = this.position(cx);
-            ProjectPanelSettings::register(cx);
-            cx.observe_global::<SettingsStore>(move |this, cx| {
-                let new_dock_position = this.position(cx);
-                if new_dock_position != old_dock_position {
-                    old_dock_position = new_dock_position;
-                    cx.emit(PanelEvent::ChangePosition);
-                }
-            })
-            .detach();
 
             this
         });
@@ -292,16 +280,16 @@ impl ProjectPanel {
                 }
                 &Event::SplitEntry { entry_id } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-                        if let Some(_entry) = worktree.read(cx).entry_for_id(entry_id) {
-                            // workspace
-                            //     .split_path(
-                            //         ProjectPath {
-                            //             worktree_id: worktree.read(cx).id(),
-                            //             path: entry.path.clone(),
-                            //         },
-                            //         cx,
-                            //     )
-                            //     .detach_and_log_err(cx);
+                        if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            workspace
+                                .split_path(
+                                    ProjectPath {
+                                        worktree_id: worktree.read(cx).id(),
+                                        path: entry.path.clone(),
+                                    },
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
                         }
                     }
                 }
@@ -788,10 +776,6 @@ impl ProjectPanel {
                     cx.notify();
                 }
             }
-
-            // cx.update_global(|drag_and_drop: &mut DragAndDrop<Workspace>, cx| {
-            //     drag_and_drop.cancel_dragging::<ProjectEntryId>(cx);
-            // })
         }
     }
 

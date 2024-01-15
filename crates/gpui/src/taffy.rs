@@ -275,20 +275,6 @@ impl ToTaffy<taffy::style::Style> for Style {
     }
 }
 
-// impl ToTaffy for Bounds<Length> {
-//     type Output = taffy::prelude::Bounds<taffy::prelude::LengthPercentageAuto>;
-
-//     fn to_taffy(
-//         &self,
-//         rem_size: Pixels,
-//     ) -> taffy::prelude::Bounds<taffy::prelude::LengthPercentageAuto> {
-//         taffy::prelude::Bounds {
-//             origin: self.origin.to_taffy(rem_size),
-//             size: self.size.to_taffy(rem_size),
-//         }
-//     }
-// }
-
 impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::LengthPercentageAuto {
         match self {

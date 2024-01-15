@@ -41,13 +41,13 @@ impl From<ViewId> for EntityId {
 pub struct Scene {
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
     orders_by_layer: BTreeMap<LayerId, StackingOrder>,
-    shadows: Vec<Shadow>,
-    quads: Vec<Quad>,
-    paths: Vec<Path<ScaledPixels>>,
-    underlines: Vec<Underline>,
-    monochrome_sprites: Vec<MonochromeSprite>,
-    polychrome_sprites: Vec<PolychromeSprite>,
-    surfaces: Vec<Surface>,
+    pub(crate) shadows: Vec<Shadow>,
+    pub(crate) quads: Vec<Quad>,
+    pub(crate) paths: Vec<Path<ScaledPixels>>,
+    pub(crate) underlines: Vec<Underline>,
+    pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
+    pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
+    pub(crate) surfaces: Vec<Surface>,
 }
 
 impl Scene {

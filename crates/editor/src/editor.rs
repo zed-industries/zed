@@ -1955,17 +1955,21 @@ impl Editor {
         }
     }
 
-    //     pub fn language_at<'a, T: ToOffset>(
-    //         &self,
-    //         point: T,
-    //         cx: &'a AppContext,
-    //     ) -> Option<Arc<Language>> {
-    //         self.buffer.read(cx).language_at(point, cx)
-    //     }
+    pub fn language_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<Arc<Language>> {
+        self.buffer.read(cx).language_at(point, cx)
+    }
 
-    //     pub fn file_at<'a, T: ToOffset>(&self, point: T, cx: &'a AppContext) -> Option<Arc<dyn File>> {
-    //         self.buffer.read(cx).read(cx).file_at(point).cloned()
-    //     }
+    pub fn file_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<Arc<dyn language::File>> {
+        self.buffer.read(cx).read(cx).file_at(point).cloned()
+    }
 
     pub fn active_excerpt(
         &self,
@@ -1975,15 +1979,6 @@ impl Editor {
             .read(cx)
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
-
-    //     pub fn style(&self, cx: &AppContext) -> EditorStyle {
-    //         build_style(
-    //             settings::get::<ThemeSettings>(cx),
-    //             self.get_field_editor_theme.as_deref(),
-    //             self.override_text_style.as_deref(),
-    //             cx,
-    //         )
-    //     }
 
     pub fn mode(&self) -> EditorMode {
         self.mode
@@ -5443,6 +5438,10 @@ impl Editor {
     }
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         self.transact(cx, |this, cx| {
             if let Some(item) = cx.read_from_clipboard() {
                 let clipboard_text = Cow::Borrowed(item.text());
@@ -5515,6 +5514,10 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.change_selections(None, cx, |s| {
@@ -5529,6 +5532,10 @@ impl Editor {
     }
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
             {

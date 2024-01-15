@@ -1,15 +1,15 @@
-use crate::{channel_view::ChannelView, is_channels_feature_enabled, ChatPanelSettings};
+use crate::{collab_panel, is_channels_feature_enabled, ChatPanelSettings};
 use anyhow::Result;
-use call::ActiveCall;
+use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
 use client::Client;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
-    actions, div, list, prelude::*, px, AnyElement, AppContext, AsyncWindowContext, ClickEvent,
-    ElementId, EventEmitter, FocusableView, ListOffset, ListScrollEvent, ListState, Model, Render,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, DismissEvent,
+    ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight, ListOffset, ListScrollEvent,
+    ListState, Model, Render, Subscription, Task, View, ViewContext, VisualContext, WeakView,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -17,10 +17,13 @@ use message_editor::MessageEditor;
 use project::Fs;
 use rich_text::RichText;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{prelude::*, Avatar, Button, IconButton, IconName, Label, TabBar, Tooltip};
+use ui::{
+    popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label,
+    TabBar,
+};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -54,21 +57,15 @@ pub struct ChatPanel {
     active: bool,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
-    workspace: WeakView<Workspace>,
     is_scrolled_to_bottom: bool,
     markdown_data: HashMap<ChannelMessageId, RichText>,
+    focus_handle: FocusHandle,
+    open_context_menu: Option<(u64, Subscription)>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct SerializedChatPanel {
     width: Option<Pixels>,
-}
-
-#[derive(Debug)]
-pub enum Event {
-    DockPositionChanged,
-    Focus,
-    Dismissed,
 }
 
 actions!(chat_panel, [ToggleFocus]);
@@ -89,8 +86,6 @@ impl ChatPanel {
             )
         });
 
-        let workspace_handle = workspace.weak_handle();
-
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let view = cx.view().downgrade();
             let message_list =
@@ -108,7 +103,7 @@ impl ChatPanel {
                 if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
                     this.load_more_messages(cx);
                 }
-                this.is_scrolled_to_bottom = event.visible_range.end == event.count;
+                this.is_scrolled_to_bottom = !event.is_scrolled;
             }));
 
             let mut this = Self {
@@ -122,27 +117,48 @@ impl ChatPanel {
                 message_editor: input_editor,
                 local_timezone: cx.local_timezone(),
                 subscriptions: Vec::new(),
-                workspace: workspace_handle,
                 is_scrolled_to_bottom: true,
                 active: false,
                 width: None,
                 markdown_data: Default::default(),
+                focus_handle: cx.focus_handle(),
+                open_context_menu: None,
             };
 
-            let mut old_dock_position = this.position(cx);
-            this.subscriptions.push(cx.observe_global::<SettingsStore>(
-                move |this: &mut Self, cx| {
-                    let new_dock_position = this.position(cx);
-                    if new_dock_position != old_dock_position {
-                        old_dock_position = new_dock_position;
-                        cx.emit(Event::DockPositionChanged);
+            this.subscriptions.push(cx.subscribe(
+                &ActiveCall::global(cx),
+                move |this: &mut Self, call, event: &room::Event, cx| match event {
+                    room::Event::RoomJoined { channel_id } => {
+                        if let Some(channel_id) = channel_id {
+                            this.select_channel(*channel_id, None, cx)
+                                .detach_and_log_err(cx);
+
+                            if call
+                                .read(cx)
+                                .room()
+                                .is_some_and(|room| room.read(cx).contains_guests())
+                            {
+                                cx.emit(PanelEvent::Activate)
+                            }
+                        }
                     }
-                    cx.notify();
+                    room::Event::Left { channel_id } => {
+                        if channel_id == &this.channel_id(cx) {
+                            cx.emit(PanelEvent::Close)
+                        }
+                    }
+                    _ => {}
                 },
             ));
 
             this
         })
+    }
+
+    pub fn channel_id(&self, cx: &AppContext) -> Option<u64> {
+        self.active_chat
+            .as_ref()
+            .map(|(chat, _)| chat.read(cx).channel_id)
     }
 
     pub fn is_scrolled_to_bottom(&self) -> bool {
@@ -259,53 +275,9 @@ impl ChatPanel {
         }
     }
 
-    fn render_channel(&self, cx: &mut ViewContext<Self>) -> AnyElement {
-        v_stack()
-            .full()
-            .on_action(cx.listener(Self::send))
-            .child(
-                h_stack().z_index(1).child(
-                    TabBar::new("chat_header")
-                        .child(
-                            h_stack()
-                                .w_full()
-                                .h(rems(ui::Tab::HEIGHT_IN_REMS))
-                                .px_2()
-                                .child(Label::new(
-                                    self.active_chat
-                                        .as_ref()
-                                        .and_then(|c| {
-                                            Some(format!("#{}", c.0.read(cx).channel(cx)?.name))
-                                        })
-                                        .unwrap_or_default(),
-                                )),
-                        )
-                        .end_child(
-                            IconButton::new("notes", IconName::File)
-                                .on_click(cx.listener(Self::open_notes))
-                                .tooltip(|cx| Tooltip::text("Open notes", cx)),
-                        )
-                        .end_child(
-                            IconButton::new("call", IconName::AudioOn)
-                                .on_click(cx.listener(Self::join_call))
-                                .tooltip(|cx| Tooltip::text("Join call", cx)),
-                        ),
-                ),
-            )
-            .child(div().flex_grow().px_2().py_1().map(|this| {
-                if self.active_chat.is_some() {
-                    this.child(list(self.message_list.clone()).full())
-                } else {
-                    this
-                }
-            }))
-            .child(h_stack().p_2().child(self.message_editor.clone()))
-            .into_any()
-    }
-
     fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let active_chat = &self.active_chat.as_ref().unwrap().0;
-        let (message, is_continuation_from_previous, is_continuation_to_next, is_admin) =
+        let (message, is_continuation_from_previous, is_admin) =
             active_chat.update(cx, |active_chat, cx| {
                 let is_admin = self
                     .channel_store
@@ -314,13 +286,9 @@ impl ChatPanel {
 
                 let last_message = active_chat.message(ix.saturating_sub(1));
                 let this_message = active_chat.message(ix).clone();
-                let next_message =
-                    active_chat.message(ix.saturating_add(1).min(active_chat.message_count() - 1));
 
                 let is_continuation_from_previous = last_message.id != this_message.id
                     && last_message.sender.id == this_message.sender.id;
-                let is_continuation_to_next = this_message.id != next_message.id
-                    && this_message.sender.id == next_message.sender.id;
 
                 if let ChannelMessageId::Saved(id) = this_message.id {
                     if this_message
@@ -332,12 +300,7 @@ impl ChatPanel {
                     }
                 }
 
-                (
-                    this_message,
-                    is_continuation_from_previous,
-                    is_continuation_to_next,
-                    is_admin,
-                )
+                (this_message, is_continuation_from_previous, is_admin)
             });
 
         let _is_pending = message.is_pending();
@@ -360,48 +323,98 @@ impl ChatPanel {
             ChannelMessageId::Saved(id) => ("saved-message", id).into(),
             ChannelMessageId::Pending(id) => ("pending-message", id).into(),
         };
+        let this = cx.view().clone();
 
         v_stack()
             .w_full()
-            .id(element_id)
             .relative()
             .overflow_hidden()
-            .group("")
             .when(!is_continuation_from_previous, |this| {
-                this.child(
+                this.pt_3().child(
                     h_stack()
-                        .gap_2()
-                        .child(Avatar::new(message.sender.avatar_uri.clone()))
-                        .child(Label::new(message.sender.github_login.clone()))
+                        .child(
+                            div().absolute().child(
+                                Avatar::new(message.sender.avatar_uri.clone())
+                                    .size(cx.rem_size() * 1.5),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .pl(cx.rem_size() * 1.5 + px(6.0))
+                                .pr(px(8.0))
+                                .font_weight(FontWeight::BOLD)
+                                .child(Label::new(message.sender.github_login.clone())),
+                        )
                         .child(
                             Label::new(format_timestamp(
                                 message.timestamp,
                                 now,
                                 self.local_timezone,
                             ))
+                            .size(LabelSize::Small)
                             .color(Color::Muted),
                         ),
                 )
             })
-            .when(!is_continuation_to_next, |this|
-                // HACK: This should really be a margin, but margins seem to get collapsed.
-                this.pb_2())
-            .child(text.element("body".into(), cx))
+            .when(is_continuation_from_previous, |this| this.pt_1())
             .child(
-                div()
-                    .absolute()
-                    .top_1()
-                    .right_2()
-                    .w_8()
-                    .visible_on_hover("")
-                    .children(message_id_to_remove.map(|message_id| {
-                        IconButton::new(("remove", message_id), IconName::XCircle).on_click(
-                            cx.listener(move |this, _, cx| {
-                                this.remove_message(message_id, cx);
-                            }),
-                        )
-                    })),
+                v_stack()
+                    .w_full()
+                    .text_ui_sm()
+                    .id(element_id)
+                    .group("")
+                    .child(text.element("body".into(), cx))
+                    .child(
+                        div()
+                            .absolute()
+                            .z_index(1)
+                            .right_0()
+                            .w_6()
+                            .bg(cx.theme().colors().panel_background)
+                            .when(!self.has_open_menu(message_id_to_remove), |el| {
+                                el.visible_on_hover("")
+                            })
+                            .children(message_id_to_remove.map(|message_id| {
+                                popover_menu(("menu", message_id))
+                                    .trigger(IconButton::new(
+                                        ("trigger", message_id),
+                                        IconName::Ellipsis,
+                                    ))
+                                    .menu(move |cx| {
+                                        Some(Self::render_message_menu(&this, message_id, cx))
+                                    })
+                            })),
+                    ),
             )
+    }
+
+    fn has_open_menu(&self, message_id: Option<u64>) -> bool {
+        match self.open_context_menu.as_ref() {
+            Some((id, _)) => Some(*id) == message_id,
+            None => false,
+        }
+    }
+
+    fn render_message_menu(
+        this: &View<Self>,
+        message_id: u64,
+        cx: &mut WindowContext,
+    ) -> View<ContextMenu> {
+        let menu = {
+            let this = this.clone();
+            ContextMenu::build(cx, move |menu, _| {
+                menu.entry("Delete message", None, move |cx| {
+                    this.update(cx, |this, cx| this.remove_message(message_id, cx))
+                })
+            })
+        };
+        this.update(cx, |this, cx| {
+            let subscription = cx.subscribe(&menu, |this: &mut Self, _, _: &DismissEvent, _| {
+                this.open_context_menu = None;
+            });
+            this.open_context_menu = Some((message_id, subscription));
+        });
+        menu
     }
 
     fn render_markdown_with_mentions(
@@ -419,44 +432,6 @@ impl ChatPanel {
             .collect::<Vec<_>>();
 
         rich_text::render_markdown(message.body.clone(), &mentions, language_registry, None)
-    }
-
-    fn render_sign_in_prompt(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
-            .gap_2()
-            .p_4()
-            .child(
-                Button::new("sign-in", "Sign in")
-                    .style(ButtonStyle::Filled)
-                    .icon_color(Color::Muted)
-                    .icon(IconName::Github)
-                    .icon_position(IconPosition::Start)
-                    .full_width()
-                    .on_click(cx.listener(move |this, _, cx| {
-                        let client = this.client.clone();
-                        cx.spawn(|this, mut cx| async move {
-                            if client
-                                .authenticate_and_connect(true, &cx)
-                                .log_err()
-                                .await
-                                .is_some()
-                            {
-                                this.update(&mut cx, |_, cx| {
-                                    cx.focus_self();
-                                })
-                                .ok();
-                            }
-                        })
-                        .detach();
-                    })),
-            )
-            .child(
-                div().flex().w_full().items_center().child(
-                    Label::new("Sign in to chat.")
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
-                ),
-            )
     }
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -535,50 +510,93 @@ impl ChatPanel {
             Ok(())
         })
     }
-
-    fn open_notes(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
-        if let Some((chat, _)) = &self.active_chat {
-            let channel_id = chat.read(cx).channel_id;
-            if let Some(workspace) = self.workspace.upgrade() {
-                ChannelView::open(channel_id, workspace, cx).detach();
-            }
-        }
-    }
-
-    fn join_call(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
-        if let Some((chat, _)) = &self.active_chat {
-            let channel_id = chat.read(cx).channel_id;
-            ActiveCall::global(cx)
-                .update(cx, |call, cx| call.join_channel(channel_id, cx))
-                .detach_and_log_err(cx);
-        }
-    }
 }
-
-impl EventEmitter<Event> for ChatPanel {}
 
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_stack()
-            .size_full()
-            .map(|this| match (self.client.user_id(), self.active_chat()) {
-                (Some(_), Some(_)) => this.child(self.render_channel(cx)),
-                (Some(_), None) => this.child(
-                    div().p_4().child(
-                        Label::new("Select a channel to chat in.")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+            .track_focus(&self.focus_handle)
+            .full()
+            .on_action(cx.listener(Self::send))
+            .child(
+                h_stack().z_index(1).child(
+                    TabBar::new("chat_header").child(
+                        h_stack()
+                            .w_full()
+                            .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                            .px_2()
+                            .child(Label::new(
+                                self.active_chat
+                                    .as_ref()
+                                    .and_then(|c| {
+                                        Some(format!("#{}", c.0.read(cx).channel(cx)?.name))
+                                    })
+                                    .unwrap_or("Chat".to_string()),
+                            )),
                     ),
                 ),
-                (None, _) => this.child(self.render_sign_in_prompt(cx)),
-            })
-            .min_w(px(150.))
+            )
+            .child(div().flex_grow().px_2().pt_1().map(|this| {
+                if self.active_chat.is_some() {
+                    this.child(list(self.message_list.clone()).full())
+                } else {
+                    this.child(
+                        div()
+                            .p_4()
+                            .child(
+                                Label::new("Select a channel to chat in.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div().pt_1().w_full().items_center().child(
+                                    Button::new("toggle-collab", "Open")
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action(
+                                            &collab_panel::ToggleFocus,
+                                            cx,
+                                        ))
+                                        .on_click(|_, cx| {
+                                            cx.dispatch_action(
+                                                collab_panel::ToggleFocus.boxed_clone(),
+                                            )
+                                        }),
+                                ),
+                            ),
+                    )
+                }
+            }))
+            .child(
+                h_stack()
+                    .when(!self.is_scrolled_to_bottom, |el| {
+                        el.border_t_1().border_color(cx.theme().colors().border)
+                    })
+                    .p_2()
+                    .map(|el| {
+                        if self.active_chat.is_some() {
+                            el.child(self.message_editor.clone())
+                        } else {
+                            el.child(
+                                div()
+                                    .rounded_md()
+                                    .h_7()
+                                    .w_full()
+                                    .bg(cx.theme().colors().editor_background),
+                            )
+                        }
+                    }),
+            )
+            .into_any()
     }
 }
 
 impl FocusableView for ChatPanel {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.message_editor.read(cx).focus_handle(cx)
+        if self.active_chat.is_some() {
+            self.message_editor.read(cx).focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
@@ -613,7 +631,7 @@ impl Panel for ChatPanel {
         if active {
             self.acknowledge_last_message(cx);
             if !is_channels_feature_enabled(cx) {
-                cx.emit(Event::Dismissed);
+                cx.emit(PanelEvent::Close);
             }
         }
     }

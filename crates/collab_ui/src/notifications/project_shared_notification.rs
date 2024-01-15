@@ -58,7 +58,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             }
         }
 
-        room::Event::Left => {
+        room::Event::Left { .. } => {
             for (_, windows) in notification_windows.drain() {
                 for window in windows {
                     window
