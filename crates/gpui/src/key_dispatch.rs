@@ -112,7 +112,7 @@ impl DispatchTree {
         target.action_listeners = mem::take(&mut source.action_listeners);
     }
 
-    pub fn graft(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
+    pub fn reuse_view(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
         let view_source_node_id = source
             .view_node_ids
             .get(&view_id)
