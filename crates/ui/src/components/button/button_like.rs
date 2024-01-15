@@ -300,6 +300,7 @@ pub struct ButtonLike {
     pub(super) selected: bool,
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
+    pub(super) height: Option<DefiniteLength>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
@@ -317,12 +318,18 @@ impl ButtonLike {
             selected: false,
             selected_style: None,
             width: None,
+            height: None,
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
             children: SmallVec::new(),
             on_click: None,
         }
+    }
+
+    pub(crate) fn height(mut self, height: DefiniteLength) -> Self {
+        self.height = Some(height);
+        self
     }
 
     pub(crate) fn rounding(mut self, rounding: impl Into<Option<ButtonLikeRounding>>) -> Self {
@@ -417,7 +424,7 @@ impl RenderOnce for ButtonLike {
             .id(self.id.clone())
             .group("")
             .flex_none()
-            .h(self.size.height())
+            .h(self.height.unwrap_or(self.size.height().into()))
             .when_some(self.width, |this, width| this.w(width).justify_center())
             .when_some(self.rounding, |this, rounding| match rounding {
                 ButtonLikeRounding::All => this.rounded_md(),

@@ -5,9 +5,17 @@ use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSiz
 
 use super::button_icon::ButtonIcon;
 
+/// The shape of an [`IconButton`].
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum IconButtonShape {
+    Square,
+    Wide,
+}
+
 #[derive(IntoElement)]
 pub struct IconButton {
     base: ButtonLike,
+    shape: IconButtonShape,
     icon: IconName,
     icon_size: IconSize,
     icon_color: Color,
@@ -18,11 +26,17 @@ impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
         Self {
             base: ButtonLike::new(id),
+            shape: IconButtonShape::Wide,
             icon,
             icon_size: IconSize::default(),
             icon_color: Color::Default,
             selected_icon: None,
         }
+    }
+
+    pub fn shape(mut self, shape: IconButtonShape) -> Self {
+        self.shape = shape;
+        self
     }
 
     pub fn icon_size(mut self, icon_size: IconSize) -> Self {
@@ -118,14 +132,21 @@ impl RenderOnce for IconButton {
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;
 
-        self.base.child(
-            ButtonIcon::new(self.icon)
-                .disabled(is_disabled)
-                .selected(is_selected)
-                .selected_icon(self.selected_icon)
-                .when_some(selected_style, |this, style| this.selected_style(style))
-                .size(self.icon_size)
-                .color(self.icon_color),
-        )
+        self.base
+            .map(|this| match self.shape {
+                IconButtonShape::Square => this
+                    .width(self.icon_size.rems().into())
+                    .height(self.icon_size.rems().into()),
+                IconButtonShape::Wide => this,
+            })
+            .child(
+                ButtonIcon::new(self.icon)
+                    .disabled(is_disabled)
+                    .selected(is_selected)
+                    .selected_icon(self.selected_icon)
+                    .when_some(selected_style, |this, style| this.selected_style(style))
+                    .size(self.icon_size)
+                    .color(self.icon_color),
+            )
     }
 }
