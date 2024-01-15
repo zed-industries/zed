@@ -420,15 +420,6 @@ impl Telemetry {
         }
     }
 
-    pub fn report_button_event(self: &Arc<Self>, operation: &'static str) {
-        let event = Event::Button {
-            operation,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
-        };
-
-        self.report_event(event)
-    }
-
     fn milliseconds_since_first_event(&self) -> i64 {
         let mut state = self.state.lock();
 
