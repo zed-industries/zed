@@ -604,6 +604,7 @@ pub struct Editor {
     gutter_width: Pixels,
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
+    show_copilot_suggestions: bool,
 }
 
 pub struct EditorSnapshot {
@@ -1804,6 +1805,7 @@ impl Editor {
             gutter_width: Default::default(),
             style: None,
             editor_actions: Default::default(),
+            show_copilot_suggestions: mode == EditorMode::Full,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -2064,6 +2066,10 @@ impl Editor {
 
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
+        self.show_copilot_suggestions = show_copilot_suggestions;
     }
 
     fn selections_did_change(
@@ -3976,7 +3982,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         let copilot = Copilot::global(cx)?;
-        if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
+        if !self.show_copilot_suggestions || !copilot.read(cx).status().is_authorized() {
             self.clear_copilot_suggestions(cx);
             return None;
         }
@@ -4036,7 +4042,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         let copilot = Copilot::global(cx)?;
-        if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
+        if !self.show_copilot_suggestions || !copilot.read(cx).status().is_authorized() {
             return None;
         }
 
@@ -4161,7 +4167,8 @@ impl Editor {
         let file = snapshot.file_at(location);
         let language = snapshot.language_at(location);
         let settings = all_language_settings(file, cx);
-        settings.copilot_enabled(language, file.map(|f| f.path().as_ref()))
+        self.show_copilot_suggestions
+            && settings.copilot_enabled(language, file.map(|f| f.path().as_ref()))
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {

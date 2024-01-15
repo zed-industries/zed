@@ -186,6 +186,7 @@ impl FeedbackModal {
                 cx,
             );
             editor.set_show_gutter(false, cx);
+            editor.set_show_copilot_suggestions(false);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
