@@ -6467,40 +6467,77 @@ impl Editor {
             }
 
             self.select_next_state = Some(select_next_state);
-        } else if selections.len() == 1 {
-            let selection = selections.last_mut().unwrap();
-            if selection.start == selection.end {
-                let word_range = movement::surrounding_word(
-                    &display_map,
-                    selection.start.to_display_point(&display_map),
-                );
-                selection.start = word_range.start.to_offset(&display_map, Bias::Left);
-                selection.end = word_range.end.to_offset(&display_map, Bias::Left);
-                selection.goal = SelectionGoal::None;
-                selection.reversed = false;
+        } else {
+            let mut only_carets = true;
+            let mut same_letters_selected = true;
+            let mut selection_query = None;
 
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
+            let mut selections_iter = selections.iter().peekable();
+            while let Some(selection) = selections_iter.next() {
+                if selection.start != selection.end {
+                    only_carets = false;
+                }
 
-                let is_empty = query.is_empty();
-                let select_state = SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
-                    wordwise: true,
-                    done: is_empty,
-                };
-                select_next_match_ranges(
-                    self,
-                    selection.start..selection.end,
-                    replace_newest,
-                    autoscroll,
-                    cx,
-                );
-                self.select_next_state = Some(select_state);
-            } else {
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
+                if same_letters_selected {
+                    if selection_query.is_none() {
+                        selection_query =
+                            Some(buffer.text_for_range(selection.range()).collect::<String>());
+                    }
+
+                    if let Some(next_selection) = selections_iter.peek() {
+                        if next_selection.range().len() == selection.range().len() {
+                            let next_query = buffer
+                                .text_for_range(next_selection.range())
+                                .collect::<String>();
+                            if Some(next_query) != selection_query {
+                                same_letters_selected = false;
+                                selection_query = None;
+                            }
+                        } else {
+                            same_letters_selected = false;
+                            selection_query = None;
+                        }
+                    }
+                }
+            }
+
+            if only_carets {
+                for selection in &mut selections {
+                    let word_range = movement::surrounding_word(
+                        &display_map,
+                        selection.start.to_display_point(&display_map),
+                    );
+                    selection.start = word_range.start.to_offset(&display_map, Bias::Left);
+                    selection.end = word_range.end.to_offset(&display_map, Bias::Left);
+                    selection.goal = SelectionGoal::None;
+                    selection.reversed = false;
+                    select_next_match_ranges(
+                        self,
+                        selection.start..selection.end,
+                        replace_newest,
+                        autoscroll,
+                        cx,
+                    );
+                }
+
+                if selections.len() == 1 {
+                    let selection = selections
+                        .last()
+                        .expect("ensured that there's only one selection");
+                    let query = buffer
+                        .text_for_range(selection.start..selection.end)
+                        .collect::<String>();
+                    let is_empty = query.is_empty();
+                    let select_state = SelectNextState {
+                        query: AhoCorasick::new(&[query])?,
+                        wordwise: true,
+                        done: is_empty,
+                    };
+                    self.select_next_state = Some(select_state);
+                } else {
+                    self.select_next_state = None;
+                }
+            } else if let Some(query) = selection_query {
                 self.select_next_state = Some(SelectNextState {
                     query: AhoCorasick::new(&[query])?,
                     wordwise: false,
@@ -6548,6 +6585,7 @@ impl Editor {
         Ok(())
     }
 
+    // TODO kb test both select_next and select_previous
     pub fn select_previous(
         &mut self,
         action: &SelectPrevious,
@@ -6606,37 +6644,79 @@ impl Editor {
             }
 
             self.select_prev_state = Some(select_prev_state);
-        } else if selections.len() == 1 {
-            let selection = selections.last_mut().unwrap();
-            if selection.start == selection.end {
-                let word_range = movement::surrounding_word(
-                    &display_map,
-                    selection.start.to_display_point(&display_map),
-                );
-                selection.start = word_range.start.to_offset(&display_map, Bias::Left);
-                selection.end = word_range.end.to_offset(&display_map, Bias::Left);
-                selection.goal = SelectionGoal::None;
-                selection.reversed = false;
+        } else {
+            let mut only_carets = true;
+            let mut same_letters_selected = true;
+            let mut selection_query = None;
 
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
-                let query = query.chars().rev().collect::<String>();
-                let select_state = SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
-                    wordwise: true,
-                    done: false,
-                };
-                self.unfold_ranges([selection.start..selection.end], false, true, cx);
+            let mut selections_iter = selections.iter().peekable();
+            while let Some(selection) = selections_iter.next() {
+                if selection.start != selection.end {
+                    only_carets = false;
+                }
+
+                if same_letters_selected {
+                    if selection_query.is_none() {
+                        selection_query =
+                            Some(buffer.text_for_range(selection.range()).collect::<String>());
+                    }
+
+                    if let Some(next_selection) = selections_iter.peek() {
+                        if next_selection.range().len() == selection.range().len() {
+                            let next_query = buffer
+                                .text_for_range(next_selection.range())
+                                .collect::<String>();
+                            if Some(next_query) != selection_query {
+                                same_letters_selected = false;
+                                selection_query = None;
+                            }
+                        } else {
+                            same_letters_selected = false;
+                            selection_query = None;
+                        }
+                    }
+                }
+            }
+
+            if only_carets {
+                for selection in &mut selections {
+                    let word_range = movement::surrounding_word(
+                        &display_map,
+                        selection.start.to_display_point(&display_map),
+                    );
+                    selection.start = word_range.start.to_offset(&display_map, Bias::Left);
+                    selection.end = word_range.end.to_offset(&display_map, Bias::Left);
+                    selection.goal = SelectionGoal::None;
+                    selection.reversed = false;
+                }
+                if selections.len() == 1 {
+                    let selection = selections
+                        .last()
+                        .expect("ensured that there's only one selection");
+                    let query = buffer
+                        .text_for_range(selection.start..selection.end)
+                        .collect::<String>();
+                    let is_empty = query.is_empty();
+                    let select_state = SelectNextState {
+                        query: AhoCorasick::new(&[query])?,
+                        wordwise: true,
+                        done: is_empty,
+                    };
+                    self.select_prev_state = Some(select_state);
+                } else {
+                    self.select_prev_state = None;
+                }
+
+                self.unfold_ranges(
+                    selections.iter().map(|s| s.range()).collect::<Vec<_>>(),
+                    false,
+                    true,
+                    cx,
+                );
                 self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select(selections);
                 });
-                self.select_prev_state = Some(select_state);
-            } else {
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
-                let query = query.chars().rev().collect::<String>();
+            } else if let Some(query) = selection_query {
                 self.select_prev_state = Some(SelectNextState {
                     query: AhoCorasick::new(&[query])?,
                     wordwise: false,
