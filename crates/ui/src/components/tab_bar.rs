@@ -90,7 +90,7 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        const HEIGHT_IN_REMS: f32 = 30. / 16.;
+        const HEIGHT_IN_REMS: f32 = 29. / 16.;
 
         div()
             .id(self.id)

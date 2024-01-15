@@ -523,7 +523,7 @@ impl Render for ChatPanel {
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()
-                            .h(rems(ui::Tab::HEIGHT_IN_REMS))
+                            .h(rems(ui::Tab::CONTAINER_HEIGHT_IN_REMS))
                             .px_2()
                             .child(Label::new(
                                 self.active_chat

@@ -1119,7 +1119,7 @@ impl Render for AssistantPanel {
                 )
                 .children(self.active_editor().map(|editor| {
                     h_flex()
-                        .h(rems(Tab::HEIGHT_IN_REMS))
+                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
                         .flex_1()
                         .px_2()
                         .child(Label::new(editor.read(cx).title(cx)).into_element())
