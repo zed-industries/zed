@@ -53,7 +53,7 @@ use std::{
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
-use ui::{h_stack, ButtonLike, ButtonStyle, IconButton, Tooltip};
+use ui::{h_flex, ButtonLike, ButtonStyle, IconButton, Tooltip};
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2293,7 +2293,7 @@ impl EditorElement {
                             .size_full()
                             .p_1p5()
                             .child(
-                                h_stack()
+                                h_flex()
                                     .id("path header block")
                                     .py_1p5()
                                     .pl_3()
@@ -2306,8 +2306,8 @@ impl EditorElement {
                                     .justify_between()
                                     .hover(|style| style.bg(cx.theme().colors().element_hover))
                                     .child(
-                                        h_stack().gap_3().child(
-                                            h_stack()
+                                        h_flex().gap_3().child(
+                                            h_flex()
                                                 .gap_2()
                                                 .child(
                                                     filename
@@ -2339,12 +2339,12 @@ impl EditorElement {
                                     }),
                             )
                     } else {
-                        h_stack()
+                        h_flex()
                             .id(("collapsed context", block_id))
                             .size_full()
                             .gap(gutter_padding)
                             .child(
-                                h_stack()
+                                h_flex()
                                     .justify_end()
                                     .flex_none()
                                     .w(gutter_width - gutter_padding)

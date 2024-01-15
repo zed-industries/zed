@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, Disclosure, Label};
+use crate::{h_flex, prelude::*, Disclosure, Label};
 use gpui::{AnyElement, ClickEvent};
 
 #[derive(IntoElement)]
@@ -76,7 +76,7 @@ impl Selectable for ListHeader {
 
 impl RenderOnce for ListHeader {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_stack()
+        h_flex()
             .id(self.label.clone())
             .w_full()
             .relative()
@@ -95,7 +95,7 @@ impl RenderOnce for ListHeader {
                     .w_full()
                     .gap_1()
                     .child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
                             .children(self.toggle.map(|is_open| {
                                 Disclosure::new("toggle", is_open).on_toggle(self.on_toggle)
@@ -109,7 +109,7 @@ impl RenderOnce for ListHeader {
                                     .child(Label::new(self.label.clone()).color(Color::Muted)),
                             ),
                     )
-                    .child(h_stack().children(self.end_slot))
+                    .child(h_flex().children(self.end_slot))
                     .when_some(self.end_hover_slot, |this, end_hover_slot| {
                         this.child(
                             div()

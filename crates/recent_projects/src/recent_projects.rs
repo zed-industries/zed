@@ -104,7 +104,7 @@ impl FocusableView for RecentProjects {
 
 impl Render for RecentProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, cx| {
@@ -236,7 +236,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    v_stack()
+                    v_flex()
                         .child(highlighted_location.names)
                         .when(self.render_paths, |this| {
                             this.children(highlighted_location.paths)

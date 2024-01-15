@@ -99,8 +99,8 @@ use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_stack, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem,
-    Popover, Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
+    Tooltip,
 };
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
@@ -1264,7 +1264,7 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        h_stack().ml_4().child(
+                                        h_flex().ml_4().child(
                                             Label::new(text.clone())
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted),
@@ -1290,7 +1290,7 @@ impl CompletionsMenu {
                                         )
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
-                                .child(h_stack().overflow_hidden().child(completion_label))
+                                .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Div>(documentation_label),
                         )
                     })
@@ -9747,7 +9747,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let group_id: SharedString = cx.block_id.to_string().into();
         // TODO: Nate: We should tint the background of the block with the severity color
         // We need to extend the theme before we can do this
-        h_stack()
+        h_flex()
             .id(cx.block_id)
             .group(group_id.clone())
             .relative()

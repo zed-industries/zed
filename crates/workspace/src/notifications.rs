@@ -173,7 +173,7 @@ pub mod simple_message_notification {
     };
     use std::sync::Arc;
     use ui::prelude::*;
-    use ui::{h_stack, v_stack, Button, Icon, IconName, Label, StyledExt};
+    use ui::{h_flex, v_flex, Button, Icon, IconName, Label, StyledExt};
 
     pub struct MessageNotification {
         message: SharedString,
@@ -218,11 +218,11 @@ pub mod simple_message_notification {
 
     impl Render for MessageNotification {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-            v_stack()
+            v_flex()
                 .elevation_3(cx)
                 .p_4()
                 .child(
-                    h_stack()
+                    h_flex()
                         .justify_between()
                         .child(div().max_w_80().child(Label::new(self.message.clone())))
                         .child(

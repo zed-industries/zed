@@ -5,7 +5,7 @@ use gpui::{
     View, ViewContext, WindowContext,
 };
 use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
+use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
 use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
@@ -236,7 +236,7 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let picker_editor = h_stack()
+        let picker_editor = h_flex()
             .overflow_hidden()
             .flex_none()
             .h_9()
@@ -264,7 +264,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
-                    v_stack()
+                    v_flex()
                         .flex_grow()
                         .py_2()
                         .max_h(self.max_height.unwrap_or(rems(18.).into()))
@@ -309,7 +309,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             })
             .when(self.delegate.match_count() == 0, |el| {
                 el.child(
-                    v_stack().flex_grow().py_2().child(
+                    v_flex().flex_grow().py_2().child(
                         ListItem::new("empty_state")
                             .inset(true)
                             .spacing(ListItemSpacing::Sparse)

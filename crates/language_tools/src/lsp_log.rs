@@ -785,7 +785,7 @@ impl Render for LspLogToolbarItemView {
                             {
                                 let log_toolbar_view = log_toolbar_view.clone();
                                 move |cx| {
-                                    h_stack()
+                                    h_flex()
                                         .w_full()
                                         .justify_between()
                                         .child(Label::new(RPC_MESSAGES))
@@ -837,7 +837,7 @@ impl Render for LspLogToolbarItemView {
                 .into()
             });
 
-        h_stack().size_full().child(lsp_menu).child(
+        h_flex().size_full().child(lsp_menu).child(
             div()
                 .child(
                     Button::new("clear_log_button", "Clear").on_click(cx.listener(

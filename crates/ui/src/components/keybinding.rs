@@ -1,4 +1,4 @@
-use crate::{h_stack, prelude::*, Icon, IconName, IconSize};
+use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{relative, rems, Action, FocusHandle, IntoElement, Keystroke};
 
 #[derive(IntoElement, Clone)]
@@ -12,13 +12,13 @@ pub struct KeyBinding {
 
 impl RenderOnce for KeyBinding {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_stack()
+        h_flex()
             .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
                 let key_icon = Self::icon_for_key(&keystroke);
 
-                h_stack()
+                h_flex()
                     .flex_none()
                     .gap_0p5()
                     .p_0p5()

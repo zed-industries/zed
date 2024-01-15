@@ -102,7 +102,7 @@ impl RenderOnce for TabBar {
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
-                    h_stack()
+                    h_flex()
                         .flex_none()
                         .gap_1()
                         .px_1()
@@ -129,7 +129,7 @@ impl RenderOnce for TabBar {
                             .border_color(cx.theme().colors().border),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .id("tabs")
                             .z_index(2)
                             .flex_grow()
@@ -142,7 +142,7 @@ impl RenderOnce for TabBar {
             )
             .when(!self.end_children.is_empty(), |this| {
                 this.child(
-                    h_stack()
+                    h_flex()
                         .flex_none()
                         .gap_1()
                         .px_1()

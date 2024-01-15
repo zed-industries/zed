@@ -325,13 +325,13 @@ impl ChatPanel {
         };
         let this = cx.view().clone();
 
-        v_stack()
+        v_flex()
             .w_full()
             .relative()
             .overflow_hidden()
             .when(!is_continuation_from_previous, |this| {
                 this.pt_3().child(
-                    h_stack()
+                    h_flex()
                         .child(
                             div().absolute().child(
                                 Avatar::new(message.sender.avatar_uri.clone())
@@ -358,7 +358,7 @@ impl ChatPanel {
             })
             .when(is_continuation_from_previous, |this| this.pt_1())
             .child(
-                v_stack()
+                v_flex()
                     .w_full()
                     .text_ui_sm()
                     .id(element_id)
@@ -514,14 +514,14 @@ impl ChatPanel {
 
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .track_focus(&self.focus_handle)
             .full()
             .on_action(cx.listener(Self::send))
             .child(
-                h_stack().z_index(1).child(
+                h_flex().z_index(1).child(
                     TabBar::new("chat_header").child(
-                        h_stack()
+                        h_flex()
                             .w_full()
                             .h(rems(ui::Tab::HEIGHT_IN_REMS))
                             .px_2()
@@ -567,7 +567,7 @@ impl Render for ChatPanel {
                 }
             }))
             .child(
-                h_stack()
+                h_flex()
                     .when(!self.is_scrolled_to_bottom, |el| {
                         el.border_t_1().border_color(cx.theme().colors().border)
                     })

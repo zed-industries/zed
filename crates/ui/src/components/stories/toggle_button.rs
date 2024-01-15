@@ -25,7 +25,7 @@ impl Render for ToggleButtonStory {
             StorySection::new().child(
                 StoryItem::new(
                     "Toggle button group",
-                    h_stack()
+                    h_flex()
                         .child(
                             ToggleButton::new(1, "Apple")
                                 .style(ButtonStyle::Filled)
@@ -59,7 +59,7 @@ impl Render for ToggleButtonStory {
             StorySection::new().child(
                 StoryItem::new(
                     "Toggle button group with selection",
-                    h_stack()
+                    h_flex()
                         .child(
                             ToggleButton::new(1, "Apple")
                                 .style(ButtonStyle::Filled)

@@ -14,7 +14,7 @@ use rpc::proto;
 use std::sync::Arc;
 use theme::{ActiveTheme, PlayerColors};
 use ui::{
-    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
+    h_flex, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
     IconButton, IconName, TintColor, Tooltip,
 };
 use util::ResultExt;
@@ -58,7 +58,7 @@ impl Render for CollabTitlebarItem {
         let client = self.client.clone();
         let project_id = self.project.read(cx).remote_id();
 
-        h_stack()
+        h_flex()
             .id("titlebar")
             .justify_between()
             .w_full()
@@ -83,7 +83,7 @@ impl Render for CollabTitlebarItem {
             })
             // left side
             .child(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
@@ -128,7 +128,7 @@ impl Render for CollabTitlebarItem {
                                     )?;
 
                                     Some(
-                                        v_stack()
+                                        v_flex()
                                             .id(("collaborator", collaborator.user.id))
                                             .child(face_pile)
                                             .child(render_color_ribbon(
@@ -160,7 +160,7 @@ impl Render for CollabTitlebarItem {
             )
             // right side
             .child(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .pr_1()
                     .when_some(room, |this, room| {
@@ -634,7 +634,7 @@ impl CollabTitlebarItem {
                 .trigger(
                     ButtonLike::new("user-menu")
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_0p5()
                                 .child(Avatar::new(user.avatar_uri.clone()))
                                 .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
@@ -657,7 +657,7 @@ impl CollabTitlebarItem {
                 .trigger(
                     ButtonLike::new("user-menu")
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_0p5()
                                 .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
                         )

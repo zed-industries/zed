@@ -32,7 +32,7 @@ use std::{
 };
 use text::Selection;
 use theme::Theme;
-use ui::{h_stack, prelude::*, Label};
+use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::{
     item::{BreadcrumbText, FollowEvent, FollowableItemHandle},
@@ -619,7 +619,7 @@ impl Item for Editor {
             Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
         });
 
-        h_stack()
+        h_flex()
             .gap_2()
             .child(Label::new(self.title(cx).to_string()).color(label_color))
             .when_some(description, |this, description| {

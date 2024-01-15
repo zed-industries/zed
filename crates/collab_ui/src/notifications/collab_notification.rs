@@ -33,7 +33,7 @@ impl ParentElement for CollabNotification {
 
 impl RenderOnce for CollabNotification {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_stack()
+        h_flex()
             .text_ui()
             .justify_between()
             .size_full()
@@ -42,9 +42,9 @@ impl RenderOnce for CollabNotification {
             .p_2()
             .gap_2()
             .child(img(self.avatar_uri).w_12().h_12().rounded_full())
-            .child(v_stack().overflow_hidden().children(self.children))
+            .child(v_flex().overflow_hidden().children(self.children))
             .child(
-                v_stack()
+                v_flex()
                     .child(self.accept_button)
                     .child(self.dismiss_button),
             )

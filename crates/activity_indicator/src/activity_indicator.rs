@@ -295,7 +295,7 @@ impl Render for ActivityIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let content = self.content_to_render(cx);
 
-        let mut result = h_stack()
+        let mut result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_error_message));

@@ -11,7 +11,7 @@ use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use theme::ActiveTheme;
 use util::ResultExt;
 use workspace::{
-    ui::{v_stack, Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Selectable},
+    ui::{v_flex, Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Selectable},
     Workspace,
 };
 
@@ -242,7 +242,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    v_stack()
+                    v_flex()
                         .child(
                             LabelLike::new().child(
                                 StyledText::new(label)

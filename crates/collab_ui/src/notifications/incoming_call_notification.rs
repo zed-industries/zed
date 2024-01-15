@@ -137,7 +137,7 @@ impl Render for IncomingCallNotification {
                     move |_, cx| state.respond(false, cx)
                 }),
             )
-            .child(v_stack().overflow_hidden().child(Label::new(format!(
+            .child(v_flex().overflow_hidden().child(Label::new(format!(
                 "{} is sharing a project in Zed",
                 self.state.call.calling_user.github_login
             )))),

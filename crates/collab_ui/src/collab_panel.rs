@@ -887,7 +887,7 @@ impl CollabPanel {
                     .ok();
             }))
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(is_last, false, cx))
                     .child(IconButton::new(0, IconName::Folder)),
@@ -908,7 +908,7 @@ impl CollabPanel {
         ListItem::new(("screen", id))
             .selected(is_selected)
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(is_last, false, cx))
                     .child(IconButton::new(0, IconName::Screen)),
@@ -949,7 +949,7 @@ impl CollabPanel {
                 this.open_channel_notes(channel_id, cx);
             }))
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(false, true, cx))
                     .child(IconButton::new(0, IconName::File)),
@@ -970,7 +970,7 @@ impl CollabPanel {
                 this.join_channel_chat(channel_id, cx);
             }))
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(false, false, cx))
                     .child(IconButton::new(0, IconName::MessageBubbles)),
@@ -1726,12 +1726,12 @@ impl CollabPanel {
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
-        v_stack()
+        v_flex()
             .gap_6()
             .p_4()
             .child(Label::new(collab_blurb))
             .child(
-                v_stack()
+                v_flex()
                     .gap_2()
                     .child(
                         Button::new("sign_in", "Sign in")
@@ -1832,14 +1832,14 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        v_stack()
+        v_flex()
             .size_full()
             .child(list(self.list_state.clone()).full())
             .child(
-                v_stack()
+                v_flex()
                     .child(div().mx_2().border_primary(cx).border_t())
                     .child(
-                        v_stack()
+                        v_flex()
                             .p_2()
                             .child(self.render_filter_input(&self.filter_editor, cx)),
                     ),
@@ -1961,7 +1961,7 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        h_stack()
+        h_flex()
             .w_full()
             .group("section-header")
             .child(
@@ -2007,7 +2007,7 @@ impl CollabPanel {
                 .selected(is_selected)
                 .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
                 .child(
-                    h_stack()
+                    h_flex()
                         .w_full()
                         .justify_between()
                         .child(Label::new(github_login.clone()))
@@ -2105,11 +2105,11 @@ impl CollabPanel {
             .indent_step_size(px(20.))
             .selected(is_selected)
             .child(
-                h_stack()
+                h_flex()
                     .w_full()
                     .justify_between()
                     .child(Label::new(github_login.clone()))
-                    .child(h_stack().children(controls)),
+                    .child(h_flex().children(controls)),
             )
             .start_slot(Avatar::new(user.avatar_uri.clone()))
     }
@@ -2149,11 +2149,11 @@ impl CollabPanel {
         ListItem::new(("channel-invite", channel.id as usize))
             .selected(is_selected)
             .child(
-                h_stack()
+                h_flex()
                     .w_full()
                     .justify_between()
                     .child(Label::new(channel.name.clone()))
-                    .child(h_stack().children(controls)),
+                    .child(h_flex().children(controls)),
             )
             .start_slot(
                 Icon::new(IconName::Hash)
@@ -2289,21 +2289,21 @@ impl CollabPanel {
                         .color(Color::Muted),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .id(channel_id as usize)
                             .child(Label::new(channel.name.clone()))
                             .children(face_pile.map(|face_pile| face_pile.render(cx))),
                     ),
             )
             .child(
-                h_stack()
+                h_flex()
                     .absolute()
                     .right(rems(0.))
                     .h_full()
                     // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
                     .z_index(10)
                     .child(
-                        h_stack()
+                        h_flex()
                             .h_full()
                             .gap_1()
                             .px_1()
@@ -2410,7 +2410,7 @@ fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> 
 
 impl Render for CollabPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
             .on_action(cx.listener(CollabPanel::select_next))
@@ -2603,7 +2603,7 @@ struct DraggedChannelView {
 impl Render for DraggedChannelView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        h_stack()
+        h_flex()
             .font(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)

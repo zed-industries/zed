@@ -24,7 +24,7 @@ impl Render for CollabNotificationStory {
                         Button::new("decline", "Decline"),
                     )
                     .child(
-                        v_stack()
+                        v_flex()
                             .overflow_hidden()
                             .child(Label::new("maxdeviant is sharing a project in Zed")),
                     ),

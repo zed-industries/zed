@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_stack, ContextMenu, Icon, KeyBinding, Label, ListItem};
+use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1541,7 +1541,7 @@ impl Render for ProjectPanel {
                         .child(menu.clone())
                 }))
         } else {
-            v_stack()
+            v_flex()
                 .id("empty-project_panel")
                 .size_full()
                 .p_4()
@@ -1565,7 +1565,7 @@ impl Render for DraggedProjectEntryView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        h_stack()
+        h_flex()
             .font(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)

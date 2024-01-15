@@ -422,7 +422,7 @@ impl Render for FeedbackModal {
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
-        v_stack()
+        v_flex()
             .elevation_3(cx)
             .key_context("GiveFeedback")
             .on_action(cx.listener(Self::cancel))
@@ -461,10 +461,10 @@ impl Render for FeedbackModal {
                     .child(self.feedback_editor.clone()),
             )
             .child(
-                v_stack()
+                v_flex()
                     .gap_1()
                     .child(
-                        h_stack()
+                        h_flex()
                             .bg(cx.theme().colors().editor_background)
                             .p_2()
                             .border()
@@ -483,7 +483,7 @@ impl Render for FeedbackModal {
                     ),
             )
             .child(
-                h_stack()
+                h_flex()
                     .justify_between()
                     .gap_1()
                     .child(
@@ -495,7 +495,7 @@ impl Render for FeedbackModal {
                             .on_click(open_community_repo),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
                             .child(
                                 Button::new("cancel_feedback", "Cancel")

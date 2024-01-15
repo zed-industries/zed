@@ -9,7 +9,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
 use ui::{
-    h_stack, v_stack, Button, ButtonCommon, Clickable, HighlightedLabel, Label, LabelCommon,
+    h_flex, v_flex, Button, ButtonCommon, Clickable, HighlightedLabel, Label, LabelCommon,
     LabelSize, ListItem, ListItemSpacing, Selectable,
 };
 use util::ResultExt;
@@ -65,7 +65,7 @@ impl FocusableView for BranchList {
 
 impl Render for BranchList {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, cx| {
@@ -290,7 +290,7 @@ impl PickerDelegate for BranchListDelegate {
     }
     fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         let label = if self.last_query.is_empty() {
-            h_stack()
+            h_flex()
                 .ml_3()
                 .child(Label::new("Recent branches").size(LabelSize::Small))
         } else {
@@ -298,7 +298,7 @@ impl PickerDelegate for BranchListDelegate {
                 let suffix = if self.matches.len() == 1 { "" } else { "es" };
                 Label::new(format!("{} match{}", self.matches.len(), suffix)).size(LabelSize::Small)
             });
-            h_stack()
+            h_flex()
                 .px_3()
                 .h_full()
                 .justify_between()
@@ -313,7 +313,7 @@ impl PickerDelegate for BranchListDelegate {
         }
 
         Some(
-            h_stack().mr_3().pb_2().child(h_stack().w_full()).child(
+            h_flex().mr_3().pb_2().child(h_flex().w_full()).child(
             Button::new("branch-picker-create-branch-button", "Create branch").on_click(
                 cx.listener(|_, _, cx| {
                     cx.spawn(|picker, mut cx| async move {
