@@ -2610,7 +2610,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "font-kit"
 version = "0.11.0"
-source = "git+https://github.com/zed-industries/font-kit?rev=b2f77d56f450338aa4f7dd2f0197d8c9acb0cf18#b2f77d56f450338aa4f7dd2f0197d8c9acb0cf18"
+source = "git+https://github.com/zed-industries/font-kit?rev=d97147f#d97147ff11a9024b9707d9c9c7e3a0bdaba048ac"
 dependencies = [
  "bitflags 1.3.2",
  "byteorder",
