@@ -1271,7 +1271,9 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        self.client().telemetry().report_app_event("open project");
+        self.client()
+            .telemetry()
+            .report_app_event("open project".to_string());
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -1776,6 +1778,12 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        if let Some(text) = item.telemetry_event_text(cx) {
+            self.client()
+                .telemetry()
+                .report_app_event(format!("{}: open", text));
+        }
+
         self.active_pane
             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
     }

@@ -708,6 +708,10 @@ impl Item for TerminalView {
             .into_any()
     }
 
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: WorkspaceId,

@@ -116,7 +116,7 @@ pub enum Event {
         milliseconds_since_first_event: i64,
     },
     App {
-        operation: &'static str,
+        operation: String,
         milliseconds_since_first_event: i64,
     },
     Setting {
@@ -219,7 +219,7 @@ impl Telemetry {
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
-        self.report_app_event("close");
+        self.report_app_event("close".to_string());
         // TODO: close final edit period and make sure it's sent
         Task::ready(())
     }
@@ -385,7 +385,7 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: &'static str) {
+    pub fn report_app_event(self: &Arc<Self>, operation: String) {
         let event = Event::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
@@ -404,20 +404,6 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    fn milliseconds_since_first_event(&self) -> i64 {
-        let mut state = self.state.lock();
-        match state.first_event_datetime {
-            Some(first_event_datetime) => {
-                let now: DateTime<Utc> = Utc::now();
-                now.timestamp_millis() - first_event_datetime.timestamp_millis()
-            }
-            None => {
-                state.first_event_datetime = Some(Utc::now());
-                0
-            }
-        }
-    }
-
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
@@ -431,6 +417,21 @@ impl Telemetry {
             };
 
             self.report_event(event);
+        }
+    }
+
+    fn milliseconds_since_first_event(&self) -> i64 {
+        let mut state = self.state.lock();
+
+        match state.first_event_datetime {
+            Some(first_event_datetime) => {
+                let now: DateTime<Utc> = Utc::now();
+                now.timestamp_millis() - first_event_datetime.timestamp_millis()
+            }
+            None => {
+                state.first_event_datetime = Some(Utc::now());
+                0
+            }
         }
     }
 

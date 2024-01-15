@@ -397,6 +397,10 @@ impl Item for SyntaxTreeView {
             .into_any_element()
     }
 
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
     fn clone_on_split(
         &self,
         _: workspace::WorkspaceId,
