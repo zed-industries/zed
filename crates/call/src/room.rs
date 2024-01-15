@@ -151,11 +151,14 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
                 this.update(&mut cx, |this, cx| {
-                    if this.read_only() || this.is_muted() {
-                        Task::ready(Ok(()))
-                    } else {
-                        this.share_microphone(cx)
+                    if !this.read_only() {
+                        if let Some(live_kit) = &this.live_kit {
+                            if !live_kit.muted_by_user && !live_kit.deafened {
+                                return this.share_microphone(cx);
+                            }
+                        }
                     }
+                    Task::ready(Ok(()))
                 })?
                 .await
             })
@@ -1477,7 +1480,10 @@ impl Room {
         if let Some(live_kit) = self.live_kit.as_mut() {
             // When unmuting, undeafen if the user was deafened before.
             let was_deafened = live_kit.deafened;
-            if live_kit.muted_by_user || live_kit.deafened {
+            if live_kit.muted_by_user
+                || live_kit.deafened
+                || matches!(live_kit.microphone_track, LocalTrack::None)
+            {
                 live_kit.muted_by_user = false;
                 live_kit.deafened = false;
             } else {

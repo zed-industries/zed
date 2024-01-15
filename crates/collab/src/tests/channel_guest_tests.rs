@@ -57,7 +57,7 @@ async fn test_channel_guests(
         })
         .await
         .is_err());
-    assert!(room_b.read_with(cx_b, |room, _| !room.is_sharing_mic()));
+    assert!(room_b.read_with(cx_b, |room, _| room.is_muted()));
 }
 
 #[gpui::test]
@@ -104,6 +104,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     });
     assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
     assert!(editor_b.update(cx_b, |e, cx| e.read_only(cx)));
+    assert!(room_b.read_with(cx_b, |room, _| room.read_only()));
     assert!(room_b
         .update(cx_b, |room, cx| room.share_microphone(cx))
         .await
@@ -127,10 +128,13 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     // project and buffers are now editable
     assert!(project_b.read_with(cx_b, |project, _| !project.is_read_only()));
     assert!(editor_b.update(cx_b, |editor, cx| !editor.read_only(cx)));
-    room_b
-        .update(cx_b, |room, cx| room.share_microphone(cx))
-        .await
-        .unwrap();
+
+    // B sees themselves as muted, and can unmute.
+    assert!(room_b.read_with(cx_b, |room, _| !room.read_only()));
+    room_b.read_with(cx_b, |room, _| assert!(room.is_muted()));
+    room_b.update(cx_b, |room, cx| room.toggle_mute(cx));
+    cx_a.run_until_parked();
+    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
 
     // B is demoted
     active_call_a
