@@ -405,8 +405,14 @@ impl LspLogView {
                     {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
-                            editor.handle_input(entry.trim(), cx);
-                            editor.handle_input("\n", cx);
+                            let last_point = editor.buffer().read(cx).len(cx);
+                            editor.edit(
+                                vec![
+                                    (last_point..last_point, entry.trim()),
+                                    (last_point..last_point, "\n"),
+                                ],
+                                cx,
+                            );
                             editor.set_read_only(true);
                         });
                     }
