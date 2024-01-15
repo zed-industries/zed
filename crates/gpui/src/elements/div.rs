@@ -1433,8 +1433,8 @@ impl Interactivity {
                                 .borrow()
                                 .as_ref()
                             {
-                                if active_tooltip.tooltip.is_some() {
-                                    cx.active_tooltip = active_tooltip.tooltip.clone()
+                                if let Some(tooltip) = active_tooltip.tooltip.clone() {
+                                    cx.set_tooltip(tooltip);
                                 }
                             }
                         }

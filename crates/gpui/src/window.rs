@@ -1,10 +1,10 @@
 #![deny(missing_docs)]
 
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
-    AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
+    px, size, transparent_black, Action, AnyDrag, AnyTooltip, AnyView, AppContext, Arena,
+    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
+    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
     ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
@@ -300,6 +300,11 @@ struct RequestedInputHandler {
     handler: Option<Box<dyn PlatformInputHandler>>,
 }
 
+struct TooltipRequest {
+    view_id: EntityId,
+    tooltip: AnyTooltip,
+}
+
 pub(crate) struct Frame {
     focus: Option<FocusId>,
     window_active: bool,
@@ -313,6 +318,7 @@ pub(crate) struct Frame {
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
     requested_input_handler: Option<RequestedInputHandler>,
+    tooltip_request: Option<TooltipRequest>,
     cursor_styles: FxHashMap<EntityId, CursorStyle>,
     requested_cursor_style: Option<CursorStyle>,
     pub(crate) view_stack: Vec<EntityId>,
@@ -328,12 +334,13 @@ impl Frame {
             mouse_listeners: FxHashMap::default(),
             dispatch_tree,
             scene: Scene::default(),
+            depth_map: Vec::new(),
             z_index_stack: StackingOrder::default(),
             next_stacking_order_id: 0,
-            depth_map: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
+            tooltip_request: None,
             cursor_styles: FxHashMap::default(),
             requested_cursor_style: None,
             view_stack: Vec::new(),
@@ -350,6 +357,7 @@ impl Frame {
         self.reused_views.clear();
         self.scene.clear();
         self.requested_input_handler.take();
+        self.tooltip_request.take();
         self.cursor_styles.clear();
         self.requested_cursor_style.take();
         debug_assert_eq!(self.view_stack.len(), 0);
@@ -1052,6 +1060,12 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.requested_cursor_style = Some(style);
     }
 
+    /// Set a tooltip to be rendered for the upcoming frame
+    pub fn set_tooltip(&mut self, tooltip: AnyTooltip) {
+        let view_id = self.parent_view_id();
+        self.window.next_frame.tooltip_request = Some(TooltipRequest { view_id, tooltip });
+    }
+
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
         let stacking_order = self.window.next_frame.z_index_stack.clone();
@@ -1432,12 +1446,11 @@ impl<'a> WindowContext<'a> {
             .window
             .next_frame
             .dispatch_tree
-            .graft(view_id, &mut self.window.rendered_frame.dispatch_tree);
+            .reuse_view(view_id, &mut self.window.rendered_frame.dispatch_tree);
         for view_id in grafted_view_ids {
             assert!(self.window.next_frame.reused_views.insert(view_id));
 
-            // Reuse the previous input handler if it was associated with one of
-            // the views grafted from the tree in the previous frame.
+            // Reuse the previous input handler requested during painting of the reused view.
             if self
                 .window
                 .rendered_frame
@@ -1449,6 +1462,19 @@ impl<'a> WindowContext<'a> {
                     self.window.rendered_frame.requested_input_handler.take();
             }
 
+            // Reuse the tooltip previously requested during painting of the reused view.
+            if self
+                .window
+                .rendered_frame
+                .tooltip_request
+                .as_ref()
+                .map_or(false, |requested| requested.view_id == view_id)
+            {
+                self.window.next_frame.tooltip_request =
+                    self.window.rendered_frame.tooltip_request.take();
+            }
+
+            // Reuse the cursor styles previously requested during painting of the reused view.
             if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
                 self.window.next_frame.cursor_styles.insert(view_id, style);
                 self.window.next_frame.requested_cursor_style = Some(style);
@@ -1498,13 +1524,16 @@ impl<'a> WindowContext<'a> {
                 active_drag.view.draw(offset, available_space, cx);
             });
             self.active_drag = Some(active_drag);
-        } else if let Some(active_tooltip) = self.app.active_tooltip.take() {
+        } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
             self.with_z_index(1, |cx| {
                 let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                active_tooltip
-                    .view
-                    .draw(active_tooltip.cursor_offset, available_space, cx);
+                tooltip_request.tooltip.view.draw(
+                    tooltip_request.tooltip.cursor_offset,
+                    available_space,
+                    cx,
+                );
             });
+            self.window.next_frame.tooltip_request = Some(tooltip_request);
         }
         self.window.dirty_views.clear();
 
@@ -2145,7 +2174,8 @@ impl<'a> WindowContext<'a> {
 
     /// Set an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
     /// platform to receive textual input with proper integration with concerns such
-    /// as IME interactions.
+    /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
+    /// rendered.
     ///
     /// [element_input_handler]: crate::ElementInputHandler
     pub fn handle_input(
