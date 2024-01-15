@@ -1,0 +1,32 @@
+[package]
+name = "color"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+stories = ["dep:itertools", "dep:story"]
+
+[lib]
+path = "src/color.rs"
+doctest = true
+
+[dependencies]
+# TODO: Clean up dependencies
+anyhow.workspace = true
+fs = { path = "../fs" }
+indexmap = "1.6.2"
+parking_lot.workspace = true
+refineable.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+settings = { path = "../settings" }
+story = { path = "../story", optional = true }
+toml.workspace = true
+uuid.workspace = true
+util = { path = "../util" }
+itertools = { version = "0.11.0", optional = true }
+palette = "0.7.3"
