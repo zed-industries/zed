@@ -117,7 +117,7 @@ impl Render for TextStory {
 //     type Element = Div;
 
 //     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Self::Element {
-//         v_stack()
+//         v_flex()
 //             .bg(blue())
 //             .child(
 //                 div()
