@@ -6,6 +6,11 @@
 
 set -e
 
+if [ -z "$GITHUB_BASE_REF" ]; then
+  echo 'Not a pull request, skipping squawk modified migrations linting'
+  return 0
+fi
+
 SQUAWK_VERSION=0.26.0
 SQUAWK_BIN="./target/squawk-$SQUAWK_VERSION"
 SQUAWK_ARGS="--assume-in-transaction"
