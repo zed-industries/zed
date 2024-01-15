@@ -4513,7 +4513,7 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        if self.move_to_next_snippet_tabstop(cx) {
+        if self.move_to_next_snippet_tabstop(cx) || self.read_only(cx) {
             return;
         }
 
