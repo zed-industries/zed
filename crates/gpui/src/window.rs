@@ -2034,6 +2034,7 @@ impl<'a> WindowContext<'a> {
                     .dispatch_tree
                     .push_node(None, None, Some(view_id));
                 let result = f(self);
+                self.window.next_frame.dispatch_tree.pop_node();
                 self.window.next_frame.view_stack.pop();
                 result
             }
