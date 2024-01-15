@@ -578,6 +578,10 @@ impl Item for Editor {
         Some(file_path.into())
     }
 
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
         let path = path_for_buffer(&self.buffer, detail, true, cx)?;
         Some(path.to_string_lossy().to_string().into())

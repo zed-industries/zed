@@ -86,7 +86,7 @@ impl Render for WelcomePage {
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.telemetry
-                                        .report_app_event("welcome page: change theme");
+                                        .report_app_event("welcome page: change theme".to_string());
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             theme_selector::toggle(
@@ -102,8 +102,9 @@ impl Render for WelcomePage {
                             Button::new("choose-keymap", "Choose a keymap")
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
-                                    this.telemetry
-                                        .report_app_event("welcome page: change keymap");
+                                    this.telemetry.report_app_event(
+                                        "welcome page: change keymap".to_string(),
+                                    );
                                     this.workspace
                                         .update(cx, |workspace, cx| {
                                             base_keymap_picker::toggle(
@@ -119,7 +120,8 @@ impl Render for WelcomePage {
                             Button::new("install-cli", "Install the CLI")
                                 .full_width()
                                 .on_click(cx.listener(|this, _, cx| {
-                                    this.telemetry.report_app_event("welcome page: install cli");
+                                    this.telemetry
+                                        .report_app_event("welcome page: install cli".to_string());
                                     cx.app_mut()
                                         .spawn(
                                             |cx| async move { install_cli::install_cli(&cx).await },
@@ -150,8 +152,9 @@ impl Render for WelcomePage {
                                     )
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
-                                            this.telemetry
-                                                .report_app_event("welcome page: toggle vim");
+                                            this.telemetry.report_app_event(
+                                                "welcome page: toggle vim".to_string(),
+                                            );
                                             this.update_settings::<VimModeSetting>(
                                                 selection,
                                                 cx,
@@ -177,7 +180,7 @@ impl Render for WelcomePage {
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
                                             this.telemetry.report_app_event(
-                                                "welcome page: toggle metric telemetry",
+                                                "welcome page: toggle metric telemetry".to_string(),
                                             );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
@@ -215,7 +218,8 @@ impl Render for WelcomePage {
                                     .on_click(cx.listener(
                                         move |this, selection, cx| {
                                             this.telemetry.report_app_event(
-                                                "welcome page: toggle diagnostic telemetry",
+                                                "welcome page: toggle diagnostic telemetry"
+                                                    .to_string(),
                                             );
                                             this.update_settings::<TelemetrySettings>(
                                                 selection,
@@ -247,7 +251,8 @@ impl WelcomePage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let this = cx.new_view(|cx| {
             cx.on_release(|this: &mut Self, _, _| {
-                this.telemetry.report_app_event("welcome page: close");
+                this.telemetry
+                    .report_app_event("welcome page: close".to_string());
             })
             .detach();
 
@@ -304,6 +309,10 @@ impl Item for WelcomePage {
                 Color::Muted
             })
             .into_any_element()
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        Some("welcome page")
     }
 
     fn show_toolbar(&self) -> bool {

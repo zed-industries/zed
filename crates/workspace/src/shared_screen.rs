@@ -111,6 +111,10 @@ impl Item for SharedScreen {
             .into_any()
     }
 
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
         self.nav_history = Some(history);
     }
