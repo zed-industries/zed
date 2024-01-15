@@ -2250,17 +2250,16 @@ impl Workspace {
         destination_index: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let item_to_move = source
+        let Some((item_ix, item_handle)) = source
             .read(cx)
             .items()
             .enumerate()
-            .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move);
-
-        if item_to_move.is_none() {
-            log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
+            .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
+        else {
+            // Tab was closed during drag
             return;
-        }
-        let (item_ix, item_handle) = item_to_move.unwrap();
+        };
+
         let item_handle = item_handle.clone();
 
         if source != destination {

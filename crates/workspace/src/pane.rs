@@ -219,8 +219,8 @@ pub struct NavigationEntry {
 #[derive(Clone)]
 pub struct DraggedTab {
     pub pane: View<Pane>,
+    pub item: Box<dyn ItemHandle>,
     pub ix: usize,
-    pub item_id: EntityId,
     pub detail: usize,
     pub is_active: bool,
 }
@@ -1310,9 +1310,9 @@ impl Pane {
             )
             .on_drag(
                 DraggedTab {
+                    item: item.boxed_clone(),
                     pane: cx.view().clone(),
                     detail,
-                    item_id,
                     is_active,
                     ix,
                 },
@@ -1603,7 +1603,7 @@ impl Pane {
         }
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
-        let item_id = dragged_tab.item_id;
+        let item_id = dragged_tab.item.item_id();
         let from_pane = dragged_tab.pane.clone();
         self.workspace
             .update(cx, |_, cx| {
@@ -2603,8 +2603,7 @@ mod tests {
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        let item = &self.pane.read(cx).items[self.ix];
-        let label = item.tab_content(Some(self.detail), false, cx);
+        let label = self.item.tab_content(Some(self.detail), false, cx);
         Tab::new("")
             .selected(self.is_active)
             .child(label)
