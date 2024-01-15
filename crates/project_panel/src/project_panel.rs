@@ -58,6 +58,7 @@ pub struct ProjectPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    was_deserialized: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -243,6 +244,7 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
+                was_deserialized: false,
             };
             this.update_visible_entries(None, cx);
 
@@ -322,6 +324,7 @@ impl ProjectPanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
+                    panel.was_deserialized = true;
                     cx.notify();
                 });
             }
@@ -1464,6 +1467,9 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         }
+    }
+    pub fn was_deserialized(&self) -> bool {
+        self.was_deserialized
     }
 }
 
