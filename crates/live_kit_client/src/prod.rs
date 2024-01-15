@@ -18,8 +18,6 @@ use std::{
     sync::{Arc, Weak},
 };
 
-// SAFETY: Most live kit types are threadsafe:
-// https://github.com/livekit/client-sdk-swift#thread-safety
 macro_rules! pointer_type {
     ($pointer_name:ident) => {
         #[repr(transparent)]
@@ -134,8 +132,10 @@ extern "C" {
     ) -> *const c_void;
 
     fn LKRemoteAudioTrackGetSid(track: swift::RemoteAudioTrack) -> CFStringRef;
-    fn LKVideoTrackAddRenderer(track: swift::RemoteVideoTrack, renderer: *const c_void);
     fn LKRemoteVideoTrackGetSid(track: swift::RemoteVideoTrack) -> CFStringRef;
+    fn LKRemoteAudioTrackStart(track: swift::RemoteAudioTrack);
+    fn LKRemoteAudioTrackStop(track: swift::RemoteAudioTrack);
+    fn LKVideoTrackAddRenderer(track: swift::RemoteVideoTrack, renderer: *const c_void);
 
     fn LKDisplaySources(
         callback_data: *mut c_void,
@@ -853,12 +853,12 @@ impl RemoteAudioTrack {
         &self.publisher_id
     }
 
-    pub fn enable(&self) -> impl Future<Output = Result<()>> {
-        async { Ok(()) }
+    pub fn start(&self) {
+        unsafe { LKRemoteAudioTrackStart(self.native_track) }
     }
 
-    pub fn disable(&self) -> impl Future<Output = Result<()>> {
-        async { Ok(()) }
+    pub fn stop(&self) {
+        unsafe { LKRemoteAudioTrackStop(self.native_track) }
     }
 }
 

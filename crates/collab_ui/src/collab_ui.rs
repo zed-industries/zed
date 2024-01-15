@@ -9,7 +9,7 @@ mod panel_settings;
 
 use std::{rc::Rc, sync::Arc};
 
-use call::{report_call_event_for_room, ActiveCall, Room};
+use call::{report_call_event_for_room, ActiveCall};
 pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
@@ -21,7 +21,6 @@ pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
 use settings::Settings;
-use util::ResultExt;
 use workspace::AppState;
 
 actions!(
@@ -75,7 +74,7 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     if let Some(room) = call.room().cloned() {
         let client = call.client();
         room.update(cx, |room, cx| {
-            let operation = if room.is_muted(cx) {
+            let operation = if room.is_muted() {
                 "enable microphone"
             } else {
                 "disable microphone"
@@ -83,17 +82,13 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
             report_call_event_for_room(operation, room.id(), room.channel_id(), &client);
 
             room.toggle_mute(cx)
-        })
-        .map(|task| task.detach_and_log_err(cx))
-        .log_err();
+        });
     }
 }
 
 pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-        room.update(cx, Room::toggle_deafen)
-            .map(|task| task.detach_and_log_err(cx))
-            .log_err();
+        room.update(cx, |room, cx| room.toggle_deafen(cx));
     }
 }
 

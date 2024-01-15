@@ -286,6 +286,18 @@ public func LKRemoteAudioTrackGetSid(track: UnsafeRawPointer) -> CFString {
     return track.sid! as CFString
 }
 
+@_cdecl("LKRemoteAudioTrackStart")
+public func LKRemoteAudioTrackStart(track: UnsafeRawPointer) {
+    let track = Unmanaged<RemoteAudioTrack>.fromOpaque(track).takeUnretainedValue()
+    track.start()
+}
+
+@_cdecl("LKRemoteAudioTrackStop")
+public func LKRemoteAudioTrackStop(track: UnsafeRawPointer) {
+    let track = Unmanaged<RemoteAudioTrack>.fromOpaque(track).takeUnretainedValue()
+    track.stop()
+}
+
 @_cdecl("LKDisplaySources")
 public func LKDisplaySources(data: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer, CFArray?, CFString?) -> Void) {
     MacOSScreenCapturer.sources(for: .display, includeCurrentApplication: false, preferredMethod: .legacy).then { displaySources in
