@@ -129,10 +129,6 @@ pub enum Event {
         environment: &'static str,
         milliseconds_since_first_event: i64,
     },
-    Button {
-        operation: &'static str,
-        milliseconds_since_first_event: i64,
-    },
 }
 
 #[cfg(debug_assertions)]
