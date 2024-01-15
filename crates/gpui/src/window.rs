@@ -1,20 +1,20 @@
 #![deny(missing_docs)]
 
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, ArenaBox, ArenaRef,
-    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
-    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
+    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
+    AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
     ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, SceneBuilder, Shadow, SharedString, Size, Style,
-    SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, Style, SubscriberSet,
+    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -99,7 +99,7 @@ impl DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyMouseListener = ArenaBox<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
+type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 struct FocusEvent {
@@ -266,19 +266,19 @@ pub struct Window {
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
-    frame_arena: Arena,
+    pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     modifiers: Modifiers,
-    requested_cursor_style: Option<CursorStyle>,
     scale_factor: f32,
     bounds: WindowBounds,
     bounds_observers: SubscriberSet<(), AnyObserver>,
     active: bool,
     pub(crate) dirty: bool,
+    pub(crate) refreshing: bool,
     pub(crate) drawing: bool,
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -290,22 +290,33 @@ pub struct Window {
 
 pub(crate) struct ElementStateBox {
     inner: Box<dyn Any>,
+    parent_view_id: EntityId,
     #[cfg(debug_assertions)]
     type_name: &'static str,
+}
+
+struct RequestedInputHandler {
+    view_id: EntityId,
+    handler: Option<Box<dyn PlatformInputHandler>>,
 }
 
 pub(crate) struct Frame {
     focus: Option<FocusId>,
     window_active: bool,
     pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
-    mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, AnyMouseListener)>>,
+    mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
     pub(crate) dispatch_tree: DispatchTree,
-    pub(crate) scene_builder: SceneBuilder,
-    pub(crate) depth_map: Vec<(StackingOrder, Bounds<Pixels>)>,
+    pub(crate) scene: Scene,
+    pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
     pub(crate) next_stacking_order_id: u32,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
+    requested_input_handler: Option<RequestedInputHandler>,
+    cursor_styles: FxHashMap<EntityId, CursorStyle>,
+    requested_cursor_style: Option<CursorStyle>,
+    pub(crate) view_stack: Vec<EntityId>,
+    pub(crate) reused_views: FxHashSet<EntityId>,
 }
 
 impl Frame {
@@ -316,12 +327,17 @@ impl Frame {
             element_states: FxHashMap::default(),
             mouse_listeners: FxHashMap::default(),
             dispatch_tree,
-            scene_builder: SceneBuilder::default(),
+            scene: Scene::default(),
             z_index_stack: StackingOrder::default(),
             next_stacking_order_id: 0,
-            depth_map: Default::default(),
+            depth_map: Vec::new(),
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            requested_input_handler: None,
+            cursor_styles: FxHashMap::default(),
+            requested_cursor_style: None,
+            view_stack: Vec::new(),
+            reused_views: FxHashSet::default(),
         }
     }
 
@@ -331,12 +347,54 @@ impl Frame {
         self.dispatch_tree.clear();
         self.depth_map.clear();
         self.next_stacking_order_id = 0;
+        self.reused_views.clear();
+        self.scene.clear();
+        self.requested_input_handler.take();
+        self.cursor_styles.clear();
+        self.requested_cursor_style.take();
+        debug_assert_eq!(self.view_stack.len(), 0);
     }
 
     fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
         self.focus
             .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
             .unwrap_or_default()
+    }
+
+    fn finish(&mut self, prev_frame: &mut Self) {
+        // Reuse mouse listeners that didn't change since the last frame.
+        for (type_id, listeners) in &mut prev_frame.mouse_listeners {
+            let next_listeners = self.mouse_listeners.entry(*type_id).or_default();
+            for (order, view_id, listener) in listeners.drain(..) {
+                if self.reused_views.contains(&view_id) {
+                    next_listeners.push((order, view_id, listener));
+                }
+            }
+        }
+
+        // Reuse entries in the depth map that didn't change since the last frame.
+        for (order, view_id, bounds) in prev_frame.depth_map.drain(..) {
+            if self.reused_views.contains(&view_id) {
+                match self
+                    .depth_map
+                    .binary_search_by(|(level, _, _)| order.cmp(level))
+                {
+                    Ok(i) | Err(i) => self.depth_map.insert(i, (order, view_id, bounds)),
+                }
+            }
+        }
+
+        // Retain element states for views that didn't change since the last frame.
+        for (element_id, state) in prev_frame.element_states.drain() {
+            if self.reused_views.contains(&state.parent_view_id) {
+                self.element_states.entry(element_id).or_insert(state);
+            }
+        }
+
+        // Reuse geometry that didn't change since the last frame.
+        self.scene
+            .reuse_views(&self.reused_views, &mut prev_frame.scene);
+        self.scene.finish();
     }
 }
 
@@ -346,14 +404,7 @@ impl Window {
         options: WindowOptions,
         cx: &mut AppContext,
     ) -> Self {
-        let platform_window = cx.platform.open_window(
-            handle,
-            options,
-            Box::new({
-                let mut cx = cx.to_async();
-                move || handle.update(&mut cx, |_, cx| cx.draw())
-            }),
-        );
+        let platform_window = cx.platform.open_window(handle, options);
         let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -362,6 +413,12 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
 
+        platform_window.on_request_frame(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle.update(&mut cx, |_, cx| cx.draw()).log_err();
+            }
+        }));
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |_, _| {
@@ -416,19 +473,19 @@ impl Window {
             element_id_stack: GlobalElementId::default(),
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
-            frame_arena: Arena::new(1024 * 1024),
+            dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
             modifiers,
-            requested_cursor_style: None,
             scale_factor,
             bounds,
             bounds_observers: SubscriberSet::new(),
             active: false,
             dirty: false,
+            refreshing: false,
             drawing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -484,8 +541,9 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
-    pub fn notify(&mut self) {
+    pub fn refresh(&mut self) {
         if !self.window.drawing {
+            self.window.refreshing = true;
             self.window.dirty = true;
         }
     }
@@ -525,7 +583,7 @@ impl<'a> WindowContext<'a> {
             self.window.focus_invalidated = true;
         }
 
-        self.notify();
+        self.refresh();
     }
 
     /// Remove focus from all elements within this context's window.
@@ -535,7 +593,7 @@ impl<'a> WindowContext<'a> {
         }
 
         self.window.focus = None;
-        self.notify();
+        self.refresh();
     }
 
     /// Blur the window and don't allow anything in it to be focused again.
@@ -772,6 +830,14 @@ impl<'a> WindowContext<'a> {
             .request_measured_layout(style, rem_size, measure)
     }
 
+    pub(crate) fn layout_style(&self, layout_id: LayoutId) -> Option<&Style> {
+        self.window
+            .layout_engine
+            .as_ref()
+            .unwrap()
+            .requested_style(layout_id)
+    }
+
     /// Compute the layout for the given id within the given available space.
     /// This method is called for its side effect, typically by the framework prior to painting.
     /// After calling it, you can request the bounds of the given layout node id or any descendant.
@@ -801,7 +867,7 @@ impl<'a> WindowContext<'a> {
         self.window.viewport_size = self.window.platform_window.content_size();
         self.window.bounds = self.window.platform_window.bounds();
         self.window.display_id = self.window.platform_window.display().id();
-        self.notify();
+        self.refresh();
 
         self.window
             .bounds_observers
@@ -898,22 +964,22 @@ impl<'a> WindowContext<'a> {
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
+        let view_id = self.parent_view_id();
         let order = self.window.next_frame.z_index_stack.clone();
-        let handler = self
-            .window
-            .frame_arena
-            .alloc(|| {
-                move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
-                    handler(event.downcast_ref().unwrap(), phase, cx)
-                }
-            })
-            .map(|handler| handler as _);
         self.window
             .next_frame
             .mouse_listeners
             .entry(TypeId::of::<Event>())
             .or_default()
-            .push((order, handler))
+            .push((
+                order,
+                view_id,
+                Box::new(
+                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
+                        handler(event.downcast_ref().unwrap(), phase, cx)
+                    },
+                ),
+            ))
     }
 
     /// Register a key event listener on the window for the next frame. The type of event
@@ -926,21 +992,13 @@ impl<'a> WindowContext<'a> {
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = self
-            .window
-            .frame_arena
-            .alloc(|| {
-                move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                    if let Some(event) = event.downcast_ref::<Event>() {
-                        listener(event, phase, cx)
-                    }
+        self.window.next_frame.dispatch_tree.on_key_event(Rc::new(
+            move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                if let Some(event) = event.downcast_ref::<Event>() {
+                    listener(event, phase, cx)
                 }
-            })
-            .map(|handler| handler as _);
-        self.window
-            .next_frame
-            .dispatch_tree
-            .on_key_event(ArenaRef::from(listener));
+            },
+        ));
     }
 
     /// Register an action listener on the window for the next frame. The type of action
@@ -954,15 +1012,10 @@ impl<'a> WindowContext<'a> {
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
     ) {
-        let listener = self
-            .window
-            .frame_arena
-            .alloc(|| listener)
-            .map(|handler| handler as _);
         self.window
             .next_frame
             .dispatch_tree
-            .on_action(action_type, ArenaRef::from(listener));
+            .on_action(action_type, Rc::new(listener));
     }
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
@@ -994,15 +1047,18 @@ impl<'a> WindowContext<'a> {
 
     /// Update the cursor style at the platform level.
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
-        self.window.requested_cursor_style = Some(style)
+        let view_id = self.parent_view_id();
+        self.window.next_frame.cursor_styles.insert(view_id, style);
+        self.window.next_frame.requested_cursor_style = Some(style);
     }
 
     /// Called during painting to track which z-index is on top at each pixel position
     pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
         let stacking_order = self.window.next_frame.z_index_stack.clone();
+        let view_id = self.parent_view_id();
         let depth_map = &mut self.window.next_frame.depth_map;
-        match depth_map.binary_search_by(|(level, _)| stacking_order.cmp(level)) {
-            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, bounds)),
+        match depth_map.binary_search_by(|(level, _, _)| stacking_order.cmp(level)) {
+            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, view_id, bounds)),
         }
     }
 
@@ -1010,7 +1066,7 @@ impl<'a> WindowContext<'a> {
     /// on top of the given level. Layers whose level is an extension of the
     /// level are not considered to be on top of the level.
     pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
-        for (opaque_level, bounds) in self.window.rendered_frame.depth_map.iter() {
+        for (opaque_level, _, bounds) in self.window.rendered_frame.depth_map.iter() {
             if level >= opaque_level {
                 break;
             }
@@ -1027,7 +1083,7 @@ impl<'a> WindowContext<'a> {
         point: &Point<Pixels>,
         level: &StackingOrder,
     ) -> bool {
-        for (opaque_level, bounds) in self.window.rendered_frame.depth_map.iter() {
+        for (opaque_level, _, bounds) in self.window.rendered_frame.depth_map.iter() {
             if level >= opaque_level {
                 break;
             }
@@ -1056,14 +1112,17 @@ impl<'a> WindowContext<'a> {
     ) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let view_id = self.parent_view_id();
         let window = &mut *self.window;
         for shadow in shadows {
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene_builder.insert(
+            window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 Shadow {
+                    view_id: view_id.into(),
+                    layer_id: 0,
                     order: 0,
                     bounds: shadow_bounds.scale(scale_factor),
                     content_mask: content_mask.scale(scale_factor),
@@ -1081,11 +1140,14 @@ impl<'a> WindowContext<'a> {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Quad {
+                view_id: view_id.into(),
+                layer_id: 0,
                 order: 0,
                 bounds: quad.bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -1101,12 +1163,15 @@ impl<'a> WindowContext<'a> {
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
+        let view_id = self.parent_view_id();
+
         path.content_mask = content_mask;
         path.color = color.into();
+        path.view_id = view_id.into();
         let window = &mut *self.window;
         window
             .next_frame
-            .scene_builder
+            .scene
             .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
     }
 
@@ -1128,10 +1193,14 @@ impl<'a> WindowContext<'a> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
+        let view_id = self.parent_view_id();
+
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Underline {
+                view_id: view_id.into(),
+                layer_id: 0,
                 order: 0,
                 bounds: bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
@@ -1181,10 +1250,13 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let view_id = self.parent_view_id();
             let window = &mut *self.window;
-            window.next_frame.scene_builder.insert(
+            window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 MonochromeSprite {
+                    view_id: view_id.into(),
+                    layer_id: 0,
                     order: 0,
                     bounds,
                     content_mask,
@@ -1231,11 +1303,14 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let view_id = self.parent_view_id();
             let window = &mut *self.window;
 
-            window.next_frame.scene_builder.insert(
+            window.next_frame.scene.insert(
                 &window.next_frame.z_index_stack,
                 PolychromeSprite {
+                    view_id: view_id.into(),
+                    layer_id: 0,
                     order: 0,
                     bounds,
                     corner_radii: Default::default(),
@@ -1273,11 +1348,14 @@ impl<'a> WindowContext<'a> {
                     Ok((params.size, Cow::Owned(bytes)))
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
+        let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             MonochromeSprite {
+                view_id: view_id.into(),
+                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -1309,11 +1387,14 @@ impl<'a> WindowContext<'a> {
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
+        let view_id = self.parent_view_id();
 
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             PolychromeSprite {
+                view_id: view_id.into(),
+                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -1330,10 +1411,13 @@ impl<'a> WindowContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
+        let view_id = self.parent_view_id();
         let window = &mut *self.window;
-        window.next_frame.scene_builder.insert(
+        window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
             Surface {
+                view_id: view_id.into(),
+                layer_id: 0,
                 order: 0,
                 bounds,
                 content_mask,
@@ -1342,8 +1426,38 @@ impl<'a> WindowContext<'a> {
         );
     }
 
+    pub(crate) fn reuse_view(&mut self) {
+        let view_id = self.parent_view_id();
+        let grafted_view_ids = self
+            .window
+            .next_frame
+            .dispatch_tree
+            .graft(view_id, &mut self.window.rendered_frame.dispatch_tree);
+        for view_id in grafted_view_ids {
+            assert!(self.window.next_frame.reused_views.insert(view_id));
+
+            // Reuse the previous input handler if it was associated with one of
+            // the views grafted from the tree in the previous frame.
+            if self
+                .window
+                .rendered_frame
+                .requested_input_handler
+                .as_ref()
+                .map_or(false, |requested| requested.view_id == view_id)
+            {
+                self.window.next_frame.requested_input_handler =
+                    self.window.rendered_frame.requested_input_handler.take();
+            }
+
+            if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
+                self.window.next_frame.cursor_styles.insert(view_id, style);
+                self.window.next_frame.requested_cursor_style = Some(style);
+            }
+        }
+    }
+
     /// Draw pixels to the display for this window based on the contents of its scene.
-    pub(crate) fn draw(&mut self) -> Scene {
+    pub(crate) fn draw(&mut self) {
         self.window.dirty = false;
         self.window.drawing = true;
 
@@ -1352,30 +1466,23 @@ impl<'a> WindowContext<'a> {
             self.window.focus_invalidated = false;
         }
 
-        self.text_system().start_frame();
-        self.window.platform_window.clear_input_handler();
-        self.window.layout_engine.as_mut().unwrap().clear();
-        self.window.next_frame.clear();
-        self.window.frame_arena.clear();
+        if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
+        {
+            requested_handler.handler = self.window.platform_window.take_input_handler();
+        }
+
         let root_view = self.window.root_view.take().unwrap();
 
         self.with_z_index(0, |cx| {
             cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
                 for (action_type, action_listeners) in &cx.app.global_action_listeners {
                     for action_listener in action_listeners.iter().cloned() {
-                        let listener = cx
-                            .window
-                            .frame_arena
-                            .alloc(|| {
-                                move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                                    action_listener(action, phase, cx)
-                                }
-                            })
-                            .map(|listener| listener as _);
-                        cx.window
-                            .next_frame
-                            .dispatch_tree
-                            .on_action(*action_type, ArenaRef::from(listener))
+                        cx.window.next_frame.dispatch_tree.on_action(
+                            *action_type,
+                            Rc::new(move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                                action_listener(action, phase, cx)
+                            }),
+                        )
                     }
                 }
 
@@ -1399,6 +1506,7 @@ impl<'a> WindowContext<'a> {
                     .draw(active_tooltip.cursor_offset, available_space, cx);
             });
         }
+        self.window.dirty_views.clear();
 
         self.window
             .next_frame
@@ -1411,23 +1519,38 @@ impl<'a> WindowContext<'a> {
         self.window.next_frame.window_active = self.window.active;
         self.window.root_view = Some(root_view);
 
-        let previous_focus_path = self.window.rendered_frame.focus_path();
-        let previous_window_active = self.window.rendered_frame.window_active;
-        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
-        let current_focus_path = self.window.rendered_frame.focus_path();
-        let current_window_active = self.window.rendered_frame.window_active;
-
-        let scene = self.window.rendered_frame.scene_builder.build();
-
         // Set the cursor only if we're the active window.
         let cursor_style = self
             .window
+            .next_frame
             .requested_cursor_style
             .take()
             .unwrap_or(CursorStyle::Arrow);
         if self.is_window_active() {
             self.platform.set_cursor_style(cursor_style);
         }
+
+        // Register requested input handler with the platform window.
+        if let Some(requested_input) = self.window.next_frame.requested_input_handler.as_mut() {
+            if let Some(handler) = requested_input.handler.take() {
+                self.window.platform_window.set_input_handler(handler);
+            }
+        }
+
+        self.window.layout_engine.as_mut().unwrap().clear();
+        self.text_system()
+            .finish_frame(&self.window.next_frame.reused_views);
+        self.window
+            .next_frame
+            .finish(&mut self.window.rendered_frame);
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
+
+        let previous_focus_path = self.window.rendered_frame.focus_path();
+        let previous_window_active = self.window.rendered_frame.window_active;
+        mem::swap(&mut self.window.rendered_frame, &mut self.window.next_frame);
+        self.window.next_frame.clear();
+        let current_focus_path = self.window.rendered_frame.focus_path();
+        let current_window_active = self.window.rendered_frame.window_active;
 
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
@@ -1457,10 +1580,11 @@ impl<'a> WindowContext<'a> {
                 .retain(&(), |listener| listener(&event, self));
         }
 
+        self.window
+            .platform_window
+            .draw(&self.window.rendered_frame.scene);
+        self.window.refreshing = false;
         self.window.drawing = false;
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
-
-        scene
     }
 
     /// Dispatch a mouse or keyboard event on the window.
@@ -1564,11 +1688,11 @@ impl<'a> WindowContext<'a> {
             .remove(&event.type_id())
         {
             // Because handlers may add other handlers, we sort every time.
-            handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
+            handlers.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
 
             // Capture phase, events bubble from back to front. Handlers for this phase are used for
             // special purposes, such as detecting events outside of a given Bounds.
-            for (_, handler) in &mut handlers {
+            for (_, _, handler) in &mut handlers {
                 handler(event, DispatchPhase::Capture, self);
                 if !self.app.propagate_event {
                     break;
@@ -1577,7 +1701,7 @@ impl<'a> WindowContext<'a> {
 
             // Bubble phase, where most normal handlers do their work.
             if self.app.propagate_event {
-                for (_, handler) in handlers.iter_mut().rev() {
+                for (_, _, handler) in handlers.iter_mut().rev() {
                     handler(event, DispatchPhase::Bubble, self);
                     if !self.app.propagate_event {
                         break;
@@ -1595,12 +1719,12 @@ impl<'a> WindowContext<'a> {
             if event.is::<MouseMoveEvent>() {
                 // If this was a mouse move event, redraw the window so that the
                 // active drag can follow the mouse cursor.
-                self.notify();
+                self.refresh();
             } else if event.is::<MouseUpEvent>() {
                 // If this was a mouse up event, cancel the active drag and redraw
                 // the window.
                 self.active_drag = None;
-                self.notify();
+                self.refresh();
             }
         }
     }
@@ -1867,18 +1991,156 @@ impl<'a> WindowContext<'a> {
         f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
     ) -> R {
         let window = &mut self.window;
-        window.next_frame.dispatch_tree.push_node(context.clone());
-        if let Some(focus_handle) = focus_handle.as_ref() {
-            window
-                .next_frame
-                .dispatch_tree
-                .make_focusable(focus_handle.id);
-        }
+        let focus_id = focus_handle.as_ref().map(|handle| handle.id);
+        window
+            .next_frame
+            .dispatch_tree
+            .push_node(context.clone(), focus_id, None);
+
         let result = f(focus_handle, self);
 
         self.window.next_frame.dispatch_tree.pop_node();
 
         result
+    }
+
+    /// Invoke the given function with the given view id present on the view stack.
+    /// This is a fairly low-level method used to layout views.
+    pub fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
+        let text_system = self.text_system().clone();
+        text_system.with_view(view_id, || {
+            if self.window.next_frame.view_stack.last() == Some(&view_id) {
+                return f(self);
+            } else {
+                self.window.next_frame.view_stack.push(view_id);
+                let result = f(self);
+                self.window.next_frame.view_stack.pop();
+                result
+            }
+        })
+    }
+
+    /// Invoke the given function with the given view id present on the view stack.
+    /// This is a fairly low-level method used to paint views.
+    pub fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
+        let text_system = self.text_system().clone();
+        text_system.with_view(view_id, || {
+            if self.window.next_frame.view_stack.last() == Some(&view_id) {
+                return f(self);
+            } else {
+                self.window.next_frame.view_stack.push(view_id);
+                self.window
+                    .next_frame
+                    .dispatch_tree
+                    .push_node(None, None, Some(view_id));
+                let result = f(self);
+                self.window.next_frame.dispatch_tree.pop_node();
+                self.window.next_frame.view_stack.pop();
+                result
+            }
+        })
+    }
+
+    /// Update or initialize state for an element with the given id that lives across multiple
+    /// frames. If an element with this id existed in the rendered frame, its state will be passed
+    /// to the given closure. The state returned by the closure will be stored so it can be referenced
+    /// when drawing the next frame.
+    pub(crate) fn with_element_state<S, R>(
+        &mut self,
+        id: ElementId,
+        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    ) -> R
+    where
+        S: 'static,
+    {
+        self.with_element_id(Some(id), |cx| {
+            let global_id = cx.window().element_id_stack.clone();
+
+            if let Some(any) = cx
+                .window_mut()
+                .next_frame
+                .element_states
+                .remove(&global_id)
+                .or_else(|| {
+                    cx.window_mut()
+                        .rendered_frame
+                        .element_states
+                        .remove(&global_id)
+                })
+            {
+                let ElementStateBox {
+                    inner,
+                    parent_view_id,
+                    #[cfg(debug_assertions)]
+                    type_name
+                } = any;
+                // Using the extra inner option to avoid needing to reallocate a new box.
+                let mut state_box = inner
+                    .downcast::<Option<S>>()
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                // Actual: Option<AnyElement> <- View
+                // Requested: () <- AnyElemet
+                let state = state_box
+                    .take()
+                    .expect("element state is already on the stack");
+                let (result, state) = f(Some(state), cx);
+                state_box.replace(state);
+                cx.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_id, ElementStateBox {
+                        inner: state_box,
+                        parent_view_id,
+                        #[cfg(debug_assertions)]
+                        type_name
+                    });
+                result
+            } else {
+                let (result, state) = f(None, cx);
+                let parent_view_id = cx.parent_view_id();
+                cx.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_id,
+                        ElementStateBox {
+                            inner: Box::new(Some(state)),
+                            parent_view_id,
+                            #[cfg(debug_assertions)]
+                            type_name: std::any::type_name::<S>()
+                        }
+
+                    );
+                result
+            }
+        })
+    }
+
+    fn parent_view_id(&self) -> EntityId {
+        *self
+            .window
+            .next_frame
+            .view_stack
+            .last()
+            .expect("a view should always be on the stack while drawing")
     }
 
     /// Set an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
@@ -1892,9 +2154,11 @@ impl<'a> WindowContext<'a> {
         input_handler: impl PlatformInputHandler,
     ) {
         if focus_handle.is_focused(self) {
-            self.window
-                .platform_window
-                .set_input_handler(Box::new(input_handler));
+            let view_id = self.parent_view_id();
+            self.window.next_frame.requested_input_handler = Some(RequestedInputHandler {
+                view_id,
+                handler: Some(Box::new(input_handler)),
+            })
         }
     }
 
@@ -2040,7 +2304,7 @@ impl VisualContext for WindowContext<'_> {
     {
         let view = self.new_view(build_view);
         self.window.root_view = Some(view.clone().into());
-        self.notify();
+        self.refresh();
         view
     }
 
@@ -2221,98 +2485,6 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
             .last()
             .copied()
             .unwrap_or_default()
-    }
-
-    /// Update or initialize state for an element with the given id that lives across multiple
-    /// frames. If an element with this id existed in the rendered frame, its state will be passed
-    /// to the given closure. The state returned by the closure will be stored so it can be referenced
-    /// when drawing the next frame.
-    fn with_element_state<S, R>(
-        &mut self,
-        id: ElementId,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
-    ) -> R
-    where
-        S: 'static,
-    {
-        self.with_element_id(Some(id), |cx| {
-            let global_id = cx.window().element_id_stack.clone();
-
-            if let Some(any) = cx
-                .window_mut()
-                .next_frame
-                .element_states
-                .remove(&global_id)
-                .or_else(|| {
-                    cx.window_mut()
-                        .rendered_frame
-                        .element_states
-                        .remove(&global_id)
-                })
-            {
-                let ElementStateBox {
-                    inner,
-
-                    #[cfg(debug_assertions)]
-                    type_name
-                } = any;
-                // Using the extra inner option to avoid needing to reallocate a new box.
-                let mut state_box = inner
-                    .downcast::<Option<S>>()
-                    .map_err(|_| {
-                        #[cfg(debug_assertions)]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                std::any::type_name::<S>(),
-                                type_name
-                            )
-                        }
-
-                        #[cfg(not(debug_assertions))]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}",
-                                std::any::type_name::<S>(),
-                            )
-                        }
-                    })
-                    .unwrap();
-
-                // Actual: Option<AnyElement> <- View
-                // Requested: () <- AnyElemet
-                let state = state_box
-                    .take()
-                    .expect("element state is already on the stack");
-                let (result, state) = f(Some(state), cx);
-                state_box.replace(state);
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id, ElementStateBox {
-                        inner: state_box,
-
-                        #[cfg(debug_assertions)]
-                        type_name
-                    });
-                result
-            } else {
-                let (result, state) = f(None, cx);
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id,
-                        ElementStateBox {
-                            inner: Box::new(Some(state)),
-
-                            #[cfg(debug_assertions)]
-                            type_name: std::any::type_name::<S>()
-                        }
-
-                    );
-                result
-            }
-        })
     }
 
     /// Obtain the current content mask.
@@ -2554,8 +2726,19 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     pub fn notify(&mut self) {
+        for view_id in self
+            .window
+            .rendered_frame
+            .dispatch_tree
+            .view_path(self.view.entity_id())
+        {
+            if !self.window.dirty_views.insert(view_id) {
+                break;
+            }
+        }
+
         if !self.window.drawing {
-            self.window_cx.notify();
+            self.window_cx.window.dirty = true;
             self.window_cx.app.push_effect(Effect::Notify {
                 emitter: self.view.model.entity_id,
             });

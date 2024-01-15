@@ -26,11 +26,11 @@ use git::diff::DiffHunkStatus;
 use gpui::{
     div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Hsla, InteractiveBounds,
-    InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StackingOrder, StatefulInteractiveElement, Style, Styled, TextRun,
-    TextStyle, View, ViewContext, WindowContext,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Hsla,
+    InteractiveBounds, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StackingOrder, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyle, View, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -2801,44 +2801,49 @@ impl Element for EditorElement {
         _element_state: Option<Self::State>,
         cx: &mut gpui::WindowContext,
     ) -> (gpui::LayoutId, Self::State) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_style(self.style.clone(), cx);
+        cx.with_view_id(self.editor.entity_id(), |cx| {
+            self.editor.update(cx, |editor, cx| {
+                editor.set_style(self.style.clone(), cx);
 
-            let layout_id = match editor.mode {
-                EditorMode::SingleLine => {
-                    let rem_size = cx.rem_size();
-                    let mut style = Style::default();
-                    style.size.width = relative(1.).into();
-                    style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
-                    cx.request_layout(&style, None)
-                }
-                EditorMode::AutoHeight { max_lines } => {
-                    let editor_handle = cx.view().clone();
-                    let max_line_number_width =
-                        self.max_line_number_width(&editor.snapshot(cx), cx);
-                    cx.request_measured_layout(Style::default(), move |known_dimensions, _, cx| {
-                        editor_handle
-                            .update(cx, |editor, cx| {
-                                compute_auto_height_layout(
-                                    editor,
-                                    max_lines,
-                                    max_line_number_width,
-                                    known_dimensions,
-                                    cx,
-                                )
-                            })
-                            .unwrap_or_default()
-                    })
-                }
-                EditorMode::Full => {
-                    let mut style = Style::default();
-                    style.size.width = relative(1.).into();
-                    style.size.height = relative(1.).into();
-                    cx.request_layout(&style, None)
-                }
-            };
+                let layout_id = match editor.mode {
+                    EditorMode::SingleLine => {
+                        let rem_size = cx.rem_size();
+                        let mut style = Style::default();
+                        style.size.width = relative(1.).into();
+                        style.size.height = self.style.text.line_height_in_pixels(rem_size).into();
+                        cx.request_layout(&style, None)
+                    }
+                    EditorMode::AutoHeight { max_lines } => {
+                        let editor_handle = cx.view().clone();
+                        let max_line_number_width =
+                            self.max_line_number_width(&editor.snapshot(cx), cx);
+                        cx.request_measured_layout(
+                            Style::default(),
+                            move |known_dimensions, _, cx| {
+                                editor_handle
+                                    .update(cx, |editor, cx| {
+                                        compute_auto_height_layout(
+                                            editor,
+                                            max_lines,
+                                            max_line_number_width,
+                                            known_dimensions,
+                                            cx,
+                                        )
+                                    })
+                                    .unwrap_or_default()
+                            },
+                        )
+                    }
+                    EditorMode::Full => {
+                        let mut style = Style::default();
+                        style.size.width = relative(1.).into();
+                        style.size.height = relative(1.).into();
+                        cx.request_layout(&style, None)
+                    }
+                };
 
-            (layout_id, ())
+                (layout_id, ())
+            })
         })
     }
 
@@ -2850,65 +2855,67 @@ impl Element for EditorElement {
     ) {
         let editor = self.editor.clone();
 
-        cx.with_text_style(
-            Some(gpui::TextStyleRefinement {
-                font_size: Some(self.style.text.font_size),
-                ..Default::default()
-            }),
-            |cx| {
-                let mut layout = self.compute_layout(bounds, cx);
-                let gutter_bounds = Bounds {
-                    origin: bounds.origin,
-                    size: layout.gutter_size,
-                };
-                let text_bounds = Bounds {
-                    origin: gutter_bounds.upper_right(),
-                    size: layout.text_size,
-                };
+        cx.paint_view(self.editor.entity_id(), |cx| {
+            cx.with_text_style(
+                Some(gpui::TextStyleRefinement {
+                    font_size: Some(self.style.text.font_size),
+                    ..Default::default()
+                }),
+                |cx| {
+                    let mut layout = self.compute_layout(bounds, cx);
+                    let gutter_bounds = Bounds {
+                        origin: bounds.origin,
+                        size: layout.gutter_size,
+                    };
+                    let text_bounds = Bounds {
+                        origin: gutter_bounds.upper_right(),
+                        size: layout.text_size,
+                    };
 
-                let focus_handle = editor.focus_handle(cx);
-                let key_context = self.editor.read(cx).key_context(cx);
-                cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
-                    self.register_actions(cx);
-                    self.register_key_listeners(cx);
+                    let focus_handle = editor.focus_handle(cx);
+                    let key_context = self.editor.read(cx).key_context(cx);
+                    cx.with_key_dispatch(Some(key_context), Some(focus_handle.clone()), |_, cx| {
+                        self.register_actions(cx);
+                        self.register_key_listeners(cx);
 
-                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                        let input_handler =
-                            ElementInputHandler::new(bounds, self.editor.clone(), cx);
-                        cx.handle_input(&focus_handle, input_handler);
+                        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                            let input_handler =
+                                ElementInputHandler::new(bounds, self.editor.clone(), cx);
+                            cx.handle_input(&focus_handle, input_handler);
 
-                        self.paint_background(gutter_bounds, text_bounds, &layout, cx);
-                        if layout.gutter_size.width > Pixels::ZERO {
-                            self.paint_gutter(gutter_bounds, &mut layout, cx);
-                        }
-                        self.paint_text(text_bounds, &mut layout, cx);
+                            self.paint_background(gutter_bounds, text_bounds, &layout, cx);
+                            if layout.gutter_size.width > Pixels::ZERO {
+                                self.paint_gutter(gutter_bounds, &mut layout, cx);
+                            }
+                            self.paint_text(text_bounds, &mut layout, cx);
 
-                        cx.with_z_index(0, |cx| {
-                            self.paint_mouse_listeners(
-                                bounds,
-                                gutter_bounds,
-                                text_bounds,
-                                &layout,
-                                cx,
-                            );
-                        });
-                        if !layout.blocks.is_empty() {
                             cx.with_z_index(0, |cx| {
-                                cx.with_element_id(Some("editor_blocks"), |cx| {
-                                    self.paint_blocks(bounds, &mut layout, cx);
-                                });
-                            })
-                        }
+                                self.paint_mouse_listeners(
+                                    bounds,
+                                    gutter_bounds,
+                                    text_bounds,
+                                    &layout,
+                                    cx,
+                                );
+                            });
+                            if !layout.blocks.is_empty() {
+                                cx.with_z_index(0, |cx| {
+                                    cx.with_element_id(Some("editor_blocks"), |cx| {
+                                        self.paint_blocks(bounds, &mut layout, cx);
+                                    });
+                                })
+                            }
 
-                        cx.with_z_index(1, |cx| {
-                            self.paint_overlays(text_bounds, &mut layout, cx);
+                            cx.with_z_index(1, |cx| {
+                                self.paint_overlays(text_bounds, &mut layout, cx);
+                            });
+
+                            cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
                         });
-
-                        cx.with_z_index(2, |cx| self.paint_scrollbar(bounds, &mut layout, cx));
-                    });
-                })
-            },
-        );
+                    })
+                },
+            )
+        })
     }
 }
 
@@ -3404,14 +3411,16 @@ mod tests {
             })
             .unwrap();
         let state = cx
-            .update_window(window.into(), |_, cx| {
-                element.compute_layout(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    cx,
-                )
+            .update_window(window.into(), |view, cx| {
+                cx.with_view_id(view.entity_id(), |cx| {
+                    element.compute_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        cx,
+                    )
+                })
             })
             .unwrap();
 
@@ -3496,14 +3505,16 @@ mod tests {
         });
 
         let state = cx
-            .update_window(window.into(), |_, cx| {
-                element.compute_layout(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    cx,
-                )
+            .update_window(window.into(), |view, cx| {
+                cx.with_view_id(view.entity_id(), |cx| {
+                    element.compute_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        cx,
+                    )
+                })
             })
             .unwrap();
         assert_eq!(state.selections.len(), 1);
@@ -3558,14 +3569,16 @@ mod tests {
 
         let mut element = EditorElement::new(&editor, style);
         let state = cx
-            .update_window(window.into(), |_, cx| {
-                element.compute_layout(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    cx,
-                )
+            .update_window(window.into(), |view, cx| {
+                cx.with_view_id(view.entity_id(), |cx| {
+                    element.compute_layout(
+                        Bounds {
+                            origin: point(px(500.), px(500.)),
+                            size: size(px(500.), px(500.)),
+                        },
+                        cx,
+                    )
+                })
             })
             .unwrap();
         let size = state.position_map.size;
@@ -3582,10 +3595,8 @@ mod tests {
 
         // Don't panic.
         let bounds = Bounds::<Pixels>::new(Default::default(), size);
-        cx.update_window(window.into(), |_, cx| {
-            element.paint(bounds, &mut (), cx);
-        })
-        .unwrap()
+        cx.update_window(window.into(), |_, cx| element.paint(bounds, &mut (), cx))
+            .unwrap()
     }
 
     #[gpui::test]

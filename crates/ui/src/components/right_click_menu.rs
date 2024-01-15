@@ -154,7 +154,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                         }
                     }
                     *menu2.borrow_mut() = None;
-                    cx.notify();
+                    cx.refresh();
                 })
                 .detach();
                 cx.focus_view(&new_menu);
@@ -167,7 +167,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 } else {
                     cx.mouse_position()
                 };
-                cx.notify();
+                cx.refresh();
             }
         });
     }

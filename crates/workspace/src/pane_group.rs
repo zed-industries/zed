@@ -3,8 +3,8 @@ use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
-    point, size, AnyWeakView, Axis, Bounds, Entity as _, IntoElement, Model, Pixels, Point, View,
-    ViewContext,
+    point, size, AnyView, AnyWeakView, Axis, Bounds, Entity as _, IntoElement, Model, Pixels,
+    Point, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -244,7 +244,7 @@ impl Member {
                     .relative()
                     .flex_1()
                     .size_full()
-                    .child(pane.clone())
+                    .child(AnyView::from(pane.clone()).cached())
                     .when_some(leader_border, |this, color| {
                         this.child(
                             div()
@@ -701,7 +701,7 @@ mod element {
             workspace
                 .update(cx, |this, cx| this.schedule_serialize(cx))
                 .log_err();
-            cx.notify();
+            cx.refresh();
         }
 
         fn push_handle(
@@ -757,7 +757,7 @@ mod element {
                                 workspace
                                     .update(cx, |this, cx| this.schedule_serialize(cx))
                                     .log_err();
-                                cx.notify();
+                                cx.refresh();
                             }
                         }
                     }

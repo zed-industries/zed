@@ -9,11 +9,11 @@ pub use line_layout::*;
 pub use line_wrapper::*;
 
 use crate::{
-    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    UnderlineStyle,
+    px, Bounds, DevicePixels, EntityId, Hsla, Pixels, PlatformTextSystem, Point, Result,
+    SharedString, Size, UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
 use core::fmt;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -187,6 +187,10 @@ impl TextSystem {
                 .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
             read(metrics)
         }
+    }
+
+    pub fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
+        self.line_layout_cache.with_view(view_id, f)
     }
 
     pub fn layout_line(
@@ -363,8 +367,8 @@ impl TextSystem {
         Ok(lines)
     }
 
-    pub fn start_frame(&self) {
-        self.line_layout_cache.start_frame()
+    pub fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
+        self.line_layout_cache.finish_frame(reused_views)
     }
 
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {

@@ -69,7 +69,7 @@ impl CopilotCodeVerification {
                 let user_code = data.user_code.clone();
                 move |_, cx| {
                     cx.write_to_clipboard(ClipboardItem::new(user_code.clone()));
-                    cx.notify();
+                    cx.refresh();
                 }
             })
             .child(div().flex_1().child(Label::new(data.user_code.clone())))
