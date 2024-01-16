@@ -485,8 +485,8 @@ impl CollabTitlebarItem {
                         avatar.indicator(
                             div()
                                 .absolute()
-                                .bottom(px(-2.))
-                                .right(px(-2.))
+                                .bottom(px(-1.))
+                                .right(px(-4.))
                                 .w(rems(12. / 16.))
                                 .h(rems(10. / 16.))
                                 .child(
