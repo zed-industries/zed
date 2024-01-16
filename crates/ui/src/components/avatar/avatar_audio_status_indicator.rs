@@ -30,17 +30,22 @@ impl AvatarAudioStatusIndicator {
 
 impl RenderOnce for AvatarAudioStatusIndicator {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let icon_size = IconSize::Indicator;
+
+        let width_in_px = icon_size.rems() * cx.rem_size();
+        let padding_x = px(4.);
+
         div()
             .absolute()
             .bottom(px(-1.))
             .right(px(-4.))
-            .w(rems(12. / 16.))
-            .h(rems(10. / 16.))
+            .w(width_in_px + padding_x)
+            .h(icon_size.rems())
             .child(
                 h_flex()
                     .id("muted-indicator")
                     .justify_center()
-                    .px(px(1.))
+                    .px(padding_x)
                     .py(px(2.))
                     .bg(cx.theme().status().error_background)
                     .rounded_md()
@@ -49,7 +54,7 @@ impl RenderOnce for AvatarAudioStatusIndicator {
                             AudioStatus::Muted => IconName::MicMute,
                             AudioStatus::Deafened => IconName::AudioOff,
                         })
-                        .size(IconSize::Indicator)
+                        .size(icon_size)
                         .color(Color::Error),
                     )
                     .when_some(self.tooltip, |this, tooltip| {
