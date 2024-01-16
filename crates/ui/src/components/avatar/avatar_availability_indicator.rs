@@ -35,6 +35,9 @@ impl RenderOnce for AvatarAvailabilityIndicator {
         let indicator_size = (avatar_size * 0.4).round();
 
         div()
+            .absolute()
+            .bottom_0()
+            .right_0()
             .size(indicator_size)
             .rounded(indicator_size)
             .bg(match self.availability {

@@ -114,13 +114,9 @@ impl RenderOnce for Avatar {
                     .size(size)
                     .bg(cx.theme().colors().ghost_element_background),
             )
-            .children(self.indicator.map(|indicator| {
-                div()
-                    .absolute()
-                    .z_index(1)
-                    .bottom_0()
-                    .right_0()
-                    .child(indicator)
-            }))
+            .children(
+                self.indicator
+                    .map(|indicator| div().z_index(1).child(indicator)),
+            )
     }
 }
