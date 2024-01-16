@@ -478,12 +478,41 @@ impl CollabTitlebarItem {
             .child(
                 Avatar::new(user.avatar_uri.clone())
                     .grayscale(!is_present)
-                    .border_color(if is_speaking {
-                        cx.theme().status().info_border
-                    } else if is_muted {
-                        cx.theme().status().error_border
-                    } else {
-                        Hsla::default()
+                    .when(is_speaking, |avatar| {
+                        avatar.border_color(cx.theme().status().info_border)
+                    })
+                    .when(is_muted, |avatar| {
+                        avatar.indicator(
+                            div()
+                                .absolute()
+                                .bottom(px(-2.))
+                                .right(px(-2.))
+                                .w(rems(12. / 16.))
+                                .h(rems(10. / 16.))
+                                .child(
+                                    h_flex()
+                                        .id("muted-indicator")
+                                        .justify_center()
+                                        .px(px(20.))
+                                        .py(px(2.))
+                                        .bg(cx.theme().status().error_background)
+                                        .rounded_md()
+                                        .child(
+                                            Icon::new(IconName::MicMute)
+                                                .size(IconSize::Indicator)
+                                                .color(Color::Error),
+                                        )
+                                        .tooltip({
+                                            let github_login = user.github_login.clone();
+                                            move |cx| {
+                                                Tooltip::text(
+                                                    format!("{} is muted.", github_login),
+                                                    cx,
+                                                )
+                                            }
+                                        }),
+                                ),
+                        )
                     }),
             )
             .children(followers.iter().filter_map(|follower_peer_id| {
