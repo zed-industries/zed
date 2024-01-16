@@ -486,8 +486,10 @@ impl CollabTitlebarItem {
             .child(
                 Avatar::new(user.avatar_uri.clone())
                     .grayscale(!is_present)
-                    .when(is_speaking, |avatar| {
-                        avatar.border_color(cx.theme().status().info_border)
+                    .border_color(if is_speaking {
+                        cx.theme().status().info_border
+                    } else {
+                        gpui::transparent_black()
                     })
                     .when(is_muted, |avatar| {
                         avatar.indicator(
