@@ -129,6 +129,11 @@ pub enum Event {
         environment: &'static str,
         milliseconds_since_first_event: i64,
     },
+    Action {
+        source: &'static str,
+        action: String,
+        milliseconds_since_first_event: i64,
+    },
 }
 
 #[cfg(debug_assertions)]
@@ -418,6 +423,16 @@ impl Telemetry {
 
             self.report_event(event);
         }
+    }
+
+    pub fn report_action_event(self: &Arc<Self>, source: &'static str, action: String) {
+        let event = Event::Action {
+            source,
+            action,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_event(event)
     }
 
     fn milliseconds_since_first_event(&self) -> i64 {
