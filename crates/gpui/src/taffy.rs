@@ -6,13 +6,16 @@ use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::fmt::Debug;
 use taffy::{
-    AvailableSpace as TaffyAvailableSpace, NodeId, Point as TaffyPoint, Rect as TaffyRect,
-    Size as TaffySize, TaffyTree, TraversePartialTree,
+    geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
+    style::AvailableSpace as TaffyAvailableSpace,
+    tree::NodeId,
+    Taffy,
 };
 
 pub struct TaffyLayoutEngine {
-    tree: TaffyTree,
+    taffy: Taffy,
     styles: FxHashMap<LayoutId, Style>,
+    children_to_parents: FxHashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
     nodes_to_measure: FxHashMap<
@@ -32,8 +35,9 @@ static EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by constructi
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
-            tree: TaffyTree::new(),
+            taffy: Taffy::new(),
             styles: FxHashMap::default(),
+            children_to_parents: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             nodes_to_measure: FxHashMap::default(),
@@ -41,7 +45,8 @@ impl TaffyLayoutEngine {
     }
 
     pub fn clear(&mut self) {
-        self.tree.clear();
+        self.taffy.clear();
+        self.children_to_parents.clear();
         self.absolute_layout_bounds.clear();
         self.computed_layouts.clear();
         self.nodes_to_measure.clear();
@@ -60,16 +65,21 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
         let layout_id = if children.is_empty() {
-            self.tree
+            self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
                 .into()
         } else {
-            self.tree
+            let parent_id = self
+                .taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
                 .new_with_children(taffy_style, unsafe { std::mem::transmute(children) })
                 .expect(EXPECT_MESSAGE)
-                .into()
+                .into();
+            for child_id in children {
+                self.children_to_parents.insert(*child_id, parent_id);
+            }
+            parent_id
         };
         self.styles.insert(layout_id, style.clone());
         layout_id
@@ -86,7 +96,7 @@ impl TaffyLayoutEngine {
         let taffy_style = style.to_taffy(rem_size);
 
         let layout_id = self
-            .tree
+            .taffy
             .new_leaf_with_context(taffy_style, ())
             .expect(EXPECT_MESSAGE)
             .into();
@@ -100,7 +110,7 @@ impl TaffyLayoutEngine {
     fn count_all_children(&self, parent: LayoutId) -> anyhow::Result<u32> {
         let mut count = 0;
 
-        for child in self.tree.children(parent.0)? {
+        for child in self.taffy.children(parent.0)? {
             // Count this child.
             count += 1;
 
@@ -116,12 +126,12 @@ impl TaffyLayoutEngine {
     fn max_depth(&self, depth: u32, parent: LayoutId) -> anyhow::Result<u32> {
         println!(
             "{parent:?} at depth {depth} has {} children",
-            self.tree.child_count(parent.0)
+            self.taffy.child_count(parent.0)?
         );
 
         let mut max_child_depth = 0;
 
-        for child in self.tree.children(parent.0)? {
+        for child in self.taffy.children(parent.0)? {
             max_child_depth = std::cmp::max(max_child_depth, self.max_depth(0, LayoutId(child))?);
         }
 
@@ -133,7 +143,7 @@ impl TaffyLayoutEngine {
     fn get_edges(&self, parent: LayoutId) -> anyhow::Result<Vec<(LayoutId, LayoutId)>> {
         let mut edges = Vec::new();
 
-        for child in self.tree.children(parent.0)? {
+        for child in self.taffy.children(parent.0)? {
             edges.push((parent, LayoutId(child)));
 
             edges.extend(self.get_edges(LayoutId(child))?);
@@ -166,7 +176,7 @@ impl TaffyLayoutEngine {
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
                 stack.extend(
-                    self.tree
+                    self.taffy
                         .children(id.into())
                         .expect(EXPECT_MESSAGE)
                         .into_iter()
@@ -176,7 +186,7 @@ impl TaffyLayoutEngine {
         }
 
         // let started_at = std::time::Instant::now();
-        self.tree
+        self.taffy
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
@@ -203,14 +213,14 @@ impl TaffyLayoutEngine {
             return layout;
         }
 
-        let layout = self.tree.layout(id.into()).expect(EXPECT_MESSAGE);
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         let mut bounds = Bounds {
             origin: layout.location.into(),
             size: layout.size.into(),
         };
 
-        if let Some(parent_id) = self.tree.parent(id.0) {
-            let parent_bounds = self.layout_bounds(parent_id.into());
+        if let Some(parent_id) = self.children_to_parents.get(&id).copied() {
+            let parent_bounds = self.layout_bounds(parent_id);
             bounds.origin += parent_bounds.origin;
         }
         self.absolute_layout_bounds.insert(id, bounds);
