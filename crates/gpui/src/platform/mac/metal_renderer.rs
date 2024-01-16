@@ -14,7 +14,6 @@ use foreign_types::ForeignType;
 use media::core_video::CVMetalTextureCache;
 use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
-use smallvec::SmallVec;
 use std::{ffi::c_void, mem, ptr, sync::Arc};
 
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
@@ -538,7 +537,7 @@ impl MetalRenderer {
         );
 
         let mut prev_texture_id = None;
-        let mut sprites = SmallVec::<[_; 1]>::new();
+        let mut sprites = Vec::new();
         let mut paths_and_tiles = paths
             .iter()
             .map(|path| (path, tiles_by_path_id.get(&path.id).unwrap()))
