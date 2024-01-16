@@ -2288,17 +2288,18 @@ impl EditorElement {
                                 .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
                         }
 
-                        div()
+                        v_flex()
                             .id(("path header container", block_id))
                             .size_full()
-                            .p_1p5()
+                            .justify_center()
+                            .p(gpui::px(6.))
                             .child(
                                 h_flex()
                                     .id("path header block")
-                                    .py_1p5()
-                                    .pl_3()
-                                    .pr_2()
-                                    .rounded_lg()
+                                    .size_full()
+                                    .pl(gpui::px(12.))
+                                    .pr(gpui::px(8.))
+                                    .rounded_md()
                                     .shadow_md()
                                     .border()
                                     .border_color(cx.theme().colors().border)
@@ -2861,6 +2862,7 @@ impl Element for EditorElement {
             cx.with_text_style(
                 Some(gpui::TextStyleRefinement {
                     font_size: Some(self.style.text.font_size),
+                    line_height: Some(self.style.text.line_height),
                     ..Default::default()
                 }),
                 |cx| {
