@@ -27,7 +27,7 @@ impl<V: ModalView> ModalViewHandle for View<V> {
 
 pub struct ActiveModal {
     modal: Box<dyn ModalViewHandle>,
-    _subscription: Subscription,
+    _subscriptions: [Subscription; 2],
     previous_focus_handle: Option<FocusHandle>,
     focus_handle: FocusHandle,
 }
@@ -61,13 +61,19 @@ impl ModalLayer {
     where
         V: ModalView,
     {
+        let focus_handle = cx.focus_handle();
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
-            _subscription: cx.subscribe(&new_modal, |this, _, _: &DismissEvent, cx| {
-                this.hide_modal(cx);
-            }),
+            _subscriptions: [
+                cx.subscribe(&new_modal, |this, _, _: &DismissEvent, cx| {
+                    this.hide_modal(cx);
+                }),
+                cx.on_focus_out(&focus_handle, |this, cx| {
+                    this.hide_modal(cx);
+                }),
+            ],
             previous_focus_handle: cx.focused(),
-            focus_handle: cx.focus_handle(),
+            focus_handle,
         });
         cx.focus_view(&new_modal);
         cx.notify();
@@ -108,7 +114,7 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
             return div();
         };
@@ -127,13 +133,7 @@ impl Render for ModalLayer {
                     .flex_col()
                     .items_center()
                     .track_focus(&active_modal.focus_handle)
-                    .child(
-                        h_flex()
-                            .on_mouse_down_out(cx.listener(|this, _, cx| {
-                                this.hide_modal(cx);
-                            }))
-                            .child(active_modal.modal.view()),
-                    ),
+                    .child(h_flex().child(active_modal.modal.view())),
             )
     }
 }
