@@ -55,13 +55,9 @@ actions!(
 );
 
 #[derive(Default)]
-struct ActiveSearches(HashMap<WeakModel<Project>, WeakView<ProjectSearchView>>);
-
-#[derive(Default)]
 struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 
 pub fn init(cx: &mut AppContext) {
-    cx.set_global(ActiveSearches::default());
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace
@@ -948,25 +944,19 @@ impl ProjectSearchView {
         });
     }
 
-    // Re-activate the most recently activated search or the most recent if it has been closed.
+    // Re-activate the most recently activated search in this pane or the most recent if it has been closed.
     // If no search exists in the workspace, create a new one.
     fn deploy_search(
         workspace: &mut Workspace,
         _: &workspace::DeploySearch,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let active_search = cx
-            .global::<ActiveSearches>()
-            .0
-            .get(&workspace.project().downgrade());
-        let existing = active_search
-            .and_then(|active_search| {
-                workspace
-                    .items_of_type::<ProjectSearchView>(cx)
-                    .filter(|search| &search.downgrade() == active_search)
-                    .last()
-            })
-            .or_else(|| workspace.item_of_type::<ProjectSearchView>(cx));
+        let existing = workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .find_map(|item| item.downcast::<ProjectSearchView>());
+
         Self::existing_or_new_search(workspace, existing, cx)
     }
 
@@ -984,11 +974,6 @@ impl ProjectSearchView {
         existing: Option<View<ProjectSearchView>>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        // Clean up entries for dropped projects
-        cx.update_global(|state: &mut ActiveSearches, _cx| {
-            state.0.retain(|project, _| project.is_upgradable())
-        });
-
         let query = workspace.active_item(cx).and_then(|item| {
             let editor = item.act_as::<Editor>(cx)?;
             let query = editor.query_suggestion(cx);
@@ -1020,6 +1005,7 @@ impl ProjectSearchView {
             workspace.add_item(Box::new(view.clone()), cx);
             view
         };
+
         search.update(cx, |search, cx| {
             if let Some(query) = query {
                 search.set_query(&query, cx);
@@ -3118,6 +3104,7 @@ pub mod tests {
     async fn test_deploy_search_with_multiple_panes(cx: &mut TestAppContext) {
         init_test(cx);
 
+        // Setup 2 panes, both with a file open and one with a project search.
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/dir",
@@ -3176,6 +3163,8 @@ pub mod tests {
                 }
             })
             .unwrap();
+
+        // Add a project search item to the second pane
         window
             .update(cx, {
                 let search_bar = search_bar.clone();
@@ -3195,6 +3184,8 @@ pub mod tests {
         cx.run_until_parked();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 2);
         assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 1);
+
+        // Focus the first pane
         window
             .update(cx, |workspace, cx| {
                 assert_eq!(workspace.active_pane(), &second_pane);
@@ -3213,20 +3204,47 @@ pub mod tests {
                 assert_eq!(second_pane.read(cx).items_len(), 2);
             })
             .unwrap();
+
+        // Deploy a new search
         cx.dispatch_action(window.into(), DeploySearch);
 
-        // We should have same # of items in workspace, the only difference being that
-        // the search we've deployed previously should now be focused.
+        // Both panes should now have a project search in them
         window
             .update(cx, |workspace, cx| {
-                assert_eq!(workspace.active_pane(), &second_pane);
-                second_pane.update(cx, |this, _| {
+                assert_eq!(workspace.active_pane(), &first_pane);
+                first_pane.update(cx, |this, _| {
                     assert_eq!(this.active_item_index(), 1);
                     assert_eq!(this.items_len(), 2);
                 });
-                first_pane.update(cx, |this, cx| {
+                second_pane.update(cx, |this, cx| {
                     assert!(!cx.focus_handle().contains_focused(cx));
-                    assert_eq!(this.items_len(), 1);
+                    assert_eq!(this.items_len(), 2);
+                });
+            })
+            .unwrap();
+
+        // Focus the second pane's non-search item
+        window
+            .update(cx, |_workspace, cx| {
+                second_pane.update(cx, |pane, cx| pane.activate_next_item(true, cx));
+            })
+            .unwrap();
+
+        // Deploy a new search
+        cx.dispatch_action(window.into(), DeploySearch);
+
+        // The project search view should now be focused in the second pane
+        // And the number of items should be unchanged.
+        window
+            .update(cx, |_workspace, cx| {
+                second_pane.update(cx, |pane, _cx| {
+                    assert!(pane
+                        .active_item()
+                        .unwrap()
+                        .downcast::<ProjectSearchView>()
+                        .is_some());
+
+                    assert_eq!(pane.items_len(), 2);
                 });
             })
             .unwrap();
@@ -3236,7 +3254,7 @@ pub mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            cx.set_global(ActiveSearches::default());
+
             SemanticIndexSettings::register(cx);
 
             theme::init(theme::LoadThemes::JustBase, cx);
