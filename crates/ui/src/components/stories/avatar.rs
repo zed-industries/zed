@@ -1,8 +1,8 @@
 use gpui::Render;
 use story::Story;
 
-use crate::prelude::*;
 use crate::Avatar;
+use crate::{prelude::*, Availability, AvatarAvailabilityIndicator};
 
 pub struct AvatarStory;
 
@@ -19,11 +19,11 @@ impl Render for AvatarStory {
             ))
             .child(
                 Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
-                    .availability_indicator(true),
+                    .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
             )
             .child(
                 Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
-                    .availability_indicator(false),
+                    .indicator(AvatarAvailabilityIndicator::new(Availability::Busy)),
             )
     }
 }
