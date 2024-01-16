@@ -1,7 +1,9 @@
 use crate::one_themes::one_dark;
 use crate::{Theme, ThemeRegistry};
 use anyhow::Result;
-use gpui::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
+use gpui::{
+    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
+};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -78,6 +80,13 @@ impl ThemeSettings {
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
+}
+
+pub fn observe_buffer_font_size_adjustment<V: 'static>(
+    cx: &mut ViewContext<V>,
+    f: impl 'static + Fn(&mut V, &mut ViewContext<V>),
+) -> Subscription {
+    cx.observe_global::<AdjustedBufferFontSize>(f)
 }
 
 pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {

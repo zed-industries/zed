@@ -97,7 +97,10 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
-use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
+use theme::{
+    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
+    ThemeColors, ThemeSettings,
+};
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
@@ -1812,6 +1815,7 @@ impl Editor {
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
+                observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                 cx.observe_window_activation(|editor, cx| {
                     let active = cx.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, cx| {
@@ -8741,6 +8745,7 @@ impl Editor {
             )),
             cx,
         );
+        cx.notify();
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
