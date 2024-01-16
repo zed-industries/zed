@@ -484,7 +484,7 @@ impl MacWindow {
 
             let display = options
                 .display_id
-                .and_then(|display_id| MacDisplay::all().find(|display| display.id() == display_id))
+                .and_then(MacDisplay::find_by_id)
                 .unwrap_or_else(MacDisplay::primary);
 
             let mut target_screen = nil;
