@@ -99,20 +99,27 @@ impl RenderOnce for Avatar {
             self = self.shape(AvatarShape::Circle);
         }
 
-        let size = self.size.unwrap_or_else(|| cx.rem_size());
+        let border_width = if self.border_color.is_some() {
+            px(2.)
+        } else {
+            px(0.)
+        };
+
+        let image_size = self.size.unwrap_or_else(|| cx.rem_size());
+        let container_size = image_size + border_width * 2.;
 
         div()
-            .size(size + px(2.))
+            .size(container_size)
             .map(|mut div| {
                 div.style().corner_radii = self.image.style().corner_radii.clone();
                 div
             })
             .when_some(self.border_color, |this, color| {
-                this.border().border_color(color)
+                this.border_width(border_width).border_color(color)
             })
             .child(
                 self.image
-                    .size(size)
+                    .size(image_size)
                     .bg(cx.theme().colors().ghost_element_background),
             )
             .children(
