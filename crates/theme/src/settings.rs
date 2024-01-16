@@ -234,6 +234,10 @@ impl settings::Settings for ThemeSettings {
                     "buffer_font_family".to_owned(),
                     Schema::new_ref("#/definitions/FontFamilies".into()),
                 ),
+                (
+                    "ui_font_family".to_owned(),
+                    Schema::new_ref("#/definitions/FontFamilies".into()),
+                ),
             ]);
 
         root_schema

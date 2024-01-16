@@ -7776,6 +7776,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_derive",
+ "serde_json",
  "settings",
  "shellexpand",
  "smallvec",
