@@ -99,6 +99,7 @@ actions!(
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
         GoBack,
+        DeploySearch,
         GoForward,
         ReopenClosedItem,
         SplitLeft,
