@@ -3882,7 +3882,11 @@ async fn test_select_previous_with_single_caret(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndef«abcˇ»\n«abcˇ»");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
 }
 
 #[gpui::test]

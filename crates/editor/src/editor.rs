@@ -6469,8 +6469,8 @@ impl Editor {
             self.select_next_state = Some(select_next_state);
         } else {
             let mut only_carets = true;
-            let mut same_letters_selected = true;
-            let mut selection_query = None;
+            let mut same_text_selected = true;
+            let mut selected_text = None;
 
             let mut selections_iter = selections.iter().peekable();
             while let Some(selection) = selections_iter.next() {
@@ -6478,24 +6478,24 @@ impl Editor {
                     only_carets = false;
                 }
 
-                if same_letters_selected {
-                    if selection_query.is_none() {
-                        selection_query =
+                if same_text_selected {
+                    if selected_text.is_none() {
+                        selected_text =
                             Some(buffer.text_for_range(selection.range()).collect::<String>());
                     }
 
                     if let Some(next_selection) = selections_iter.peek() {
                         if next_selection.range().len() == selection.range().len() {
-                            let next_query = buffer
+                            let next_selected_text = buffer
                                 .text_for_range(next_selection.range())
                                 .collect::<String>();
-                            if Some(next_query) != selection_query {
-                                same_letters_selected = false;
-                                selection_query = None;
+                            if Some(next_selected_text) != selected_text {
+                                same_text_selected = false;
+                                selected_text = None;
                             }
                         } else {
-                            same_letters_selected = false;
-                            selection_query = None;
+                            same_text_selected = false;
+                            selected_text = None;
                         }
                     }
                 }
@@ -6537,9 +6537,9 @@ impl Editor {
                 } else {
                     self.select_next_state = None;
                 }
-            } else if let Some(query) = selection_query {
+            } else if let Some(selected_text) = selected_text {
                 self.select_next_state = Some(SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
+                    query: AhoCorasick::new(&[selected_text])?,
                     wordwise: false,
                     done: false,
                 });
@@ -6585,7 +6585,6 @@ impl Editor {
         Ok(())
     }
 
-    // TODO kb test both select_next and select_previous
     pub fn select_previous(
         &mut self,
         action: &SelectPrevious,
@@ -6646,8 +6645,8 @@ impl Editor {
             self.select_prev_state = Some(select_prev_state);
         } else {
             let mut only_carets = true;
-            let mut same_letters_selected = true;
-            let mut selection_query = None;
+            let mut same_text_selected = true;
+            let mut selected_text = None;
 
             let mut selections_iter = selections.iter().peekable();
             while let Some(selection) = selections_iter.next() {
@@ -6655,24 +6654,24 @@ impl Editor {
                     only_carets = false;
                 }
 
-                if same_letters_selected {
-                    if selection_query.is_none() {
-                        selection_query =
+                if same_text_selected {
+                    if selected_text.is_none() {
+                        selected_text =
                             Some(buffer.text_for_range(selection.range()).collect::<String>());
                     }
 
                     if let Some(next_selection) = selections_iter.peek() {
                         if next_selection.range().len() == selection.range().len() {
-                            let next_query = buffer
+                            let next_selected_text = buffer
                                 .text_for_range(next_selection.range())
                                 .collect::<String>();
-                            if Some(next_query) != selection_query {
-                                same_letters_selected = false;
-                                selection_query = None;
+                            if Some(next_selected_text) != selected_text {
+                                same_text_selected = false;
+                                selected_text = None;
                             }
                         } else {
-                            same_letters_selected = false;
-                            selection_query = None;
+                            same_text_selected = false;
+                            selected_text = None;
                         }
                     }
                 }
@@ -6698,7 +6697,7 @@ impl Editor {
                         .collect::<String>();
                     let is_empty = query.is_empty();
                     let select_state = SelectNextState {
-                        query: AhoCorasick::new(&[query])?,
+                        query: AhoCorasick::new(&[query.chars().rev().collect::<String>()])?,
                         wordwise: true,
                         done: is_empty,
                     };
@@ -6716,9 +6715,9 @@ impl Editor {
                 self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select(selections);
                 });
-            } else if let Some(query) = selection_query {
+            } else if let Some(selected_text) = selected_text {
                 self.select_prev_state = Some(SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
+                    query: AhoCorasick::new(&[selected_text.chars().rev().collect::<String>()])?,
                     wordwise: false,
                     done: false,
                 });
