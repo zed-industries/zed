@@ -59,14 +59,22 @@ impl TextSystem {
             fallback_font_stack: smallvec![
                 // TODO: This is currently Zed-specific.
                 // We should allow GPUI users to provide their own fallback font stack.
-                font("Zed Sans"),
+                font("Zed Mono"),
                 font("Helvetica")
             ],
         }
     }
 
     pub fn all_font_families(&self) -> Vec<String> {
-        self.platform_text_system.all_font_families()
+        let mut families = self.platform_text_system.all_font_families();
+        families.append(
+            &mut self
+                .fallback_font_stack
+                .iter()
+                .map(|font| font.family.to_string())
+                .collect(),
+        );
+        families
     }
     pub fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.platform_text_system.add_fonts(fonts)
