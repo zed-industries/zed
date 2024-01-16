@@ -1,7 +1,7 @@
 use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
+use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
     actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
@@ -12,7 +12,7 @@ use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto;
 use std::sync::Arc;
-use theme::{ActiveTheme, PlayerColors};
+use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
     IconButton, IconName, TintColor, Tooltip,
