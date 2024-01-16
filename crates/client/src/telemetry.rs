@@ -469,8 +469,6 @@ impl Telemetry {
         let signed_in = state.metrics_id.is_some();
         state.events_queue.push(EventWrapper { signed_in, event });
 
-        dbg!(&state.events_queue.len());
-
         if state.installation_id.is_some() {
             if state.events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
@@ -538,7 +536,6 @@ impl Telemetry {
                             release_channel: state.release_channel,
                             events,
                         };
-                        dbg!("flush", &request_body);
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
