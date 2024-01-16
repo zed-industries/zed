@@ -205,7 +205,7 @@ impl settings::Settings for ThemeSettings {
 
         let available_fonts = cx
             .text_system()
-            .all_font_families()
+            .all_font_names()
             .into_iter()
             .map(Value::String)
             .collect();
@@ -232,6 +232,10 @@ impl settings::Settings for ThemeSettings {
                 ),
                 (
                     "buffer_font_family".to_owned(),
+                    Schema::new_ref("#/definitions/FontFamilies".into()),
+                ),
+                (
+                    "ui_font_family".to_owned(),
                     Schema::new_ref("#/definitions/FontFamilies".into()),
                 ),
             ]);
