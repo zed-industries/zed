@@ -62,6 +62,10 @@ pub enum LoadThemes {
 
 pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::default());
+    match themes_to_load {
+        LoadThemes::JustBase => (),
+        LoadThemes::All => cx.global_mut::<ThemeRegistry>().load_user_themes(),
+    }
     ThemeSettings::register(cx);
 
     let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
@@ -73,11 +77,6 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
         }
     })
     .detach();
-
-    match themes_to_load {
-        LoadThemes::JustBase => (),
-        LoadThemes::All => cx.global_mut::<ThemeRegistry>().load_user_themes(),
-    }
 }
 
 pub trait ActiveTheme {
