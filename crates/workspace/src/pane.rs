@@ -32,10 +32,10 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconName, IconSize, Indicator,
-    Label, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
+    IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
 };
-use ui::{v_stack, ContextMenu};
+use ui::{v_flex, ContextMenu};
 use util::{maybe, truncate_and_remove_front, ResultExt};
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
@@ -59,24 +59,6 @@ pub enum SaveIntent {
 
 #[derive(Clone, Deserialize, PartialEq, Debug)]
 pub struct ActivateItem(pub usize);
-
-// #[derive(Clone, PartialEq)]
-// pub struct CloseItemById {
-//     pub item_id: usize,
-//     pub pane: WeakView<Pane>,
-// }
-
-// #[derive(Clone, PartialEq)]
-// pub struct CloseItemsToTheLeftById {
-//     pub item_id: usize,
-//     pub pane: WeakView<Pane>,
-// }
-
-// #[derive(Clone, PartialEq)]
-// pub struct CloseItemsToTheRightById {
-//     pub item_id: usize,
-//     pub pane: WeakView<Pane>,
-// }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -237,8 +219,8 @@ pub struct NavigationEntry {
 #[derive(Clone)]
 pub struct DraggedTab {
     pub pane: View<Pane>,
+    pub item: Box<dyn ItemHandle>,
     pub ix: usize,
-    pub item_id: EntityId,
     pub detail: usize,
     pub is_active: bool,
 }
@@ -289,7 +271,7 @@ impl Pane {
             custom_drop_handle: None,
             can_split: true,
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-                h_stack()
+                h_flex()
                     .gap_2()
                     .child(
                         IconButton::new("plus", IconName::Plus)
@@ -1226,125 +1208,6 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
-    //     fn deploy_split_menu(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
-    //             menu.toggle(
-    //                 Default::default(),
-    //                 AnchorCorner::TopRight,
-    //                 vec![
-    //                     ContextMenuItem::action("Split Right", SplitRight),
-    //                     ContextMenuItem::action("Split Left", SplitLeft),
-    //                     ContextMenuItem::action("Split Up", SplitUp),
-    //                     ContextMenuItem::action("Split Down", SplitDown),
-    //                 ],
-    //                 cx,
-    //             );
-    //         });
-
-    //         self.tab_bar_context_menu.kind = TabBarContextMenuKind::Split;
-    //     }
-
-    //     fn deploy_new_menu(&mut self, cx: &mut ViewContext<Self>) {
-    //         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
-    //             menu.toggle(
-    //                 Default::default(),
-    //                 AnchorCorner::TopRight,
-    //                 vec![
-    //                     ContextMenuItem::action("New File", NewFile),
-    //                     ContextMenuItem::action("New Terminal", NewCenterTerminal),
-    //                     ContextMenuItem::action("New Search", NewSearch),
-    //                 ],
-    //                 cx,
-    //             );
-    //         });
-
-    //         self.tab_bar_context_menu.kind = TabBarContextMenuKind::New;
-    //     }
-
-    //     fn deploy_tab_context_menu(
-    //         &mut self,
-    //         position: Vector2F,
-    //         target_item_id: usize,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         let active_item_id = self.items[self.active_item_index].id();
-    //         let is_active_item = target_item_id == active_item_id;
-    //         let target_pane = cx.weak_handle();
-
-    //         // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currently, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
-
-    //         self.tab_context_menu.update(cx, |menu, cx| {
-    //             menu.show(
-    //                 position,
-    //                 AnchorCorner::TopLeft,
-    //                 if is_active_item {
-    //                     vec![
-    //                         ContextMenuItem::action(
-    //                             "Close Active Item",
-    //                             CloseActiveItem { save_intent: None },
-    //                         ),
-    //                         ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
-    //                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
-    //                         ContextMenuItem::action("Close Items To The Left", CloseItemsToTheLeft),
-    //                         ContextMenuItem::action("Close Items To The Right", CloseItemsToTheRight),
-    //                         ContextMenuItem::action(
-    //                             "Close All Items",
-    //                             CloseAllItems { save_intent: None },
-    //                         ),
-    //                     ]
-    //                 } else {
-    //                     // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
-    //                     vec![
-    //                         ContextMenuItem::handler("Close Inactive Item", {
-    //                             let pane = target_pane.clone();
-    //                             move |cx| {
-    //                                 if let Some(pane) = pane.upgrade(cx) {
-    //                                     pane.update(cx, |pane, cx| {
-    //                                         pane.close_item_by_id(
-    //                                             target_item_id,
-    //                                             SaveIntent::Close,
-    //                                             cx,
-    //                                         )
-    //                                         .detach_and_log_err(cx);
-    //                                     })
-    //                                 }
-    //                             }
-    //                         }),
-    //                         ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
-    //                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
-    //                         ContextMenuItem::handler("Close Items To The Left", {
-    //                             let pane = target_pane.clone();
-    //                             move |cx| {
-    //                                 if let Some(pane) = pane.upgrade(cx) {
-    //                                     pane.update(cx, |pane, cx| {
-    //                                         pane.close_items_to_the_left_by_id(target_item_id, cx)
-    //                                             .detach_and_log_err(cx);
-    //                                     })
-    //                                 }
-    //                             }
-    //                         }),
-    //                         ContextMenuItem::handler("Close Items To The Right", {
-    //                             let pane = target_pane.clone();
-    //                             move |cx| {
-    //                                 if let Some(pane) = pane.upgrade(cx) {
-    //                                     pane.update(cx, |pane, cx| {
-    //                                         pane.close_items_to_the_right_by_id(target_item_id, cx)
-    //                                             .detach_and_log_err(cx);
-    //                                     })
-    //                                 }
-    //                             }
-    //                         }),
-    //                         ContextMenuItem::action(
-    //                             "Close All Items",
-    //                             CloseAllItems { save_intent: None },
-    //                         ),
-    //                     ]
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-    //     }
-
     pub fn toolbar(&self) -> &View<Toolbar> {
         &self.toolbar
     }
@@ -1447,9 +1310,9 @@ impl Pane {
             )
             .on_drag(
                 DraggedTab {
+                    item: item.boxed_clone(),
                     pane: cx.view().clone(),
                     detail,
-                    item_id,
                     is_active,
                     ix,
                 },
@@ -1478,6 +1341,7 @@ impl Pane {
             .start_slot::<Indicator>(indicator)
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
+                    .shape(IconButtonShape::Square)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
                     .icon_size(IconSize::XSmall)
@@ -1580,7 +1444,7 @@ impl Pane {
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(self.display_nav_history_buttons, |tab_bar| {
                 tab_bar.start_child(
-                    h_stack()
+                    h_flex()
                         .gap_2()
                         .child(
                             IconButton::new("navigate_backward", IconName::ArrowLeft)
@@ -1739,7 +1603,7 @@ impl Pane {
         }
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
-        let item_id = dragged_tab.item_id;
+        let item_id = dragged_tab.item.item_id();
         let from_pane = dragged_tab.pane.clone();
         self.workspace
             .update(cx, |_, cx| {
@@ -1854,7 +1718,7 @@ impl FocusableView for Pane {
 
 impl Render for Pane {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .key_context("Pane")
             .track_focus(&self.focus_handle)
             .size_full()
@@ -2739,8 +2603,7 @@ mod tests {
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        let item = &self.pane.read(cx).items[self.ix];
-        let label = item.tab_content(Some(self.detail), false, cx);
+        let label = self.item.tab_content(Some(self.detail), false, cx);
         Tab::new("")
             .selected(self.is_active)
             .child(label)

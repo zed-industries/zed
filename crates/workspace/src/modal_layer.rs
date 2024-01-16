@@ -2,7 +2,7 @@ use gpui::{
     div, prelude::*, px, AnyView, DismissEvent, FocusHandle, ManagedView, Render, Subscription,
     View, ViewContext, WindowContext,
 };
-use ui::{h_stack, v_stack};
+use ui::{h_flex, v_flex};
 
 pub trait ModalView: ManagedView {
     fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> bool {
@@ -120,7 +120,7 @@ impl Render for ModalLayer {
             .left_0()
             .z_index(169)
             .child(
-                v_stack()
+                v_flex()
                     .h(px(0.0))
                     .top_20()
                     .flex()
@@ -128,7 +128,7 @@ impl Render for ModalLayer {
                     .items_center()
                     .track_focus(&active_modal.focus_handle)
                     .child(
-                        h_stack()
+                        h_flex()
                             .on_mouse_down_out(cx.listener(|this, _, cx| {
                                 this.hide_modal(cx);
                             }))

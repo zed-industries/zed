@@ -9,7 +9,7 @@ use language::{Buffer, OwnedSyntaxLayerInfo};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
-use ui::{h_stack, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
+use ui::{h_flex, popover_menu, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
     item::{Item, ItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -239,7 +239,7 @@ impl SyntaxTreeView {
 
     fn render_node(cursor: &TreeCursor, depth: u32, selected: bool, cx: &AppContext) -> Div {
         let colors = cx.theme().colors();
-        let mut row = h_stack();
+        let mut row = h_flex();
         if let Some(field_name) = cursor.field_name() {
             row = row.children([Label::new(field_name).color(Color::Info), Label::new(": ")]);
         }
@@ -395,6 +395,10 @@ impl Item for SyntaxTreeView {
                 Color::Muted
             })
             .into_any_element()
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
     }
 
     fn clone_on_split(

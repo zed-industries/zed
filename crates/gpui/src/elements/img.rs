@@ -109,7 +109,7 @@ impl Element for Img {
                             } else {
                                 cx.spawn(|mut cx| async move {
                                     if image_future.await.ok().is_some() {
-                                        cx.on_next_frame(|cx| cx.notify());
+                                        cx.on_next_frame(|cx| cx.refresh());
                                     }
                                 })
                                 .detach();

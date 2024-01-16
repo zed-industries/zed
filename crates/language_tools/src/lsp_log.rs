@@ -405,8 +405,14 @@ impl LspLogView {
                     {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
-                            editor.handle_input(entry.trim(), cx);
-                            editor.handle_input("\n", cx);
+                            let last_point = editor.buffer().read(cx).len(cx);
+                            editor.edit(
+                                vec![
+                                    (last_point..last_point, entry.trim()),
+                                    (last_point..last_point, "\n"),
+                                ],
+                                cx,
+                            );
                             editor.set_read_only(true);
                         });
                     }
@@ -449,6 +455,7 @@ impl LspLogView {
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
+            editor.set_show_copilot_suggestions(false);
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -624,6 +631,10 @@ impl Item for LspLogView {
             .into_any_element()
     }
 
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
@@ -784,7 +795,7 @@ impl Render for LspLogToolbarItemView {
                             {
                                 let log_toolbar_view = log_toolbar_view.clone();
                                 move |cx| {
-                                    h_stack()
+                                    h_flex()
                                         .w_full()
                                         .justify_between()
                                         .child(Label::new(RPC_MESSAGES))
@@ -836,7 +847,7 @@ impl Render for LspLogToolbarItemView {
                 .into()
             });
 
-        h_stack().size_full().child(lsp_menu).child(
+        h_flex().size_full().child(lsp_menu).child(
             div()
                 .child(
                     Button::new("clear_log_button", "Clear").on_click(cx.listener(

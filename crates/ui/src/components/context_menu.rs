@@ -1,5 +1,5 @@
 use crate::{
-    h_stack, prelude::*, v_stack, Icon, IconName, KeyBinding, Label, List, ListItem, ListSeparator,
+    h_flex, prelude::*, v_flex, Icon, IconName, KeyBinding, Label, List, ListItem, ListSeparator,
     ListSubHeader,
 };
 use gpui::{
@@ -234,7 +234,7 @@ impl ContextMenuItem {
 impl Render for ContextMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().elevation_2(cx).flex().flex_row().child(
-            v_stack()
+            v_flex()
                 .min_w(px(200.))
                 .track_focus(&self.focus_handle)
                 .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
@@ -277,7 +277,7 @@ impl Render for ContextMenu {
                             let menu = cx.view().downgrade();
 
                             let label_element = if let Some(icon) = icon {
-                                h_stack()
+                                h_flex()
                                     .gap_1()
                                     .child(Label::new(label.clone()))
                                     .child(Icon::new(*icon))
@@ -298,7 +298,7 @@ impl Render for ContextMenu {
                                     .ok();
                                 })
                                 .child(
-                                    h_stack()
+                                    h_flex()
                                         .w_full()
                                         .justify_between()
                                         .child(label_element)

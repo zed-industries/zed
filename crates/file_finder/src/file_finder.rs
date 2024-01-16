@@ -119,7 +119,7 @@ impl FocusableView for FileFinder {
 }
 impl Render for FileFinder {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack().w(rems(34.)).child(self.picker.clone())
+        v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -786,7 +786,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .inset(true)
                 .selected(selected)
                 .child(
-                    v_stack()
+                    v_flex()
                         .child(HighlightedLabel::new(file_name, file_name_positions))
                         .child(HighlightedLabel::new(full_path, full_path_positions)),
                 ),

@@ -11,7 +11,7 @@ impl Render for OverflowScrollStory {
             .child(Story::title("Overflow Scroll"))
             .child(Story::label("`overflow_x_scroll`"))
             .child(
-                h_stack()
+                h_flex()
                     .id("overflow_x_scroll")
                     .gap_2()
                     .overflow_x_scroll()
@@ -24,7 +24,7 @@ impl Render for OverflowScrollStory {
             )
             .child(Story::label("`overflow_y_scroll`"))
             .child(
-                v_stack()
+                v_flex()
                     .id("overflow_y_scroll")
                     .gap_2()
                     .overflow_y_scroll()

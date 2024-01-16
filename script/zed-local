@@ -1,31 +1,44 @@
 #!/usr/bin/env node
 
+const HELP = `
+USAGE
+  zed-local  [options]  [zed args]
+
+OPTIONS
+  --help        Print this help message
+  --release     Build Zed in release mode
+  -2, -3, -4    Spawn 2, 3, or 4 Zed instances, with their windows tiled.
+  --top         Arrange the Zed windows so they take up the top half of the screen.
+`.trim();
+
 const { spawn, execFileSync } = require("child_process");
 
 const RESOLUTION_REGEX = /(\d+) x (\d+)/;
 const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
 
-// Parse the number of Zed instances to spawn.
 let instanceCount = 1;
 let isReleaseMode = false;
 let isTop = false;
 
 const args = process.argv.slice(2);
-for (const arg of args) {
+while (args.length > 0) {
+  const arg = args[0];
+
   const digitMatch = arg.match(DIGIT_FLAG_REGEX);
   if (digitMatch) {
     instanceCount = parseInt(digitMatch[1]);
-    continue;
-  }
-
-  if (arg == "--release") {
+  } else if (arg === "--release") {
     isReleaseMode = true;
-    continue;
+  } else if (arg === "--top") {
+    isTop = true;
+  } else if (arg === "--help") {
+    console.log(HELP);
+    process.exit(0);
+  } else {
+    break;
   }
 
-  if (arg == "--top") {
-    isTop = true;
-  }
+  args.shift();
 }
 
 // Parse the resolution of the main screen

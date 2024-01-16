@@ -35,6 +35,7 @@ menu = { path = "../menu" }
 ui = { path = "../ui", features = ["stories"] }
 util = { path = "../util" }
 picker = { path = "../picker" }
+ctrlc = "3.4"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

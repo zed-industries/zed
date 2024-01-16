@@ -97,10 +97,13 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{OffsetUtf16, Rope};
-use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
+use theme::{
+    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
+    ThemeColors, ThemeSettings,
+};
 use ui::{
-    h_stack, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem,
-    Popover, Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
+    Tooltip,
 };
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{searchable::SearchEvent, ItemNavHistory, Pane, SplitDirection, ViewId, Workspace};
@@ -604,6 +607,7 @@ pub struct Editor {
     gutter_width: Pixels,
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
+    show_copilot_suggestions: bool,
 }
 
 pub struct EditorSnapshot {
@@ -1263,7 +1267,7 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        h_stack().ml_4().child(
+                                        h_flex().ml_4().child(
                                             Label::new(text.clone())
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted),
@@ -1289,7 +1293,7 @@ impl CompletionsMenu {
                                         )
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
-                                .child(h_stack().overflow_hidden().child(completion_label))
+                                .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Div>(documentation_label),
                         )
                     })
@@ -1804,12 +1808,14 @@ impl Editor {
             gutter_width: Default::default(),
             style: None,
             editor_actions: Default::default(),
+            show_copilot_suggestions: mode == EditorMode::Full,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
+                observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                 cx.observe_window_activation(|editor, cx| {
                     let active = cx.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, cx| {
@@ -1955,17 +1961,21 @@ impl Editor {
         }
     }
 
-    //     pub fn language_at<'a, T: ToOffset>(
-    //         &self,
-    //         point: T,
-    //         cx: &'a AppContext,
-    //     ) -> Option<Arc<Language>> {
-    //         self.buffer.read(cx).language_at(point, cx)
-    //     }
+    pub fn language_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<Arc<Language>> {
+        self.buffer.read(cx).language_at(point, cx)
+    }
 
-    //     pub fn file_at<'a, T: ToOffset>(&self, point: T, cx: &'a AppContext) -> Option<Arc<dyn File>> {
-    //         self.buffer.read(cx).read(cx).file_at(point).cloned()
-    //     }
+    pub fn file_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<Arc<dyn language::File>> {
+        self.buffer.read(cx).read(cx).file_at(point).cloned()
+    }
 
     pub fn active_excerpt(
         &self,
@@ -1975,15 +1985,6 @@ impl Editor {
             .read(cx)
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
-
-    //     pub fn style(&self, cx: &AppContext) -> EditorStyle {
-    //         build_style(
-    //             settings::get::<ThemeSettings>(cx),
-    //             self.get_field_editor_theme.as_deref(),
-    //             self.override_text_style.as_deref(),
-    //             cx,
-    //         )
-    //     }
 
     pub fn mode(&self) -> EditorMode {
         self.mode
@@ -2069,6 +2070,10 @@ impl Editor {
 
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
+        self.show_copilot_suggestions = show_copilot_suggestions;
     }
 
     fn selections_did_change(
@@ -3981,7 +3986,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         let copilot = Copilot::global(cx)?;
-        if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
+        if !self.show_copilot_suggestions || !copilot.read(cx).status().is_authorized() {
             self.clear_copilot_suggestions(cx);
             return None;
         }
@@ -4041,7 +4046,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         let copilot = Copilot::global(cx)?;
-        if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
+        if !self.show_copilot_suggestions || !copilot.read(cx).status().is_authorized() {
             return None;
         }
 
@@ -4166,7 +4171,8 @@ impl Editor {
         let file = snapshot.file_at(location);
         let language = snapshot.language_at(location);
         let settings = all_language_settings(file, cx);
-        settings.copilot_enabled(language, file.map(|f| f.path().as_ref()))
+        self.show_copilot_suggestions
+            && settings.copilot_enabled(language, file.map(|f| f.path().as_ref()))
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
@@ -4511,7 +4517,7 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        if self.move_to_next_snippet_tabstop(cx) {
+        if self.move_to_next_snippet_tabstop(cx) || self.read_only(cx) {
             return;
         }
 
@@ -5443,6 +5449,10 @@ impl Editor {
     }
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         self.transact(cx, |this, cx| {
             if let Some(item) = cx.read_from_clipboard() {
                 let clipboard_text = Cow::Borrowed(item.text());
@@ -5515,6 +5525,10 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.change_selections(None, cx, |s| {
@@ -5529,6 +5543,10 @@ impl Editor {
     }
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
             {
@@ -6453,42 +6471,79 @@ impl Editor {
             }
 
             self.select_next_state = Some(select_next_state);
-        } else if selections.len() == 1 {
-            let selection = selections.last_mut().unwrap();
-            if selection.start == selection.end {
-                let word_range = movement::surrounding_word(
-                    &display_map,
-                    selection.start.to_display_point(&display_map),
-                );
-                selection.start = word_range.start.to_offset(&display_map, Bias::Left);
-                selection.end = word_range.end.to_offset(&display_map, Bias::Left);
-                selection.goal = SelectionGoal::None;
-                selection.reversed = false;
+        } else {
+            let mut only_carets = true;
+            let mut same_text_selected = true;
+            let mut selected_text = None;
 
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
+            let mut selections_iter = selections.iter().peekable();
+            while let Some(selection) = selections_iter.next() {
+                if selection.start != selection.end {
+                    only_carets = false;
+                }
 
-                let is_empty = query.is_empty();
-                let select_state = SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
-                    wordwise: true,
-                    done: is_empty,
-                };
-                select_next_match_ranges(
-                    self,
-                    selection.start..selection.end,
-                    replace_newest,
-                    autoscroll,
-                    cx,
-                );
-                self.select_next_state = Some(select_state);
-            } else {
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
+                if same_text_selected {
+                    if selected_text.is_none() {
+                        selected_text =
+                            Some(buffer.text_for_range(selection.range()).collect::<String>());
+                    }
+
+                    if let Some(next_selection) = selections_iter.peek() {
+                        if next_selection.range().len() == selection.range().len() {
+                            let next_selected_text = buffer
+                                .text_for_range(next_selection.range())
+                                .collect::<String>();
+                            if Some(next_selected_text) != selected_text {
+                                same_text_selected = false;
+                                selected_text = None;
+                            }
+                        } else {
+                            same_text_selected = false;
+                            selected_text = None;
+                        }
+                    }
+                }
+            }
+
+            if only_carets {
+                for selection in &mut selections {
+                    let word_range = movement::surrounding_word(
+                        &display_map,
+                        selection.start.to_display_point(&display_map),
+                    );
+                    selection.start = word_range.start.to_offset(&display_map, Bias::Left);
+                    selection.end = word_range.end.to_offset(&display_map, Bias::Left);
+                    selection.goal = SelectionGoal::None;
+                    selection.reversed = false;
+                    select_next_match_ranges(
+                        self,
+                        selection.start..selection.end,
+                        replace_newest,
+                        autoscroll,
+                        cx,
+                    );
+                }
+
+                if selections.len() == 1 {
+                    let selection = selections
+                        .last()
+                        .expect("ensured that there's only one selection");
+                    let query = buffer
+                        .text_for_range(selection.start..selection.end)
+                        .collect::<String>();
+                    let is_empty = query.is_empty();
+                    let select_state = SelectNextState {
+                        query: AhoCorasick::new(&[query])?,
+                        wordwise: true,
+                        done: is_empty,
+                    };
+                    self.select_next_state = Some(select_state);
+                } else {
+                    self.select_next_state = None;
+                }
+            } else if let Some(selected_text) = selected_text {
                 self.select_next_state = Some(SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
+                    query: AhoCorasick::new(&[selected_text])?,
                     wordwise: false,
                     done: false,
                 });
@@ -6592,39 +6647,81 @@ impl Editor {
             }
 
             self.select_prev_state = Some(select_prev_state);
-        } else if selections.len() == 1 {
-            let selection = selections.last_mut().unwrap();
-            if selection.start == selection.end {
-                let word_range = movement::surrounding_word(
-                    &display_map,
-                    selection.start.to_display_point(&display_map),
-                );
-                selection.start = word_range.start.to_offset(&display_map, Bias::Left);
-                selection.end = word_range.end.to_offset(&display_map, Bias::Left);
-                selection.goal = SelectionGoal::None;
-                selection.reversed = false;
+        } else {
+            let mut only_carets = true;
+            let mut same_text_selected = true;
+            let mut selected_text = None;
 
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
-                let query = query.chars().rev().collect::<String>();
-                let select_state = SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
-                    wordwise: true,
-                    done: false,
-                };
-                self.unfold_ranges([selection.start..selection.end], false, true, cx);
+            let mut selections_iter = selections.iter().peekable();
+            while let Some(selection) = selections_iter.next() {
+                if selection.start != selection.end {
+                    only_carets = false;
+                }
+
+                if same_text_selected {
+                    if selected_text.is_none() {
+                        selected_text =
+                            Some(buffer.text_for_range(selection.range()).collect::<String>());
+                    }
+
+                    if let Some(next_selection) = selections_iter.peek() {
+                        if next_selection.range().len() == selection.range().len() {
+                            let next_selected_text = buffer
+                                .text_for_range(next_selection.range())
+                                .collect::<String>();
+                            if Some(next_selected_text) != selected_text {
+                                same_text_selected = false;
+                                selected_text = None;
+                            }
+                        } else {
+                            same_text_selected = false;
+                            selected_text = None;
+                        }
+                    }
+                }
+            }
+
+            if only_carets {
+                for selection in &mut selections {
+                    let word_range = movement::surrounding_word(
+                        &display_map,
+                        selection.start.to_display_point(&display_map),
+                    );
+                    selection.start = word_range.start.to_offset(&display_map, Bias::Left);
+                    selection.end = word_range.end.to_offset(&display_map, Bias::Left);
+                    selection.goal = SelectionGoal::None;
+                    selection.reversed = false;
+                }
+                if selections.len() == 1 {
+                    let selection = selections
+                        .last()
+                        .expect("ensured that there's only one selection");
+                    let query = buffer
+                        .text_for_range(selection.start..selection.end)
+                        .collect::<String>();
+                    let is_empty = query.is_empty();
+                    let select_state = SelectNextState {
+                        query: AhoCorasick::new(&[query.chars().rev().collect::<String>()])?,
+                        wordwise: true,
+                        done: is_empty,
+                    };
+                    self.select_prev_state = Some(select_state);
+                } else {
+                    self.select_prev_state = None;
+                }
+
+                self.unfold_ranges(
+                    selections.iter().map(|s| s.range()).collect::<Vec<_>>(),
+                    false,
+                    true,
+                    cx,
+                );
                 self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select(selections);
                 });
-                self.select_prev_state = Some(select_state);
-            } else {
-                let query = buffer
-                    .text_for_range(selection.start..selection.end)
-                    .collect::<String>();
-                let query = query.chars().rev().collect::<String>();
+            } else if let Some(selected_text) = selected_text {
                 self.select_prev_state = Some(SelectNextState {
-                    query: AhoCorasick::new(&[query])?,
+                    query: AhoCorasick::new(&[selected_text.chars().rev().collect::<String>()])?,
                     wordwise: false,
                     done: false,
                 });
@@ -8727,6 +8824,7 @@ impl Editor {
             )),
             cx,
         );
+        cx.notify();
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -9733,7 +9831,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let group_id: SharedString = cx.block_id.to_string().into();
         // TODO: Nate: We should tint the background of the block with the severity color
         // We need to extend the theme before we can do this
-        h_stack()
+        h_flex()
             .id(cx.block_id)
             .group(group_id.clone())
             .relative()

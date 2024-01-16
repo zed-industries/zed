@@ -57,7 +57,7 @@ impl CopilotCodeVerification {
             .read_from_clipboard()
             .map(|item| item.text() == &data.user_code)
             .unwrap_or(false);
-        h_stack()
+        h_flex()
             .w_full()
             .p_1()
             .border()
@@ -69,7 +69,7 @@ impl CopilotCodeVerification {
                 let user_code = data.user_code.clone();
                 move |_, cx| {
                     cx.write_to_clipboard(ClipboardItem::new(user_code.clone()));
-                    cx.notify();
+                    cx.refresh();
                 }
             })
             .child(div().flex_1().child(Label::new(data.user_code.clone())))
@@ -90,7 +90,7 @@ impl CopilotCodeVerification {
         } else {
             "Connect to Github"
         };
-        v_stack()
+        v_flex()
             .flex_1()
             .gap_2()
             .items_center()
@@ -118,7 +118,7 @@ impl CopilotCodeVerification {
             )
     }
     fn render_enabled_modal(cx: &mut ViewContext<Self>) -> impl Element {
-        v_stack()
+        v_flex()
             .gap_2()
             .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
             .child(Label::new(
@@ -132,7 +132,7 @@ impl CopilotCodeVerification {
     }
 
     fn render_unauthorized_modal() -> impl Element {
-        v_stack()
+        v_flex()
             .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
 
             .child(Label::new(
@@ -163,7 +163,7 @@ impl Render for CopilotCodeVerification {
             _ => div().into_any_element(),
         };
 
-        v_stack()
+        v_flex()
             .id("copilot code verification")
             .elevation_3(cx)
             .w_96()

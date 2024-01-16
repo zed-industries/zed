@@ -36,17 +36,17 @@ impl ContactFinder {
 
 impl Render for ContactFinder {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .elevation_3(cx)
             .child(
-                v_stack()
+                v_flex()
                     .px_2()
                     .py_1()
                     .bg(cx.theme().colors().element_background)
                     // HACK: Prevent the background color from overflowing the parent container.
                     .rounded_t(px(8.))
                     .child(Label::new("Contacts"))
-                    .child(h_stack().child(Label::new("Invite new contacts"))),
+                    .child(h_flex().child(Label::new("Invite new contacts"))),
             )
             .child(self.picker.clone())
             .w(rems(34.))

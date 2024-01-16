@@ -1271,7 +1271,9 @@ impl Workspace {
     }
 
     pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        self.client().telemetry().report_app_event("open project");
+        self.client()
+            .telemetry()
+            .report_app_event("open project".to_string());
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -1776,6 +1778,12 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        if let Some(text) = item.telemetry_event_text(cx) {
+            self.client()
+                .telemetry()
+                .report_app_event(format!("{}: open", text));
+        }
+
         self.active_pane
             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
     }
@@ -2250,17 +2258,16 @@ impl Workspace {
         destination_index: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let item_to_move = source
+        let Some((item_ix, item_handle)) = source
             .read(cx)
             .items()
             .enumerate()
-            .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move);
-
-        if item_to_move.is_none() {
-            log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
+            .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
+        else {
+            // Tab was closed during drag
             return;
-        }
-        let (item_ix, item_handle) = item_to_move.unwrap();
+        };
+
         let item_handle = item_handle.clone();
 
         if source != destination {
@@ -3324,36 +3331,6 @@ impl Workspace {
         workspace
     }
 
-    //     fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
-    //         let dock = match position {
-    //             DockPosition::Left => &self.left_dock,
-    //             DockPosition::Right => &self.right_dock,
-    //             DockPosition::Bottom => &self.bottom_dock,
-    //         };
-    //         let active_panel = dock.read(cx).visible_panel()?;
-    //         let element = if Some(active_panel.id()) == self.zoomed.as_ref().map(|zoomed| zoomed.id()) {
-    //             dock.read(cx).render_placeholder(cx)
-    //         } else {
-    //             ChildView::new(dock, cx).into_any()
-    //         };
-
-    //         Some(
-    //             element
-    //                 .constrained()
-    //                 .dynamically(move |constraint, _, cx| match position {
-    //                     DockPosition::Left | DockPosition::Right => SizeConstraint::new(
-    //                         Vector2F::new(20., constraint.min.y()),
-    //                         Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
-    //                     ),
-    //                     DockPosition::Bottom => SizeConstraint::new(
-    //                         Vector2F::new(constraint.min.x(), 20.),
-    //                         Vector2F::new(constraint.max.x(), cx.window_size().y() * 0.8),
-    //                     ),
-    //                 })
-    //                 .into_any(),
-    //         )
-    //     }
-    // }
     pub fn register_action<A: Action>(
         &mut self,
         callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,

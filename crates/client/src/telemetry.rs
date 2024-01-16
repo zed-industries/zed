@@ -14,6 +14,8 @@ use sysinfo::{
 };
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
+#[cfg(not(debug_assertions))]
+use util::ResultExt;
 use util::{channel::ReleaseChannel, TryFutureExt};
 
 use self::event_coalescer::EventCoalescer;
@@ -114,7 +116,7 @@ pub enum Event {
         milliseconds_since_first_event: i64,
     },
     App {
-        operation: &'static str,
+        operation: String,
         milliseconds_since_first_event: i64,
     },
     Setting {
@@ -125,6 +127,11 @@ pub enum Event {
     Edit {
         duration: i64,
         environment: &'static str,
+        milliseconds_since_first_event: i64,
+    },
+    Action {
+        source: &'static str,
+        action: String,
         milliseconds_since_first_event: i64,
     },
 }
@@ -167,6 +174,20 @@ impl Telemetry {
             event_coalescer: EventCoalescer::new(),
         }));
 
+        #[cfg(not(debug_assertions))]
+        cx.background_executor()
+            .spawn({
+                let state = state.clone();
+                async move {
+                    if let Some(tempfile) =
+                        NamedTempFile::new_in(util::paths::CONFIG_DIR.as_path()).log_err()
+                    {
+                        state.lock().log_file = Some(tempfile);
+                    }
+                }
+            })
+            .detach();
+
         cx.observe_global::<SettingsStore>({
             let state = state.clone();
 
@@ -203,7 +224,7 @@ impl Telemetry {
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
-        self.report_app_event("close");
+        self.report_app_event("close".to_string());
         // TODO: close final edit period and make sure it's sent
         Task::ready(())
     }
@@ -369,7 +390,7 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: &'static str) {
+    pub fn report_app_event(self: &Arc<Self>, operation: String) {
         let event = Event::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
@@ -388,20 +409,6 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    fn milliseconds_since_first_event(&self) -> i64 {
-        let mut state = self.state.lock();
-        match state.first_event_datetime {
-            Some(first_event_datetime) => {
-                let now: DateTime<Utc> = Utc::now();
-                now.timestamp_millis() - first_event_datetime.timestamp_millis()
-            }
-            None => {
-                state.first_event_datetime = Some(Utc::now());
-                0
-            }
-        }
-    }
-
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
@@ -415,6 +422,31 @@ impl Telemetry {
             };
 
             self.report_event(event);
+        }
+    }
+
+    pub fn report_action_event(self: &Arc<Self>, source: &'static str, action: String) {
+        let event = Event::Action {
+            source,
+            action,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_event(event)
+    }
+
+    fn milliseconds_since_first_event(&self) -> i64 {
+        let mut state = self.state.lock();
+
+        match state.first_event_datetime {
+            Some(first_event_datetime) => {
+                let now: DateTime<Utc> = Utc::now();
+                now.timestamp_millis() - first_event_datetime.timestamp_millis()
+            }
+            None => {
+                state.first_event_datetime = Some(Utc::now());
+                0
+            }
         }
     }
 

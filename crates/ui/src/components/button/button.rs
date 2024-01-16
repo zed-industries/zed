@@ -362,7 +362,7 @@ impl RenderOnce for Button {
         };
 
         self.base.child(
-            h_stack()
+            h_flex()
                 .gap_1()
                 .when(self.icon_position == Some(IconPosition::Start), |this| {
                     this.children(self.icon.map(|icon| {
@@ -375,7 +375,7 @@ impl RenderOnce for Button {
                     }))
                 })
                 .child(
-                    h_stack()
+                    h_flex()
                         .gap_2()
                         .justify_between()
                         .child(

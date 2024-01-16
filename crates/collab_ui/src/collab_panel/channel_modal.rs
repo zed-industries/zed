@@ -152,19 +152,19 @@ impl Render for ChannelModal {
         let visibility = channel.visibility;
         let mode = self.picker.read(cx).delegate.mode;
 
-        v_stack()
+        v_flex()
             .key_context("ChannelModal")
             .on_action(cx.listener(Self::toggle_mode))
             .on_action(cx.listener(Self::dismiss))
             .elevation_3(cx)
             .w(rems(34.))
             .child(
-                v_stack()
+                v_flex()
                     .px_2()
                     .py_1()
                     .gap_2()
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_px()
                             .flex_1()
                             .gap_1()
@@ -172,13 +172,13 @@ impl Render for ChannelModal {
                             .child(Label::new(channel_name)),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_full()
                             .h(rems(22. / 16.))
                             .justify_between()
                             .line_height(rems(1.25))
                             .child(
-                                h_stack()
+                                h_flex()
                                     .gap_2()
                                     .child(
                                         Checkbox::new(
@@ -212,7 +212,7 @@ impl Render for ChannelModal {
                             ),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .child(
                                 div()
                                     .id("manage-members")
@@ -391,7 +391,7 @@ impl PickerDelegate for ChannelModalDelegate {
                 .selected(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
                 .child(Label::new(user.github_login.clone()))
-                .end_slot(h_stack().gap_2().map(|slot| {
+                .end_slot(h_flex().gap_2().map(|slot| {
                     match self.mode {
                         Mode::ManageMembers => slot
                             .children(

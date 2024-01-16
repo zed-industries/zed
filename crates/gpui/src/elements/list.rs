@@ -43,6 +43,7 @@ pub enum ListAlignment {
 pub struct ListScrollEvent {
     pub visible_range: Range<usize>,
     pub count: usize,
+    pub is_scrolled: bool,
 }
 
 #[derive(Clone)]
@@ -253,12 +254,13 @@ impl StateInner {
                 &ListScrollEvent {
                     visible_range,
                     count: self.items.summary().count,
+                    is_scrolled: self.logical_scroll_top.is_some(),
                 },
                 cx,
             );
         }
 
-        cx.notify();
+        cx.refresh();
     }
 
     fn logical_scroll_top(&self) -> ListOffset {

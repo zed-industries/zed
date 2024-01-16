@@ -255,8 +255,8 @@ impl Story {
             .child(label.into())
     }
 
-    /// Note: Not ui::v_stack() as the story crate doesn't depend on the ui crate.
-    pub fn v_stack() -> Div {
+    /// Note: Not `ui::v_flex` as the `story` crate doesn't depend on the `ui` crate.
+    pub fn v_flex() -> Div {
         div().flex().flex_col().gap_1()
     }
 }
@@ -298,7 +298,7 @@ impl RenderOnce for StoryItem {
             .gap_4()
             .w_full()
             .child(
-                Story::v_stack()
+                Story::v_flex()
                     .px_2()
                     .w_1_2()
                     .min_h_px()
@@ -319,7 +319,7 @@ impl RenderOnce for StoryItem {
                     }),
             )
             .child(
-                Story::v_stack()
+                Story::v_flex()
                     .px_2()
                     .flex_none()
                     .w_1_2()

@@ -20,7 +20,7 @@ mod user_theme;
 
 use std::sync::Arc;
 
-use ::settings::Settings;
+use ::settings::{Settings, SettingsStore};
 pub use default_colors::*;
 pub use default_theme::*;
 pub use registry::*;
@@ -62,13 +62,21 @@ pub enum LoadThemes {
 
 pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::default());
-
     match themes_to_load {
         LoadThemes::JustBase => (),
         LoadThemes::All => cx.global_mut::<ThemeRegistry>().load_user_themes(),
     }
-
     ThemeSettings::register(cx);
+
+    let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+        if buffer_font_size != prev_buffer_font_size {
+            prev_buffer_font_size = buffer_font_size;
+            reset_font_size(cx);
+        }
+    })
+    .detach();
 }
 
 pub trait ActiveTheme {

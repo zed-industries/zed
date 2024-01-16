@@ -4,7 +4,7 @@ use gpui::{
     WindowContext,
 };
 use ui::prelude::*;
-use ui::{h_stack, v_stack};
+use ui::{h_flex, v_flex};
 
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
@@ -103,18 +103,18 @@ impl Render for Toolbar {
         let has_left_items = self.left_items().count() > 0;
         let has_right_items = self.right_items().count() > 0;
 
-        v_stack()
+        v_flex()
             .p_2()
             .when(has_left_items || has_right_items, |this| this.gap_2())
             .border_b()
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().toolbar_background)
             .child(
-                h_stack()
+                h_flex()
                     .justify_between()
                     .when(has_left_items, |this| {
                         this.child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 .justify_start()
                                 .children(self.left_items().map(|item| item.to_any())),
@@ -122,7 +122,7 @@ impl Render for Toolbar {
                     })
                     .when(has_right_items, |this| {
                         this.child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 .justify_end()
                                 .children(self.right_items().map(|item| item.to_any())),

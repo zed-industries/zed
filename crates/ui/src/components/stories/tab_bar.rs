@@ -35,7 +35,7 @@ impl Render for TabBarStory {
             .child(Story::title_for::<TabBar>())
             .child(Story::label("Default"))
             .child(
-                h_stack().child(
+                h_flex().child(
                     TabBar::new("tab_bar_1")
                         .start_child(
                             IconButton::new("navigate_backward", IconName::ArrowLeft)

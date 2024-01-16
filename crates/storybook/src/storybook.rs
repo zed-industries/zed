@@ -21,11 +21,6 @@ use crate::assets::Assets;
 use crate::story_selector::{ComponentStory, StorySelector};
 pub use indoc::indoc;
 
-// gpui::actions! {
-//     storybook,
-//     [ToggleInspector]
-// }
-
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -49,11 +44,17 @@ fn main() {
     let story_selector = args.story.clone().unwrap_or_else(|| {
         let stories = ComponentStory::iter().collect::<Vec<_>>();
 
-        let selection = FuzzySelect::new()
+        ctrlc::set_handler(move || {}).unwrap();
+
+        let result = FuzzySelect::new()
             .with_prompt("Choose a story to run:")
             .items(&stories)
-            .interact()
-            .unwrap();
+            .interact();
+
+        let Ok(selection) = result else {
+            dialoguer::console::Term::stderr().show_cursor().unwrap();
+            std::process::exit(0);
+        };
 
         StorySelector::Component(stories[selection])
     });

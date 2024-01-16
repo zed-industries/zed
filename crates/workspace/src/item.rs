@@ -114,6 +114,8 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     }
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
 
+    fn telemetry_event_text(&self) -> Option<&'static str>;
+
     /// (model id, Item)
     fn for_each_project_item(
         &self,
@@ -225,6 +227,7 @@ pub trait ItemHandle: 'static + Send {
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
@@ -311,6 +314,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
+    }
+
+    fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str> {
+        self.read(cx).telemetry_event_text()
     }
 
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
@@ -809,27 +816,6 @@ pub mod test {
         Edit,
     }
 
-    // impl Clone for TestItem {
-    //     fn clone(&self) -> Self {
-    //         Self {
-    //             state: self.state.clone(),
-    //             label: self.label.clone(),
-    //             save_count: self.save_count,
-    //             save_as_count: self.save_as_count,
-    //             reload_count: self.reload_count,
-    //             is_dirty: self.is_dirty,
-    //             is_singleton: self.is_singleton,
-    //             has_conflict: self.has_conflict,
-    //             project_items: self.project_items.clone(),
-    //             nav_history: None,
-    //             tab_descriptions: None,
-    //             tab_detail: Default::default(),
-    //             workspace_id: self.workspace_id,
-    //             focus_handle: self.focus_handle.clone(),
-    //         }
-    //     }
-    // }
-
     impl TestProjectItem {
         pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Model<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
@@ -941,6 +927,10 @@ pub mod test {
                 let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
                 Some(description.into())
             })
+        }
+
+        fn telemetry_event_text(&self) -> Option<&'static str> {
+            None
         }
 
         fn tab_content(

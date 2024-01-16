@@ -1,7 +1,9 @@
 use crate::one_themes::one_dark;
 use crate::{Theme, ThemeRegistry};
 use anyhow::Result;
-use gpui::{px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels};
+use gpui::{
+    px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
+};
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -78,6 +80,13 @@ impl ThemeSettings {
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
+}
+
+pub fn observe_buffer_font_size_adjustment<V: 'static>(
+    cx: &mut ViewContext<V>,
+    f: impl 'static + Fn(&mut V, &mut ViewContext<V>),
+) -> Subscription {
+    cx.observe_global::<AdjustedBufferFontSize>(f)
 }
 
 pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
@@ -194,9 +203,21 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
-        root_schema
-            .definitions
-            .extend([("ThemeName".into(), theme_name_schema.into())]);
+        let available_fonts = cx
+            .text_system()
+            .all_font_families()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        let fonts_schema = SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            enum_values: Some(available_fonts),
+            ..Default::default()
+        };
+        root_schema.definitions.extend([
+            ("ThemeName".into(), theme_name_schema.into()),
+            ("FontFamilies".into(), fonts_schema.into()),
+        ]);
 
         root_schema
             .schema
@@ -204,10 +225,16 @@ impl settings::Settings for ThemeSettings {
             .as_mut()
             .unwrap()
             .properties
-            .extend([(
-                "theme".to_owned(),
-                Schema::new_ref("#/definitions/ThemeName".into()),
-            )]);
+            .extend([
+                (
+                    "theme".to_owned(),
+                    Schema::new_ref("#/definitions/ThemeName".into()),
+                ),
+                (
+                    "buffer_font_family".to_owned(),
+                    Schema::new_ref("#/definitions/FontFamilies".into()),
+                ),
+            ]);
 
         root_schema
     }

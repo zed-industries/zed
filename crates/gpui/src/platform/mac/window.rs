@@ -1,6 +1,6 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, DrawWindow, ExternalPaths,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
     FileDropEvent, ForegroundExecutor, GlobalPixels, InputEvent, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
@@ -46,7 +46,6 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -318,8 +317,8 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     renderer: MetalRenderer,
-    draw: Option<DrawWindow>,
     kind: WindowKind,
+    request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(InputEvent) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -455,7 +454,6 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         options: WindowOptions,
-        draw: DrawWindow,
         executor: ForegroundExecutor,
     ) -> Self {
         unsafe {
@@ -486,7 +484,7 @@ impl MacWindow {
 
             let display = options
                 .display_id
-                .and_then(|display_id| MacDisplay::all().find(|display| display.id() == display_id))
+                .and_then(MacDisplay::find_by_id)
                 .unwrap_or_else(MacDisplay::primary);
 
             let mut target_screen = nil;
@@ -547,8 +545,8 @@ impl MacWindow {
                 executor,
                 native_window,
                 renderer: MetalRenderer::new(true),
-                draw: Some(draw),
                 kind: options.kind,
+                request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
                 resize_callback: None,
@@ -770,8 +768,8 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
-    fn clear_input_handler(&mut self) {
-        self.0.as_ref().lock().input_handler = None;
+    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>> {
+        self.0.as_ref().lock().input_handler.take()
     }
 
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {
@@ -926,6 +924,10 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().request_frame_callback = Some(callback);
+    }
+
     fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {
         self.0.as_ref().lock().event_callback = Some(callback);
     }
@@ -988,6 +990,11 @@ impl PlatformWindow for MacWindow {
         unsafe {
             let _: () = msg_send![this.native_window.contentView(), setNeedsDisplay: YES];
         }
+    }
+
+    fn draw(&self, scene: &crate::Scene) {
+        let mut this = self.0.lock();
+        this.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1437,15 +1444,12 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
-    unsafe {
-        let window_state = get_window_state(this);
-        let mut draw = window_state.lock().draw.take().unwrap();
-        let scene = draw().log_err();
-        let mut window_state = window_state.lock();
-        window_state.draw = Some(draw);
-        if let Some(scene) = scene {
-            window_state.renderer.draw(&scene);
-        }
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.lock();
+    if let Some(mut callback) = lock.request_frame_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().request_frame_callback = Some(callback);
     }
 }
 

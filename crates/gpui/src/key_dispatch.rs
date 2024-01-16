@@ -1,12 +1,13 @@
 use crate::{
-    arena::ArenaRef, Action, ActionRegistry, DispatchPhase, FocusId, KeyBinding, KeyContext,
-    KeyMatch, Keymap, Keystroke, KeystrokeMatcher, WindowContext,
+    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, KeyMatch,
+    Keymap, Keystroke, KeystrokeMatcher, WindowContext,
 };
-use collections::HashMap;
+use collections::FxHashMap;
 use parking_lot::Mutex;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::{
     any::{Any, TypeId},
+    mem,
     rc::Rc,
     sync::Arc,
 };
@@ -18,8 +19,9 @@ pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
     nodes: Vec<DispatchNode>,
-    focusable_node_ids: HashMap<FocusId, DispatchNodeId>,
-    keystroke_matchers: HashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
+    focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
+    view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
+    keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Arc<Mutex<Keymap>>,
     action_registry: Rc<ActionRegistry>,
 }
@@ -30,15 +32,16 @@ pub(crate) struct DispatchNode {
     pub action_listeners: Vec<DispatchActionListener>,
     pub context: Option<KeyContext>,
     focus_id: Option<FocusId>,
+    view_id: Option<EntityId>,
     parent: Option<DispatchNodeId>,
 }
 
-type KeyListener = ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
+type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
     pub(crate) action_type: TypeId,
-    pub(crate) listener: ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+    pub(crate) listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
 }
 
 impl DispatchTree {
@@ -47,8 +50,9 @@ impl DispatchTree {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
             nodes: Vec::new(),
-            focusable_node_ids: HashMap::default(),
-            keystroke_matchers: HashMap::default(),
+            focusable_node_ids: FxHashMap::default(),
+            view_node_ids: FxHashMap::default(),
+            keystroke_matchers: FxHashMap::default(),
             keymap,
             action_registry,
         }
@@ -56,31 +60,101 @@ impl DispatchTree {
 
     pub fn clear(&mut self) {
         self.node_stack.clear();
-        self.nodes.clear();
         self.context_stack.clear();
+        self.nodes.clear();
         self.focusable_node_ids.clear();
+        self.view_node_ids.clear();
         self.keystroke_matchers.clear();
     }
 
-    pub fn push_node(&mut self, context: Option<KeyContext>) {
+    pub fn push_node(
+        &mut self,
+        context: Option<KeyContext>,
+        focus_id: Option<FocusId>,
+        view_id: Option<EntityId>,
+    ) {
         let parent = self.node_stack.last().copied();
         let node_id = DispatchNodeId(self.nodes.len());
         self.nodes.push(DispatchNode {
             parent,
+            focus_id,
+            view_id,
             ..Default::default()
         });
         self.node_stack.push(node_id);
+
         if let Some(context) = context {
             self.active_node().context = Some(context.clone());
             self.context_stack.push(context);
         }
+
+        if let Some(focus_id) = focus_id {
+            self.focusable_node_ids.insert(focus_id, node_id);
+        }
+
+        if let Some(view_id) = view_id {
+            self.view_node_ids.insert(view_id, node_id);
+        }
     }
 
     pub fn pop_node(&mut self) {
-        let node_id = self.node_stack.pop().unwrap();
-        if self.nodes[node_id.0].context.is_some() {
+        let node = &self.nodes[self.active_node_id().0];
+        if node.context.is_some() {
             self.context_stack.pop();
         }
+        self.node_stack.pop();
+    }
+
+    fn move_node(&mut self, source: &mut DispatchNode) {
+        self.push_node(source.context.take(), source.focus_id, source.view_id);
+        let target = self.active_node();
+        target.key_listeners = mem::take(&mut source.key_listeners);
+        target.action_listeners = mem::take(&mut source.action_listeners);
+    }
+
+    pub fn reuse_view(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
+        let view_source_node_id = source
+            .view_node_ids
+            .get(&view_id)
+            .expect("view should exist in previous dispatch tree");
+        let view_source_node = &mut source.nodes[view_source_node_id.0];
+        self.move_node(view_source_node);
+
+        let mut grafted_view_ids = smallvec![view_id];
+        let mut source_stack = vec![*view_source_node_id];
+        for (source_node_id, source_node) in source
+            .nodes
+            .iter_mut()
+            .enumerate()
+            .skip(view_source_node_id.0 + 1)
+        {
+            let source_node_id = DispatchNodeId(source_node_id);
+            while let Some(source_ancestor) = source_stack.last() {
+                if source_node.parent != Some(*source_ancestor) {
+                    source_stack.pop();
+                    self.pop_node();
+                } else {
+                    break;
+                }
+            }
+
+            if source_stack.is_empty() {
+                break;
+            } else {
+                source_stack.push(source_node_id);
+                self.move_node(source_node);
+                if let Some(view_id) = source_node.view_id {
+                    grafted_view_ids.push(view_id);
+                }
+            }
+        }
+
+        while !source_stack.is_empty() {
+            source_stack.pop();
+            self.pop_node();
+        }
+
+        grafted_view_ids
     }
 
     pub fn clear_pending_keystrokes(&mut self) {
@@ -117,7 +191,7 @@ impl DispatchTree {
     pub fn on_action(
         &mut self,
         action_type: TypeId,
-        listener: ArenaRef<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
     ) {
         self.active_node()
             .action_listeners
@@ -125,12 +199,6 @@ impl DispatchTree {
                 action_type,
                 listener,
             });
-    }
-
-    pub fn make_focusable(&mut self, focus_id: FocusId) {
-        let node_id = self.active_node_id();
-        self.active_node().focus_id = Some(focus_id);
-        self.focusable_node_ids.insert(focus_id, node_id);
     }
 
     pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {
@@ -259,6 +327,20 @@ impl DispatchTree {
         }
         focus_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         focus_path
+    }
+
+    pub fn view_path(&self, view_id: EntityId) -> SmallVec<[EntityId; 8]> {
+        let mut view_path: SmallVec<[EntityId; 8]> = SmallVec::new();
+        let mut current_node_id = self.view_node_ids.get(&view_id).copied();
+        while let Some(node_id) = current_node_id {
+            let node = self.node(node_id);
+            if let Some(view_id) = node.view_id {
+                view_path.push(view_id);
+            }
+            current_node_id = node.parent;
+        }
+        view_path.reverse(); // Reverse the path so it goes from the root to the view node.
+        view_path
     }
 
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {

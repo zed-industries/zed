@@ -11,9 +11,9 @@ use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
-use ui::{h_stack, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
+use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -68,7 +68,7 @@ impl TerminalPanel {
             pane.display_nav_history_buttons(false);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let terminal_panel = terminal_panel.clone();
-                h_stack()
+                h_flex()
                     .gap_2()
                     .child(
                         IconButton::new("plus", IconName::Plus)
@@ -159,15 +159,6 @@ impl TerminalPanel {
             height: None,
             _subscriptions: subscriptions,
         };
-        let mut old_dock_position = this.position(cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| {
-            let new_dock_position = this.position(cx);
-            if new_dock_position != old_dock_position {
-                old_dock_position = new_dock_position;
-                cx.emit(PanelEvent::ChangePosition);
-            }
-        })
-        .detach();
         this
     }
 

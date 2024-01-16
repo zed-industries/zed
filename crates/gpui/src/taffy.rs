@@ -14,6 +14,7 @@ use taffy::{
 
 pub struct TaffyLayoutEngine {
     taffy: Taffy,
+    styles: FxHashMap<LayoutId, Style>,
     children_to_parents: FxHashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
@@ -35,6 +36,7 @@ impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
             taffy: Taffy::new(),
+            styles: FxHashMap::default(),
             children_to_parents: FxHashMap::default(),
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
@@ -48,6 +50,11 @@ impl TaffyLayoutEngine {
         self.absolute_layout_bounds.clear();
         self.computed_layouts.clear();
         self.nodes_to_measure.clear();
+        self.styles.clear();
+    }
+
+    pub fn requested_style(&self, layout_id: LayoutId) -> Option<&Style> {
+        self.styles.get(&layout_id)
     }
 
     pub fn request_layout(
@@ -56,21 +63,26 @@ impl TaffyLayoutEngine {
         rem_size: Pixels,
         children: &[LayoutId],
     ) -> LayoutId {
-        let style = style.to_taffy(rem_size);
-        if children.is_empty() {
-            self.taffy.new_leaf(style).expect(EXPECT_MESSAGE).into()
+        let taffy_style = style.to_taffy(rem_size);
+        let layout_id = if children.is_empty() {
+            self.taffy
+                .new_leaf(taffy_style)
+                .expect(EXPECT_MESSAGE)
+                .into()
         } else {
             let parent_id = self
                 .taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(style, unsafe { std::mem::transmute(children) })
+                .new_with_children(taffy_style, unsafe { std::mem::transmute(children) })
                 .expect(EXPECT_MESSAGE)
                 .into();
             for child_id in children {
                 self.children_to_parents.insert(*child_id, parent_id);
             }
             parent_id
-        }
+        };
+        self.styles.insert(layout_id, style.clone());
+        layout_id
     }
 
     pub fn request_measured_layout(
@@ -80,14 +92,16 @@ impl TaffyLayoutEngine {
         measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
-        let style = style.to_taffy(rem_size);
+        let style = style.clone();
+        let taffy_style = style.to_taffy(rem_size);
 
         let layout_id = self
             .taffy
-            .new_leaf_with_context(style, ())
+            .new_leaf_with_context(taffy_style, ())
             .expect(EXPECT_MESSAGE)
             .into();
         self.nodes_to_measure.insert(layout_id, Box::new(measure));
+        self.styles.insert(layout_id, style.clone());
         layout_id
     }
 
@@ -270,20 +284,6 @@ impl ToTaffy<taffy::style::Style> for Style {
         }
     }
 }
-
-// impl ToTaffy for Bounds<Length> {
-//     type Output = taffy::prelude::Bounds<taffy::prelude::LengthPercentageAuto>;
-
-//     fn to_taffy(
-//         &self,
-//         rem_size: Pixels,
-//     ) -> taffy::prelude::Bounds<taffy::prelude::LengthPercentageAuto> {
-//         taffy::prelude::Bounds {
-//             origin: self.origin.to_taffy(rem_size),
-//             size: self.size.to_taffy(rem_size),
-//         }
-//     }
-// }
 
 impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::LengthPercentageAuto {

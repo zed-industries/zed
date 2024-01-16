@@ -7,14 +7,14 @@ use gpui::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{h_stack, ContextMenu, IconButton, Tooltip};
+use ui::{h_flex, ContextMenu, IconButton, Tooltip};
 use ui::{prelude::*, right_click_menu};
 
 const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
 
 pub enum PanelEvent {
-    ChangePosition,
     ZoomIn,
     ZoomOut,
     Activate,
@@ -177,7 +177,7 @@ impl DockPosition {
 
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 pub struct PanelButtons {
@@ -321,9 +321,15 @@ impl Dock {
     ) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
-            cx.subscribe(&panel, move |this, panel, event, cx| match event {
-                PanelEvent::ChangePosition => {
+            cx.observe_global::<SettingsStore>({
+                let workspace = workspace.clone();
+                let panel = panel.clone();
+
+                move |this, cx| {
                     let new_position = panel.read(cx).position(cx);
+                    if new_position == this.position {
+                        return;
+                    }
 
                     let Ok(new_dock) = workspace.update(cx, |workspace, cx| {
                         if panel.is_zoomed(cx) {
@@ -354,6 +360,8 @@ impl Dock {
                         }
                     });
                 }
+            }),
+            cx.subscribe(&panel, move |this, panel, event, cx| match event {
                 PanelEvent::ZoomIn => {
                     this.set_panel_zoomed(&panel.to_any(), true, cx);
                     if !panel.focus_handle(cx).contains_focused(cx) {
@@ -575,7 +583,7 @@ impl Render for Dock {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
                         })
-                        .child(entry.panel.to_any()),
+                        .child(entry.panel.to_any().cached()),
                 )
                 .child(handle)
         } else {
@@ -674,7 +682,7 @@ impl Render for PanelButtons {
                 )
             });
 
-        h_stack().gap_0p5().children(buttons)
+        h_flex().gap_0p5().children(buttons)
     }
 }
 
@@ -737,7 +745,7 @@ pub mod test {
 
         fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
             self.position = position;
-            cx.emit(PanelEvent::ChangePosition);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
         }
 
         fn size(&self, _: &WindowContext) -> Pixels {

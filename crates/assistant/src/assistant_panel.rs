@@ -40,7 +40,7 @@ use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset a
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::{
     cell::Cell,
     cmp,
@@ -165,7 +165,7 @@ impl AssistantPanel {
                     cx.on_focus_in(&focus_handle, Self::focus_in).detach();
                     cx.on_focus_out(&focus_handle, Self::focus_out).detach();
 
-                    let mut this = Self {
+                    Self {
                         workspace: workspace_handle,
                         active_editor_index: Default::default(),
                         prev_active_editor_index: Default::default(),
@@ -190,20 +190,7 @@ impl AssistantPanel {
                         _watch_saved_conversations,
                         semantic_index,
                         retrieve_context_in_next_inline_assist: false,
-                    };
-
-                    let mut old_dock_position = this.position(cx);
-                    this.subscriptions =
-                        vec![cx.observe_global::<SettingsStore>(move |this, cx| {
-                            let new_dock_position = this.position(cx);
-                            if new_dock_position != old_dock_position {
-                                old_dock_position = new_dock_position;
-                                cx.emit(PanelEvent::ChangePosition);
-                            }
-                            cx.notify();
-                        })];
-
-                    this
+                    }
                 })
             })
         })
@@ -1103,7 +1090,7 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
-            v_stack()
+            v_flex()
                 .on_action(cx.listener(AssistantPanel::save_credentials))
                 .track_focus(&self.focus_handle)
                 .child(Label::new(
@@ -1128,26 +1115,26 @@ impl Render for AssistantPanel {
         } else {
             let header = TabBar::new("assistant_header")
                 .start_child(
-                    h_stack().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
+                    h_flex().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
                 )
                 .children(self.active_editor().map(|editor| {
-                    h_stack()
-                        .h(rems(Tab::HEIGHT_IN_REMS))
+                    h_flex()
+                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
                         .flex_1()
                         .px_2()
                         .child(Label::new(editor.read(cx).title(cx)).into_element())
                 }))
                 .end_child(if self.focus_handle.contains_focused(cx) {
-                    h_stack()
+                    h_flex()
                         .gap_2()
-                        .child(h_stack().gap_1().children(self.render_editor_tools(cx)))
+                        .child(h_flex().gap_1().children(self.render_editor_tools(cx)))
                         .child(
                             ui::Divider::vertical()
                                 .inset()
                                 .color(ui::DividerColor::Border),
                         )
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_1()
                                 .child(Self::render_plus_button(cx))
                                 .child(self.render_zoom_button(cx)),
@@ -1166,7 +1153,7 @@ impl Render for AssistantPanel {
             } else {
                 div()
             };
-            v_stack()
+            v_flex()
                 .key_context("AssistantPanel")
                 .size_full()
                 .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
@@ -2543,7 +2530,7 @@ impl Render for ConversationEditor {
                     .child(self.editor.clone()),
             )
             .child(
-                h_stack()
+                h_flex()
                     .absolute()
                     .gap_1()
                     .top_3()
@@ -2629,7 +2616,7 @@ impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 impl Render for InlineAssistant {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let measurements = self.measurements.get();
-        h_stack()
+        h_flex()
             .w_full()
             .py_2()
             .border_y_1()
@@ -2641,7 +2628,7 @@ impl Render for InlineAssistant {
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::move_down))
             .child(
-                h_stack()
+                h_flex()
                     .justify_center()
                     .w(measurements.gutter_width)
                     .child(
@@ -2689,7 +2676,7 @@ impl Render for InlineAssistant {
                     }),
             )
             .child(
-                h_stack()
+                h_flex()
                     .w_full()
                     .ml(measurements.anchor_x - measurements.gutter_width)
                     .child(self.render_prompt_editor(cx)),
@@ -3133,6 +3120,7 @@ mod tests {
     use crate::MessageId;
     use ai::test::FakeCompletionProvider;
     use gpui::AppContext;
+    use settings::SettingsStore;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {

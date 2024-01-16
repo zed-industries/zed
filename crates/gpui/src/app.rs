@@ -196,7 +196,6 @@ pub struct AppContext {
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
-    pub(crate) active_tooltip: Option<AnyTooltip>,
     pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) frame_consumers: FxHashMap<DisplayId, Task<()>>,
     pub(crate) background_executor: BackgroundExecutor,
@@ -258,7 +257,6 @@ impl AppContext {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                active_tooltip: None,
                 next_frame_callbacks: FxHashMap::default(),
                 frame_consumers: FxHashMap::default(),
                 background_executor: executor,
@@ -845,6 +843,7 @@ impl AppContext {
     /// Remove the global of the given type from the app context. Does not notify global observers.
     pub fn remove_global<G: Any>(&mut self) -> G {
         let global_type = TypeId::of::<G>();
+        self.push_effect(Effect::NotifyGlobalObservers { global_type });
         *self
             .globals_by_type
             .remove(&global_type)
@@ -1268,8 +1267,10 @@ pub struct AnyDrag {
     pub cursor_offset: Point<Pixels>,
 }
 
+/// Contains state associated with a tooltip. You'll only need this struct if you're implementing
+/// tooltip behavior on a custom element. Otherwise, use [Div::tooltip].
 #[derive(Clone)]
-pub(crate) struct AnyTooltip {
+pub struct AnyTooltip {
     pub view: AnyView,
     pub cursor_offset: Point<Pixels>,
 }

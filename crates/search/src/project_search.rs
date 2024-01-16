@@ -38,7 +38,7 @@ use std::{
 use theme::ThemeSettings;
 
 use ui::{
-    h_stack, prelude::*, v_stack, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
+    h_flex, prelude::*, v_flex, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
     Selectable, ToggleButton, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
@@ -360,19 +360,19 @@ impl Render for ProjectSearchView {
                     .max_w_96()
                     .child(Label::new(text).size(LabelSize::Small))
             });
-            v_stack()
+            v_flex()
                 .flex_1()
                 .size_full()
                 .justify_center()
                 .bg(cx.theme().colors().editor_background)
                 .track_focus(&self.focus_handle)
                 .child(
-                    h_stack()
+                    h_flex()
                         .size_full()
                         .justify_center()
-                        .child(h_stack().flex_1())
-                        .child(v_stack().child(major_text).children(minor_text))
-                        .child(h_stack().flex_1()),
+                        .child(h_flex().flex_1())
+                        .child(v_flex().child(major_text).children(minor_text))
+                        .child(h_flex().flex_1()),
                 )
         }
     }
@@ -431,7 +431,7 @@ impl Item for ProjectSearchView {
         let tab_name = last_query
             .filter(|query| !query.is_empty())
             .unwrap_or_else(|| "Project search".into());
-        h_stack()
+        h_flex()
             .gap_2()
             .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
                 Color::Default
@@ -444,6 +444,10 @@ impl Item for ProjectSearchView {
                 Color::Muted
             }))
             .into_any()
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        Some("project search")
     }
 
     fn for_each_project_item(
@@ -1601,8 +1605,8 @@ impl Render for ProjectSearchBar {
         let search = search.read(cx);
         let semantic_is_available = SemanticIndex::enabled(cx);
 
-        let query_column = v_stack().child(
-            h_stack()
+        let query_column = v_flex().child(
+            h_flex()
                 .min_w(rems(512. / 16.))
                 .px_2()
                 .py_1()
@@ -1617,7 +1621,7 @@ impl Render for ProjectSearchBar {
                 .child(Icon::new(IconName::MagnifyingGlass))
                 .child(self.render_text_input(&search.query_editor, cx))
                 .child(
-                    h_stack()
+                    h_flex()
                         .child(
                             IconButton::new("project-search-filter-button", IconName::Filter)
                                 .tooltip(|cx| {
@@ -1674,11 +1678,11 @@ impl Render for ProjectSearchBar {
                 ),
         );
 
-        let mode_column = v_stack().items_start().justify_start().child(
-            h_stack()
+        let mode_column = v_flex().items_start().justify_start().child(
+            h_flex()
                 .gap_2()
                 .child(
-                    h_stack()
+                    h_flex()
                         .child(
                             ToggleButton::new("project-search-text-button", "Text")
                                 .style(ButtonStyle::Filled)
@@ -1744,7 +1748,7 @@ impl Render for ProjectSearchBar {
                 ),
         );
         let replace_column = if search.replace_enabled {
-            h_stack()
+            h_flex()
                 .flex_1()
                 .h_full()
                 .gap_2()
@@ -1757,9 +1761,9 @@ impl Render for ProjectSearchBar {
                 .child(self.render_text_input(&search.replacement_editor, cx))
         } else {
             // Fill out the space if we don't have a replacement editor.
-            h_stack().flex_1()
+            h_flex().flex_1()
         };
-        let actions_column = h_stack()
+        let actions_column = h_flex()
             .when(search.replace_enabled, |this| {
                 this.child(
                     IconButton::new("project-search-replace-next", IconName::ReplaceNext)
@@ -1820,7 +1824,7 @@ impl Render for ProjectSearchBar {
                     .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
             );
 
-        v_stack()
+        v_flex()
             .key_context(key_context)
             .flex_grow()
             .gap_2()
@@ -1880,7 +1884,7 @@ impl Render for ProjectSearchBar {
                 })
             })
             .child(
-                h_stack()
+                h_flex()
                     .justify_between()
                     .gap_2()
                     .child(query_column)
@@ -1890,12 +1894,12 @@ impl Render for ProjectSearchBar {
             )
             .when(search.filters_enabled, |this| {
                 this.child(
-                    h_stack()
+                    h_flex()
                         .flex_1()
                         .gap_2()
                         .justify_between()
                         .child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 .h_full()
                                 .px_2()
@@ -1921,7 +1925,7 @@ impl Render for ProjectSearchBar {
                                 }),
                         )
                         .child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 .h_full()
                                 .px_2()

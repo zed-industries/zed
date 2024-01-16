@@ -20,7 +20,7 @@ use terminal::{
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
 };
 use terminal_element::TerminalElement;
-use ui::{h_stack, prelude::*, ContextMenu, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
@@ -600,6 +600,9 @@ fn possible_open_targets(
 
 pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
     let query = query.as_str();
+    if query == "." {
+        return None;
+    }
     let searcher = RegexSearch::new(&query);
     searcher.ok()
 }
@@ -694,7 +697,7 @@ impl Item for TerminalView {
         cx: &WindowContext,
     ) -> AnyElement {
         let title = self.terminal().read(cx).title(true);
-        h_stack()
+        h_flex()
             .gap_2()
             .child(Icon::new(IconName::Terminal))
             .child(Label::new(title).color(if selected {
@@ -703,6 +706,10 @@ impl Item for TerminalView {
                 Color::Muted
             }))
             .into_any()
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
     }
 
     fn clone_on_split(

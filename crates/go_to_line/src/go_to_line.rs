@@ -5,7 +5,7 @@ use gpui::{
 };
 use text::{Bias, Point};
 use theme::ActiveTheme;
-use ui::{h_stack, prelude::*, v_stack, Label};
+use ui::{h_flex, prelude::*, v_flex, Label};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalView;
 
@@ -160,12 +160,12 @@ impl Render for GoToLine {
             .on_action(cx.listener(Self::confirm))
             .w_96()
             .child(
-                v_stack()
+                v_flex()
                     .px_1()
                     .pt_0p5()
                     .gap_px()
                     .child(
-                        v_stack()
+                        v_flex()
                             .py_0p5()
                             .px_1()
                             .child(div().px_1().py_0p5().child(self.line_editor.clone())),
@@ -177,7 +177,7 @@ impl Render for GoToLine {
                             .bg(cx.theme().colors().element_background),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .justify_between()
                             .px_2()
                             .py_1()
