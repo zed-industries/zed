@@ -1607,6 +1607,7 @@ name = "command_palette"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "ctor",
  "editor",
