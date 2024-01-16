@@ -14,8 +14,8 @@ use rpc::proto;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconName, TintColor, Tooltip,
+    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -486,12 +486,16 @@ impl CollabTitlebarItem {
             .child(
                 Avatar::new(user.avatar_uri.clone())
                     .grayscale(!is_present)
-                    .border_color(if is_speaking {
-                        cx.theme().status().info_border
-                    } else if is_muted {
-                        cx.theme().status().error_border
-                    } else {
-                        Hsla::default()
+                    .when(is_speaking, |avatar| {
+                        avatar.border_color(cx.theme().status().info_border)
+                    })
+                    .when(is_muted, |avatar| {
+                        avatar.indicator(
+                            AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted).tooltip({
+                                let github_login = user.github_login.clone();
+                                move |cx| Tooltip::text(format!("{} is muted", github_login), cx)
+                            }),
+                        )
                     }),
             )
             .children(followers.iter().filter_map(|follower_peer_id| {

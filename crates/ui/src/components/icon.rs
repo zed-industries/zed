@@ -5,6 +5,7 @@ use crate::prelude::*;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
+    Indicator,
     XSmall,
     Small,
     #[default]
@@ -14,6 +15,7 @@ pub enum IconSize {
 impl IconSize {
     pub fn rems(self) -> Rems {
         match self {
+            IconSize::Indicator => rems(10. / 16.),
             IconSize::XSmall => rems(12. / 16.),
             IconSize::Small => rems(14. / 16.),
             IconSize::Medium => rems(16. / 16.),
