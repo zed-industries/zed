@@ -14,8 +14,8 @@ use rpc::proto;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconName, TintColor, Tooltip,
+    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -490,37 +490,7 @@ impl CollabTitlebarItem {
                         avatar.border_color(cx.theme().status().info_border)
                     })
                     .when(is_muted, |avatar| {
-                        avatar.indicator(
-                            div()
-                                .absolute()
-                                .bottom(px(-1.))
-                                .right(px(-4.))
-                                .w(rems(12. / 16.))
-                                .h(rems(10. / 16.))
-                                .child(
-                                    h_flex()
-                                        .id("muted-indicator")
-                                        .justify_center()
-                                        .px(px(20.))
-                                        .py(px(2.))
-                                        .bg(cx.theme().status().error_background)
-                                        .rounded_md()
-                                        .child(
-                                            Icon::new(IconName::MicMute)
-                                                .size(IconSize::Indicator)
-                                                .color(Color::Error),
-                                        )
-                                        .tooltip({
-                                            let github_login = user.github_login.clone();
-                                            move |cx| {
-                                                Tooltip::text(
-                                                    format!("{} is muted.", github_login),
-                                                    cx,
-                                                )
-                                            }
-                                        }),
-                                ),
-                        )
+                        avatar.indicator(AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted))
                     }),
             )
             .children(followers.iter().filter_map(|follower_peer_id| {

@@ -1,4 +1,5 @@
 use crate::prelude::*;
+
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 
 /// The shape of an [`Avatar`].
