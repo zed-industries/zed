@@ -3821,62 +3821,133 @@ async fn test_select_next(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_select_previous(cx: &mut gpui::TestAppContext) {
+async fn test_select_next_with_multiple_carets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    {
-        // `Select previous` without a selection (selects wordwise)
-        let mut cx = EditorTestContext::new(cx).await;
-        cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        r#"let foo = 2;
+lˇet foo = 2;
+let fooˇ = 2;
+let foo = 2;
+let foo = ˇ2;"#,
+    );
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
+    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx))
+        .unwrap();
+    cx.assert_editor_state(
+        r#"let foo = 2;
+«letˇ» foo = 2;
+let «fooˇ» = 2;
+let foo = 2;
+let foo = «2ˇ»;"#,
+    );
 
-        cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
-        cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
+    // noop for multiple selections with different contents
+    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx))
+        .unwrap();
+    cx.assert_editor_state(
+        r#"let foo = 2;
+«letˇ» foo = 2;
+let «fooˇ» = 2;
+let foo = 2;
+let foo = «2ˇ»;"#,
+    );
+}
 
-        cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
-        cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
+#[gpui::test]
+async fn test_select_previous_with_single_caret(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\n«abcˇ»");
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
-    }
-    {
-        // `Select previous` with a selection
-        let mut cx = EditorTestContext::new(cx).await;
-        cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
+    cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
 
-        cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
-        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
 
-        cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
-        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\n«abcˇ»");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+}
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
-            .unwrap();
-        cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
-    }
+#[gpui::test]
+async fn test_select_previous_with_multiple_carets(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        r#"let foo = 2;
+lˇet foo = 2;
+let fooˇ = 2;
+let foo = 2;
+let foo = ˇ2;"#,
+    );
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state(
+        r#"let foo = 2;
+«letˇ» foo = 2;
+let «fooˇ» = 2;
+let foo = 2;
+let foo = «2ˇ»;"#,
+    );
+
+    // noop for multiple selections with different contents
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state(
+        r#"let foo = 2;
+«letˇ» foo = 2;
+let «fooˇ» = 2;
+let foo = 2;
+let foo = «2ˇ»;"#,
+    );
+}
+
+#[gpui::test]
+async fn test_select_previous_with_single_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+
+    cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
 }
 
 #[gpui::test]
