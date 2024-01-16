@@ -205,7 +205,7 @@ impl settings::Settings for ThemeSettings {
 
         let available_fonts = cx
             .text_system()
-            .all_font_families()
+            .all_font_names()
             .into_iter()
             .map(Value::String)
             .collect();

@@ -192,7 +192,7 @@ pub trait PlatformDispatcher: Send + Sync {
 
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
-    fn all_font_families(&self) -> Vec<String>;
+    fn all_font_names(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
