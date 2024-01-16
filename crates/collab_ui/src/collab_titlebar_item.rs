@@ -490,7 +490,12 @@ impl CollabTitlebarItem {
                         avatar.border_color(cx.theme().status().info_border)
                     })
                     .when(is_muted, |avatar| {
-                        avatar.indicator(AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted))
+                        avatar.indicator(
+                            AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted).tooltip({
+                                let github_login = user.github_login.clone();
+                                move |cx| Tooltip::text(format!("{} is muted", github_login), cx)
+                            }),
+                        )
                     }),
             )
             .children(followers.iter().filter_map(|follower_peer_id| {
