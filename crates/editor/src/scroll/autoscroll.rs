@@ -5,7 +5,7 @@ use language::Point;
 
 use crate::{display_map::ToDisplayPoint, Editor, EditorMode, LineWithInvisibles};
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
     Next,
     Strategy(AutoscrollStrategy),
@@ -25,7 +25,7 @@ impl Autoscroll {
     }
 }
 
-#[derive(PartialEq, Eq, Default)]
+#[derive(PartialEq, Eq, Default, Clone, Copy)]
 pub enum AutoscrollStrategy {
     Fit,
     Newest,
