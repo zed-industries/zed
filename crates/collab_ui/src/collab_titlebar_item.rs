@@ -1,7 +1,7 @@
 use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
+use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
     actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
@@ -12,7 +12,7 @@ use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto;
 use std::sync::Arc;
-use theme::{ActiveTheme, PlayerColors};
+use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
     IconButton, IconName, TintColor, Tooltip,
@@ -97,7 +97,7 @@ impl Render for CollabTitlebarItem {
                                 room.remote_participants().values().collect::<Vec<_>>();
                             remote_participants.sort_by_key(|p| p.participant_index.0);
 
-                            this.children(self.render_collaborator(
+                            let current_user_face_pile = self.render_collaborator(
                                 &current_user,
                                 peer_id,
                                 true,
@@ -107,7 +107,13 @@ impl Render for CollabTitlebarItem {
                                 project_id,
                                 &current_user,
                                 cx,
-                            ))
+                            );
+
+                            this.children(current_user_face_pile.map(|face_pile| {
+                                v_flex()
+                                    .child(face_pile)
+                                    .child(render_color_ribbon(player_colors.local().cursor))
+                            }))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
                                     let is_present = project_id.map_or(false, |project_id| {
@@ -132,8 +138,11 @@ impl Render for CollabTitlebarItem {
                                             .id(("collaborator", collaborator.user.id))
                                             .child(face_pile)
                                             .child(render_color_ribbon(
-                                                collaborator.participant_index,
-                                                player_colors,
+                                                player_colors
+                                                    .color_for_participant(
+                                                        collaborator.participant_index.0,
+                                                    )
+                                                    .cursor,
                                             ))
                                             .cursor_pointer()
                                             .on_click({
@@ -312,8 +321,7 @@ impl Render for CollabTitlebarItem {
     }
 }
 
-fn render_color_ribbon(participant_index: ParticipantIndex, colors: &PlayerColors) -> gpui::Canvas {
-    let color = colors.color_for_participant(participant_index.0).cursor;
+fn render_color_ribbon(color: Hsla) -> gpui::Canvas {
     canvas(move |bounds, cx| {
         let height = bounds.size.height;
         let horizontal_offset = height;
