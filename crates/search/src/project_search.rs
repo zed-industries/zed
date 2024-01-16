@@ -282,6 +282,8 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const PLEASE_AUTHENTICATE: &str = "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables. If you authenticated using the Assistant Panel, please restart Zed to Authenticate.";
+
         if self.has_matches() {
             div()
                 .flex_1()
@@ -303,40 +305,39 @@ impl Render for ProjectSearchView {
             let mut show_minor_text = true;
             let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
                 let status = semantic.index_status;
-                                match status {
-                                    SemanticIndexStatus::NotAuthenticated => {
-                                        major_text = Label::new("Not Authenticated");
-                                        show_minor_text = false;
-                                        Some(
-                                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables. If you authenticated using the Assistant Panel, please restart Zed to Authenticate.".to_string())
-                                    }
-                                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
-                                    SemanticIndexStatus::Indexing {
-                                        remaining_files,
-                                        rate_limit_expiry,
-                                    } => {
-                                        if remaining_files == 0 {
-                                            Some("Indexing...".to_string())
-                                        } else {
-                                            if let Some(rate_limit_expiry) = rate_limit_expiry {
-                                                let remaining_seconds =
-                                                    rate_limit_expiry.duration_since(Instant::now());
-                                                if remaining_seconds > Duration::from_secs(0) {
-                                                    Some(format!(
-                                                        "Remaining files to index (rate limit resets in {}s): {}",
-                                                        remaining_seconds.as_secs(),
-                                                        remaining_files
-                                                    ))
-                                                } else {
-                                                    Some(format!("Remaining files to index: {}", remaining_files))
-                                                }
-                                            } else {
-                                                Some(format!("Remaining files to index: {}", remaining_files))
-                                            }
-                                        }
-                                    }
-                                    SemanticIndexStatus::NotIndexed => None,
+                match status {
+                    SemanticIndexStatus::NotAuthenticated => {
+                        major_text = Label::new("Not Authenticated");
+                        show_minor_text = false;
+                        Some(PLEASE_AUTHENTICATE.to_string())
+                    }
+                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
+                    SemanticIndexStatus::Indexing {
+                        remaining_files,
+                        rate_limit_expiry,
+                    } => {
+                        if remaining_files == 0 {
+                            Some("Indexing...".to_string())
+                        } else {
+                            if let Some(rate_limit_expiry) = rate_limit_expiry {
+                                let remaining_seconds =
+                                    rate_limit_expiry.duration_since(Instant::now());
+                                if remaining_seconds > Duration::from_secs(0) {
+                                    Some(format!(
+                                        "Remaining files to index (rate limit resets in {}s): {}",
+                                        remaining_seconds.as_secs(),
+                                        remaining_files
+                                    ))
+                                } else {
+                                    Some(format!("Remaining files to index: {}", remaining_files))
                                 }
+                            } else {
+                                Some(format!("Remaining files to index: {}", remaining_files))
+                            }
+                        }
+                    }
+                    SemanticIndexStatus::NotIndexed => None,
+                }
             });
             let major_text = div().justify_center().max_w_96().child(major_text);
 
