@@ -112,7 +112,7 @@ impl Render for CollabTitlebarItem {
                             this.children(current_user_face_pile.map(|face_pile| {
                                 v_flex()
                                     .child(face_pile)
-                                    .child(render_color_ribbon(gpui::transparent_black()))
+                                    .child(render_color_ribbon(player_colors.local().cursor))
                             }))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
