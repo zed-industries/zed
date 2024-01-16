@@ -2761,6 +2761,8 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             .rendered_frame
             .dispatch_tree
             .view_path(self.view.entity_id())
+            .into_iter()
+            .rev()
         {
             if !self.window.dirty_views.insert(view_id) {
                 break;
