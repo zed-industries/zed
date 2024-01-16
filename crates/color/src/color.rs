@@ -7,7 +7,9 @@
 //! **Note:** This crate does not depend on `gpui`, so it does not provide any
 //! interfaces for converting to `gpui` style colors.
 
-use palette::{FromColor, Hsl, Hsla, Mix, Srgba, WithAlpha};
+use palette::{
+    blend::Blend, convert::FromColorUnclamped, encoding, rgb::Rgb, Clamp, Mix, Srgb, WithAlpha,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum BlendMode {
@@ -24,16 +26,11 @@ pub enum BlendMode {
     Exclusion,
 }
 
-/// Creates a new [`palette::Hsl`] color.
-pub fn hsl(h: f32, s: f32, l: f32) -> Hsl {
-    Hsl::new_srgb(h, s, l)
-}
-
 /// Converts a hexadecimal color string to a `palette::Hsla` color.
 ///
 /// This function supports the following hex formats:
 /// `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`.
-pub fn hex_to_hsla(s: &str) -> Result<Hsla, String> {
+pub fn hex_to_hsla(s: &str) -> Result<Color, String> {
     let hex = s.trim_start_matches('#');
 
     // Expand shorthand formats #RGB and #RGBA to #RRGGBB and #RRGGBBAA
@@ -64,64 +61,112 @@ pub fn hex_to_hsla(s: &str) -> Result<Hsla, String> {
     let b = ((hex_val >> 8) & 0xFF) as f32 / 255.0;
     let a = (hex_val & 0xFF) as f32 / 255.0;
 
-    let srgba = Srgba::new(r, g, b, a);
-    let hsl = Hsl::from_color(srgba);
-    let hsla = Hsla::from(hsl).with_alpha(a);
+    let color = Color { r, g, b, a };
 
-    Ok(hsla)
+    Ok(color)
 }
 
-/// Mixes two [`palette::Hsl`] colors at the given `mix_ratio`.
-pub fn hsl_mix(hsla_1: Hsl, hsla_2: Hsl, mix_ratio: f32) -> Hsl {
-    hsla_1.mix(hsla_2, mix_ratio).into()
-}
-
-/// Represents a color
-/// An interstitial state used to provide a consistent API for colors
-/// with additional functionality like color mixing, blending, etc.
-///
-/// Does not return [gpui] colors as the `color` crate does not
-/// depend on [gpui].
-#[derive(Debug, Copy, Clone)]
+// This implements conversion to and from all Palette colors.
+#[derive(FromColorUnclamped, WithAlpha, Debug, Clone)]
+// We have to tell Palette that we will take care of converting to/from sRGB.
+#[palette(skip_derives(Rgb), rgb_standard = "encoding::Srgb")]
 pub struct Color {
-    value: Hsla,
+    r: f32,
+    g: f32,
+    b: f32,
+    // Let Palette know this is our alpha channel.
+    #[palette(alpha)]
+    a: f32,
+}
+
+// There's no blanket implementation for Self -> Self, unlike the From trait.
+// This is to better allow cases like Self<A> -> Self<B>.
+impl FromColorUnclamped<Color> for Color {
+    fn from_color_unclamped(color: Color) -> Color {
+        color
+    }
+}
+
+// Convert from any kind of f32 sRGB.
+impl<S> FromColorUnclamped<Rgb<S, f32>> for Color
+where
+    Srgb: FromColorUnclamped<Rgb<S, f32>>,
+{
+    fn from_color_unclamped(color: Rgb<S, f32>) -> Color {
+        let srgb = Srgb::from_color_unclamped(color);
+        Color {
+            r: srgb.red,
+            g: srgb.green,
+            b: srgb.blue,
+            a: 1.0,
+        }
+    }
+}
+
+// Convert into any kind of f32 sRGB.
+impl<S> FromColorUnclamped<Color> for Rgb<S, f32>
+where
+    Rgb<S, f32>: FromColorUnclamped<Srgb>,
+{
+    fn from_color_unclamped(color: Color) -> Self {
+        let srgb = Srgb::new(color.r, color.g, color.b);
+        Self::from_color_unclamped(srgb)
+    }
+}
+
+// Add the required clamping.
+impl Clamp for Color {
+    fn clamp(self) -> Self {
+        Color {
+            r: self.r.min(1.0).max(0.0),
+            g: self.g.min(1.0).max(0.0),
+            b: self.b.min(1.0).max(0.0),
+            a: self.a.min(1.0).max(0.0),
+        }
+    }
 }
 
 impl Color {
-    /// Creates a new [`Color`] with an alpha value.
-    pub fn new(hue: f32, saturation: f32, lightness: f32, alpha: f32) -> Self {
-        Self {
-            value: Hsla::new(hue, saturation, lightness, alpha),
-        }
-    }
-
-    /// Creates a new [`Color`] with an alpha value of `1.0`.
-    pub fn hsl(hue: f32, saturation: f32, lightness: f32) -> Self {
-        Self::new(hue, saturation, lightness, 1.0)
-    }
-
-    /// Returns the [`palette::Hsla`] value of this color.
-    pub fn value(&self) -> Hsla {
-        self.value
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Color { r, g, b, a }
     }
 
     /// Returns a set of states for this color.
-    pub fn states(&self, is_light: bool) -> ColorStates {
-        states_for_color(*self, is_light)
+    pub fn states(self, is_light: bool) -> ColorStates {
+        states_for_color(self, is_light)
     }
 
     /// Mixes this color with another [`palette::Hsl`] color at the given `mix_ratio`.
-    pub fn mix(&self, other: Hsl, mix_ratio: f32) -> Self {
-        let mixed = self.value.mix(other.into(), mix_ratio);
+    pub fn mixed(&self, other: Color, mix_ratio: f32) -> Self {
+        let srgb_self = Srgb::new(self.r, self.g, self.b);
+        let srgb_other = Srgb::new(other.r, other.g, other.b);
+
+        // Directly mix the colors as sRGB values
+        let mixed = srgb_self.mix(srgb_other, mix_ratio);
+        Color::from_color_unclamped(mixed)
+    }
+
+    pub fn blend(&self, other: Color, blend_mode: BlendMode) -> Self {
+        let srgb_self = Srgb::new(self.r, self.g, self.b);
+        let srgb_other = Srgb::new(other.r, other.g, other.b);
+
+        let blended = match blend_mode {
+            // replace hsl methods with the respective sRGB methods
+            BlendMode::Multiply => srgb_self.multiply(srgb_other),
+            _ => unimplemented!(),
+        };
 
         Self {
-            value: mixed.into(),
+            r: blended.red,
+            g: blended.green,
+            b: blended.blue,
+            a: self.a,
         }
     }
 }
 
 /// A set of colors for different states of an element.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct ColorStates {
     /// The default color.
     pub default: Color,
@@ -139,21 +184,30 @@ pub struct ColorStates {
 ///
 /// todo!("Test and improve this function")
 pub fn states_for_color(color: Color, is_light: bool) -> ColorStates {
-    let hover_lightness = if is_light { 0.9 } else { 0.1 };
-    let active_lightness = if is_light { 0.8 } else { 0.2 };
-    let focused_lightness = if is_light { 0.7 } else { 0.3 };
-    let disabled_lightness = if is_light { 0.6 } else { 0.5 };
+    let adjustment_factor = if is_light { 0.1 } else { -0.1 };
+    let hover_adjustment = 1.0 - adjustment_factor;
+    let active_adjustment = 1.0 - 2.0 * adjustment_factor;
+    let focused_adjustment = 1.0 - 3.0 * adjustment_factor;
+    let disabled_adjustment = 1.0 - 4.0 * adjustment_factor;
 
-    let hover = color.mix(hsl(0.0, 0.0, hover_lightness), 0.1);
-    let active = color.mix(hsl(0.0, 0.0, active_lightness), 0.1);
-    let focused = color.mix(hsl(0.0, 0.0, focused_lightness), 0.1);
-    let disabled = color.mix(hsl(0.0, 0.0, disabled_lightness), 0.1);
+    let make_adjustment = |color: Color, adjustment: f32| -> Color {
+        // Adjust lightness for each state
+        // Note: Adjustment logic may differ; simplify as needed for sRGB
+        Color::new(
+            color.r * adjustment,
+            color.g * adjustment,
+            color.b * adjustment,
+            color.a,
+        )
+    };
+
+    let color = color.clamp();
 
     ColorStates {
-        default: color,
-        hover,
-        active,
-        focused,
-        disabled,
+        default: color.clone(),
+        hover: make_adjustment(color.clone(), hover_adjustment),
+        active: make_adjustment(color.clone(), active_adjustment),
+        focused: make_adjustment(color.clone(), focused_adjustment),
+        disabled: make_adjustment(color.clone(), disabled_adjustment),
     }
 }
