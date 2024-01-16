@@ -65,8 +65,8 @@ impl TextSystem {
         }
     }
 
-    pub fn all_font_families(&self) -> Vec<String> {
-        let mut families = self.platform_text_system.all_font_families();
+    pub fn all_font_names(&self) -> Vec<String> {
+        let mut families = self.platform_text_system.all_font_names();
         families.append(
             &mut self
                 .fallback_font_stack
@@ -101,7 +101,6 @@ impl TextSystem {
         if let Ok(font_id) = self.font_id(font) {
             return font_id;
         }
-
         for fallback in &self.fallback_font_stack {
             if let Ok(font_id) = self.font_id(fallback) {
                 return font_id;
