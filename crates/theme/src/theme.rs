@@ -147,3 +147,10 @@ pub fn color_alpha(color: Hsla, alpha: f32) -> Hsla {
     color.a = alpha;
     color
 }
+
+pub fn to_gpui_hsla(color: color::Color) -> gpui::Hsla {
+    let hsla = color.value();
+    let hue: f32 = hsla.hue.into();
+
+    gpui::hsla(hue / 360.0, hsla.saturation, hsla.lightness, hsla.alpha)
+}
