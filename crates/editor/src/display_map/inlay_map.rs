@@ -35,8 +35,8 @@ enum Transform {
 }
 
 #[derive(Debug, Clone)]
-pub struct Inlay {
-    pub id: InlayId,
+pub(crate) struct Inlay {
+    pub(crate) id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
 }
@@ -1016,7 +1016,7 @@ impl InlaySnapshot {
         (line_end - line_start) as u32
     }
 
-    pub fn chunks<'a>(
+    pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<InlayOffset>,
         language_aware: bool,

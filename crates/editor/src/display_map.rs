@@ -30,7 +30,8 @@ pub use block_map::{
 };
 
 pub use self::fold_map::{Fold, FoldPoint};
-pub use self::inlay_map::{Inlay, InlayOffset, InlayPoint};
+pub use self::inlay_map::{InlayOffset, InlayPoint};
+pub(crate) use inlay_map::Inlay;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -220,7 +221,7 @@ impl DisplayMap {
             .insert(Some(type_id), Arc::new((style, ranges)));
     }
 
-    pub fn highlight_inlays(
+    pub(crate) fn highlight_inlays(
         &mut self,
         type_id: TypeId,
         highlights: Vec<InlayHighlight>,
@@ -258,11 +259,11 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+    pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
         self.inlay_map.current_inlays()
     }
 
-    pub fn splice_inlays(
+    pub(crate) fn splice_inlays(
         &mut self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
@@ -306,7 +307,7 @@ impl DisplayMap {
 }
 
 #[derive(Debug, Default)]
-pub struct Highlights<'a> {
+pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
     pub inlay_highlight_style: Option<HighlightStyle>,
@@ -881,7 +882,7 @@ impl DisplaySnapshot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn inlay_highlights<Tag: ?Sized + 'static>(
+    pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(
         &self,
     ) -> Option<&HashMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let type_id = TypeId::of::<Tag>();

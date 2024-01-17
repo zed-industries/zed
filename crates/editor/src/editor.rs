@@ -197,7 +197,7 @@ pub fn render_parsed_markdown(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum InlayId {
+pub(crate) enum InlayId {
     Suggestion(usize),
     Hint(usize),
 }
@@ -287,7 +287,7 @@ pub enum SelectPhase {
 }
 
 #[derive(Clone, Debug)]
-pub enum SelectMode {
+pub(crate) enum SelectMode {
     Character,
     Word(Range<Anchor>),
     Line(Range<Anchor>),
@@ -558,6 +558,7 @@ struct SnippetState {
     active_index: usize,
 }
 
+#[doc(hidden)]
 pub struct RenameState {
     pub range: Range<Anchor>,
     pub old_name: Arc<str>,
@@ -1417,14 +1418,12 @@ pub struct ClipboardSelection {
 }
 
 #[derive(Debug)]
-pub struct NavigationData {
+pub(crate) struct NavigationData {
     cursor_anchor: Anchor,
     cursor_position: Point,
     scroll_anchor: ScrollAnchor,
     scroll_top_row: u32,
 }
-
-pub struct EditorCreated(pub View<Editor>);
 
 enum GotoDefinitionKind {
     Symbol,
@@ -8282,7 +8281,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn highlight_inlay_background<T: 'static>(
+    pub(crate) fn highlight_inlay_background<T: 'static>(
         &mut self,
         ranges: Vec<InlayHighlight>,
         color_fetcher: fn(&ThemeColors) -> Hsla,
@@ -8489,7 +8488,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn highlight_inlays<T: 'static>(
+    pub(crate) fn highlight_inlays<T: 'static>(
         &mut self,
         highlights: Vec<InlayHighlight>,
         style: HighlightStyle,

@@ -582,7 +582,7 @@ impl BlockSnapshot {
         .collect()
     }
 
-    pub fn chunks<'a>(
+    pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<u32>,
         language_aware: bool,
