@@ -1,11 +1,11 @@
 #![deny(missing_docs)]
 
 use crate::{
-    div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
-    InputEvent, IntoElement, Keystroke, Model, ModelContext, Pixels, Platform, Render, Result,
-    Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View, ViewContext,
-    VisualContext, WindowContext, WindowHandle, WindowOptions,
+    Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
+    AvailableSpace, BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter,
+    ForegroundExecutor, InputEvent, Keystroke, Model, ModelContext, Pixels, Platform, Point,
+    Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View,
+    ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -167,10 +167,14 @@ impl TestAppContext {
     }
 
     /// Adds a new window with no content.
-    pub fn add_empty_window(&mut self) -> AnyWindowHandle {
+    pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| EmptyView {}))
-            .any_handle
+        let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| ()));
+        drop(cx);
+        let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
+        cx.run_until_parked();
+        // it might be nice to try and cleanup these at the end of each test.
+        Box::leak(cx)
     }
 
     /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
@@ -609,9 +613,32 @@ impl<'a> VisualTestContext {
         self.cx.simulate_input(self.window, input)
     }
 
+    /// Draw an element to the window. Useful for simulating events or actions
+    pub fn draw(
+        &mut self,
+        origin: Point<Pixels>,
+        space: Size<AvailableSpace>,
+        f: impl FnOnce(&mut WindowContext) -> AnyElement,
+    ) {
+        self.update(|cx| {
+            let entity_id = cx
+                .window
+                .root_view
+                .as_ref()
+                .expect("Can't draw to this window without a root view")
+                .entity_id();
+            cx.with_view_id(entity_id, |cx| {
+                f(cx).draw(origin, space, cx);
+            });
+
+            cx.refresh();
+        })
+    }
+
     /// Simulate an event from the platform, e.g. a SrollWheelEvent
-    pub fn simulate_event(&mut self, event: InputEvent) {
-        self.update(|cx| cx.dispatch_event(event));
+    /// Make sure you've called [VisualTestContext::draw] first!
+    pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
+        self.update(|cx| cx.dispatch_event(event.to_platform_input()));
         self.background_executor.run_until_parked();
     }
 
@@ -767,14 +794,5 @@ impl AnyWindowHandle {
         build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
     ) -> View<V> {
         self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
-    }
-}
-
-/// An EmptyView for testing.
-pub struct EmptyView {}
-
-impl Render for EmptyView {
-    fn render(&mut self, _cx: &mut crate::ViewContext<Self>) -> impl IntoElement {
-        div()
     }
 }

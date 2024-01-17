@@ -1,7 +1,7 @@
 use crate::{
-    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, InputEvent, KeyDownEvent,
-    Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    Size, TestPlatform, TileId, WindowAppearance, WindowBounds, WindowOptions,
+    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, KeyDownEvent, Keystroke,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, Size, TestPlatform, TileId, WindowAppearance, WindowBounds, WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -19,7 +19,7 @@ pub struct TestWindowState {
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
-    input_callback: Option<Box<dyn FnMut(InputEvent) -> bool>>,
+    input_callback: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
@@ -85,7 +85,7 @@ impl TestWindow {
         self.0.lock().active_status_change_callback = Some(callback);
     }
 
-    pub fn simulate_input(&mut self, event: InputEvent) -> bool {
+    pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
         let mut lock = self.0.lock();
         let Some(mut callback) = lock.input_callback.take() else {
             return false;
@@ -97,7 +97,7 @@ impl TestWindow {
     }
 
     pub fn simulate_keystroke(&mut self, keystroke: Keystroke, is_held: bool) {
-        if self.simulate_input(InputEvent::KeyDown(KeyDownEvent {
+        if self.simulate_input(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
             is_held,
         })) {
@@ -220,7 +220,7 @@ impl PlatformWindow for TestWindow {
 
     fn on_request_frame(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_input(&self, callback: Box<dyn FnMut(crate::InputEvent) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> bool>) {
         self.0.lock().input_callback = Some(callback)
     }
 

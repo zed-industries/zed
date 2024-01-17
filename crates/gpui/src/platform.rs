@@ -7,7 +7,7 @@ mod test;
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, Keymap, LineLayout, Pixels,
+    FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene, SharedString,
     Size, TaskLabel,
 };
@@ -88,7 +88,7 @@ pub(crate) trait Platform: 'static {
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
+    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
@@ -155,7 +155,7 @@ pub trait PlatformWindow {
     fn zoom(&self);
     fn toggle_full_screen(&self);
     fn on_request_frame(&self, callback: Box<dyn FnMut()>);
-    fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);

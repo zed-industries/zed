@@ -1,6 +1,6 @@
 use crate::{
     point, px, AnyElement, AvailableSpace, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    DispatchPhase, Element, IntoElement, IsZero, Pixels, Point, ScrollWheelEvent, Size, Style,
+    DispatchPhase, Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
     StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
@@ -584,36 +584,33 @@ impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod test {
 
-    use crate::{self as gpui, Entity, TestAppContext};
+    use gpui::{ScrollDelta, ScrollWheelEvent};
+
+    use crate::{self as gpui, TestAppContext};
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
         use crate::{div, list, point, px, size, Element, ListState, Styled};
 
-        let (v, cx) = cx.add_window_view(|_| ());
+        let cx = cx.add_empty_window();
 
         let state = ListState::new(5, crate::ListAlignment::Top, px(10.), |_, _| {
             div().h(px(10.)).w_full().into_any()
         });
 
-        cx.update(|cx| {
-            cx.with_view_id(v.entity_id(), |cx| {
-                list(state.clone())
-                    .w_full()
-                    .h_full()
-                    .z_index(10)
-                    .into_any()
-                    .draw(point(px(0.0), px(0.0)), size(px(100.), px(20.)).into(), cx)
-            });
-        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(100.), px(20.)).into(),
+            |_| list(state.clone()).w_full().h_full().z_index(10).into_any(),
+        );
 
         state.reset(5);
 
-        cx.simulate_event(gpui::InputEvent::ScrollWheel(gpui::ScrollWheelEvent {
+        cx.simulate_event(ScrollWheelEvent {
             position: point(px(1.), px(1.)),
-            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-500.))),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-500.))),
             ..Default::default()
-        }));
+        });
 
         assert_eq!(state.logical_scroll_top().item_ix, 0);
         assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));

@@ -5,13 +5,14 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
     Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
-    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    ImageData, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeystrokeEvent, LayoutId,
+    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene, Shadow,
+    SharedString, Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task,
+    Underline, UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -968,7 +969,7 @@ impl<'a> WindowContext<'a> {
     /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
-    pub fn on_mouse_event<Event: 'static>(
+    pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
@@ -996,7 +997,7 @@ impl<'a> WindowContext<'a> {
     ///
     /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
     /// a specific need to register a global listener.
-    pub fn on_key_event<Event: 'static>(
+    pub fn on_key_event<Event: KeyEvent>(
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
     ) {
@@ -1617,7 +1618,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Dispatch a mouse or keyboard event on the window.
-    pub fn dispatch_event(&mut self, event: InputEvent) -> bool {
+    pub fn dispatch_event(&mut self, event: PlatformInput) -> bool {
         // Handlers may set this to false by calling `stop_propagation`.
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
@@ -1626,37 +1627,37 @@ impl<'a> WindowContext<'a> {
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.
-            InputEvent::MouseMove(mouse_move) => {
+            PlatformInput::MouseMove(mouse_move) => {
                 self.window.mouse_position = mouse_move.position;
                 self.window.modifiers = mouse_move.modifiers;
-                InputEvent::MouseMove(mouse_move)
+                PlatformInput::MouseMove(mouse_move)
             }
-            InputEvent::MouseDown(mouse_down) => {
+            PlatformInput::MouseDown(mouse_down) => {
                 self.window.mouse_position = mouse_down.position;
                 self.window.modifiers = mouse_down.modifiers;
-                InputEvent::MouseDown(mouse_down)
+                PlatformInput::MouseDown(mouse_down)
             }
-            InputEvent::MouseUp(mouse_up) => {
+            PlatformInput::MouseUp(mouse_up) => {
                 self.window.mouse_position = mouse_up.position;
                 self.window.modifiers = mouse_up.modifiers;
-                InputEvent::MouseUp(mouse_up)
+                PlatformInput::MouseUp(mouse_up)
             }
-            InputEvent::MouseExited(mouse_exited) => {
+            PlatformInput::MouseExited(mouse_exited) => {
                 self.window.modifiers = mouse_exited.modifiers;
-                InputEvent::MouseExited(mouse_exited)
+                PlatformInput::MouseExited(mouse_exited)
             }
-            InputEvent::ModifiersChanged(modifiers_changed) => {
+            PlatformInput::ModifiersChanged(modifiers_changed) => {
                 self.window.modifiers = modifiers_changed.modifiers;
-                InputEvent::ModifiersChanged(modifiers_changed)
+                PlatformInput::ModifiersChanged(modifiers_changed)
             }
-            InputEvent::ScrollWheel(scroll_wheel) => {
+            PlatformInput::ScrollWheel(scroll_wheel) => {
                 self.window.mouse_position = scroll_wheel.position;
                 self.window.modifiers = scroll_wheel.modifiers;
-                InputEvent::ScrollWheel(scroll_wheel)
+                PlatformInput::ScrollWheel(scroll_wheel)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
-            InputEvent::FileDrop(file_drop) => match file_drop {
+            PlatformInput::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, paths } => {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
@@ -1666,7 +1667,7 @@ impl<'a> WindowContext<'a> {
                             cursor_offset: position,
                         });
                     }
-                    InputEvent::MouseMove(MouseMoveEvent {
+                    PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
@@ -1674,7 +1675,7 @@ impl<'a> WindowContext<'a> {
                 }
                 FileDropEvent::Pending { position } => {
                     self.window.mouse_position = position;
-                    InputEvent::MouseMove(MouseMoveEvent {
+                    PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
@@ -1683,21 +1684,21 @@ impl<'a> WindowContext<'a> {
                 FileDropEvent::Submit { position } => {
                     self.activate(true);
                     self.window.mouse_position = position;
-                    InputEvent::MouseUp(MouseUpEvent {
+                    PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     })
                 }
-                FileDropEvent::Exited => InputEvent::MouseUp(MouseUpEvent {
+                FileDropEvent::Exited => PlatformInput::MouseUp(MouseUpEvent {
                     button: MouseButton::Left,
                     position: Point::default(),
                     modifiers: Modifiers::default(),
                     click_count: 1,
                 }),
             },
-            InputEvent::KeyDown(_) | InputEvent::KeyUp(_) => event,
+            PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
@@ -2976,7 +2977,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Add a listener for any mouse event that occurs in the window.
     /// This is a fairly low level method.
     /// Typically, you'll want to use methods on UI elements, which perform bounds checking etc.
-    pub fn on_mouse_event<Event: 'static>(
+    pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
@@ -2989,7 +2990,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Register a callback to be invoked when the given Key Event is dispatched to the window.
-    pub fn on_key_event<Event: 'static>(
+    pub fn on_key_event<Event: KeyEvent>(
         &mut self,
         handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
     ) {
