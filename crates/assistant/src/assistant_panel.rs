@@ -1148,7 +1148,7 @@ impl Render for AssistantPanel {
                     |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
                     cx,
                 );
-                BufferSearchBar::register_inner(&mut registrar);
+                BufferSearchBar::register(&mut registrar);
                 registrar.into_div()
             } else {
                 div()
