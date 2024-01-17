@@ -54,4 +54,4 @@ We're happy to pair with you to help you learn the codebase and get your contrib
 Reviewing code in a pull request, after the fact, is hard and tedious - the team generally likes to build trust and review code through pair programming.
 We'd prefer have conversations about the code, through Zed, while it is being written, so decisions can be made in real-time and less time is spent on fixing things after the fact. Ideally, GitHub is only used to merge code that has already been discussed and reviewed in Zed.
 
-Remeber that smaller, incremental PRs are easier to review and merge than large PRs.
+Remember that smaller, incremental PRs are easier to review and merge than large PRs.

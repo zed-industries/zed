@@ -200,7 +200,7 @@ impl<V> PartialEq for WeakView<V> {
 
 impl<V> Eq for WeakView<V> {}
 
-/// A dynically-typed handle to a view, which can be downcast to a [View] for a specific type.
+/// A dynamically-typed handle to a view, which can be downcast to a [View] for a specific type.
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,

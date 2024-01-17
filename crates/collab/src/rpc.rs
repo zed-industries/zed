@@ -3116,7 +3116,7 @@ async fn leave_channel_chat(request: proto::LeaveChannelChat, session: Session) 
     Ok(())
 }
 
-/// Retrive the chat history for a channel
+/// Retrieve the chat history for a channel
 async fn get_channel_messages(
     request: proto::GetChannelMessages,
     response: Response<proto::GetChannelMessages>,

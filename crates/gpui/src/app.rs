@@ -967,8 +967,8 @@ impl AppContext {
     }
 
     /// Register a callback to be invoked when a keystroke is received by the application
-    /// in any window. Note that this fires after all other action and event mechansims have resolved
-    /// and that this API will not be invoked if the event's propogation is stopped.
+    /// in any window. Note that this fires after all other action and event mechanisms have resolved
+    /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
         f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
