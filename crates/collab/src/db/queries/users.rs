@@ -1,6 +1,7 @@
 use super::*;
 
 impl Database {
+    /// Creates a new user.
     pub async fn create_user(
         &self,
         email_address: &str,
@@ -35,11 +36,13 @@ impl Database {
         .await
     }
 
+    /// Returns a user by ID. There are no access checks here, so this should only be used internally.
     pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<user::Model>> {
         self.transaction(|tx| async move { Ok(user::Entity::find_by_id(id).one(&*tx).await?) })
             .await
     }
 
+    /// Returns all users by ID. There are no access checks here, so this should only be used internally.
     pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<user::Model>> {
         self.transaction(|tx| async {
             let tx = tx;
@@ -51,6 +54,7 @@ impl Database {
         .await
     }
 
+    /// Returns a user by GitHub login. There are no access checks here, so this should only be used internally.
     pub async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
         self.transaction(|tx| async move {
             Ok(user::Entity::find()
@@ -111,6 +115,8 @@ impl Database {
         .await
     }
 
+    /// get_all_users returns the next page of users. To get more call again with
+    /// the same limit and the page incremented by 1.
     pub async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
         self.transaction(|tx| async move {
             Ok(user::Entity::find()
@@ -123,6 +129,7 @@ impl Database {
         .await
     }
 
+    /// Returns the metrics id for the user.
     pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
         enum QueryAs {
@@ -142,6 +149,7 @@ impl Database {
         .await
     }
 
+    /// Set "connected_once" on the user for analytics.
     pub async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()> {
         self.transaction(|tx| async move {
             user::Entity::update_many()
@@ -157,6 +165,7 @@ impl Database {
         .await
     }
 
+    /// hard delete the user.
     pub async fn destroy_user(&self, id: UserId) -> Result<()> {
         self.transaction(|tx| async move {
             access_token::Entity::delete_many()
@@ -169,6 +178,7 @@ impl Database {
         .await
     }
 
+    /// Find users where github_login ILIKE name_query.
     pub async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
         self.transaction(|tx| async {
             let tx = tx;
@@ -193,6 +203,8 @@ impl Database {
         .await
     }
 
+    /// fuzzy_like_string creates a string for matching in-order using fuzzy_search_users.
+    /// e.g. "cir" would become "%c%i%r%"
     pub fn fuzzy_like_string(string: &str) -> String {
         let mut result = String::with_capacity(string.len() * 2 + 1);
         for c in string.chars() {
@@ -205,6 +217,7 @@ impl Database {
         result
     }
 
+    /// Creates a new feature flag.
     pub async fn create_user_flag(&self, flag: &str) -> Result<FlagId> {
         self.transaction(|tx| async move {
             let flag = feature_flag::Entity::insert(feature_flag::ActiveModel {
@@ -220,6 +233,7 @@ impl Database {
         .await
     }
 
+    /// Add the given user to the feature flag
     pub async fn add_user_flag(&self, user: UserId, flag: FlagId) -> Result<()> {
         self.transaction(|tx| async move {
             user_feature::Entity::insert(user_feature::ActiveModel {
@@ -234,6 +248,7 @@ impl Database {
         .await
     }
 
+    /// Return the active flags for the user.
     pub async fn get_user_flags(&self, user: UserId) -> Result<Vec<String>> {
         self.transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]

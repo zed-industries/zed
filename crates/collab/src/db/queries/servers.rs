@@ -1,6 +1,7 @@
 use super::*;
 
 impl Database {
+    /// Creates a new server in the given environment.
     pub async fn create_server(&self, environment: &str) -> Result<ServerId> {
         self.transaction(|tx| async move {
             let server = server::ActiveModel {
@@ -14,6 +15,10 @@ impl Database {
         .await
     }
 
+    /// Returns the IDs of resources associated with stale servers.
+    ///
+    /// A server is stale if it is in the specified `environment` and does not
+    /// match the provided `new_server_id`.
     pub async fn stale_server_resource_ids(
         &self,
         environment: &str,
@@ -61,6 +66,7 @@ impl Database {
         .await
     }
 
+    /// Deletes any stale servers in the environment that don't match the `new_server_id`.
     pub async fn delete_stale_servers(
         &self,
         environment: &str,

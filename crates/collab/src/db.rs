@@ -47,6 +47,8 @@ pub use ids::*;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 
+/// Database gives you a handle that lets you access the database.
+/// It handles pooling internally.
 pub struct Database {
     options: ConnectOptions,
     pool: DatabaseConnection,
@@ -62,6 +64,7 @@ pub struct Database {
 // The `Database` type has so many methods that its impl blocks are split into
 // separate files in the `queries` folder.
 impl Database {
+    /// Connects to the database with the given options
     pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
         sqlx::any::install_default_drivers();
         Ok(Self {
@@ -82,6 +85,7 @@ impl Database {
         self.rooms.clear();
     }
 
+    /// Runs the database migrations.
     pub async fn migrate(
         &self,
         migrations_path: &Path,
@@ -123,11 +127,15 @@ impl Database {
         Ok(new_migrations)
     }
 
+    /// Initializes static data that resides in the database by upserting it.
     pub async fn initialize_static_data(&mut self) -> Result<()> {
         self.initialize_notification_kinds().await?;
         Ok(())
     }
 
+    /// Transaction runs things in a transaction. If you want to call other methods
+    /// and pass the transaction around you need to reborrow the transaction at each
+    /// call site with: `&*tx`.
     pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
@@ -160,6 +168,7 @@ impl Database {
         self.run(body).await
     }
 
+    /// The same as room_transaction, but if you need to only optionally return a Room.
     async fn optional_room_transaction<F, Fut, T>(&self, f: F) -> Result<Option<RoomGuard<T>>>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
@@ -210,6 +219,9 @@ impl Database {
         self.run(body).await
     }
 
+    /// room_transaction runs the block in a transaction. It returns a RoomGuard, that keeps
+    /// the database locked until it is dropped. This ensures that updates sent to clients are
+    /// properly serialized with respect to database changes.
     async fn room_transaction<F, Fut, T>(&self, room_id: RoomId, f: F) -> Result<RoomGuard<T>>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
@@ -330,6 +342,7 @@ fn is_serialization_error(error: &Error) -> bool {
     }
 }
 
+/// A handle to a [`DatabaseTransaction`].
 pub struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
 
 impl Deref for TransactionHandle {
@@ -340,6 +353,8 @@ impl Deref for TransactionHandle {
     }
 }
 
+/// [`RoomGuard`] keeps a database transaction alive until it is dropped.
+/// so that updates to rooms are serialized.
 pub struct RoomGuard<T> {
     data: T,
     _guard: OwnedMutexGuard<()>,
@@ -361,6 +376,7 @@ impl<T> DerefMut for RoomGuard<T> {
 }
 
 impl<T> RoomGuard<T> {
+    /// Returns the inner value of the guard.
     pub fn into_inner(self) -> T {
         self.data
     }
@@ -420,12 +436,14 @@ pub struct WaitlistSummary {
     pub unknown_count: i64,
 }
 
+/// The parameters to create a new user.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewUserParams {
     pub github_login: String,
     pub github_user_id: i32,
 }
 
+/// The result of creating a new user.
 #[derive(Debug)]
 pub struct NewUserResult {
     pub user_id: UserId,
@@ -434,6 +452,7 @@ pub struct NewUserResult {
     pub signup_device_id: Option<String>,
 }
 
+/// The result of moving a channel.
 #[derive(Debug)]
 pub struct MoveChannelResult {
     pub participants_to_update: HashMap<UserId, ChannelsForUser>,
@@ -441,18 +460,21 @@ pub struct MoveChannelResult {
     pub moved_channels: HashSet<ChannelId>,
 }
 
+/// The result of renaming a channel.
 #[derive(Debug)]
 pub struct RenameChannelResult {
     pub channel: Channel,
     pub participants_to_update: HashMap<UserId, Channel>,
 }
 
+/// The result of creating a channel.
 #[derive(Debug)]
 pub struct CreateChannelResult {
     pub channel: Channel,
     pub participants_to_update: Vec<(UserId, ChannelsForUser)>,
 }
 
+/// The result of setting a channel's visibility.
 #[derive(Debug)]
 pub struct SetChannelVisibilityResult {
     pub participants_to_update: HashMap<UserId, ChannelsForUser>,
@@ -460,6 +482,7 @@ pub struct SetChannelVisibilityResult {
     pub channels_to_remove: Vec<ChannelId>,
 }
 
+/// The result of updating a channel membership.
 #[derive(Debug)]
 pub struct MembershipUpdated {
     pub channel_id: ChannelId,
@@ -467,12 +490,14 @@ pub struct MembershipUpdated {
     pub removed_channels: Vec<ChannelId>,
 }
 
+/// The result of setting a member's role.
 #[derive(Debug)]
 pub enum SetMemberRoleResult {
     InviteUpdated(Channel),
     MembershipUpdated(MembershipUpdated),
 }
 
+/// The result of inviting a member to a channel.
 #[derive(Debug)]
 pub struct InviteMemberResult {
     pub channel: Channel,
@@ -497,6 +522,7 @@ pub struct Channel {
     pub name: String,
     pub visibility: ChannelVisibility,
     pub role: ChannelRole,
+    /// parent_path is the channel ids from the root to this one (not including this one)
     pub parent_path: Vec<ChannelId>,
 }
 
