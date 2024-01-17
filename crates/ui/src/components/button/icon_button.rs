@@ -127,16 +127,25 @@ impl VisibleOnHover for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;
 
         self.base
             .map(|this| match self.shape {
-                IconButtonShape::Square => this
-                    .width(self.icon_size.rems().into())
-                    .height(self.icon_size.rems().into()),
+                IconButtonShape::Square => {
+                    let icon_size = self.icon_size.rems() * cx.rem_size();
+                    let padding = match self.icon_size {
+                        IconSize::Indicator => px(0.),
+                        IconSize::XSmall => px(0.),
+                        IconSize::Small => px(2.),
+                        IconSize::Medium => px(2.),
+                    };
+
+                    this.width((icon_size + padding * 2.).into())
+                        .height((icon_size + padding * 2.).into())
+                }
                 IconButtonShape::Wide => this,
             })
             .child(
