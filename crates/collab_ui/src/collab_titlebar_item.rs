@@ -3,7 +3,7 @@ use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
-    actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Element, Hsla,
+    actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
     WindowBounds,
@@ -19,7 +19,7 @@ use ui::{
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{notifications::NotifyResultExt, titlebar_height, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -62,10 +62,7 @@ impl Render for CollabTitlebarItem {
             .id("titlebar")
             .justify_between()
             .w_full()
-            .h(rems(1.75))
-            // Set a non-scaling min-height here to ensure the titlebar is
-            // always at least the height of the traffic lights.
-            .min_h(px(32.))
+            .h(titlebar_height(cx))
             .map(|this| {
                 if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
                     this.pl_2()
