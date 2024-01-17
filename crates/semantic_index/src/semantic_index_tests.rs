@@ -626,7 +626,7 @@ async fn test_code_context_retrieval_lua() {
                 -- Any functions this instance does not know of will 'look up' to the superclass definition.
                 setmetatable(instance, { __index = classdef, __newindex = mastertable })
                 return instance
-            end"#.unindent(), 809),
+            end"#.unindent(), 810),
         ]
     );
 }
