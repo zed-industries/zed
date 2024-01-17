@@ -1735,6 +1735,11 @@ async fn test_following_into_excluded_file(
         vec![18..17]
     );
 
+    editor_for_excluded_a.update(cx_a, |editor, cx| {
+        editor.select_right(&Default::default(), cx);
+    });
+    executor.run_until_parked();
+
     // Changes from B to the excluded file are replicated in A's editor
     editor_for_excluded_b.update(cx_b, |editor, cx| {
         editor.handle_input("\nCo-Authored-By: B <b@b.b>", cx);
@@ -1743,7 +1748,7 @@ async fn test_following_into_excluded_file(
     editor_for_excluded_a.update(cx_a, |editor, cx| {
         assert_eq!(
             editor.text(cx),
-            "new commit messag\nCo-Authored-By: B <b@b.b>"
+            "new commit message\nCo-Authored-By: B <b@b.b>"
         );
     });
 }

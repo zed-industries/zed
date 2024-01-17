@@ -1,0 +1,19 @@
+[files]
+ignore-files = true
+extend-exclude = [
+    # Vim makes heavy use of partial typing tables
+    "crates/vim/*",
+    # glsl isn't recognized by this tool
+    "crates/zed/src/languages/glsl/*",
+    # File suffixes aren't typos
+    "assets/icons/file_icons/file_types.json",
+    # :/
+    "crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql",
+    # Editor and file finder rely on partial typing and custom in-string syntax
+    "crates/file_finder/src/file_finder.rs",
+    "crates/editor/src/editor_tests.rs",
+]
+
+[default]
+extend-ignore-re = ["ba"]
+check-filename = true
