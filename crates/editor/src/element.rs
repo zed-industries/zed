@@ -64,6 +64,7 @@ struct SelectionLayout {
     is_local: bool,
     range: Range<DisplayPoint>,
     active_rows: Range<u32>,
+    user_name: Option<SharedString>,
 }
 
 impl SelectionLayout {
@@ -74,6 +75,7 @@ impl SelectionLayout {
         map: &DisplaySnapshot,
         is_newest: bool,
         is_local: bool,
+        user_name: Option<SharedString>,
     ) -> Self {
         let point_selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
@@ -113,6 +115,7 @@ impl SelectionLayout {
             is_local,
             range,
             active_rows,
+            user_name,
         }
     }
 }
@@ -980,8 +983,10 @@ impl EditorElement {
                 let corner_radius = 0.15 * layout.position_map.line_height;
                 let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
-                for (selection_style, selections) in &layout.selections {
-                    for selection in selections {
+                for (participant_ix, (selection_style, selections)) in
+                    layout.selections.iter().enumerate()
+                {
+                    for selection in selections.into_iter() {
                         self.paint_highlighted_range(
                             selection.range.clone(),
                             selection_style.selection,
@@ -1062,6 +1067,7 @@ impl EditorElement {
                                         ))
                                     });
                                 }
+
                                 cursors.push(Cursor {
                                     color: selection_style.cursor,
                                     block_width,
@@ -1069,6 +1075,14 @@ impl EditorElement {
                                     line_height: layout.position_map.line_height,
                                     shape: selection.cursor_shape,
                                     block_text,
+                                    cursor_name: selection.user_name.clone().map(|name| {
+                                        CursorName {
+                                            string: name,
+                                            color: self.style.background,
+                                            is_top_row: cursor_position.row() == 0,
+                                            z_index: (participant_ix % 256).try_into().unwrap(),
+                                        }
+                                    }),
                                 });
                             }
                         }
@@ -1887,6 +1901,7 @@ impl EditorElement {
                         &snapshot.display_snapshot,
                         is_newest,
                         true,
+                        None,
                     );
                     if is_newest {
                         newest_selection_head = Some(layout.head);
@@ -1959,6 +1974,7 @@ impl EditorElement {
                             &snapshot.display_snapshot,
                             false,
                             false,
+                            selection.user_name,
                         ));
                 }
 
@@ -1990,6 +2006,7 @@ impl EditorElement {
                     &snapshot.display_snapshot,
                     true,
                     true,
+                    None,
                 )
                 .head
             });
@@ -3096,6 +3113,15 @@ pub struct Cursor {
     color: Hsla,
     shape: CursorShape,
     block_text: Option<ShapedLine>,
+    cursor_name: Option<CursorName>,
+}
+
+#[derive(Debug)]
+pub struct CursorName {
+    string: SharedString,
+    color: Hsla,
+    is_top_row: bool,
+    z_index: u8,
 }
 
 impl Cursor {
@@ -3106,6 +3132,7 @@ impl Cursor {
         color: Hsla,
         shape: CursorShape,
         block_text: Option<ShapedLine>,
+        cursor_name: Option<CursorName>,
     ) -> Cursor {
         Cursor {
             origin,
@@ -3114,6 +3141,7 @@ impl Cursor {
             color,
             shape,
             block_text,
+            cursor_name,
         }
     }
 
@@ -3155,6 +3183,29 @@ impl Cursor {
             block_text
                 .paint(self.origin + origin, self.line_height, cx)
                 .log_err();
+        }
+
+        if let Some(name) = &self.cursor_name {
+            let name_origin = if name.is_top_row {
+                point(bounds.right() - px(1.), bounds.top())
+            } else {
+                point(bounds.left(), bounds.top() - self.line_height / 4. - px(1.))
+            };
+            cx.with_z_index(name.z_index, |cx| {
+                div()
+                    .bg(self.color)
+                    .text_size(self.line_height / 2.)
+                    .px_0p5()
+                    .line_height(self.line_height / 2. + px(1.))
+                    .text_color(name.color)
+                    .child(name.string.clone())
+                    .into_any_element()
+                    .draw(
+                        name_origin,
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent),
+                        cx,
+                    )
+            })
         }
     }
 
