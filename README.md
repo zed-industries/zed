@@ -1,15 +1,15 @@
 # 🚧 TODO 🚧
 
-[ ] Add intro
-[ ] Add link to contributing guide
-[ ] Add barebones running zed from source instructions
-[ ] Link out to further dev docs
+- [ ] Add intro
+- [ ] Add link to contributing guide
+- [ ] Add barebones running zed from source instructions
+- [ ] Link out to further dev docs
 
 # Zed
 
 [![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
 
-Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom]https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
 ## Developing Zed
 
