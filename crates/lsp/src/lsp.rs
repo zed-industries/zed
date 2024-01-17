@@ -584,7 +584,7 @@ impl LanguageServer {
         Ok(Arc::new(self))
     }
 
-    /// Sends a shutdown request to the language server process and prepares the `LanguageServer` to be dropped.
+    /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
@@ -645,7 +645,7 @@ impl LanguageServer {
         self.on_custom_request(T::METHOD, f)
     }
 
-    /// Register a handler to inspect all language server process stdio.
+    /// Registers a handler to inspect all language server process stdio.
     #[must_use]
     pub fn on_io<F>(&self, f: F) -> Subscription
     where
@@ -659,17 +659,17 @@ impl LanguageServer {
         }
     }
 
-    /// Removes a request handler registers via [Self::on_request].
+    /// Removes a request handler registers via [`Self::on_request`].
     pub fn remove_request_handler<T: request::Request>(&self) {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
-    /// Removes a notification handler registers via [Self::on_notification].
+    /// Removes a notification handler registers via [`Self::on_notification`].
     pub fn remove_notification_handler<T: notification::Notification>(&self) {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
-    /// Checks if a notification handler has been registered via [Self::on_notification].
+    /// Checks if a notification handler has been registered via [`Self::on_notification`].
     pub fn has_notification_handler<T: notification::Notification>(&self) -> bool {
         self.notification_handlers.lock().contains_key(T::METHOD)
     }
@@ -1055,12 +1055,12 @@ impl LanguageServer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
-    /// See [LanguageServer::notify]
+    /// See [`LanguageServer::notify`].
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
-    /// See [LanguageServer::request]
+    /// See [`LanguageServer::request`].
     pub async fn request<T>(&self, params: T::Params) -> Result<T::Result>
     where
         T: request::Request,
@@ -1070,7 +1070,7 @@ impl FakeLanguageServer {
         self.server.request::<T>(params).await
     }
 
-    /// Attempts [try_receive_notification], unwrapping if it has not received the specified type yet.
+    /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
         self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
