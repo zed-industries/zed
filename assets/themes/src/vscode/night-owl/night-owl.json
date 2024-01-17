@@ -926,14 +926,14 @@
       }
     },
     {
-      "name": "CoffeeScript Variable Assignment",
+      "name": "CoffeScript Variable Assignment",
       "scope": "variable.assignment.coffee",
       "settings": {
         "foreground": "#31e1eb"
       }
     },
     {
-      "name": "CoffeeScript Parameter Function",
+      "name": "CoffeScript Parameter Function",
       "scope": "variable.parameter.function.coffee",
       "settings": {
         "foreground": "#d6deeb"
@@ -1817,7 +1817,7 @@
         "keyword.operator.type",
         "keyword.operator",
         "keyword",
-        "punctuation.definition.string",
+        "punctuation.definintion.string",
         "punctuation",
         "variable.other.readwrite.js",
         "storage.type",

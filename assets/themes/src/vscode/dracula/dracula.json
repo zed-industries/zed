@@ -1024,7 +1024,7 @@
       }
     },
     {
-      "name": "SCSS attribute selector strings",
+      "name": "SCSS attibute selector strings",
       "scope": ["meta.attribute-selector.scss"],
       "settings": {
         "foreground": "#F1FA8C"
