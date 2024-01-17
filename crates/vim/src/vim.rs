@@ -61,7 +61,6 @@ actions!(
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-/// Action to Toggle vim on and off
 actions!(workspace, [ToggleVimMode]);
 
 impl_actions!(vim, [SwitchMode, PushOperator, Number]);
