@@ -681,8 +681,8 @@ pub(crate) fn next_word_start(
     for _ in 0..times {
         let mut crossed_newline = false;
         point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
+            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
             let at_newline = right == '\n';
 
             let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
@@ -711,8 +711,8 @@ fn next_word_end(
             *point.column_mut() = 0;
         }
         point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
+            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+            let right_kind = ccoerce_punctuation(har_kind(&scope, right), ignore_punctuation);
 
             left_kind != right_kind && left_kind != CharKind::Whitespace
         });
@@ -744,8 +744,8 @@ fn previous_word_start(
         // cursor because the newline is checked only once.
         point =
             movement::find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
-                let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
-                let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
+                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
                 (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
             });
@@ -950,6 +950,14 @@ pub(crate) fn next_line_end(
         point = start_of_relative_buffer_row(map, point, times as isize - 1);
     }
     end_of_line(map, false, point)
+}
+
+fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> Self {
+    if treat_punctuation_as_word && kind == CharKind::Punctuation {
+        CharKind::Word
+    } else {
+        kind
+    }
 }
 
 #[cfg(test)]

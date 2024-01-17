@@ -3023,7 +3023,7 @@ impl MultiBufferSnapshot {
 
     pub fn has_git_diffs(&self) -> bool {
         for excerpt in self.excerpts.iter() {
-            if !excerpt.buffer.git_diff.is_empty() {
+            if excerpt.buffer.has_git_diff() {
                 return true;
             }
         }
