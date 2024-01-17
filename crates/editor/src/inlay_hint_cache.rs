@@ -1,3 +1,11 @@
+/// Stores and updates all data received from LSP <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_inlayHint">textDocument/inlayHint</a> requests.
+/// Has nothing to do with other inlays, e.g. copilot suggestions — those are stored elsewhere.
+/// On every update, cache may query for more inlay hints and update inlays on the screen.
+///
+/// Inlays stored on screen are in [`crate::display_map::inlay_map`] and this cache is the only way to update any inlay hint data in the visible hints in the inlay map.
+/// For determining the update to the `inlay_map`, the cache requires a list of visible inlay hints — all other hints are not relevant and their separate updates are not influencing the cache work.
+///
+/// Due to the way the data is stored for both visible inlays and the cache, every inlay (and inlay hint) collection is editor-specific, so a single buffer may have multiple sets of inlays of open on different panes.
 use std::{
     cmp,
     ops::{ControlFlow, Range},
@@ -39,7 +47,7 @@ struct TasksForRanges {
 }
 
 #[derive(Debug)]
-pub struct CachedExcerptHints {
+struct CachedExcerptHints {
     version: usize,
     buffer_version: Global,
     buffer_id: u64,
@@ -47,15 +55,30 @@ pub struct CachedExcerptHints {
     hints_by_id: HashMap<InlayId, InlayHint>,
 }
 
+/// A logic to apply when querying for new inlay hints and deciding what to do with the old entries in the cache in case of conflicts.
 #[derive(Debug, Clone, Copy)]
-pub enum InvalidationStrategy {
+pub(super) enum InvalidationStrategy {
+    /// Hints reset is <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_inlayHint_refresh">requested</a> by the LSP server.
+    /// Demands to re-query all inlay hints needed and invalidate all cached entries, but does not require instant update with invalidation.
+    ///
+    /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
     RefreshRequested,
+    /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
+    /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
     BufferEdited,
+    /// A new file got opened/new excerpt was added to a multibuffer/a [multi]buffer was scrolled to a new position.
+    /// No invalidation should be done at all, all new hints are added to the cache.
+    ///
+    /// A special case is the settings change: in addition to LSP capabilities, Zed allows omitting certain hint kinds (defined by the corresponding LSP part: type/parameter/other).
+    /// This does not lead to cache invalidation, but would require cache usage for determining which hints are not displayed and issuing an update to inlays on the screen.
     None,
 }
 
-#[derive(Debug, Default)]
-pub struct InlaySplice {
+/// A splice to send into the `inlay_map` for updating the visible inlays on the screen.
+/// "Visible" inlays may not be displayed in the buffer right away, but those are ready to be displayed on further buffer scroll, pane item activations, etc. right away without additional LSP queries or settings changes.
+/// The data in the cache is never used directly for displaying inlays on the screen, to avoid races with updates from LSP queries and sync overhead.
+/// Splice is picked to help avoid extra hint flickering and "jumps" on the screen.
+pub(super) struct InlaySplice {
     pub to_remove: Vec<InlayId>,
     pub to_insert: Vec<Inlay>,
 }
@@ -237,7 +260,7 @@ impl TasksForRanges {
 }
 
 impl InlayHintCache {
-    pub fn new(inlay_hint_settings: InlayHintSettings) -> Self {
+    pub(super) fn new(inlay_hint_settings: InlayHintSettings) -> Self {
         Self {
             allowed_hint_kinds: inlay_hint_settings.enabled_inlay_hint_kinds(),
             enabled: inlay_hint_settings.enabled,
@@ -248,7 +271,10 @@ impl InlayHintCache {
         }
     }
 
-    pub fn update_settings(
+    /// Checks inlay hint settings for enabled hint kinds and general enabled state.
+    /// Generates corresponding inlay_map splice updates on settings changes.
+    /// Does not update inlay hint cache state on disabling or inlay hint kinds change: only reenabling forces new LSP queries.
+    pub(super) fn update_settings(
         &mut self,
         multi_buffer: &Model<MultiBuffer>,
         new_hint_settings: InlayHintSettings,
@@ -299,7 +325,11 @@ impl InlayHintCache {
         }
     }
 
-    pub fn spawn_hint_refresh(
+    /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
+    /// To reduce inlay hint jumping, attempts to query a visible range of the editor(s) first,
+    /// followed by the delayed queries of the same range above and below the visible one.
+    /// This way, concequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
+    pub(super) fn spawn_hint_refresh(
         &mut self,
         reason: &'static str,
         excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
@@ -460,7 +490,11 @@ impl InlayHintCache {
         }
     }
 
-    pub fn remove_excerpts(&mut self, excerpts_removed: Vec<ExcerptId>) -> Option<InlaySplice> {
+    /// Completely forget of certain excerpts that were removed from the multibuffer.
+    pub(super) fn remove_excerpts(
+        &mut self,
+        excerpts_removed: Vec<ExcerptId>,
+    ) -> Option<InlaySplice> {
         let mut to_remove = Vec::new();
         for excerpt_to_remove in excerpts_removed {
             self.update_tasks.remove(&excerpt_to_remove);
@@ -480,7 +514,7 @@ impl InlayHintCache {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         if !self.update_tasks.is_empty() || !self.hints.is_empty() {
             self.version += 1;
         }
@@ -488,7 +522,7 @@ impl InlayHintCache {
         self.hints.clear();
     }
 
-    pub fn hint_by_id(&self, excerpt_id: ExcerptId, hint_id: InlayId) -> Option<InlayHint> {
+    pub(super) fn hint_by_id(&self, excerpt_id: ExcerptId, hint_id: InlayId) -> Option<InlayHint> {
         self.hints
             .get(&excerpt_id)?
             .read()
@@ -516,7 +550,8 @@ impl InlayHintCache {
         self.version
     }
 
-    pub fn spawn_hint_resolve(
+    /// Queries a certain hint from the cache for extra data via the LSP <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHint_resolve">resolve</a> request.
+    pub(super) fn spawn_hint_resolve(
         &self,
         buffer_id: u64,
         excerpt_id: ExcerptId,

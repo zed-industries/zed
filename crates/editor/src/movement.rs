@@ -1,3 +1,6 @@
+//! Movement module contains helper functions for calculating intended position
+//! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
+
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
 use gpui::{px, Pixels, TextSystem};
@@ -5,6 +8,9 @@ use language::Point;
 
 use std::{ops::Range, sync::Arc};
 
+/// Defines search strategy for items in `movement` module.
+/// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
+/// `FindRange::MultiLine` keeps going until the end of a string.
 #[derive(Debug, PartialEq)]
 pub enum FindRange {
     SingleLine,
@@ -14,11 +20,13 @@ pub enum FindRange {
 /// TextLayoutDetails encompasses everything we need to move vertically
 /// taking into account variable width characters.
 pub struct TextLayoutDetails {
-    pub text_system: Arc<TextSystem>,
-    pub editor_style: EditorStyle,
-    pub rem_size: Pixels,
+    pub(crate) text_system: Arc<TextSystem>,
+    pub(crate) editor_style: EditorStyle,
+    pub(crate) rem_size: Pixels,
 }
 
+/// Returns a column to the left of the current point, wrapping
+/// to the previous line if that point is at the start of line.
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() > 0 {
         *point.column_mut() -= 1;
@@ -29,6 +37,8 @@ pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     map.clip_point(point, Bias::Left)
 }
 
+/// Returns a column to the left of the current point, doing nothing if
+/// that point is already at the start of line.
 pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() > 0 {
         *point.column_mut() -= 1;
@@ -36,6 +46,8 @@ pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Displa
     map.clip_point(point, Bias::Left)
 }
 
+/// Returns a column to the right of the current point, wrapping
+/// to the next line if that point is at the end of line.
 pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let max_column = map.line_len(point.row());
     if point.column() < max_column {
@@ -47,11 +59,14 @@ pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     map.clip_point(point, Bias::Right)
 }
 
+/// Returns a column to the right of the current point, not performing any wrapping
+/// if that point is already at the end of line.
 pub fn saturating_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     *point.column_mut() += 1;
     map.clip_point(point, Bias::Right)
 }
 
+/// Returns a display point for the preceding displayed line (which might be a soft-wrapped line).
 pub fn up(
     map: &DisplaySnapshot,
     start: DisplayPoint,
@@ -69,6 +84,7 @@ pub fn up(
     )
 }
 
+/// Returns a display point for the next displayed line (which might be a soft-wrapped line).
 pub fn down(
     map: &DisplaySnapshot,
     start: DisplayPoint,
@@ -86,7 +102,7 @@ pub fn down(
     )
 }
 
-pub fn up_by_rows(
+pub(crate) fn up_by_rows(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     row_count: u32,
@@ -125,7 +141,7 @@ pub fn up_by_rows(
     )
 }
 
-pub fn down_by_rows(
+pub(crate) fn down_by_rows(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     row_count: u32,
@@ -161,6 +177,10 @@ pub fn down_by_rows(
     )
 }
 
+/// Returns a position of the start of line.
+/// If `stop_at_soft_boundaries` is true, the returned position is that of the
+/// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
+/// Otherwise it's always going to be the start of a logical line.
 pub fn line_beginning(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -177,6 +197,10 @@ pub fn line_beginning(
     }
 }
 
+/// Returns the last indented position on a given line.
+/// If `stop_at_soft_boundaries` is true, the returned [`DisplayPoint`] is that of a
+/// displayed line (e.g. if there's soft wrap it's gonna be returned),
+/// otherwise it's always going to be a start of a logical line.
 pub fn indented_line_beginning(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -201,6 +225,11 @@ pub fn indented_line_beginning(
     }
 }
 
+/// Returns a position of the end of line.
+
+/// If `stop_at_soft_boundaries` is true, the returned position is that of the
+/// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
+/// Otherwise it's always going to be the end of a logical line.
 pub fn line_end(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -217,6 +246,8 @@ pub fn line_end(
     }
 }
 
+/// Returns a position of the previous word boundary, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
@@ -227,6 +258,9 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     })
 }
 
+/// Returns a position of the previous subword boundary, where a subword is defined as a run of
+/// word characters of the same "subkind" - where subcharacter kinds are '_' character,
+/// lowerspace characters and uppercase characters.
 pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
@@ -240,6 +274,8 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
     })
 }
 
+/// Returns a position of the next word boundary, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
@@ -250,6 +286,9 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     })
 }
 
+/// Returns a position of the next subword boundary, where a subword is defined as a run of
+/// word characters of the same "subkind" - where subcharacter kinds are '_' character,
+/// lowerspace characters and uppercase characters.
 pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
@@ -263,6 +302,8 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     })
 }
 
+/// Returns a position of the start of the current paragraph, where a paragraph
+/// is defined as a run of non-blank lines.
 pub fn start_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -290,6 +331,8 @@ pub fn start_of_paragraph(
     DisplayPoint::zero()
 }
 
+/// Returns a position of the end of the current paragraph, where a paragraph
+/// is defined as a run of non-blank lines.
 pub fn end_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -376,6 +419,9 @@ pub fn find_boundary(
     map.clip_point(offset.to_display_point(map), Bias::Right)
 }
 
+/// Returns an iterator over the characters following a given offset in the [`DisplaySnapshot`].
+/// The returned value also contains a range of the start/end of a returned character in
+/// the [`DisplaySnapshot`]. The offsets are relative to the start of a buffer.
 pub fn chars_after(
     map: &DisplaySnapshot,
     mut offset: usize,
@@ -387,6 +433,9 @@ pub fn chars_after(
     })
 }
 
+/// Returns a reverse iterator over the characters following a given offset in the [`DisplaySnapshot`].
+/// The returned value also contains a range of the start/end of a returned character in
+/// the [`DisplaySnapshot`]. The offsets are relative to the start of a buffer.
 pub fn chars_before(
     map: &DisplaySnapshot,
     mut offset: usize,
@@ -400,7 +449,7 @@ pub fn chars_before(
         })
 }
 
-pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
+pub(crate) fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
     let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
@@ -413,7 +462,10 @@ pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
     prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
 }
 
-pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<DisplayPoint> {
+pub(crate) fn surrounding_word(
+    map: &DisplaySnapshot,
+    position: DisplayPoint,
+) -> Range<DisplayPoint> {
     let position = map
         .clip_point(position, Bias::Left)
         .to_offset(map, Bias::Left);
@@ -429,6 +481,12 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
     start..end
 }
 
+/// Returns a list of lines (represented as a [`DisplayPoint`] range) contained
+/// within a passed range.
+///
+/// The line ranges are **always* going to be in bounds of a requested range, which means that
+/// the first and the last lines might not necessarily represent the
+/// full range of a logical line (as their `.start`/`.end` values are clipped to those of a passed in range).
 pub fn split_display_range_by_lines(
     map: &DisplaySnapshot,
     range: Range<DisplayPoint>,

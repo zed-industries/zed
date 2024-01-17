@@ -855,7 +855,7 @@ impl<'a> DerefMut for MutableSelectionsCollection<'a> {
 }
 
 // Panics if passed selections are not in order
-pub fn resolve_multiple<'a, D, I>(
+pub(crate) fn resolve_multiple<'a, D, I>(
     selections: I,
     snapshot: &MultiBufferSnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>

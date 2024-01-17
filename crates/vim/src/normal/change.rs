@@ -1,13 +1,12 @@
 use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
 use editor::{
-    char_kind,
     display_map::DisplaySnapshot,
     movement::{self, FindRange, TextLayoutDetails},
     scroll::autoscroll::Autoscroll,
-    CharKind, DisplayPoint,
+    DisplayPoint,
 };
 use gpui::WindowContext;
-use language::Selection;
+use language::{char_kind, CharKind, Selection};
 
 pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     // Some motions ignore failure when switching to normal mode

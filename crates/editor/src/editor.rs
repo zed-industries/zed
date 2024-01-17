@@ -14,7 +14,7 @@ pub mod movement;
 mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
-pub mod selections_collection;
+mod selections_collection;
 
 #[cfg(test)]
 mod editor_tests;
@@ -51,7 +51,7 @@ use hover_popover::{hide_hover, HoverState};
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
-pub use language::{char_kind, CharKind};
+use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
@@ -113,10 +113,12 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+#[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+#[doc(hidden)]
 pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
-pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
