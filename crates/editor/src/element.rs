@@ -2543,18 +2543,21 @@ impl EditorElement {
 
             move |event: &MouseUpEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
                 {
-                    editor.update(cx, |editor, cx| {
-                        Self::mouse_up(
-                            editor,
-                            event,
-                            &position_map,
-                            text_bounds,
-                            &stacking_order,
-                            cx,
-                        )
-                    });
+                    // if interactive_bounds.visibly_contains(&event.position, cx) {
+                        editor.update(cx, |editor, cx| {
+                            Self::mouse_up(
+                                editor,
+                                event,
+                                &position_map,
+                                text_bounds,
+                                &stacking_order,
+                                cx,
+                            )
+                        });
+                    // } else {
+
+                    // }
                 }
             }
         });
