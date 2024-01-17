@@ -1,3 +1,5 @@
+use crate::{ErrorCode, ErrorCodeExt, ErrorExt, RPCError};
+
 use super::{
     proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, RequestMessage},
     Connection,
@@ -423,11 +425,7 @@ impl Peer {
             let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
 
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                Err(anyhow!(
-                    "RPC request {} failed - {}",
-                    T::NAME,
-                    error.message
-                ))
+                Err(RPCError::from_proto(&error, T::NAME))
             } else {
                 Ok(TypedEnvelope {
                     message_id: response.id,
@@ -516,9 +514,12 @@ impl Peer {
         envelope: Box<dyn AnyTypedEnvelope>,
     ) -> Result<()> {
         let connection = self.connection_state(envelope.sender_id())?;
-        let response = proto::Error {
-            message: format!("message {} was not handled", envelope.payload_type_name()),
-        };
+        let response = ErrorCode::Internal
+            .message(format!(
+                "message {} was not handled",
+                envelope.payload_type_name()
+            ))
+            .to_proto();
         let message_id = connection
             .next_message_id
             .fetch_add(1, atomic::Ordering::SeqCst);
@@ -692,17 +693,17 @@ mod tests {
                 server
                     .send(
                         server_to_client_conn_id,
-                        proto::Error {
-                            message: "message 1".to_string(),
-                        },
+                        ErrorCode::Internal
+                            .message("message 1".to_string())
+                            .to_proto(),
                     )
                     .unwrap();
                 server
                     .send(
                         server_to_client_conn_id,
-                        proto::Error {
-                            message: "message 2".to_string(),
-                        },
+                        ErrorCode::Internal
+                            .message("message 2".to_string())
+                            .to_proto(),
                     )
                     .unwrap();
                 server.respond(request.receipt(), proto::Ack {}).unwrap();
@@ -797,17 +798,17 @@ mod tests {
                 server
                     .send(
                         server_to_client_conn_id,
-                        proto::Error {
-                            message: "message 1".to_string(),
-                        },
+                        ErrorCode::Internal
+                            .message("message 1".to_string())
+                            .to_proto(),
                     )
                     .unwrap();
                 server
                     .send(
                         server_to_client_conn_id,
-                        proto::Error {
-                            message: "message 2".to_string(),
-                        },
+                        ErrorCode::Internal
+                            .message("message 2".to_string())
+                            .to_proto(),
                     )
                     .unwrap();
                 server.respond(request1.receipt(), proto::Ack {}).unwrap();

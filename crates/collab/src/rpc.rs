@@ -10,7 +10,7 @@ use crate::{
         User, UserId,
     },
     executor::Executor,
-    AppState, Result,
+    AppState, Error, Result,
 };
 use anyhow::anyhow;
 use async_tungstenite::tungstenite::{
@@ -44,7 +44,7 @@ use rpc::{
         self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
         RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
     },
-    Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
+    Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
 use serde::{Serialize, Serializer};
 use std::{
@@ -543,12 +543,11 @@ impl Server {
                         }
                     }
                     Err(error) => {
-                        peer.respond_with_error(
-                            receipt,
-                            proto::Error {
-                                message: error.to_string(),
-                            },
-                        )?;
+                        let proto_err = match &error {
+                            Error::Internal(err) => err.to_proto(),
+                            _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
+                        };
+                        peer.respond_with_error(receipt, proto_err)?;
                         Err(error)
                     }
                 }

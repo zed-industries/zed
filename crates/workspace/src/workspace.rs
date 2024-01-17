@@ -14,8 +14,8 @@ mod workspace_settings;
 use anyhow::{anyhow, Context as _, Result};
 use call::ActiveCall;
 use client::{
-    proto::{self, PeerId},
-    Client, Status, TypedEnvelope, UserStore,
+    proto::{self, ErrorCode, PeerId},
+    Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
@@ -3919,10 +3919,10 @@ async fn join_channel_internal(
             | Status::Reconnecting
             | Status::Reauthenticating => continue,
             Status::Connected { .. } => break 'outer,
-            Status::SignedOut => return Err(anyhow!("not signed in")),
-            Status::UpgradeRequired => return Err(anyhow!("zed is out of date")),
+            Status::SignedOut => return Err(ErrorCode::SignedOut.into()),
+            Status::UpgradeRequired => return Err(ErrorCode::UpgradeRequired.into()),
             Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
-                return Err(anyhow!("zed is offline"))
+                return Err(ErrorCode::Disconnected.into())
             }
         }
     }
@@ -3995,9 +3995,23 @@ pub fn join_channel(
             if let Some(active_window) = active_window {
                 active_window
                     .update(&mut cx, |_, cx| {
+                        let message:SharedString = match err.error_code() {
+                            ErrorCode::SignedOut => {
+                                "Failed to join channel\n\nPlease sign in to continue.".into()
+                            },
+                            ErrorCode::UpgradeRequired => {
+                                "Failed to join channel\n\nPlease update to the latest version of Zed to continue.".into()
+                            },
+                            ErrorCode::NoSuchChannel => {
+                                "Failed to find channel\n\nPlease check the link and try again.".into()
+                            },
+                            ErrorCode::Disconnected => "Failed to join channel\n\nPlease check your internet connection and try again.".into(),
+                            ErrorCode::WrongReleaseChannel => format!("Failed to join channel\n\nOther people in the channel are using the {} release of Zed, please switch to that release instead.", err.error_tag("required").unwrap_or("other")).into(),
+                            _ => format!("Failed to join channel\n\n{}\n\nPlease try again.", err).into(),
+                        };
                         cx.prompt(
                             PromptLevel::Critical,
-                            &format!("Failed to join channel: {}", err),
+                            &message,
                             &["Ok"],
                         )
                     })?

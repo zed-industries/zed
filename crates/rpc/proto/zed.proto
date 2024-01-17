@@ -197,6 +197,18 @@ message Ack {}
 
 message Error {
     string message = 1;
+    ErrorCode code = 2;
+    repeated string tags = 3;
+}
+
+enum ErrorCode {
+    Internal = 0;
+    NoSuchChannel = 1;
+    Disconnected = 2;
+    SignedOut = 3;
+    UpgradeRequired = 4;
+    Forbidden = 5;
+    WrongReleaseChannel = 6;
 }
 
 message Test {
