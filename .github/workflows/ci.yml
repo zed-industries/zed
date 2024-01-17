@@ -23,7 +23,7 @@ env:
 
 jobs:
     style:
-        name: Check formatting and Clippy lints
+        name: Check formatting, Clippy lints, and spelling
         runs-on:
             - self-hosted
             - test
@@ -40,7 +40,6 @@ jobs:
 
             - name: Run style checks
               uses: ./.github/actions/check_style
-
     tests:
         name: Run tests
         runs-on:

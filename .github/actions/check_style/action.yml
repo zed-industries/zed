@@ -21,3 +21,6 @@ runs:
       run: |
         export SQUAWK_GITHUB_TOKEN=${{ github.token }}
         . ./script/squawk
+
+    - name: Run spelling check
+      uses: crate-ci/typos@master
