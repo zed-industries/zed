@@ -1149,7 +1149,7 @@ impl Render for AssistantPanel {
                     |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
                     cx,
                 );
-                BufferSearchBar::register_inner(&mut registrar);
+                BufferSearchBar::register(&mut registrar);
                 registrar.into_div()
             } else {
                 div()
@@ -2312,8 +2312,7 @@ impl ConversationEditor {
                                     }
                                 });
 
-                            div()
-                                .h_flex()
+                            h_flex()
                                 .id(("message_header", message_id.0))
                                 .h_11()
                                 .relative()
@@ -2329,6 +2328,7 @@ impl ConversationEditor {
                                         .add_suffix(true)
                                         .to_string(),
                                     )
+                                    .size(LabelSize::XSmall)
                                     .color(Color::Muted),
                                 )
                                 .children(

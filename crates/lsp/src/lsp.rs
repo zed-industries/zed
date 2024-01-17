@@ -39,6 +39,7 @@ type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppCon
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
+/// Kind of language server stdio given to an IO handler.
 #[derive(Debug, Clone, Copy)]
 pub enum IoKind {
     StdOut,
@@ -46,12 +47,15 @@ pub enum IoKind {
     StdErr,
 }
 
+/// Represents a launchable language server. This can either be a standalone binary or the path
+/// to a runtime with arguments to instruct it to launch the actual language server file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
 }
 
+/// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicUsize,
@@ -70,10 +74,12 @@ pub struct LanguageServer {
     _server: Option<Mutex<Child>>,
 }
 
+/// Identifies a running language server.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct LanguageServerId(pub usize);
 
+/// Handle to a language server RPC activity subscription.
 pub enum Subscription {
     Notification {
         method: &'static str,
@@ -85,6 +91,9 @@ pub enum Subscription {
     },
 }
 
+/// Language server protocol RPC request message.
+///
+/// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
 #[derive(Serialize, Deserialize)]
 pub struct Request<'a, T> {
     jsonrpc: &'static str,
@@ -93,6 +102,7 @@ pub struct Request<'a, T> {
     params: T,
 }
 
+/// Language server protocol RPC request response message before it is deserialized into a concrete type.
 #[derive(Serialize, Deserialize)]
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
@@ -103,6 +113,9 @@ struct AnyResponse<'a> {
     result: Option<&'a RawValue>,
 }
 
+/// Language server protocol RPC request response message.
+///
+/// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#responseMessage)
 #[derive(Serialize)]
 struct Response<T> {
     jsonrpc: &'static str,
@@ -111,6 +124,9 @@ struct Response<T> {
     error: Option<Error>,
 }
 
+/// Language server protocol RPC notification message.
+///
+/// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
 #[derive(Serialize, Deserialize)]
 struct Notification<'a, T> {
     jsonrpc: &'static str,
@@ -119,6 +135,7 @@ struct Notification<'a, T> {
     params: T,
 }
 
+/// Language server RPC notification message before it is deserialized into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
     #[serde(default)]
@@ -135,6 +152,7 @@ struct Error {
 }
 
 impl LanguageServer {
+    /// Starts a language server process.
     pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
@@ -277,6 +295,7 @@ impl LanguageServer {
         }
     }
 
+    /// List of code action kinds this language server reports being able to emit.
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         self.code_action_kinds.clone()
     }
@@ -427,9 +446,10 @@ impl LanguageServer {
         Ok(())
     }
 
-    /// Initializes a language server.
-    /// Note that `options` is used directly to construct [`InitializeParams`],
-    /// which is why it is owned.
+    /// Initializes a language server by sending the `Initialize` request.
+    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
     pub async fn initialize(mut self, options: Option<Value>) -> Result<Arc<Self>> {
         let root_uri = Url::from_file_path(&self.root_path).unwrap();
         #[allow(deprecated)]
@@ -564,6 +584,7 @@ impl LanguageServer {
         Ok(Arc::new(self))
     }
 
+    /// Sends a shutdown request to the language server process and prepares the `LanguageServer` to be dropped.
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
@@ -598,6 +619,9 @@ impl LanguageServer {
         }
     }
 
+    /// Register a handler to handle incoming LSP notifications.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
     #[must_use]
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
     where
@@ -607,6 +631,9 @@ impl LanguageServer {
         self.on_custom_notification(T::METHOD, f)
     }
 
+    /// Register a handler to handle incoming LSP requests.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     #[must_use]
     pub fn on_request<T, F, Fut>(&self, f: F) -> Subscription
     where
@@ -618,6 +645,7 @@ impl LanguageServer {
         self.on_custom_request(T::METHOD, f)
     }
 
+    /// Register a handler to inspect all language server process stdio.
     #[must_use]
     pub fn on_io<F>(&self, f: F) -> Subscription
     where
@@ -631,20 +659,23 @@ impl LanguageServer {
         }
     }
 
+    /// Removes a request handler registers via [Self::on_request].
     pub fn remove_request_handler<T: request::Request>(&self) {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
+    /// Removes a notification handler registers via [Self::on_notification].
     pub fn remove_notification_handler<T: notification::Notification>(&self) {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
+    /// Checks if a notification handler has been registered via [Self::on_notification].
     pub fn has_notification_handler<T: notification::Notification>(&self) -> bool {
         self.notification_handlers.lock().contains_key(T::METHOD)
     }
 
     #[must_use]
-    pub fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
+    fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
         F: 'static + FnMut(Params, AsyncAppContext) + Send,
         Params: DeserializeOwned,
@@ -668,11 +699,7 @@ impl LanguageServer {
     }
 
     #[must_use]
-    pub fn on_custom_request<Params, Res, Fut, F>(
-        &self,
-        method: &'static str,
-        mut f: F,
-    ) -> Subscription
+    fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
         F: 'static + FnMut(Params, AsyncAppContext) -> Fut + Send,
         Fut: 'static + Future<Output = Result<Res>>,
@@ -750,22 +777,29 @@ impl LanguageServer {
         }
     }
 
+    /// Get the name of the running language server.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Get the reported capabilities of the running language server.
     pub fn capabilities(&self) -> &ServerCapabilities {
         &self.capabilities
     }
 
+    /// Get the id of the running language server.
     pub fn server_id(&self) -> LanguageServerId {
         self.server_id
     }
 
+    /// Get the root path of the project the language server is running against.
     pub fn root_path(&self) -> &PathBuf {
         &self.root_path
     }
 
+    /// Sends a RPC request to the language server.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
@@ -851,6 +885,9 @@ impl LanguageServer {
         }
     }
 
+    /// Sends a RPC notification to the language server.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
     pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
         Self::notify_internal::<T>(&self.outbound_tx, params)
     }
@@ -879,6 +916,7 @@ impl Drop for LanguageServer {
 }
 
 impl Subscription {
+    /// Detaching a subscription handle prevents it from unsubscribing on drop.
     pub fn detach(&mut self) {
         match self {
             Subscription::Notification {
@@ -925,6 +963,7 @@ impl Drop for Subscription {
     }
 }
 
+/// Mock language server for use in tests.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub struct FakeLanguageServer {
@@ -946,6 +985,7 @@ impl LanguageServer {
         }
     }
 
+    /// Construct a fake language server.
     pub fn fake(
         name: String,
         capabilities: ServerCapabilities,
@@ -1015,10 +1055,12 @@ impl LanguageServer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
+    /// See [LanguageServer::notify]
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
+    /// See [LanguageServer::request]
     pub async fn request<T>(&self, params: T::Params) -> Result<T::Result>
     where
         T: request::Request,
@@ -1028,11 +1070,13 @@ impl FakeLanguageServer {
         self.server.request::<T>(params).await
     }
 
+    /// Attempts [try_receive_notification], unwrapping if it has not received the specified type yet.
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
         self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
     }
 
+    /// Consumes the notification channel until it finds a notification for the specified type.
     pub async fn try_receive_notification<T: notification::Notification>(
         &mut self,
     ) -> Option<T::Params> {
@@ -1048,6 +1092,7 @@ impl FakeLanguageServer {
         }
     }
 
+    /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
     pub fn handle_request<T, F, Fut>(
         &self,
         mut handler: F,
@@ -1076,6 +1121,7 @@ impl FakeLanguageServer {
         responded_rx
     }
 
+    /// Registers a handler for a specific kind of notification. Removes any existing handler for specified notification type.
     pub fn handle_notification<T, F>(
         &self,
         mut handler: F,
@@ -1096,6 +1142,7 @@ impl FakeLanguageServer {
         handled_rx
     }
 
+    /// Removes any existing handler for specified notification type.
     pub fn remove_request_handler<T>(&mut self)
     where
         T: 'static + request::Request,
@@ -1103,6 +1150,7 @@ impl FakeLanguageServer {
         self.server.remove_request_handler::<T>();
     }
 
+    /// Simulate that the server has started work and notifies about its progress with the specified token.
     pub async fn start_progress(&self, token: impl Into<String>) {
         let token = token.into();
         self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
@@ -1116,6 +1164,7 @@ impl FakeLanguageServer {
         });
     }
 
+    /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
         self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token.into()),

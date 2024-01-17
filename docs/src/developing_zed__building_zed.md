@@ -1,94 +1,120 @@
 # Building Zed
 
 🚧 TODO:
-- [ ] Tidy up & update instructions
+
 - [ ] Remove ZI-specific things
 - [ ] Rework any steps that currently require a ZI-specific account
 
 How to build Zed from source for the first time.
 
-## Prerequisites
+### Prerequisites
+
+🚧 TODO 🚧 Update for open source
 
 - Be added to the GitHub organization
 - Be added to the Vercel team
+- Create a [Personal Access Token](https://github.com/settings/personal-access-tokens/new) on Github
+  - 🚧 TODO 🚧 What permissions are required?
+  - 🚧 TODO 🚧 What changes when repo isn't private?
+  - Go to https://github.com/settings/tokens and Generate new token
+  - GitHub currently provides two kinds of tokens:
+    - Classic Tokens, where only `repo` (Full control of private repositories) OAuth scope has to be selected
+      Unfortunately, unselecting `repo` scope and selecting every its inner scope instead does not allow the token users to read from private repositories
+    - (not applicable) Fine-grained Tokens, at the moment of writing, did not allow any kind of access of non-owned private repos
+  - Keep the token in the browser tab/editor for the next two steps
 
-## Process
+### Dependencies
 
-Expect this to take 30min to an hour! Some of these steps will take quite a while based on your connection speed, and how long your first build will be.
+- Install [Rust](https://www.rust-lang.org/tools/install)
 
-1. Install the [GitHub CLI](https://cli.github.com/):
-   - `brew install gh`
+- Install the [GitHub CLI](https://cli.github.com/), [Livekit](https://formulae.brew.sh/formula/livekit) & [Foreman](https://formulae.brew.sh/formula/foreman)
+
+```bash
+brew install gh
+brew install livekit
+brew install foreman
+```
+
+- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store
+
+- Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
+
+```bash
+xcode-select --install
+```
+
+- If `xcode-select --print-path prints /Library/Developer/CommandLineTools…` run `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer.`
+
+* Install [Postgres](https://postgresapp.com)
+
+* Install the wasm toolchain
+
+```bash
+rustup target add wasm32-wasi
+```
+
+### Building Zed from Source
+
 1. Clone the `zed` repo
-   - `gh repo clone zed-industries/zed`
-1. Install Xcode from the macOS App Store
-1. Install Xcode command line tools
-   - `xcode-select --install`
-   - If xcode-select --print-path prints /Library/Developer/CommandLineTools… run `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer.`
-1. Install [Postgres](https://postgresapp.com)
-1. Install rust/rustup
-   - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-1. Install the wasm toolchain
-   - `rustup target add wasm32-wasi`
-1. Install Livekit & Foreman
-   - `brew install livekit`
-   - `brew install foreman`
-1. Generate an GitHub API Key
-   - Go to https://github.com/settings/tokens and Generate new token
-   - GitHub currently provides two kinds of tokens:
-     - Classic Tokens, where only `repo` (Full control of private repositories) OAuth scope has to be selected
-       Unfortunately, unselecting `repo` scope and selecting every its inner scope instead does not allow the token users to read from private repositories
-     - (not applicable) Fine-grained Tokens, at the moment of writing, did not allow any kind of access of non-owned private repos
-   - Keep the token in the browser tab/editor for the next two steps
-1. (Optional but reccomended) Add your GITHUB_TOKEN to your `.zshrc` or `.bashrc` like this: `export GITHUB_TOKEN=yourGithubAPIToken`
-1. Ensure the Zed.dev website is checked out in a sibling directory and install its dependencies:
-    ```
-    cd ..
-    git clone https://github.com/zed-industries/zed.dev
-    cd zed.dev && npm install
-    npm install -g vercel
-    ```
-1. Link your zed.dev project to Vercel
-    - `vercel link`
-    - Select the `zed-industries` team. If you don't have this get someone on the team to add you to it.
-    - Select the `zed.dev` project
-1. Run `vercel pull` to pull down the environment variables and project info from Vercel
+
+```bash
+gh repo clone zed-industries/zed
+```
+
+1. (Optional but recommended) Add your GITHUB_TOKEN to your `.zshrc` or `.bashrc` like this: `export GITHUB_TOKEN=yourGithubAPIToken`
+1. (🚧 TODO 🚧 - Will this be relevant for open source?) Ensure the Zed.dev website is checked out in a sibling directory and install its dependencies:
+
+```bash
+cd ..
+git clone https://github.com/zed-industries/zed.dev
+cd zed.dev && npm install
+pnpm install -g vercel
+```
+
+1. (🚧 TODO 🚧 - Will this be relevant for open source?) Link your zed.dev project to Vercel
+
+- `vercel link`
+- Select the `zed-industries` team. If you don't have this get someone on the team to add you to it.
+- Select the `zed.dev` project
+
+1. (🚧 TODO 🚧 - Will this be relevant for open source?) Run `vercel pull` to pull down the environment variables and project info from Vercel
 1. Open Postgres.app
-1. From `./path/to/zed/`:
-    - Run:
-        - `GITHUB_TOKEN={yourGithubAPIToken} script/bootstrap`
-        - Replace `{yourGithubAPIToken}` with the API token you generated above.
-        - You don't need to include the GITHUB_TOKEN if you exported it above.
-    - Consider removing the token (if it's fine for you to recreate such tokens during occasional migrations) or store this token somewhere safe (like your Zed 1Password vault).
-   - If you get:
-     - ```bash
-       Error: Cannot install in Homebrew on ARM processor in Intel default prefix (/usr/local)!
-       Please create a new installation in /opt/homebrew using one of the
-       "Alternative Installs" from:
-       https://docs.brew.sh/Installation
-       ```
-     - In that case try:
-       - `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
-   - If Homebrew is not in your PATH:
-     - Replace `{username}` with your home folder name (usually your login name)
-     - `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> /Users/{username}/.zprofile`
-     - `eval "$(/opt/homebrew/bin/brew shellenv)"`
+1. From `./path/to/zed/` run `GITHUB_TOKEN={yourGithubAPIToken} script/bootstrap`
+
+- You don't need to include the GITHUB_TOKEN if you exported it above.
+- Consider removing the token (if it's fine for you to recreate such tokens during occasional migrations) or store this token somewhere safe (like your Zed 1Password vault).
+
 1. To run the Zed app:
-    - If you are working on zed:
-      - `cargo run`
-    - If you are just using the latest version, but not working on zed:
-      - `cargo run --release`
-    - If you need to run the collaboration server locally:
-      - `script/zed-local`
+   - If you are working on zed:
+     - `cargo run`
+   - If you are just using the latest version, but not working on zed:
+     - `cargo run --release`
+   - If you need to run the collaboration server locally:
+     - `script/zed-local`
 
 ## Troubleshooting
 
-### `error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`
+**`error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`**
 
 - Try `xcode-select --switch /Applications/Xcode.app/Contents/Developer`
 
-### `xcrun: error: unable to find utility "metal", not a developer tool or in PATH`
+**`xcrun: error: unable to find utility "metal", not a developer tool or in PATH`**
 
-### Seeding errors during `script/bootstrap` runs
+### `script/bootstrap`
+
+```bash
+Error: Cannot install in Homebrew on ARM processor in Intel default prefix (/usr/local)!
+Please create a new installation in /opt/homebrew using one of the
+"Alternative Installs" from:
+https://docs.brew.sh/Installation
+```
+
+- In that case try `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+
+- If Homebrew is not in your PATH:
+  - Replace `{username}` with your home folder name (usually your login name)
+  - `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> /Users/{username}/.zprofile`
+  - `eval "$(/opt/homebrew/bin/brew shellenv)"`
 
 ```
 seeding database...
@@ -104,4 +130,4 @@ Same command
 
 ### If you experience errors that mention some dependency is using unstable features
 
-Try `cargo clean` and `cargo build`
+Try `cargo clean` and `cargo build`,

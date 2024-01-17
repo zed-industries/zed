@@ -2,6 +2,7 @@ use super::*;
 use sea_orm::sea_query::Query;
 
 impl Database {
+    /// Creates a new access token for the given user.
     pub async fn create_access_token(
         &self,
         user_id: UserId,
@@ -39,6 +40,7 @@ impl Database {
         .await
     }
 
+    /// Retrieves the access token with the given ID.
     pub async fn get_access_token(
         &self,
         access_token_id: AccessTokenId,
