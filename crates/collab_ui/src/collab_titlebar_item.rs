@@ -1,9 +1,9 @@
 use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
+use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
-    actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Element, Hsla,
+    actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
     WindowBounds,
@@ -12,14 +12,14 @@ use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto;
 use std::sync::Arc;
-use theme::{ActiveTheme, PlayerColors};
+use theme::ActiveTheme;
 use ui::{
-    h_flex, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconName, TintColor, Tooltip,
+    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{notifications::NotifyResultExt, titlebar_height, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -62,10 +62,7 @@ impl Render for CollabTitlebarItem {
             .id("titlebar")
             .justify_between()
             .w_full()
-            .h(rems(1.75))
-            // Set a non-scaling min-height here to ensure the titlebar is
-            // always at least the height of the traffic lights.
-            .min_h(px(32.))
+            .h(titlebar_height(cx))
             .map(|this| {
                 if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
                     this.pl_2()
@@ -97,7 +94,7 @@ impl Render for CollabTitlebarItem {
                                 room.remote_participants().values().collect::<Vec<_>>();
                             remote_participants.sort_by_key(|p| p.participant_index.0);
 
-                            this.children(self.render_collaborator(
+                            let current_user_face_pile = self.render_collaborator(
                                 &current_user,
                                 peer_id,
                                 true,
@@ -107,7 +104,13 @@ impl Render for CollabTitlebarItem {
                                 project_id,
                                 &current_user,
                                 cx,
-                            ))
+                            );
+
+                            this.children(current_user_face_pile.map(|face_pile| {
+                                v_flex()
+                                    .child(face_pile)
+                                    .child(render_color_ribbon(player_colors.local().cursor))
+                            }))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
                                     let is_present = project_id.map_or(false, |project_id| {
@@ -132,8 +135,11 @@ impl Render for CollabTitlebarItem {
                                             .id(("collaborator", collaborator.user.id))
                                             .child(face_pile)
                                             .child(render_color_ribbon(
-                                                collaborator.participant_index,
-                                                player_colors,
+                                                player_colors
+                                                    .color_for_participant(
+                                                        collaborator.participant_index.0,
+                                                    )
+                                                    .cursor,
                                             ))
                                             .cursor_pointer()
                                             .on_click({
@@ -312,8 +318,7 @@ impl Render for CollabTitlebarItem {
     }
 }
 
-fn render_color_ribbon(participant_index: ParticipantIndex, colors: &PlayerColors) -> gpui::Canvas {
-    let color = colors.color_for_participant(participant_index.0).cursor;
+fn render_color_ribbon(color: Hsla) -> gpui::Canvas {
     canvas(move |bounds, cx| {
         let height = bounds.size.height;
         let horizontal_offset = height;
@@ -472,7 +477,9 @@ impl CollabTitlebarItem {
             return None;
         }
 
+        const FACEPILE_LIMIT: usize = 3;
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
+        let extra_count = followers.len().saturating_sub(FACEPILE_LIMIT);
 
         let pile = FacePile::default()
             .child(
@@ -480,24 +487,48 @@ impl CollabTitlebarItem {
                     .grayscale(!is_present)
                     .border_color(if is_speaking {
                         cx.theme().status().info_border
-                    } else if is_muted {
-                        cx.theme().status().error_border
                     } else {
-                        Hsla::default()
+                        // We draw the border in a transparent color rather to avoid
+                        // the layout shift that would come with adding/removing the border.
+                        gpui::transparent_black()
+                    })
+                    .when(is_muted, |avatar| {
+                        avatar.indicator(
+                            AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted).tooltip({
+                                let github_login = user.github_login.clone();
+                                move |cx| Tooltip::text(format!("{} is muted", github_login), cx)
+                            }),
+                        )
                     }),
             )
-            .children(followers.iter().filter_map(|follower_peer_id| {
-                let follower = room
-                    .remote_participants()
-                    .values()
-                    .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
-                    .or_else(|| {
-                        (self.client.peer_id() == Some(*follower_peer_id)).then_some(current_user)
-                    })?
-                    .clone();
+            .children(
+                followers
+                    .iter()
+                    .take(FACEPILE_LIMIT)
+                    .filter_map(|follower_peer_id| {
+                        let follower = room
+                            .remote_participants()
+                            .values()
+                            .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
+                            .or_else(|| {
+                                (self.client.peer_id() == Some(*follower_peer_id))
+                                    .then_some(current_user)
+                            })?
+                            .clone();
 
-                Some(Avatar::new(follower.avatar_uri.clone()))
-            }));
+                        Some(Avatar::new(follower.avatar_uri.clone()))
+                    }),
+            )
+            .children(if extra_count > 0 {
+                Some(
+                    div()
+                        .ml_1()
+                        .child(Label::new(format!("+{extra_count}")))
+                        .into_any_element(),
+                )
+            } else {
+                None
+            });
 
         Some(pile)
     }

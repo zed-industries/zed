@@ -1,27 +1,21 @@
 [package]
-name = "theme"
+name = "color"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [features]
 default = []
-importing-themes = []
 stories = ["dep:itertools", "dep:story"]
-test-support = [
-    "gpui/test-support",
-    "fs/test-support",
-    "settings/test-support"
-]
 
 [lib]
-path = "src/theme.rs"
-doctest = false
+path = "src/color.rs"
+doctest = true
 
 [dependencies]
+# TODO: Clean up dependencies
 anyhow.workspace = true
 fs = { path = "../fs" }
-gpui = { path = "../gpui" }
 indexmap = "1.6.2"
 parking_lot.workspace = true
 refineable.workspace = true
@@ -34,10 +28,5 @@ story = { path = "../story", optional = true }
 toml.workspace = true
 uuid.workspace = true
 util = { path = "../util" }
-color = {path = "../color"}
 itertools = { version = "0.11.0", optional = true }
-
-[dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
-fs = { path = "../fs", features = ["test-support"] }
-settings = { path = "../settings", features = ["test-support"] }
+palette = "0.7.3"

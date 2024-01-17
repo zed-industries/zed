@@ -386,7 +386,7 @@ impl Style {
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
-            cx.with_z_index(1, |cx| {
+            cx.with_z_index(0, |cx| {
                 let mut border_color = background_color.unwrap_or_default();
                 border_color.a = 0.;
                 cx.paint_quad(quad(
@@ -399,12 +399,12 @@ impl Style {
             });
         }
 
-        cx.with_z_index(2, |cx| {
+        cx.with_z_index(0, |cx| {
             continuation(cx);
         });
 
         if self.is_border_visible() {
-            cx.with_z_index(3, |cx| {
+            cx.with_z_index(0, |cx| {
                 let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
                 let border_widths = self.border_widths.to_pixels(rem_size);
                 let max_border_width = border_widths.max();

@@ -85,6 +85,18 @@ fn generate_methods() -> Vec<TokenStream2> {
     }
 
     for (prefix, fields, prefix_doc_string) in border_prefixes() {
+        methods.push(generate_custom_value_setter(
+            // The plain method names (e.g., `border`, `border_t`, `border_r`, etc.) are special-cased
+            // versions of the 1px variants. This better matches Tailwind, but breaks our existing
+            // convention of the suffix-less variant of the method being the one that accepts a custom value
+            //
+            // To work around this, we're assigning a `_width` suffix here.
+            &format!("{prefix}_width"),
+            quote! { AbsoluteLength },
+            &fields,
+            prefix_doc_string,
+        ));
+
         for (suffix, width_tokens, suffix_doc_string) in border_suffixes() {
             methods.push(generate_predefined_setter(
                 prefix,
@@ -141,7 +153,7 @@ fn generate_predefined_setter(
 }
 
 fn generate_custom_value_setter(
-    prefix: &'static str,
+    prefix: &str,
     length_type: TokenStream2,
     fields: &[TokenStream2],
     doc_string: &str,

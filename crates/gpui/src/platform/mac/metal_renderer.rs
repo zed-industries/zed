@@ -82,7 +82,7 @@ impl MetalRenderer {
         ];
         let unit_vertices = device.new_buffer_with_data(
             unit_vertices.as_ptr() as *const c_void,
-            (unit_vertices.len() * mem::size_of::<u64>()) as u64,
+            mem::size_of_val(&unit_vertices) as u64,
             MTLResourceOptions::StorageModeManaged,
         );
         let instances = device.new_buffer(
@@ -340,7 +340,8 @@ impl MetalRenderer {
 
         for (texture_id, vertices) in vertices_by_texture_id {
             align_offset(offset);
-            let next_offset = *offset + vertices.len() * mem::size_of::<PathVertex<ScaledPixels>>();
+            let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
+            let next_offset = *offset + vertices_bytes_len;
             if next_offset > INSTANCE_BUFFER_SIZE {
                 return None;
             }
@@ -373,7 +374,6 @@ impl MetalRenderer {
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
 
-            let vertices_bytes_len = mem::size_of::<PathVertex<ScaledPixels>>() * vertices.len();
             let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
             unsafe {
                 ptr::copy_nonoverlapping(
@@ -430,7 +430,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let shadow_bytes_len = std::mem::size_of_val(shadows);
+        let shadow_bytes_len = mem::size_of_val(shadows);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + shadow_bytes_len;
@@ -491,7 +491,7 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let quad_bytes_len = std::mem::size_of_val(quads);
+        let quad_bytes_len = mem::size_of_val(quads);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + quad_bytes_len;
@@ -591,7 +591,7 @@ impl MetalRenderer {
                 command_encoder
                     .set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-                let sprite_bytes_len = mem::size_of::<MonochromeSprite>() * sprites.len();
+                let sprite_bytes_len = mem::size_of_val(sprites.as_slice());
                 let next_offset = *offset + sprite_bytes_len;
                 if next_offset > INSTANCE_BUFFER_SIZE {
                     return false;
@@ -656,19 +656,20 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        let quad_bytes_len = std::mem::size_of_val(underlines);
+        let underline_bytes_len = mem::size_of_val(underlines);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+
+        let next_offset = *offset + underline_bytes_len;
+        if next_offset > INSTANCE_BUFFER_SIZE {
+            return false;
+        }
+
         unsafe {
             ptr::copy_nonoverlapping(
                 underlines.as_ptr() as *const u8,
                 buffer_contents,
-                quad_bytes_len,
+                underline_bytes_len,
             );
-        }
-
-        let next_offset = *offset + quad_bytes_len;
-        if next_offset > INSTANCE_BUFFER_SIZE {
-            return false;
         }
 
         command_encoder.draw_primitives_instanced(
@@ -727,7 +728,7 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-        let sprite_bytes_len = std::mem::size_of_val(sprites);
+        let sprite_bytes_len = mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + sprite_bytes_len;
@@ -799,7 +800,7 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
-        let sprite_bytes_len = std::mem::size_of_val(sprites);
+        let sprite_bytes_len = mem::size_of_val(sprites);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
 
         let next_offset = *offset + sprite_bytes_len;

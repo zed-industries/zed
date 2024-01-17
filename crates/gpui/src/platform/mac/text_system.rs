@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
-use collections::HashMap;
+use collections::{BTreeSet, HashMap};
 use core_foundation::{
     array::CFIndex,
     attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
@@ -78,12 +78,16 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn all_font_families(&self) -> Vec<String> {
-        self.0
-            .read()
-            .system_source
-            .all_families()
-            .expect("core text should never return an error")
+    fn all_font_names(&self) -> Vec<String> {
+        let collection = core_text::font_collection::create_for_all_families();
+        let Some(descriptors) = collection.get_descriptors() else {
+            return vec![];
+        };
+        let mut names = BTreeSet::new();
+        for descriptor in descriptors.into_iter() {
+            names.insert(descriptor.display_name());
+        }
+        names.into_iter().collect()
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {

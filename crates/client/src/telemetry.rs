@@ -143,10 +143,10 @@ const MAX_QUEUE_LEN: usize = 5;
 const MAX_QUEUE_LEN: usize = 50;
 
 #[cfg(debug_assertions)]
-const FLUSH_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
+const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
-const FLUSH_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(60 * 5);
+const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
@@ -457,6 +457,15 @@ impl Telemetry {
             return;
         }
 
+        if state.flush_events_task.is_none() {
+            let this = self.clone();
+            let executor = self.executor.clone();
+            state.flush_events_task = Some(self.executor.spawn(async move {
+                executor.timer(FLUSH_INTERVAL).await;
+                this.flush_events();
+            }));
+        }
+
         let signed_in = state.metrics_id.is_some();
         state.events_queue.push(EventWrapper { signed_in, event });
 
@@ -464,13 +473,6 @@ impl Telemetry {
             if state.events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
                 self.flush_events();
-            } else {
-                let this = self.clone();
-                let executor = self.executor.clone();
-                state.flush_events_task = Some(self.executor.spawn(async move {
-                    executor.timer(FLUSH_DEBOUNCE_INTERVAL).await;
-                    this.flush_events();
-                }));
             }
         }
     }

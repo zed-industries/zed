@@ -29,6 +29,7 @@ command_palette = { path = "../command_palette" }
 # component_test = { path = "../component_test" }
 client = { path = "../client" }
 # clock = { path = "../clock" }
+color = { path = "../color" }
 copilot = { path = "../copilot" }
 copilot_ui = { path = "../copilot_ui" }
 diagnostics = { path = "../diagnostics" }

@@ -1,6 +1,12 @@
 use gpui::{px, AbsoluteLength, AppContext, FontFeatures, Pixels};
-use schemars::JsonSchema;
+use schemars::{
+    gen::SchemaGenerator,
+    schema::{InstanceType, RootSchema, Schema, SchemaObject},
+    JsonSchema,
+};
 use serde_derive::{Deserialize, Serialize};
+use serde_json::Value;
+use settings::SettingsJsonSchemaParams;
 use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -152,6 +158,39 @@ impl settings::Settings for TerminalSettings {
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
+    }
+    fn json_schema(
+        generator: &mut SchemaGenerator,
+        _: &SettingsJsonSchemaParams,
+        cx: &AppContext,
+    ) -> RootSchema {
+        let mut root_schema = generator.root_schema_for::<Self::FileContent>();
+        let available_fonts = cx
+            .text_system()
+            .all_font_names()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        let fonts_schema = SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            enum_values: Some(available_fonts),
+            ..Default::default()
+        };
+        root_schema
+            .definitions
+            .extend([("FontFamilies".into(), fonts_schema.into())]);
+        root_schema
+            .schema
+            .object
+            .as_mut()
+            .unwrap()
+            .properties
+            .extend([(
+                "font_family".to_owned(),
+                Schema::new_ref("#/definitions/FontFamilies".into()),
+            )]);
+
+        root_schema
     }
 }
 

@@ -315,6 +315,7 @@ pub(crate) struct Frame {
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
     pub(crate) next_stacking_order_id: u32,
+    next_root_z_index: u8,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
     requested_input_handler: Option<RequestedInputHandler>,
@@ -337,6 +338,7 @@ impl Frame {
             depth_map: Vec::new(),
             z_index_stack: StackingOrder::default(),
             next_stacking_order_id: 0,
+            next_root_z_index: 0,
             content_mask_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             requested_input_handler: None,
@@ -354,6 +356,7 @@ impl Frame {
         self.dispatch_tree.clear();
         self.depth_map.clear();
         self.next_stacking_order_id = 0;
+        self.next_root_z_index = 0;
         self.reused_views.clear();
         self.scene.clear();
         self.requested_input_handler.take();
@@ -2450,8 +2453,13 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         };
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
         let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
         self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window_mut()
+            .next_frame
+            .z_index_stack
+            .push(new_root_z_index);
         self.window_mut().next_frame.content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().next_frame.content_mask_stack.pop();

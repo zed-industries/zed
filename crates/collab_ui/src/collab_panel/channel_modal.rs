@@ -348,6 +348,10 @@ impl PickerDelegate for ChannelModalDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some((selected_user, role)) = self.user_at_index(self.selected_index) {
+            if Some(selected_user.id) == self.user_store.read(cx).current_user().map(|user| user.id)
+            {
+                return;
+            }
             match self.mode {
                 Mode::ManageMembers => {
                     self.show_context_menu(selected_user, role.unwrap_or(ChannelRole::Member), cx)
@@ -383,6 +387,7 @@ impl PickerDelegate for ChannelModalDelegate {
     ) -> Option<Self::ListItem> {
         let (user, role) = self.user_at_index(ix)?;
         let request_status = self.member_status(user.id, cx);
+        let is_me = self.user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
 
         Some(
             ListItem::new(ix)
@@ -406,7 +411,10 @@ impl PickerDelegate for ChannelModalDelegate {
                                 Some(ChannelRole::Guest) => Some(Label::new("Guest")),
                                 _ => None,
                             })
-                            .child(IconButton::new("ellipsis", IconName::Ellipsis))
+                            .when(!is_me, |el| {
+                                el.child(IconButton::new("ellipsis", IconName::Ellipsis))
+                            })
+                            .when(is_me, |el| el.child(Label::new("You").color(Color::Muted)))
                             .children(
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
                                     Some(

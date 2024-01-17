@@ -12,7 +12,6 @@ use client::{Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
-use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
@@ -31,8 +30,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    prelude::*, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconName, IconSize, Label,
-    ListHeader, ListItem, Tooltip,
+    prelude::*, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Icon, IconButton,
+    IconName, IconSize, Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -265,10 +264,6 @@ impl CollabPanel {
                 }));
             this.subscriptions
                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
-            this.subscriptions
-                .push(cx.observe_flag::<ChannelsAlpha, _>(move |_, this, cx| {
-                    this.update_entries(true, cx)
-                }));
             this.subscriptions.push(cx.subscribe(
                 &this.channel_store,
                 |this, _channel_store, e, cx| match e {
@@ -504,115 +499,118 @@ impl CollabPanel {
 
         let mut request_entries = Vec::new();
 
-        if cx.has_flag::<ChannelsAlpha>() {
-            self.entries.push(ListEntry::Header(Section::Channels));
+        self.entries.push(ListEntry::Header(Section::Channels));
 
-            if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(channel_store.ordered_channels().enumerate().map(
-                        |(ix, (_, channel))| StringMatchCandidate {
+        if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    channel_store
+                        .ordered_channels()
+                        .enumerate()
+                        .map(|(ix, (_, channel))| StringMatchCandidate {
                             id: ix,
                             string: channel.name.clone().into(),
                             char_bag: channel.name.chars().collect(),
-                        },
-                    ));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                if let Some(state) = &self.channel_editing_state {
-                    if matches!(state, ChannelEditingState::Create { location: None, .. }) {
-                        self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            if let Some(state) = &self.channel_editing_state {
+                if matches!(state, ChannelEditingState::Create { location: None, .. }) {
+                    self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                }
+            }
+            let mut collapse_depth = None;
+            for mat in matches {
+                let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
+                let depth = channel.parent_path.len();
+
+                if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
+                    collapse_depth = Some(depth);
+                } else if let Some(collapsed_depth) = collapse_depth {
+                    if depth > collapsed_depth {
+                        continue;
+                    }
+                    if self.is_channel_collapsed(channel.id) {
+                        collapse_depth = Some(depth);
+                    } else {
+                        collapse_depth = None;
                     }
                 }
-                let mut collapse_depth = None;
-                for mat in matches {
-                    let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
-                    let depth = channel.parent_path.len();
 
-                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
-                        collapse_depth = Some(depth);
-                    } else if let Some(collapsed_depth) = collapse_depth {
-                        if depth > collapsed_depth {
-                            continue;
-                        }
-                        if self.is_channel_collapsed(channel.id) {
-                            collapse_depth = Some(depth);
-                        } else {
-                            collapse_depth = None;
-                        }
-                    }
+                let has_children = channel_store
+                    .channel_at_index(mat.candidate_id + 1)
+                    .map_or(false, |next_channel| {
+                        next_channel.parent_path.ends_with(&[channel.id])
+                    });
 
-                    let has_children = channel_store
-                        .channel_at_index(mat.candidate_id + 1)
-                        .map_or(false, |next_channel| {
-                            next_channel.parent_path.ends_with(&[channel.id])
+                match &self.channel_editing_state {
+                    Some(ChannelEditingState::Create {
+                        location: parent_id,
+                        ..
+                    }) if *parent_id == Some(channel.id) => {
+                        self.entries.push(ListEntry::Channel {
+                            channel: channel.clone(),
+                            depth,
+                            has_children: false,
                         });
-
-                    match &self.channel_editing_state {
-                        Some(ChannelEditingState::Create {
-                            location: parent_id,
-                            ..
-                        }) if *parent_id == Some(channel.id) => {
-                            self.entries.push(ListEntry::Channel {
-                                channel: channel.clone(),
-                                depth,
-                                has_children: false,
-                            });
-                            self.entries
-                                .push(ListEntry::ChannelEditor { depth: depth + 1 });
-                        }
-                        Some(ChannelEditingState::Rename {
-                            location: parent_id,
-                            ..
-                        }) if parent_id == &channel.id => {
-                            self.entries.push(ListEntry::ChannelEditor { depth });
-                        }
-                        _ => {
-                            self.entries.push(ListEntry::Channel {
-                                channel: channel.clone(),
-                                depth,
-                                has_children,
-                            });
-                        }
+                        self.entries
+                            .push(ListEntry::ChannelEditor { depth: depth + 1 });
+                    }
+                    Some(ChannelEditingState::Rename {
+                        location: parent_id,
+                        ..
+                    }) if parent_id == &channel.id => {
+                        self.entries.push(ListEntry::ChannelEditor { depth });
+                    }
+                    _ => {
+                        self.entries.push(ListEntry::Channel {
+                            channel: channel.clone(),
+                            depth,
+                            has_children,
+                        });
                     }
                 }
             }
+        }
 
-            let channel_invites = channel_store.channel_invitations();
-            if !channel_invites.is_empty() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
-                        StringMatchCandidate {
-                            id: ix,
-                            string: channel.name.clone().into(),
-                            char_bag: channel.name.chars().collect(),
-                        }
-                    }));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                request_entries.extend(matches.iter().map(|mat| {
-                    ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())
-                }));
-
-                if !request_entries.is_empty() {
-                    self.entries
-                        .push(ListEntry::Header(Section::ChannelInvites));
-                    if !self.collapsed_sections.contains(&Section::ChannelInvites) {
-                        self.entries.append(&mut request_entries);
+        let channel_invites = channel_store.channel_invitations();
+        if !channel_invites.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
+                    StringMatchCandidate {
+                        id: ix,
+                        string: channel.name.clone().into(),
+                        char_bag: channel.name.chars().collect(),
                     }
+                }));
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())),
+            );
+
+            if !request_entries.is_empty() {
+                self.entries
+                    .push(ListEntry::Header(Section::ChannelInvites));
+                if !self.collapsed_sections.contains(&Section::ChannelInvites) {
+                    self.entries.append(&mut request_entries);
                 }
             }
         }
@@ -2000,43 +1998,49 @@ impl CollabPanel {
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let github_login = SharedString::from(contact.user.github_login.clone());
-        let item =
-            ListItem::new(github_login.clone())
-                .indent_level(1)
-                .indent_step_size(px(20.))
-                .selected(is_selected)
-                .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .child(Label::new(github_login.clone()))
-                        .when(calling, |el| {
-                            el.child(Label::new("Calling").color(Color::Muted))
-                        })
-                        .when(!calling, |el| {
-                            el.child(
-                                IconButton::new("remove_contact", IconName::Close)
-                                    .icon_color(Color::Muted)
-                                    .visible_on_hover("")
-                                    .tooltip(|cx| Tooltip::text("Remove Contact", cx))
-                                    .on_click(cx.listener({
-                                        let github_login = github_login.clone();
-                                        move |this, _, cx| {
-                                            this.remove_contact(user_id, &github_login, cx);
-                                        }
-                                    })),
-                            )
-                        }),
-                )
-                .start_slot(
-                    // todo handle contacts with no avatar
-                    Avatar::new(contact.user.avatar_uri.clone())
-                        .availability_indicator(if online { Some(!busy) } else { None }),
-                )
-                .when(online && !busy, |el| {
-                    el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
-                });
+        let item = ListItem::new(github_login.clone())
+            .indent_level(1)
+            .indent_step_size(px(20.))
+            .selected(is_selected)
+            .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new(github_login.clone()))
+                    .when(calling, |el| {
+                        el.child(Label::new("Calling").color(Color::Muted))
+                    })
+                    .when(!calling, |el| {
+                        el.child(
+                            IconButton::new("remove_contact", IconName::Close)
+                                .icon_color(Color::Muted)
+                                .visible_on_hover("")
+                                .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                .on_click(cx.listener({
+                                    let github_login = github_login.clone();
+                                    move |this, _, cx| {
+                                        this.remove_contact(user_id, &github_login, cx);
+                                    }
+                                })),
+                        )
+                    }),
+            )
+            .start_slot(
+                // todo handle contacts with no avatar
+                Avatar::new(contact.user.avatar_uri.clone())
+                    .indicator::<AvatarAvailabilityIndicator>(if online {
+                        Some(AvatarAvailabilityIndicator::new(match busy {
+                            true => ui::Availability::Busy,
+                            false => ui::Availability::Free,
+                        }))
+                    } else {
+                        None
+                    }),
+            )
+            .when(online && !busy, |el| {
+                el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
+            });
 
         div()
             .id(github_login.clone())
@@ -2310,7 +2314,7 @@ impl CollabPanel {
                             .child(
                                 IconButton::new("channel_chat", IconName::MessageBubbles)
                                     .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Compact)
+                                    .shape(ui::IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(if has_messages_notification {
                                         Color::Default
@@ -2328,7 +2332,7 @@ impl CollabPanel {
                             .child(
                                 IconButton::new("channel_notes", IconName::File)
                                     .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Compact)
+                                    .shape(ui::IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(if has_notes_notification {
                                         Color::Default

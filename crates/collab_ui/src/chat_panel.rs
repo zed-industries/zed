@@ -1,4 +1,4 @@
-use crate::{collab_panel, is_channels_feature_enabled, ChatPanelSettings};
+use crate::{collab_panel, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
@@ -630,9 +630,6 @@ impl Panel for ChatPanel {
         self.active = active;
         if active {
             self.acknowledge_last_message(cx);
-            if !is_channels_feature_enabled(cx) {
-                cx.emit(PanelEvent::Close);
-            }
         }
     }
 
@@ -641,10 +638,6 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
-        if !is_channels_feature_enabled(cx) {
-            return None;
-        }
-
         Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
     }
 

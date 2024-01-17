@@ -72,6 +72,30 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cancel_selection(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(
+        indoc! {"The quick brown fox juˇmps over the lazy dog"},
+        Mode::Normal,
+    );
+    // jumps
+    cx.simulate_keystrokes(["v", "l", "l"]);
+    cx.assert_editor_state("The quick brown fox ju«mpsˇ» over the lazy dog");
+
+    cx.simulate_keystrokes(["escape"]);
+    cx.assert_editor_state("The quick brown fox jumpˇs over the lazy dog");
+
+    // go back to the same selection state
+    cx.simulate_keystrokes(["v", "h", "h"]);
+    cx.assert_editor_state("The quick brown fox ju«ˇmps» over the lazy dog");
+
+    // Ctrl-[ should behave like Esc
+    cx.simulate_keystrokes(["ctrl-["]);
+    cx.assert_editor_state("The quick brown fox juˇmps over the lazy dog");
+}
+
+#[gpui::test]
 async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
