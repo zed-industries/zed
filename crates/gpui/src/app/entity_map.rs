@@ -281,7 +281,7 @@ impl Drop for AnyModel {
             entity_map
                 .write()
                 .leak_detector
-                .handle_dropped(self.entity_id, self.handle_id)
+                .handle_released(self.entity_id, self.handle_id)
         }
     }
 }
@@ -500,15 +500,15 @@ impl AnyWeakModel {
         })
     }
 
-    /// Assert that model referenced by this weak handle has been dropped.
+    /// Assert that model referenced by this weak handle has been released.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_dropped(&self) {
+    pub fn assert_released(&self) {
         self.entity_ref_counts
             .upgrade()
             .unwrap()
             .write()
             .leak_detector
-            .assert_dropped(self.entity_id);
+            .assert_released(self.entity_id);
 
         if self
             .entity_ref_counts
@@ -658,12 +658,12 @@ impl LeakDetector {
         handle_id
     }
 
-    pub fn handle_dropped(&mut self, entity_id: EntityId, handle_id: HandleId) {
+    pub fn handle_released(&mut self, entity_id: EntityId, handle_id: HandleId) {
         let handles = self.entity_handles.entry(entity_id).or_default();
         handles.remove(&handle_id);
     }
 
-    pub fn assert_dropped(&mut self, entity_id: EntityId) {
+    pub fn assert_released(&mut self, entity_id: EntityId) {
         let handles = self.entity_handles.entry(entity_id).or_default();
         if !handles.is_empty() {
             for (_, backtrace) in handles {

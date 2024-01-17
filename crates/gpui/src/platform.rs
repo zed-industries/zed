@@ -114,15 +114,20 @@ pub(crate) trait Platform: 'static {
     fn delete_credentials(&self, url: &str) -> Result<()>;
 }
 
+/// A handle to a platform's display, e.g. a monitor or laptop screen.
 pub trait PlatformDisplay: Send + Sync + Debug {
+    /// Get the ID for this display
     fn id(&self) -> DisplayId;
+
     /// Returns a stable identifier for this display that can be persisted and used
     /// across system restarts.
     fn uuid(&self) -> Result<Uuid>;
-    fn as_any(&self) -> &dyn Any;
+
+    /// Get the bounds for this display
     fn bounds(&self) -> Bounds<GlobalPixels>;
 }
 
+/// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct DisplayId(pub(crate) u32);
 
@@ -134,7 +139,7 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
-pub trait PlatformWindow {
+pub(crate) trait PlatformWindow {
     fn bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
@@ -175,6 +180,9 @@ pub trait PlatformWindow {
     }
 }
 
+/// This type is public so that our test macro can generate and use it, but it should not
+/// be considered part of our public API.
+#[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
@@ -190,7 +198,7 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 }
 
-pub trait PlatformTextSystem: Send + Sync {
+pub(crate) trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
@@ -214,15 +222,21 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
+/// Basic metadata about the current application and operating system.
 #[derive(Clone, Debug)]
 pub struct AppMetadata {
+    /// The name of the current operating system
     pub os_name: &'static str,
+
+    /// The operating system's version
     pub os_version: Option<SemanticVersion>,
+
+    /// The current version of the application
     pub app_version: Option<SemanticVersion>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub enum AtlasKey {
+pub(crate) enum AtlasKey {
     Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
     Image(RenderImageParams),
@@ -262,7 +276,7 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
-pub trait PlatformAtlas: Send + Sync {
+pub(crate) trait PlatformAtlas: Send + Sync {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
@@ -274,7 +288,7 @@ pub trait PlatformAtlas: Send + Sync {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub struct AtlasTile {
+pub(crate) struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
     pub(crate) tile_id: TileId,
     pub(crate) bounds: Bounds<DevicePixels>,
