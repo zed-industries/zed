@@ -209,7 +209,6 @@ mod tests {
         );
         assert!(!matcher.has_pending_keystrokes());
 
-        eprintln!("PROBLEM AREA");
         // If a is prefixed, C will not be dispatched because there
         // was a pending binding for it
         assert_eq!(

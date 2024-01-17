@@ -643,7 +643,8 @@ impl<'a> VisualTestContext {
     /// Simulate an event from the platform, e.g. a SrollWheelEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
-        self.update(|cx| cx.dispatch_event(event.to_platform_input()));
+        self.test_window(self.window)
+            .simulate_input(event.to_platform_input());
         self.background_executor.run_until_parked();
     }
 

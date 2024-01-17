@@ -1717,7 +1717,6 @@ impl<'a> WindowContext<'a> {
             .mouse_listeners
             .remove(&event.type_id())
         {
-            dbg!(handlers.len());
             // Because handlers may add other handlers, we sort every time.
             handlers.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
 
