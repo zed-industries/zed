@@ -881,6 +881,7 @@ impl DisplaySnapshot {
         self.text_highlights.get(&Some(type_id)).cloned()
     }
 
+    #[allow(unused)]
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(
         &self,
