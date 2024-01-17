@@ -1,3 +1,18 @@
+#![allow(rustdoc::private_intra_doc_links)]
+//! This is the place where everything editor-related is stored (data-wise) and displayed (ui-wise).
+//! The main point of interest in this crate is [`Editor`] type, which is used in every other Zed part as a user input element.
+//! It comes in different flavors: single line, multiline and a fixed height one.
+//!
+//! Editor contains of multiple large submodules:
+//! * [`element`] — the place where all rendering happens
+//! * [`display_map`] - chunks up text in the editor into the logical blocks, establishes coordinates and mapping between each of them.
+//!   Contains all metadata related to text transformations (folds, fake inlay text insertions, soft wraps, tab markup, etc.).
+//! * [`inlay_hint_cache`] - is a storage of inlay hints out of LSP requests, responsible for querying LSP and updating `display_map`'s state accordingly.
+//!
+//! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
+//!
+//! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides it's behaviour.
+pub mod actions;
 mod blink_manager;
 pub mod display_map;
 mod editor_settings;
@@ -14,13 +29,14 @@ pub mod movement;
 mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
-pub mod selections_collection;
+mod selections_collection;
 
 #[cfg(test)]
 mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::DiffHunk;
+pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
@@ -32,14 +48,13 @@ use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
-pub use element::{
-    Cursor, EditorElement, HighlightedRange, HighlightedRangeLine, LineWithInvisibles,
-};
+use element::LineWithInvisibles;
+pub use element::{Cursor, EditorElement, HighlightedRange, HighlightedRangeLine};
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    actions, div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
+    div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
     HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton,
@@ -51,7 +66,7 @@ use hover_popover::{hide_hover, HoverState};
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
-pub use language::{char_kind, CharKind};
+use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
@@ -74,9 +89,7 @@ use parking_lot::RwLock;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::{self, *};
-use scroll::{
-    autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
-};
+use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -113,10 +126,12 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+#[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+#[doc(hidden)]
 pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
-pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
@@ -181,103 +196,8 @@ pub fn render_parsed_markdown(
     })
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct SelectNext {
-    #[serde(default)]
-    pub replace_newest: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct SelectPrevious {
-    #[serde(default)]
-    pub replace_newest: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct SelectAllMatches {
-    #[serde(default)]
-    pub replace_newest: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct SelectToBeginningOfLine {
-    #[serde(default)]
-    stop_at_soft_wraps: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct MovePageUp {
-    #[serde(default)]
-    center_cursor: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct MovePageDown {
-    #[serde(default)]
-    center_cursor: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct SelectToEndOfLine {
-    #[serde(default)]
-    stop_at_soft_wraps: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct ToggleCodeActions {
-    #[serde(default)]
-    pub deployed_from_indicator: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct ConfirmCompletion {
-    #[serde(default)]
-    pub item_ix: Option<usize>,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct ConfirmCodeAction {
-    #[serde(default)]
-    pub item_ix: Option<usize>,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct ToggleComments {
-    #[serde(default)]
-    pub advance_downwards: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct FoldAt {
-    pub buffer_row: u32,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct UnfoldAt {
-    pub buffer_row: u32,
-}
-
-impl_actions!(
-    editor,
-    [
-        SelectNext,
-        SelectPrevious,
-        SelectAllMatches,
-        SelectToBeginningOfLine,
-        MovePageUp,
-        MovePageDown,
-        SelectToEndOfLine,
-        ToggleCodeActions,
-        ConfirmCompletion,
-        ConfirmCodeAction,
-        ToggleComments,
-        FoldAt,
-        UnfoldAt
-    ]
-);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum InlayId {
+pub(crate) enum InlayId {
     Suggestion(usize),
     Hint(usize),
 }
@@ -290,128 +210,6 @@ impl InlayId {
         }
     }
 }
-
-actions!(
-    editor,
-    [
-        AddSelectionAbove,
-        AddSelectionBelow,
-        Backspace,
-        Cancel,
-        ConfirmRename,
-        ContextMenuFirst,
-        ContextMenuLast,
-        ContextMenuNext,
-        ContextMenuPrev,
-        ConvertToKebabCase,
-        ConvertToLowerCamelCase,
-        ConvertToLowerCase,
-        ConvertToSnakeCase,
-        ConvertToTitleCase,
-        ConvertToUpperCamelCase,
-        ConvertToUpperCase,
-        Copy,
-        CopyHighlightJson,
-        CopyPath,
-        CopyRelativePath,
-        Cut,
-        CutToEndOfLine,
-        Delete,
-        DeleteLine,
-        DeleteToBeginningOfLine,
-        DeleteToEndOfLine,
-        DeleteToNextSubwordEnd,
-        DeleteToNextWordEnd,
-        DeleteToPreviousSubwordStart,
-        DeleteToPreviousWordStart,
-        DuplicateLine,
-        ExpandMacroRecursively,
-        FindAllReferences,
-        Fold,
-        FoldSelectedRanges,
-        Format,
-        GoToDefinition,
-        GoToDefinitionSplit,
-        GoToDiagnostic,
-        GoToHunk,
-        GoToPrevDiagnostic,
-        GoToPrevHunk,
-        GoToTypeDefinition,
-        GoToTypeDefinitionSplit,
-        HalfPageDown,
-        HalfPageUp,
-        Hover,
-        Indent,
-        JoinLines,
-        LineDown,
-        LineUp,
-        MoveDown,
-        MoveLeft,
-        MoveLineDown,
-        MoveLineUp,
-        MoveRight,
-        MoveToBeginning,
-        MoveToBeginningOfLine,
-        MoveToEnclosingBracket,
-        MoveToEnd,
-        MoveToEndOfLine,
-        MoveToEndOfParagraph,
-        MoveToNextSubwordEnd,
-        MoveToNextWordEnd,
-        MoveToPreviousSubwordStart,
-        MoveToPreviousWordStart,
-        MoveToStartOfParagraph,
-        MoveUp,
-        Newline,
-        NewlineAbove,
-        NewlineBelow,
-        NextScreen,
-        OpenExcerpts,
-        Outdent,
-        PageDown,
-        PageUp,
-        Paste,
-        Redo,
-        RedoSelection,
-        Rename,
-        RestartLanguageServer,
-        RevealInFinder,
-        ReverseLines,
-        ScrollCursorBottom,
-        ScrollCursorCenter,
-        ScrollCursorTop,
-        SelectAll,
-        SelectDown,
-        SelectLargerSyntaxNode,
-        SelectLeft,
-        SelectLine,
-        SelectRight,
-        SelectSmallerSyntaxNode,
-        SelectToBeginning,
-        SelectToEnd,
-        SelectToEndOfParagraph,
-        SelectToNextSubwordEnd,
-        SelectToNextWordEnd,
-        SelectToPreviousSubwordStart,
-        SelectToPreviousWordStart,
-        SelectToStartOfParagraph,
-        SelectUp,
-        ShowCharacterPalette,
-        ShowCompletions,
-        ShuffleLines,
-        SortLinesCaseInsensitive,
-        SortLinesCaseSensitive,
-        SplitSelectionIntoLines,
-        Tab,
-        TabPrev,
-        ToggleInlayHints,
-        ToggleSoftWrap,
-        Transpose,
-        Undo,
-        UndoSelection,
-        UnfoldLines,
-    ]
-);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -489,7 +287,7 @@ pub enum SelectPhase {
 }
 
 #[derive(Clone, Debug)]
-pub enum SelectMode {
+pub(crate) enum SelectMode {
     Character,
     Word(Range<Anchor>),
     Line(Range<Anchor>),
@@ -760,6 +558,7 @@ struct SnippetState {
     active_index: usize,
 }
 
+#[doc(hidden)]
 pub struct RenameState {
     pub range: Range<Anchor>,
     pub old_name: Arc<str>,
@@ -1499,7 +1298,7 @@ impl CodeActionsMenu {
     }
 }
 
-pub struct CopilotState {
+pub(crate) struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
     pending_cycling_refresh: Task<Option<()>>,
@@ -1619,14 +1418,12 @@ pub struct ClipboardSelection {
 }
 
 #[derive(Debug)]
-pub struct NavigationData {
+pub(crate) struct NavigationData {
     cursor_anchor: Anchor,
     cursor_position: Point,
     scroll_anchor: ScrollAnchor,
     scroll_top_row: u32,
 }
-
-pub struct EditorCreated(pub View<Editor>);
 
 enum GotoDefinitionKind {
     Symbol,
@@ -8125,7 +7922,7 @@ impl Editor {
         }
     }
 
-    pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
+    pub fn fold(&mut self, _: &actions::Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -8484,7 +8281,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn highlight_inlay_background<T: 'static>(
+    pub(crate) fn highlight_inlay_background<T: 'static>(
         &mut self,
         ranges: Vec<InlayHighlight>,
         color_fetcher: fn(&ThemeColors) -> Hsla,
@@ -8691,7 +8488,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn highlight_inlays<T: 'static>(
+    pub(crate) fn highlight_inlays<T: 'static>(
         &mut self,
         highlights: Vec<InlayHighlight>,
         style: HighlightStyle,
@@ -9899,7 +9696,7 @@ pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, V
     (text_without_backticks.into(), code_ranges)
 }
 
-pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, colors: &StatusColors) -> Hsla {
+fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, colors: &StatusColors) -> Hsla {
     match (severity, valid) {
         (DiagnosticSeverity::ERROR, true) => colors.error,
         (DiagnosticSeverity::ERROR, false) => colors.error,
@@ -9958,7 +9755,7 @@ pub fn styled_runs_for_code_label<'a>(
         })
 }
 
-pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
+pub(crate) fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
     let mut index = 0;
     let mut codepoints = text.char_indices().peekable();
 

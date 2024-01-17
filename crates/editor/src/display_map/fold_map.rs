@@ -655,7 +655,7 @@ impl FoldSnapshot {
         }
     }
 
-    pub fn chunks<'a>(
+    pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<FoldOffset>,
         language_aware: bool,

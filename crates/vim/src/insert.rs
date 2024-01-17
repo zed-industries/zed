@@ -1,5 +1,5 @@
 use crate::{normal::repeat, state::Mode, Vim};
-use editor::{scroll::autoscroll::Autoscroll, Bias};
+use editor::{scroll::Autoscroll, Bias};
 use gpui::{actions, Action, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;

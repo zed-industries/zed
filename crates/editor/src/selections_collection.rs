@@ -99,7 +99,7 @@ impl SelectionsCollection {
             .map(|pending| pending.map(|p| p.summary::<D>(&self.buffer(cx))))
     }
 
-    pub fn pending_mode(&self) -> Option<SelectMode> {
+    pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
@@ -398,7 +398,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         }
     }
 
-    pub fn set_pending_anchor_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
+    pub(crate) fn set_pending_anchor_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
         self.collection.pending = Some(PendingSelection {
             selection: Selection {
                 id: post_inc(&mut self.collection.next_selection_id),
@@ -412,7 +412,11 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.selections_changed = true;
     }
 
-    pub fn set_pending_display_range(&mut self, range: Range<DisplayPoint>, mode: SelectMode) {
+    pub(crate) fn set_pending_display_range(
+        &mut self,
+        range: Range<DisplayPoint>,
+        mode: SelectMode,
+    ) {
         let (start, end, reversed) = {
             let display_map = self.display_map();
             let buffer = self.buffer();
@@ -448,7 +452,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.selections_changed = true;
     }
 
-    pub fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
+    pub(crate) fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
         self.collection.pending = Some(PendingSelection { selection, mode });
         self.selections_changed = true;
     }
@@ -855,7 +859,7 @@ impl<'a> DerefMut for MutableSelectionsCollection<'a> {
 }
 
 // Panics if passed selections are not in order
-pub fn resolve_multiple<'a, D, I>(
+pub(crate) fn resolve_multiple<'a, D, I>(
     selections: I,
     snapshot: &MultiBufferSnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>

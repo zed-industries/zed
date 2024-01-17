@@ -7,7 +7,7 @@ use crate::{
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{Editor, EditorElement, EditorStyle, Tab};
+use editor::{actions::Tab, Editor, EditorElement, EditorStyle};
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
@@ -635,7 +635,7 @@ impl BufferSearchBar {
         registrar.register_handler(|this, action: &SelectAllMatches, cx| {
             this.select_all_matches(action, cx);
         });
-        registrar.register_handler(|this, _: &editor::Cancel, cx| {
+        registrar.register_handler(|this, _: &editor::actions::Cancel, cx| {
             this.dismiss(&Dismiss, cx);
         });
         registrar.register_handler_for_dismissed_search(|this, deploy, cx| {

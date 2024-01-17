@@ -12,7 +12,7 @@ actions!(vim, [Repeat, EndRepeat]);
 
 fn should_replay(action: &Box<dyn Action>) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::ShowCharacterPalette.partial_eq(&**action) {
+    if editor::actions::ShowCharacterPalette.partial_eq(&**action) {
         return false;
     }
     true

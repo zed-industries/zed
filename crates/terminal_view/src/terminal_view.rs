@@ -2,7 +2,7 @@ mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 
-use editor::{scroll::autoscroll::Autoscroll, Editor};
+use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, Pixels,
@@ -357,7 +357,7 @@ impl TerminalView {
         }
     }
 
-    fn select_all(&mut self, _: &editor::SelectAll, cx: &mut ViewContext<Self>) {
+    fn select_all(&mut self, _: &editor::actions::SelectAll, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.select_all());
         cx.notify();
     }

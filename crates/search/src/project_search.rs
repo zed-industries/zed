@@ -7,8 +7,8 @@ use crate::{
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use editor::{
-    items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, EditorEvent,
-    MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN,
+    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor, EditorEvent,
+    MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use editor::{EditorElement, EditorStyle};
 use gpui::{
@@ -1383,11 +1383,11 @@ impl ProjectSearchBar {
         }
     }
 
-    fn tab(&mut self, _: &editor::Tab, cx: &mut ViewContext<Self>) {
+    fn tab(&mut self, _: &editor::actions::Tab, cx: &mut ViewContext<Self>) {
         self.cycle_field(Direction::Next, cx);
     }
 
-    fn tab_previous(&mut self, _: &editor::TabPrev, cx: &mut ViewContext<Self>) {
+    fn tab_previous(&mut self, _: &editor::actions::TabPrev, cx: &mut ViewContext<Self>) {
         self.cycle_field(Direction::Prev, cx);
     }
 

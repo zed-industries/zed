@@ -1,7 +1,7 @@
 use crate::Vim;
 use editor::{
     display_map::ToDisplayPoint,
-    scroll::{scroll_amount::ScrollAmount, VERTICAL_SCROLL_MARGIN},
+    scroll::{ScrollAmount, VERTICAL_SCROLL_MARGIN},
     DisplayPoint, Editor,
 };
 use gpui::{actions, ViewContext};

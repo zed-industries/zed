@@ -1,4 +1,4 @@
-use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
+use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,

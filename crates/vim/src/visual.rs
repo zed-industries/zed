@@ -5,7 +5,7 @@ use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
-    scroll::autoscroll::Autoscroll,
+    scroll::Autoscroll,
     Bias, DisplayPoint, Editor,
 };
 use gpui::{actions, ViewContext, WindowContext};
