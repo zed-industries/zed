@@ -115,6 +115,12 @@ pub trait Render: 'static + Sized {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement;
 }
 
+impl Render for () {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        ()
+    }
+}
+
 /// You can derive [`IntoElement`] on any type that implements this trait.
 /// It is used to allow views to be expressed in terms of abstract data.
 pub trait RenderOnce: 'static {

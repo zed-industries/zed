@@ -1167,7 +1167,7 @@ mod tests {
 
     use super::*;
     use editor::{DisplayPoint, Editor};
-    use gpui::{Context, EmptyView, Hsla, TestAppContext, VisualTestContext};
+    use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
     use language::Buffer;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
@@ -1200,7 +1200,7 @@ mod tests {
                 .unindent(),
             )
         });
-        let (_, cx) = cx.add_window_view(|_| EmptyView {});
+        let cx = cx.add_empty_window();
         let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
         let search_bar = cx.new_view(|cx| {
@@ -1547,7 +1547,7 @@ mod tests {
             "Should pick a query with multiple results"
         );
         let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
-        let window = cx.add_window(|_| EmptyView {});
+        let window = cx.add_window(|_| ());
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
@@ -1743,7 +1743,7 @@ mod tests {
         "#
         .unindent();
         let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
-        let (_, cx) = cx.add_window_view(|_| EmptyView {});
+        let cx = cx.add_empty_window();
 
         let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
