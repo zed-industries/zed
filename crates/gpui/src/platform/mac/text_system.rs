@@ -87,6 +87,9 @@ impl PlatformTextSystem for MacTextSystem {
         for descriptor in descriptors.into_iter() {
             names.insert(descriptor.display_name());
         }
+        if let Ok(fonts_in_memory) = self.0.read().memory_source.all_families() {
+            names.extend(fonts_in_memory);
+        }
         names.into_iter().collect()
     }
 
