@@ -299,8 +299,8 @@ impl<'a> Iterator for BatchIterator<'a> {
 
         let first = orders_and_kinds[0];
         let second = orders_and_kinds[1];
-        let (batch_kind, max_order) = if first.0.is_some() {
-            (first.1, second.0.unwrap_or(u32::MAX))
+        let (batch_kind, max_order_and_kind) = if first.0.is_some() {
+            (first.1, (second.0.unwrap_or(u32::MAX), second.1))
         } else {
             return None;
         };
@@ -312,7 +312,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.shadows_iter.next();
                 while self
                     .shadows_iter
-                    .next_if(|shadow| shadow.order < max_order)
+                    .next_if(|shadow| (shadow.order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     shadows_end += 1;
@@ -328,7 +328,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.quads_iter.next();
                 while self
                     .quads_iter
-                    .next_if(|quad| quad.order < max_order)
+                    .next_if(|quad| (quad.order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     quads_end += 1;
@@ -342,7 +342,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.paths_iter.next();
                 while self
                     .paths_iter
-                    .next_if(|path| path.order < max_order)
+                    .next_if(|path| (path.order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     paths_end += 1;
@@ -356,7 +356,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.underlines_iter.next();
                 while self
                     .underlines_iter
-                    .next_if(|underline| underline.order < max_order)
+                    .next_if(|underline| (underline.order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     underlines_end += 1;
@@ -374,7 +374,8 @@ impl<'a> Iterator for BatchIterator<'a> {
                 while self
                     .monochrome_sprites_iter
                     .next_if(|sprite| {
-                        sprite.order < max_order && sprite.tile.texture_id == texture_id
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
                     })
                     .is_some()
                 {
@@ -394,7 +395,8 @@ impl<'a> Iterator for BatchIterator<'a> {
                 while self
                     .polychrome_sprites_iter
                     .next_if(|sprite| {
-                        sprite.order < max_order && sprite.tile.texture_id == texture_id
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
                     })
                     .is_some()
                 {
@@ -412,7 +414,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_iter.next();
                 while self
                     .surfaces_iter
-                    .next_if(|surface| surface.order < max_order)
+                    .next_if(|surface| (surface.order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
                     surfaces_end += 1;
