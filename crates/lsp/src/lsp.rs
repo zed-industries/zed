@@ -839,7 +839,7 @@ impl LanguageServer {
             futures::select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
-                    log::trace!("Took {elapsed:?} to recieve response to {method:?} id {id}");
+                    log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     response?
                 }
 

@@ -68,7 +68,7 @@ impl PromptTemplate for RepositoryContext {
         let mut prompt = String::new();
 
         let mut remaining_tokens = max_token_length.clone();
-        let seperator_token_length = args.model.count_tokens("\n")?;
+        let separator_token_length = args.model.count_tokens("\n")?;
         for snippet in &args.snippets {
             let mut snippet_prompt = template.to_string();
             let content = snippet.to_string();
@@ -79,9 +79,9 @@ impl PromptTemplate for RepositoryContext {
                 if let Some(tokens_left) = remaining_tokens {
                     if tokens_left >= token_count {
                         writeln!(prompt, "{snippet_prompt}").unwrap();
-                        remaining_tokens = if tokens_left >= (token_count + seperator_token_length)
+                        remaining_tokens = if tokens_left >= (token_count + separator_token_length)
                         {
-                            Some(tokens_left - token_count - seperator_token_length)
+                            Some(tokens_left - token_count - separator_token_length)
                         } else {
                             Some(0)
                         };

@@ -10,7 +10,7 @@ nDCG@k:
 - "The relevance of result is represented by a score (also known as a 'grade') that is assigned to the search query. The scores of these results are then discounted based on their position in the search results -- did they get recommended first or last?"
 
 MRR@k:
-- "Mean reciprocal rank quantifies the rank of the first relevant item found in teh recommendation list."
+- "Mean reciprocal rank quantifies the rank of the first relevant item found in the recommendation list."
 
 MAP@k:
 - "Mean average precision averages the precision@k metric at each relevant item position in the recommendation list.

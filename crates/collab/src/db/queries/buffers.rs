@@ -149,7 +149,7 @@ impl Database {
                     .await?;
 
                 // If the buffer epoch hasn't changed since the client lost
-                // connection, then the client's buffer can be syncronized with
+                // connection, then the client's buffer can be synchronized with
                 // the server's buffer.
                 if buffer.epoch as u64 != client_buffer.epoch {
                     log::info!("can't rejoin buffer, epoch has changed");
@@ -962,7 +962,7 @@ fn version_from_storage(version: &Vec<storage::VectorClockEntry>) -> Vec<proto::
         .collect()
 }
 
-// This is currently a manual copy of the deserialization code in the client's langauge crate
+// This is currently a manual copy of the deserialization code in the client's language crate
 pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operation> {
     match operation.variant? {
         proto::operation::Variant::Edit(edit) => Some(text::Operation::Edit(EditOperation {

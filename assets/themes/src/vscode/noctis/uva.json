@@ -389,7 +389,7 @@
             "source.reason variable.interpolation",
             "punctuation.definition.directive",
             "storage.type.modifier",
-            "keyword.other.class.fileds",
+            "keyword.other.class.fields",
             "source.toml entity.other.attribute-name",
             "source.css entity.name.tag.custom",
             "sharing.modifier",

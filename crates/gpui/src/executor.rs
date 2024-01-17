@@ -149,7 +149,7 @@ impl BackgroundExecutor {
         Task::Spawned(task)
     }
 
-    /// Used by the test harness to run an async test in a syncronous fashion.
+    /// Used by the test harness to run an async test in a synchronous fashion.
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
@@ -276,7 +276,7 @@ impl BackgroundExecutor {
 
     /// Returns a task that will complete after the given duration.
     /// Depending on other concurrent tasks the elapsed duration may be longer
-    /// than reqested.
+    /// than requested.
     pub fn timer(&self, duration: Duration) -> Task<()> {
         let (runnable, task) = async_task::spawn(async move {}, {
             let dispatcher = self.dispatcher.clone();

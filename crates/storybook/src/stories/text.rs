@@ -65,7 +65,7 @@ impl Render for TextStory {
                                     ))
                     )
                     .usage(indoc! {r##"
-                        // NOTE: When rendering text in a horizonal flex container,
+                        // NOTE: When rendering text in a horizontal flex container,
                         // Taffy will not pass width constraints down from the parent.
                         // To fix this, render text in a parent with overflow: hidden
 
@@ -149,7 +149,7 @@ impl Render for TextStory {
 //         "Meanwhile, the lazy dog decided it was time for a change. ",
 //         "He started daily workout routines, ate healthier and became the fastest dog in town.",
 //     ))))
-//             // NOTE: When rendering text in a horizonal flex container,
+//             // NOTE: When rendering text in a horizontal flex container,
 //             // Taffy will not pass width constraints down from the parent.
 //             // To fix this, render text in a parent with overflow: hidden
 //                     .child(div().h_5())

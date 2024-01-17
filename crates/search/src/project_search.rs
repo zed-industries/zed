@@ -2579,7 +2579,7 @@ pub mod tests {
                     );
                     assert!(
                         search_view_2.query_editor.focus_handle(cx).is_focused(cx),
-                        "Focus should be moved into query editor fo the new window"
+                        "Focus should be moved into query editor of the new window"
                     );
                 });
         }).unwrap();

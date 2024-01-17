@@ -1201,7 +1201,7 @@ async fn test_on_input_format_from_host_to_guest(
     executor.run_until_parked();
 
     // Receive an OnTypeFormatting request as the host's language server.
-    // Return some formattings from the host's language server.
+    // Return some formatting from the host's language server.
     fake_language_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(
         |params, _| async move {
             assert_eq!(
@@ -1220,7 +1220,7 @@ async fn test_on_input_format_from_host_to_guest(
         },
     );
 
-    // Open the buffer on the guest and see that the formattings worked
+    // Open the buffer on the guest and see that the formatting worked
     let buffer_b = project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
@@ -1339,7 +1339,7 @@ async fn test_on_input_format_from_guest_to_host(
     });
 
     // Receive an OnTypeFormatting request as the host's language server.
-    // Return some formattings from the host's language server.
+    // Return some formatting from the host's language server.
     executor.start_waiting();
     fake_language_server
         .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
@@ -1362,7 +1362,7 @@ async fn test_on_input_format_from_guest_to_host(
         .unwrap();
     executor.finish_waiting();
 
-    // Open the buffer on the host and see that the formattings worked
+    // Open the buffer on the host and see that the formatting worked
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
@@ -1836,7 +1836,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         assert_eq!(
             inlay_cache.version(),
             1,
-            "Should update cache verison after first hints"
+            "Should update cache version after first hints"
         );
     });
 

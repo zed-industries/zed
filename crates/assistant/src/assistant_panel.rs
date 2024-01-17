@@ -2917,7 +2917,7 @@ impl InlineAssistant {
         let semantic_permissioned = self.semantic_permissioned(cx);
         if let Some(semantic_index) = SemanticIndex::global(cx) {
             cx.spawn(|_, mut cx| async move {
-                // This has to be updated to accomodate for semantic_permissions
+                // This has to be updated to accommodate for semantic_permissions
                 if semantic_permissioned.await.unwrap_or(false) {
                     semantic_index
                         .update(&mut cx, |index, cx| index.index_project(project, cx))?

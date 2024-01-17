@@ -111,7 +111,7 @@ pub enum ButtonStyle {
     #[default]
     Subtle,
 
-    /// Used for buttons that only change forground color on hover and active states.
+    /// Used for buttons that only change foreground color on hover and active states.
     ///
     /// TODO: Better docs for this.
     Transparent,

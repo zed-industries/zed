@@ -10,7 +10,7 @@ mod open_type;
 mod platform;
 mod text_system;
 mod window;
-mod window_appearence;
+mod window_appearance;
 
 use crate::{px, size, GlobalPixels, Pixels, Size};
 use cocoa::{

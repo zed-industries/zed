@@ -12,7 +12,7 @@ use smallvec::SmallVec;
 /// user's mouse.)
 ///
 /// Example: A "new" menu with options like "new file", "new folder", etc,
-/// Linear's "Display" menu, a profile menu that appers when you click your avatar.
+/// Linear's "Display" menu, a profile menu that appears when you click your avatar.
 ///
 /// Related elements:
 ///

@@ -29,7 +29,7 @@ pub trait GitRepository: Send {
     fn branch_name(&self) -> Option<String>;
 
     /// Get the statuses of all of the files in the index that start with the given
-    /// path and have changes with resepect to the HEAD commit. This is fast because
+    /// path and have changes with respect to the HEAD commit. This is fast because
     /// the index stores hashes of trees, so that unchanged directories can be skipped.
     fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
 

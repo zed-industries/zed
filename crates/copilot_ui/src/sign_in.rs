@@ -96,7 +96,7 @@ impl CopilotCodeVerification {
             .items_center()
             .child(Headline::new("Use Github Copilot in Zed.").size(HeadlineSize::Large))
             .child(
-                Label::new("Using Copilot requres an active subscription on Github.")
+                Label::new("Using Copilot requires an active subscription on Github.")
                     .color(Color::Muted),
             )
             .child(Self::render_device_code(data, cx))
@@ -139,7 +139,7 @@ impl CopilotCodeVerification {
                 "You can enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.",
             ).color(Color::Warning))
             .child(
-                Button::new("copilot-subscribe-button", "Subscibe on Github")
+                Button::new("copilot-subscribe-button", "Subscribe on Github")
                     .full_width()
                     .on_click(|_, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )

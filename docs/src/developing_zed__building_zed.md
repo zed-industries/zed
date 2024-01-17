@@ -39,7 +39,7 @@ Expect this to take 30min to an hour! Some of these steps will take quite a whil
        Unfortunately, unselecting `repo` scope and selecting every its inner scope instead does not allow the token users to read from private repositories
      - (not applicable) Fine-grained Tokens, at the moment of writing, did not allow any kind of access of non-owned private repos
    - Keep the token in the browser tab/editor for the next two steps
-1. (Optional but reccomended) Add your GITHUB_TOKEN to your `.zshrc` or `.bashrc` like this: `export GITHUB_TOKEN=yourGithubAPIToken`
+1. (Optional but recommended) Add your GITHUB_TOKEN to your `.zshrc` or `.bashrc` like this: `export GITHUB_TOKEN=yourGithubAPIToken`
 1. Ensure the Zed.dev website is checked out in a sibling directory and install its dependencies:
     ```
     cd ..

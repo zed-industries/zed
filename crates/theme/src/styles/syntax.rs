@@ -127,7 +127,7 @@ impl SyntaxTheme {
         }
     }
 
-    // TOOD: Get this working with `#[cfg(test)]`. Why isn't it?
+    // TODO: Get this working with `#[cfg(test)]`. Why isn't it?
     pub fn new_test(colors: impl IntoIterator<Item = (&'static str, Hsla)>) -> Self {
         SyntaxTheme {
             highlights: colors

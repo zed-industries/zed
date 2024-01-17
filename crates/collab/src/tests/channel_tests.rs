@@ -203,7 +203,7 @@ async fn test_core_channels(
     executor.run_until_parked();
 
     // Observe that client B is now an admin of channel A, and that
-    // their admin priveleges extend to subchannels of channel A.
+    // their admin privileges extend to subchannels of channel A.
     assert_channel_invitations(client_b.channel_store(), cx_b, &[]);
     assert_channels(
         client_b.channel_store(),

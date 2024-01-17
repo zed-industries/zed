@@ -797,14 +797,14 @@
       }
     },
     {
-      "name": "CoffeScript Variable Assignment",
+      "name": "CoffeeScript Variable Assignment",
       "scope": "variable.assignment.coffee",
       "settings": {
         "foreground": "#89DDFF"
       }
     },
     {
-      "name": "CoffeScript Parameter Function",
+      "name": "CoffeeScript Parameter Function",
       "scope": "variable.parameter.function.coffee",
       "settings": {
         "foreground": "#bfc7d5"
@@ -1523,14 +1523,14 @@
       }
     },
     {
-      "name": "handlebars enitity attribute names",
+      "name": "handlebars entity attribute names",
       "scope": "entity.other.attribute-name.handlebars",
       "settings": {
         "foreground": "#89DDFF"
       }
     },
     {
-      "name": "handlebars enitity attribute values",
+      "name": "handlebars entity attribute values",
       "scope": "entity.other.attribute-value.handlebars variable.parameter.handlebars",
       "settings": {
         "foreground": "#7986E7"
@@ -1558,7 +1558,7 @@
         "keyword.operator.expression.in",
         "keyword.operator.type",
         "punctuation.section.embedded.js",
-        "punctuation.definintion.string",
+        "punctuation.definition.string",
         "punctuation"
       ],
       "settings": {

@@ -110,7 +110,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         cx,
     );
 
-    // Test Include Files Functonality
+    // Test Include Files Functionality
     let include_files = vec![PathMatcher::new("*.rs").unwrap()];
     let exclude_files = vec![PathMatcher::new("*.rs").unwrap()];
     let rust_only_search_results = semantic_index
@@ -576,7 +576,7 @@ async fn test_code_context_retrieval_lua() {
             setmetatable(classdef, { __index = baseclass })
             -- All class instances have a reference to the class object.
             classdef.class = classdef
-            --- Recursivly allocates the inheritance tree of the instance.
+            --- Recursively allocates the inheritance tree of the instance.
             -- @param mastertable The 'root' of the inheritance tree.
             -- @return Returns the instance with the allocated inheritance tree.
             function classdef.alloc(mastertable)
@@ -607,7 +607,7 @@ async fn test_code_context_retrieval_lua() {
                     setmetatable(classdef, { __index = baseclass })
                     -- All class instances have a reference to the class object.
                     classdef.class = classdef
-                    --- Recursivly allocates the inheritance tree of the instance.
+                    --- Recursively allocates the inheritance tree of the instance.
                     -- @param mastertable The 'root' of the inheritance tree.
                     -- @return Returns the instance with the allocated inheritance tree.
                     function classdef.alloc(mastertable)
@@ -617,7 +617,7 @@ async fn test_code_context_retrieval_lua() {
                 end"#.unindent(),
             114),
             (r#"
-            --- Recursivly allocates the inheritance tree of the instance.
+            --- Recursively allocates the inheritance tree of the instance.
             -- @param mastertable The 'root' of the inheritance tree.
             -- @return Returns the instance with the allocated inheritance tree.
             function classdef.alloc(mastertable)

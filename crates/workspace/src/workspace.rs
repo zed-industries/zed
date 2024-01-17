@@ -2617,7 +2617,7 @@ impl Workspace {
 
                             // If the item belongs to a particular project, then it should
                             // only be included if this project is shared, and the follower
-                            // is in thie project.
+                            // is in the project.
                             //
                             // Some items, like channel notes, do not belong to a particular
                             // project, so they should be included regardless of whether the

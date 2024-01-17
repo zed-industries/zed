@@ -8736,7 +8736,7 @@ impl Editor {
     ) {
         match event {
             multi_buffer::Event::Edited {
-                sigleton_buffer_edited,
+                singleton_buffer_edited,
             } => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
@@ -8746,7 +8746,7 @@ impl Editor {
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
 
-                if *sigleton_buffer_edited {
+                if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
                         let project = project.read(cx);
                         let languages_affected = multibuffer

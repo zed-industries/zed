@@ -4,7 +4,7 @@
 
 Folder-specific settings are used to override Zed's global settings for files within a specific directory in the project panel.  To get started, create a `.zed` subdirectory and add a `settings.json` within it.  It should be noted that folder-specific settings don't need to live only a project's root, but can be defined at multiple levels in the project hierarchy.  In setups like this, Zed will find the configuration nearest to the file you are working in and apply those settings to it.  In most cases, this level of flexibility won't be needed and a single configuration for all files in a project is all that is required; the `Zed > Settings > Open Local Settings` menu action is built for this case.  Running this action will look for a `.zed/settings.json` file at the root of the first top-level directory in your project panel.  If it does not exist, it will create it.
 
-The following global settings can be overriden with a folder-specific configuration:
+The following global settings can be overridden with a folder-specific configuration:
 
 - `copilot`
 - `enable_language_server`

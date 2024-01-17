@@ -2130,7 +2130,7 @@ impl<'a> WindowContext<'a> {
                     .unwrap();
 
                 // Actual: Option<AnyElement> <- View
-                // Requested: () <- AnyElemet
+                // Requested: () <- AnyElement
                 let state = state_box
                     .take()
                     .expect("element state is already on the stack");

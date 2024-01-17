@@ -76,7 +76,7 @@ pub struct CodeContextRetriever {
 
 // Every match has an item, this represents the fundamental treesitter symbol and anchors the search
 // Every match has one or more 'name' captures. These indicate the display range of the item for deduplication.
-// If there are preceeding comments, we track this with a context capture
+// If there are preceding comments, we track this with a context capture
 // If there is a piece that should be collapsed in hierarchical queries, we capture it with a collapse capture
 // If there is a piece that should be kept inside a collapsed node, we capture it with a keep capture
 #[derive(Debug, Clone)]

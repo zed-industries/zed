@@ -273,7 +273,7 @@ impl CompletionProvider for OpenAICompletionProvider {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         // Currently the CompletionRequest for OpenAI, includes a 'model' parameter
         // This means that the model is determined by the CompletionRequest and not the CompletionProvider,
-        // which is currently model based, due to the langauge model.
+        // which is currently model based, due to the language model.
         // At some point in the future we should rectify this.
         let credential = self.credential.read().clone();
         let request = stream_completion(credential, self.executor.clone(), prompt);

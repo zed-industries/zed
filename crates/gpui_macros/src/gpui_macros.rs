@@ -53,7 +53,7 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
 /// variety of scenarios and interleavings just by changing the seed.
 ///
 /// #[gpui::test] also takes three different arguments:
-/// - `#[gpui::test(interations=10)]` will run the test ten times with a different initial SEED.
+/// - `#[gpui::test(iterations=10)]` will run the test ten times with a different initial SEED.
 /// - `#[gpui::test(retries=3)]` will run the test up to four times if it fails to try and make it pass.
 /// - `#[gpui::test(on_failure="crate::test::report_failure")]` will call the specified function after the
 ///    tests fail so that you can write out more detail about the failure.

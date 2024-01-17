@@ -42,7 +42,7 @@ pub struct Style {
     #[refineable]
     pub inset: Edges<Length>,
 
-    // Size properies
+    // Size properties
     /// Sets the initial size of the item
     #[refineable]
     pub size: Size<Length>,
@@ -79,7 +79,7 @@ pub struct Style {
     #[refineable]
     pub gap: Size<DefiniteLength>,
 
-    // Flexbox properies
+    // Flexbox properties
     /// Which direction does the main axis flow in?
     pub flex_direction: FlexDirection,
     /// Should elements wrap, or stay in a single line?
@@ -502,7 +502,7 @@ impl Default for Style {
             max_size: Size::auto(),
             aspect_ratio: None,
             gap: Size::default(),
-            // Aligment
+            // Alignment
             align_items: None,
             align_self: None,
             align_content: None,
