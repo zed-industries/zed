@@ -19,12 +19,13 @@ use chrono::{DateTime, Local};
 use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
+    actions::{MoveDown, MoveUp},
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MoveDown, MoveUp, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset,
+    ToPoint,
 };
 use fs::Fs;
 use futures::StreamExt;
@@ -479,7 +480,7 @@ impl AssistantPanel {
 
     fn cancel_last_inline_assist(
         workspace: &mut Workspace,
-        _: &editor::Cancel,
+        _: &editor::actions::Cancel,
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
@@ -891,7 +892,7 @@ impl AssistantPanel {
         }
     }
 
-    fn handle_editor_cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+    fn handle_editor_cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
             if !search_bar.read(cx).is_dismissed() {
                 search_bar.update(cx, |search_bar, cx| {
@@ -2158,7 +2159,7 @@ impl ConversationEditor {
         }
     }
 
-    fn cancel_last_assist(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel_last_assist(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         if !self
             .conversation
             .update(cx, |conversation, _| conversation.cancel_last_assist())
@@ -2417,7 +2418,7 @@ impl ConversationEditor {
         }
     }
 
-    fn copy(&mut self, _: &editor::Copy, cx: &mut ViewContext<Self>) {
+    fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);
         let conversation = self.conversation.read(cx);
         if editor.selections.count() == 1 {
@@ -2828,7 +2829,7 @@ impl InlineAssistant {
         cx.notify();
     }
 
-    fn cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(InlineAssistantEvent::Canceled);
     }
 

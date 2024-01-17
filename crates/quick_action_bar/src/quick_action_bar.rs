@@ -45,13 +45,13 @@ impl Render for QuickActionBar {
             "toggle inlay hints",
             IconName::InlayHint,
             editor.read(cx).inlay_hints_enabled(),
-            Box::new(editor::ToggleInlayHints),
+            Box::new(editor::actions::ToggleInlayHints),
             "Toggle Inlay Hints",
             {
                 let editor = editor.clone();
                 move |_, cx| {
                     editor.update(cx, |editor, cx| {
-                        editor.toggle_inlay_hints(&editor::ToggleInlayHints, cx);
+                        editor.toggle_inlay_hints(&editor::actions::ToggleInlayHints, cx);
                     });
                 }
             },

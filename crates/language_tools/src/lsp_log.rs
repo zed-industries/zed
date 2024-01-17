@@ -1,5 +1,5 @@
 use collections::{HashMap, VecDeque};
-use editor::{Editor, EditorEvent, MoveToEnd};
+use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions, div, AnchorCorner, AnyElement, AppContext, Context, EventEmitter, FocusHandle,

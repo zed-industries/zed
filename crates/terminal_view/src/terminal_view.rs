@@ -357,7 +357,7 @@ impl TerminalView {
         }
     }
 
-    fn select_all(&mut self, _: &editor::SelectAll, cx: &mut ViewContext<Self>) {
+    fn select_all(&mut self, _: &editor::actions::SelectAll, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.select_all());
         cx.notify();
     }
