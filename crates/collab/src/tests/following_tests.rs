@@ -1229,7 +1229,9 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     });
 
     // When client B moves, it automatically stops following client A.
-    editor_b2.update(cx_b, |editor, cx| editor.move_right(&editor::MoveRight, cx));
+    editor_b2.update(cx_b, |editor, cx| {
+        editor.move_right(&editor::actions::MoveRight, cx)
+    });
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
         None

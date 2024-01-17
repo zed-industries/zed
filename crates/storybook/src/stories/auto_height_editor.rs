@@ -10,7 +10,11 @@ pub struct AutoHeightEditorStory {
 
 impl AutoHeightEditorStory {
     pub fn new(cx: &mut WindowContext) -> View<Self> {
-        cx.bind_keys([KeyBinding::new("enter", editor::Newline, Some("Editor"))]);
+        cx.bind_keys([KeyBinding::new(
+            "enter",
+            editor::actions::Newline,
+            Some("Editor"),
+        )]);
         cx.new_view(|cx| Self {
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(3, cx);

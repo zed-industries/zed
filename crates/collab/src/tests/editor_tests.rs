@@ -8,9 +8,11 @@ use std::{
 
 use call::ActiveCall;
 use editor::{
+    actions::{
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, ToggleCodeActions, Undo,
+    },
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
-    ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToggleCodeActions,
-    Undo,
+    Editor,
 };
 use futures::StreamExt;
 use gpui::{TestAppContext, VisualContext, VisualTestContext};
@@ -221,7 +223,8 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     editor_cx_b.set_selections_state(indoc! {"
         Some textˇ
     "});
-    editor_cx_a.update_editor(|editor, cx| editor.newline_above(&editor::NewlineAbove, cx));
+    editor_cx_a
+        .update_editor(|editor, cx| editor.newline_above(&editor::actions::NewlineAbove, cx));
     executor.run_until_parked();
     editor_cx_a.assert_editor_state(indoc! {"
         ˇ
@@ -241,7 +244,8 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
         Some textˇ
     "});
-    editor_cx_a.update_editor(|editor, cx| editor.newline_below(&editor::NewlineBelow, cx));
+    editor_cx_a
+        .update_editor(|editor, cx| editor.newline_below(&editor::actions::NewlineBelow, cx));
     executor.run_until_parked();
     editor_cx_a.assert_editor_state(indoc! {"
 
