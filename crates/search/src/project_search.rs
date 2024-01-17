@@ -1383,7 +1383,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn tab(&mut self, _: &editor::actions::Tab, cx: &mut ViewContext<Self>) {g
+    fn tab(&mut self, _: &editor::actions::Tab, cx: &mut ViewContext<Self>) {
         self.cycle_field(Direction::Next, cx);
     }
 
