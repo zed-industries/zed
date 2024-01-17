@@ -93,19 +93,15 @@ pub fn init(cx: &mut AppContext) {
             }
             */
             .register_action(move |workspace, action: &SelectNextMatch, cx| {
-                dbg!("@@@@@@@@@1");
                 if workspace.has_active_modal(cx) {
                     cx.propagate();
                     return;
                 }
 
-                dbg!("????? 2");
                 let pane = workspace.active_pane();
                 pane.update(cx, move |this, cx| {
                     this.toolbar().update(cx, move |this, cx| {
-                        dbg!("@@@@@@@@@ 3");
                         if let Some(search_bar) = this.item_of_type::<ProjectSearchBar>() {
-                            dbg!("$$$$$$$$$ 4");
                             search_bar.update(cx, move |search_bar, cx| {
                                 search_bar.select_next_match(action, cx)
                             });

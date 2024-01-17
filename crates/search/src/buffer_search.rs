@@ -429,6 +429,11 @@ pub trait SearchActionsRegistrar {
         &mut self,
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     );
+
+    fn register_handler_for_dismissed_bar<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    );
 }
 
 type GetSearchBar<T> =
@@ -457,16 +462,60 @@ impl<'a, 'b, T: 'static> DivRegistrar<'a, 'b, T> {
 }
 
 impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
-    fn register_handler<A: gpui::Action>(
+    fn register_handler<A: Action>(
         &mut self,
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     ) {
         let getter = self.search_getter;
         self.div = self.div.take().map(|div| {
             div.on_action(self.cx.listener(move |this, action, cx| {
-                (getter)(this, cx)
+                let should_notify = (getter)(this, cx)
                     .clone()
-                    .map(|search_bar| search_bar.update(cx, |this, cx| callback(this, action, cx)));
+                    .map(|search_bar| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            if search_bar.is_dismissed() {
+                                false
+                            } else {
+                                callback(search_bar, action, cx);
+                                true
+                            }
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_notify {
+                    cx.notify();
+                } else {
+                    cx.propagate();
+                }
+            }))
+        });
+    }
+
+    fn register_handler_for_dismissed_bar<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        let getter = self.search_getter;
+        self.div = self.div.take().map(|div| {
+            div.on_action(self.cx.listener(move |this, action, cx| {
+                let should_notify = (getter)(this, cx)
+                    .clone()
+                    .map(|search_bar| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            if search_bar.is_dismissed() {
+                                callback(search_bar, action, cx);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_notify {
+                    cx.notify();
+                } else {
+                    cx.propagate();
+                }
             }))
         });
     }
@@ -488,8 +537,52 @@ impl SearchActionsRegistrar for Workspace {
             pane.update(cx, move |this, cx| {
                 this.toolbar().update(cx, move |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        search_bar.update(cx, move |this, cx| callback(this, action, cx));
-                        cx.notify();
+                        let should_notify = search_bar.update(cx, move |search_bar, cx| {
+                            if search_bar.is_dismissed() {
+                                false
+                            } else {
+                                callback(search_bar, action, cx);
+                                true
+                            }
+                        });
+                        if should_notify {
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
+                    }
+                })
+            });
+        });
+    }
+
+    fn register_handler_for_dismissed_bar<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        self.register_action(move |workspace, action: &A, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+
+            let pane = workspace.active_pane();
+            pane.update(cx, move |this, cx| {
+                this.toolbar().update(cx, move |this, cx| {
+                    if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
+                        let should_notify = search_bar.update(cx, move |search_bar, cx| {
+                            if search_bar.is_dismissed() {
+                                callback(search_bar, action, cx);
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                        if should_notify {
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
                     }
                 })
             });
@@ -500,59 +593,29 @@ impl SearchActionsRegistrar for Workspace {
 impl BufferSearchBar {
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(|this, action: &ToggleCaseSensitive, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             if this.supported_options().case {
                 this.toggle_case_sensitive(action, cx);
             }
         });
         registrar.register_handler(|this, action: &ToggleWholeWord, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             if this.supported_options().word {
                 this.toggle_whole_word(action, cx);
             }
         });
         registrar.register_handler(|this, action: &ToggleReplace, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             if this.supported_options().replacement {
                 this.toggle_replace(action, cx);
             }
         });
         registrar.register_handler(|this, _: &ActivateRegexMode, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             if this.supported_options().regex {
                 this.activate_search_mode(SearchMode::Regex, cx);
             }
         });
         registrar.register_handler(|this, _: &ActivateTextMode, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             this.activate_search_mode(SearchMode::Text, cx);
         });
         registrar.register_handler(|this, action: &CycleMode, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             if this.supported_options().regex {
                 // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
                 // cycling.
@@ -560,44 +623,19 @@ impl BufferSearchBar {
             }
         });
         registrar.register_handler(|this, action: &SelectNextMatch, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             this.select_next_match(action, cx);
         });
         registrar.register_handler(|this, action: &SelectPrevMatch, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             this.select_prev_match(action, cx);
         });
         registrar.register_handler(|this, action: &SelectAllMatches, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             this.select_all_matches(action, cx);
         });
         registrar.register_handler(|this, _: &editor::Cancel, cx| {
-            if this.is_dismissed() {
-                cx.propagate();
-                return;
-            }
-
             this.dismiss(&Dismiss, cx);
         });
-        registrar.register_handler(|this, deploy, cx| {
-            if this.is_dismissed() {
-                this.deploy(deploy, cx);
-                return;
-            }
-
-            cx.propagate();
+        registrar.register_handler_for_dismissed_bar(|this, deploy, cx| {
+            this.deploy(deploy, cx);
         })
     }
 
