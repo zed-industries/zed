@@ -477,7 +477,9 @@ impl CollabTitlebarItem {
             return None;
         }
 
+        const FACEPILE_LIMIT: usize = 3;
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
+        let extra_count = followers.len().saturating_sub(FACEPILE_LIMIT);
 
         let pile = FacePile::default()
             .child(
@@ -499,18 +501,34 @@ impl CollabTitlebarItem {
                         )
                     }),
             )
-            .children(followers.iter().filter_map(|follower_peer_id| {
-                let follower = room
-                    .remote_participants()
-                    .values()
-                    .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
-                    .or_else(|| {
-                        (self.client.peer_id() == Some(*follower_peer_id)).then_some(current_user)
-                    })?
-                    .clone();
+            .children(
+                followers
+                    .iter()
+                    .take(FACEPILE_LIMIT)
+                    .filter_map(|follower_peer_id| {
+                        let follower = room
+                            .remote_participants()
+                            .values()
+                            .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
+                            .or_else(|| {
+                                (self.client.peer_id() == Some(*follower_peer_id))
+                                    .then_some(current_user)
+                            })?
+                            .clone();
 
-                Some(Avatar::new(follower.avatar_uri.clone()))
-            }));
+                        Some(Avatar::new(follower.avatar_uri.clone()))
+                    }),
+            )
+            .children(if extra_count > 0 {
+                Some(
+                    div()
+                        .ml_1()
+                        .child(Label::new(format!("+{extra_count}")))
+                        .into_any_element(),
+                )
+            } else {
+                None
+            });
 
         Some(pile)
     }
