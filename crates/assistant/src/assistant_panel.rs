@@ -2311,8 +2311,7 @@ impl ConversationEditor {
                                     }
                                 });
 
-                            div()
-                                .h_flex()
+                            h_flex()
                                 .id(("message_header", message_id.0))
                                 .h_11()
                                 .relative()
@@ -2328,6 +2327,7 @@ impl ConversationEditor {
                                         .add_suffix(true)
                                         .to_string(),
                                     )
+                                    .size(LabelSize::XSmall)
                                     .color(Color::Muted),
                                 )
                                 .children(
