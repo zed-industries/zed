@@ -20,7 +20,11 @@ impl Database {
             })
             .on_conflict(
                 OnConflict::column(user::Column::GithubLogin)
-                    .update_column(user::Column::GithubLogin)
+                    .update_columns([
+                        user::Column::Admin,
+                        user::Column::EmailAddress,
+                        user::Column::GithubUserId,
+                    ])
                     .to_owned(),
             )
             .exec_with_returning(&*tx)

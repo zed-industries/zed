@@ -4,6 +4,11 @@ const HELP = `
 USAGE
   zed-local  [options]  [zed args]
 
+SUMMARY
+  Runs 1-4 instances of Zed using a locally-running collaboration server.
+  Each instance of Zed will be signed in as a different user specified in
+  either \`.admins.json\` or \`.admins.default.json\`.
+
 OPTIONS
   --help        Print this help message
   --release     Build Zed in release mode
@@ -12,6 +17,16 @@ OPTIONS
 `.trim();
 
 const { spawn, execFileSync } = require("child_process");
+const assert = require("assert");
+
+const defaultUsers = require("../crates/collab/.admins.default.json");
+let users = defaultUsers;
+try {
+  const customUsers = require("../crates/collab/.admins.json");
+  assert(customUsers.length > 0);
+  assert(customUsers.every((user) => typeof user === "string"));
+  users.splice(0, 0, ...customUsers);
+} catch (_) {}
 
 const RESOLUTION_REGEX = /(\d+) x (\d+)/;
 const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
@@ -71,10 +86,6 @@ if (instanceCount > 1) {
   }
 }
 
-let users = ["nathansobo", "as-cii", "maxbrunsfeld", "iamnbutler"];
-
-const RUST_LOG = process.env.RUST_LOG || "info";
-
 // If a user is specified, make sure it's first in the list
 const user = process.env.ZED_IMPERSONATE;
 if (user) {
@@ -88,18 +99,12 @@ const positions = [
   `${instanceWidth},${instanceHeight}`,
 ];
 
-const buildArgs = (() => {
-  const buildArgs = ["build"];
-  if (isReleaseMode) {
-    buildArgs.push("--release");
-  }
-
-  return buildArgs;
-})();
-const zedBinary = (() => {
-  const target = isReleaseMode ? "release" : "debug";
-  return `target/${target}/Zed`;
-})();
+let buildArgs = ["build"];
+let zedBinary = "target/debug/Zed";
+if (isReleaseMode) {
+  buildArgs.push("--release");
+  zedBinary = "target/release/Zed";
+}
 
 execFileSync("cargo", buildArgs, { stdio: "inherit" });
 setTimeout(() => {
@@ -115,7 +120,7 @@ setTimeout(() => {
         ZED_ADMIN_API_TOKEN: "secret",
         ZED_WINDOW_SIZE: `${instanceWidth},${instanceHeight}`,
         PATH: process.env.PATH,
-        RUST_LOG,
+        RUST_LOG: process.env.RUST_LOG || "info",
       },
     });
   }

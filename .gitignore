@@ -9,6 +9,7 @@
 /styles/src/types/zed.ts
 /crates/theme/schemas/theme.json
 /crates/collab/static/styles.css
+/crates/collab/.admins.json
 /vendor/bin
 /assets/themes/*.json
 /assets/*licenses.md
