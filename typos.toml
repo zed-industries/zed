@@ -7,11 +7,13 @@ extend-exclude = [
     "crates/zed/src/languages/glsl/*",
     # File suffixes aren't typos
     "assets/icons/file_icons/file_types.json",
-    # :/
-    "crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql",
+    # Not our typos
+    "assets/themes/src/vscode/*",
     # Editor and file finder rely on partial typing and custom in-string syntax
     "crates/file_finder/src/file_finder.rs",
     "crates/editor/src/editor_tests.rs",
+    # :/
+    "crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql",
 ]
 
 [default]
