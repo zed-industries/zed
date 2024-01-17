@@ -31,6 +31,7 @@ impl From<u64> for EntityId {
 }
 
 impl EntityId {
+    /// Converts this entity id to a [u64]
     pub fn as_u64(self) -> u64 {
         self.0.as_ffi()
     }
@@ -140,7 +141,7 @@ impl EntityMap {
     }
 }
 
-pub struct Lease<'a, T> {
+pub(crate) struct Lease<'a, T> {
     entity: Option<Box<dyn Any>>,
     pub model: &'a Model<T>,
     entity_type: PhantomData<T>,
@@ -169,8 +170,9 @@ impl<'a, T> Drop for Lease<'a, T> {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct Slot<T>(Model<T>);
+pub(crate) struct Slot<T>(Model<T>);
 
+/// A dynamically typed reference to a model, which can be downcast into a `Model<T>`.
 pub struct AnyModel {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
@@ -195,14 +197,17 @@ impl AnyModel {
         }
     }
 
+    /// Returns the id associated with this model.
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
+    /// Returns the [TypeId] associated with this model.
     pub fn entity_type(&self) -> TypeId {
         self.entity_type
     }
 
+    /// Converts this model handle into a weak variant, which does not prevent it from being released.
     pub fn downgrade(&self) -> AnyWeakModel {
         AnyWeakModel {
             entity_id: self.entity_id,
@@ -211,6 +216,8 @@ impl AnyModel {
         }
     }
 
+    /// Converts this model handle into a strongly-typed model handle of the given type.
+    /// If this model handle is not of the specified type, returns itself as an error variant.
     pub fn downcast<T: 'static>(self) -> Result<Model<T>, AnyModel> {
         if TypeId::of::<T>() == self.entity_type {
             Ok(Model {
@@ -307,6 +314,8 @@ impl std::fmt::Debug for AnyModel {
     }
 }
 
+/// A strong, well typed reference to a struct which is managed
+/// by GPUI
 #[derive(Deref, DerefMut)]
 pub struct Model<T> {
     #[deref]
@@ -368,10 +377,12 @@ impl<T: 'static> Model<T> {
         self.any_model
     }
 
+    /// Grab a reference to this entity from the context.
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.entities.read(self)
     }
 
+    /// Read the entity referenced by this model with the given function.
     pub fn read_with<R, C: Context>(
         &self,
         cx: &C,
@@ -437,6 +448,7 @@ impl<T> PartialEq<WeakModel<T>> for Model<T> {
     }
 }
 
+/// A type erased, weak reference to a model.
 #[derive(Clone)]
 pub struct AnyWeakModel {
     pub(crate) entity_id: EntityId,
@@ -445,10 +457,12 @@ pub struct AnyWeakModel {
 }
 
 impl AnyWeakModel {
+    /// Get the entity ID associated with this weak reference.
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
+    /// Check if this weak handle can be upgraded, or if the model has already been dropped
     pub fn is_upgradable(&self) -> bool {
         let ref_count = self
             .entity_ref_counts
@@ -458,6 +472,7 @@ impl AnyWeakModel {
         ref_count > 0
     }
 
+    /// Upgrade this weak model reference to a strong reference.
     pub fn upgrade(&self) -> Option<AnyModel> {
         let ref_counts = &self.entity_ref_counts.upgrade()?;
         let ref_counts = ref_counts.read();
@@ -485,6 +500,7 @@ impl AnyWeakModel {
         })
     }
 
+    /// Assert that model referenced by this weak handle has been dropped.
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_dropped(&self) {
         self.entity_ref_counts
@@ -527,6 +543,7 @@ impl PartialEq for AnyWeakModel {
 
 impl Eq for AnyWeakModel {}
 
+/// A weak reference to a model of the given type.
 #[derive(Deref, DerefMut)]
 pub struct WeakModel<T> {
     #[deref]
@@ -617,12 +634,12 @@ lazy_static::lazy_static! {
 
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
-pub struct HandleId {
+pub(crate) struct HandleId {
     id: u64, // id of the handle itself, not the pointed at object
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub struct LeakDetector {
+pub(crate) struct LeakDetector {
     next_handle_id: u64,
     entity_handles: HashMap<EntityId, HashMap<HandleId, Option<backtrace::Backtrace>>>,
 }
