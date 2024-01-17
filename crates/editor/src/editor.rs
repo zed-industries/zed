@@ -48,9 +48,8 @@ use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
-pub use element::{
-    Cursor, EditorElement, HighlightedRange, HighlightedRangeLine, LineWithInvisibles,
-};
+use element::LineWithInvisibles;
+pub use element::{Cursor, EditorElement, HighlightedRange, HighlightedRangeLine};
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
@@ -90,9 +89,7 @@ use parking_lot::RwLock;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::{self, *};
-use scroll::{
-    autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
-};
+use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -9700,7 +9697,7 @@ pub fn highlight_diagnostic_message(diagnostic: &Diagnostic) -> (SharedString, V
     (text_without_backticks.into(), code_ranges)
 }
 
-pub fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, colors: &StatusColors) -> Hsla {
+fn diagnostic_style(severity: DiagnosticSeverity, valid: bool, colors: &StatusColors) -> Hsla {
     match (severity, valid) {
         (DiagnosticSeverity::ERROR, true) => colors.error,
         (DiagnosticSeverity::ERROR, false) => colors.error,
@@ -9759,7 +9756,7 @@ pub fn styled_runs_for_code_label<'a>(
         })
 }
 
-pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
+pub(crate) fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str> + 'a {
     let mut index = 0;
     let mut codepoints = text.char_indices().peekable();
 

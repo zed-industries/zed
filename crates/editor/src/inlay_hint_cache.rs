@@ -1234,7 +1234,7 @@ pub mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
     use crate::{
-        scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
+        scroll::{scroll_amount::ScrollAmount, Autoscroll},
         ExcerptRange,
     };
     use futures::StreamExt;

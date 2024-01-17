@@ -1,6 +1,6 @@
 use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
 use collections::{HashMap, HashSet};
-use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias};
+use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias};
 use gpui::WindowContext;
 use language::Point;
 

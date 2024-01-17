@@ -23,7 +23,7 @@ use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
-    scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
+    scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };

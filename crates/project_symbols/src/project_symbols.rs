@@ -1,4 +1,4 @@
-use editor::{scroll::autoscroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
+use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, rems, AppContext, DismissEvent, FontWeight, Model, ParentElement, StyledText, Task,

@@ -2,7 +2,7 @@ use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_
 use editor::{
     display_map::DisplaySnapshot,
     movement::{self, FindRange, TextLayoutDetails},
-    scroll::autoscroll::Autoscroll,
+    scroll::Autoscroll,
     DisplayPoint,
 };
 use gpui::WindowContext;

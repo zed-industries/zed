@@ -1,6 +1,6 @@
 use editor::{
-    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Anchor, AnchorRangeExt,
-    DisplayPoint, Editor, EditorMode, ToPoint,
+    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, AnchorRangeExt, DisplayPoint, Editor,
+    EditorMode, ToPoint,
 };
 use fuzzy::StringMatch;
 use gpui::{

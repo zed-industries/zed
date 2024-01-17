@@ -3,7 +3,7 @@ mod project_panel_settings;
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
-use editor::{actions::Cancel, scroll::autoscroll::Autoscroll, Editor};
+use editor::{actions::Cancel, scroll::Autoscroll, Editor};
 use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};

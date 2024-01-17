@@ -2599,7 +2599,7 @@ impl EditorElement {
 }
 
 #[derive(Debug)]
-pub struct LineWithInvisibles {
+pub(crate) struct LineWithInvisibles {
     pub line: ShapedLine,
     invisibles: Vec<Invisible>,
 }

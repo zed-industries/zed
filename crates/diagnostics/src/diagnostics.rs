@@ -8,7 +8,7 @@ use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
     highlight_diagnostic_message,
-    scroll::autoscroll::Autoscroll,
+    scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use futures::future::try_join_all;

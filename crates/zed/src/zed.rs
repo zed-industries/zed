@@ -730,7 +730,7 @@ fn open_bundled_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
+    use editor::{scroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
         VisualTestContext, WindowHandle,
