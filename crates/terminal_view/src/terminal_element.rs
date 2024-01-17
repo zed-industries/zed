@@ -250,8 +250,8 @@ impl TerminalElement {
 
                 //Layout current cell text
                 {
-                    let cell_text = cell.c.to_string();
                     if !is_blank(&cell) {
+                        let cell_text = cell.c.to_string();
                         let cell_style =
                             TerminalElement::cell_style(&cell, fg, theme, text_style, hyperlink);
 
@@ -586,24 +586,6 @@ impl TerminalElement {
         }
     }
 
-    fn register_key_listeners(&self, cx: &mut WindowContext) {
-        cx.on_key_event({
-            let this = self.terminal.clone();
-            move |event: &ModifiersChangedEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                let handled =
-                    this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
-
-                if handled {
-                    cx.refresh();
-                }
-            }
-        });
-    }
-
     fn register_mouse_listeners(
         &mut self,
         origin: Point<Pixels>,
@@ -771,53 +753,68 @@ impl Element for TerminalElement {
 
         self.register_mouse_listeners(origin, layout.mode, bounds, cx);
 
-        let mut interactivity = mem::take(&mut self.interactivity);
-        interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
-            cx.handle_input(&self.focus, terminal_input_handler);
+        self.interactivity
+            .paint(bounds, bounds.size, state, cx, |_, _, cx| {
+                cx.handle_input(&self.focus, terminal_input_handler);
 
-            self.register_key_listeners(cx);
+                cx.on_key_event({
+                    let this = self.terminal.clone();
+                    move |event: &ModifiersChangedEvent, phase, cx| {
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
 
-            for rect in &layout.rects {
-                rect.paint(origin, &layout, cx);
-            }
+                        let handled =
+                            this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 
-            cx.with_z_index(1, |cx| {
-                for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
-                {
-                    if let Some((start_y, highlighted_range_lines)) =
-                        to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
-                    {
-                        let hr = HighlightedRange {
-                            start_y, //Need to change this
-                            line_height: layout.dimensions.line_height,
-                            lines: highlighted_range_lines,
-                            color: color.clone(),
-                            //Copied from editor. TODO: move to theme or something
-                            corner_radius: 0.15 * layout.dimensions.line_height,
-                        };
-                        hr.paint(bounds, cx);
-                    }
-                }
-            });
-
-            cx.with_z_index(2, |cx| {
-                for cell in &layout.cells {
-                    cell.paint(origin, &layout, bounds, cx);
-                }
-            });
-
-            if self.cursor_visible {
-                cx.with_z_index(3, |cx| {
-                    if let Some(cursor) = &layout.cursor {
-                        cursor.paint(origin, cx);
+                        if handled {
+                            cx.refresh();
+                        }
                     }
                 });
-            }
 
-            if let Some(mut element) = layout.hyperlink_tooltip.take() {
-                element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
-            }
-        });
+                for rect in &layout.rects {
+                    rect.paint(origin, &layout, cx);
+                }
+
+                cx.with_z_index(1, |cx| {
+                    for (relative_highlighted_range, color) in
+                        layout.relative_highlighted_ranges.iter()
+                    {
+                        if let Some((start_y, highlighted_range_lines)) =
+                            to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
+                        {
+                            let hr = HighlightedRange {
+                                start_y, //Need to change this
+                                line_height: layout.dimensions.line_height,
+                                lines: highlighted_range_lines,
+                                color: color.clone(),
+                                //Copied from editor. TODO: move to theme or something
+                                corner_radius: 0.15 * layout.dimensions.line_height,
+                            };
+                            hr.paint(bounds, cx);
+                        }
+                    }
+                });
+
+                cx.with_z_index(2, |cx| {
+                    for cell in &layout.cells {
+                        cell.paint(origin, &layout, bounds, cx);
+                    }
+                });
+
+                if self.cursor_visible {
+                    cx.with_z_index(3, |cx| {
+                        if let Some(cursor) = &layout.cursor {
+                            cursor.paint(origin, cx);
+                        }
+                    });
+                }
+
+                if let Some(mut element) = layout.hyperlink_tooltip.take() {
+                    element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
+                }
+            });
     }
 }
 
