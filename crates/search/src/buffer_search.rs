@@ -430,7 +430,7 @@ pub trait SearchActionsRegistrar {
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     );
 
-    fn register_handler_for_dismissed_bar<A: Action>(
+    fn register_handler_for_dismissed_search<A: Action>(
         &mut self,
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     );
@@ -491,7 +491,7 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
         });
     }
 
-    fn register_handler_for_dismissed_bar<A: Action>(
+    fn register_handler_for_dismissed_search<A: Action>(
         &mut self,
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     ) {
@@ -556,7 +556,7 @@ impl SearchActionsRegistrar for Workspace {
         });
     }
 
-    fn register_handler_for_dismissed_bar<A: Action>(
+    fn register_handler_for_dismissed_search<A: Action>(
         &mut self,
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     ) {
@@ -634,7 +634,7 @@ impl BufferSearchBar {
         registrar.register_handler(|this, _: &editor::Cancel, cx| {
             this.dismiss(&Dismiss, cx);
         });
-        registrar.register_handler_for_dismissed_bar(|this, deploy, cx| {
+        registrar.register_handler_for_dismissed_search(|this, deploy, cx| {
             this.deploy(deploy, cx);
         })
     }
