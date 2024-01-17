@@ -473,7 +473,9 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
                     .clone()
                     .map(|search_bar| {
                         search_bar.update(cx, |search_bar, cx| {
-                            if search_bar.is_dismissed() {
+                            if search_bar.is_dismissed()
+                                || search_bar.active_searchable_item.is_none()
+                            {
                                 false
                             } else {
                                 callback(search_bar, action, cx);
@@ -538,7 +540,9 @@ impl SearchActionsRegistrar for Workspace {
                 this.toolbar().update(cx, move |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
                         let should_notify = search_bar.update(cx, move |search_bar, cx| {
-                            if search_bar.is_dismissed() {
+                            if search_bar.is_dismissed()
+                                || search_bar.active_searchable_item.is_none()
+                            {
                                 false
                             } else {
                                 callback(search_bar, action, cx);
