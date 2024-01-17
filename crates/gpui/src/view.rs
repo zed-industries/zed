@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
     Bounds, ContentMask, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
@@ -11,12 +13,16 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+/// A view is a piece of state that can be presented on screen by implementing the [Render] trait.
+/// Views implement [Element] and can composed with other views, and every window is created with a root view.
 pub struct View<V> {
+    /// A view is just a [Model] whose type implements `Render`, and the model is accessible via this field.
     pub model: Model<V>,
 }
 
 impl<V> Sealed for View<V> {}
 
+#[doc(hidden)]
 pub struct AnyViewState {
     root_style: Style,
     cache_key: Option<ViewCacheKey>,
@@ -58,6 +64,7 @@ impl<V: 'static> View<V> {
         Entity::downgrade(self)
     }
 
+    /// Update the view's state with the given function, which is passed a mutable reference and a context.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -69,10 +76,12 @@ impl<V: 'static> View<V> {
         cx.update_view(self, f)
     }
 
+    /// Obtain a read-only reference to this view's state.
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
         self.model.read(cx)
     }
 
+    /// Gets a [FocusHandle] for this view when its state implements [FocusableView].
     pub fn focus_handle(&self, cx: &AppContext) -> FocusHandle
     where
         V: FocusableView,
@@ -131,19 +140,24 @@ impl<V> PartialEq for View<V> {
 
 impl<V> Eq for View<V> {}
 
+/// A weak variant of [View] which does not prevent the view from being released.
 pub struct WeakView<V> {
     pub(crate) model: WeakModel<V>,
 }
 
 impl<V: 'static> WeakView<V> {
+    /// Gets the entity id associated with this handle.
     pub fn entity_id(&self) -> EntityId {
         self.model.entity_id
     }
 
+    /// Obtain a strong handle for the view if it hasn't been released.
     pub fn upgrade(&self) -> Option<View<V>> {
         Entity::upgrade_from(self)
     }
 
+    /// Update this view's state if it hasn't been released.
+    /// Returns an error if this view has been released.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -157,9 +171,10 @@ impl<V: 'static> WeakView<V> {
         Ok(view.update(cx, f)).flatten()
     }
 
+    /// Assert that the view referenced by this handle has been released.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_dropped(&self) {
-        self.model.assert_dropped()
+    pub fn assert_released(&self) {
+        self.model.assert_released()
     }
 }
 
@@ -185,6 +200,7 @@ impl<V> PartialEq for WeakView<V> {
 
 impl<V> Eq for WeakView<V> {}
 
+/// A dynically-typed handle to a view, which can be downcast to a [View] for a specific type.
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
@@ -193,11 +209,15 @@ pub struct AnyView {
 }
 
 impl AnyView {
+    /// Indicate that this view should be cached when using it as an element.
+    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
+    /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self) -> Self {
         self.cache = true;
         self
     }
 
+    /// Convert this to a weak handle.
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             model: self.model.downgrade(),
@@ -205,6 +225,8 @@ impl AnyView {
         }
     }
 
+    /// Convert this to a [View] of a specific type.
+    /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
     pub fn downcast<T: 'static>(self) -> Result<View<T>, Self> {
         match self.model.downcast() {
             Ok(model) => Ok(View { model }),
@@ -216,10 +238,12 @@ impl AnyView {
         }
     }
 
+    /// Gets the [TypeId] of the underlying view.
     pub fn entity_type(&self) -> TypeId {
         self.model.entity_type
     }
 
+    /// Gets the entity id of this handle.
     pub fn entity_id(&self) -> EntityId {
         self.model.entity_id()
     }
@@ -337,12 +361,14 @@ impl IntoElement for AnyView {
     }
 }
 
+/// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
     model: AnyWeakModel,
     layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
 }
 
 impl AnyWeakView {
+    /// Convert to a strongly-typed handle if the referenced view has not yet been released.
     pub fn upgrade(&self) -> Option<AnyView> {
         let model = self.model.upgrade()?;
         Some(AnyView {
