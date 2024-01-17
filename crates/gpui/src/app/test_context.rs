@@ -568,6 +568,11 @@ pub struct VisualTestContext {
 }
 
 impl<'a> VisualTestContext {
+    /// Get the underlying window handle underlying this context.
+    pub fn handle(&self) -> AnyWindowHandle {
+        self.window
+    }
+
     /// Provides the `WindowContext` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut WindowContext) -> R) -> R {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
