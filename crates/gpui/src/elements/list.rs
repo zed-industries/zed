@@ -30,6 +30,7 @@ struct StateInner {
     logical_scroll_top: Option<ListOffset>,
     alignment: ListAlignment,
     overdraw: Pixels,
+    reset: bool,
     #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut WindowContext)>>,
 }
@@ -92,11 +93,17 @@ impl ListState {
             alignment: orientation,
             overdraw,
             scroll_handler: None,
+            reset: false,
         })))
     }
 
+    /// Reset this instantiation of the list state.
+    ///
+    /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
         let state = &mut *self.0.borrow_mut();
+        state.reset = true;
+
         state.logical_scroll_top = None;
         state.items = SumTree::new();
         state
@@ -152,11 +159,13 @@ impl ListState {
             scroll_top.item_ix = item_count;
             scroll_top.offset_in_item = px(0.);
         }
+
         state.logical_scroll_top = Some(scroll_top);
     }
 
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
+
         let mut scroll_top = state.logical_scroll_top();
         let height = state
             .last_layout_bounds
@@ -187,9 +196,9 @@ impl ListState {
     /// Get the bounds for the given item in window coordinates.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         let state = &*self.0.borrow();
+
         let bounds = state.last_layout_bounds.unwrap_or_default();
         let scroll_top = state.logical_scroll_top();
-
         if ix < scroll_top.item_ix {
             return None;
         }
@@ -230,6 +239,12 @@ impl StateInner {
         delta: Point<Pixels>,
         cx: &mut WindowContext,
     ) {
+        // Drop scroll events after a reset, since we can't calculate
+        // the new logical scroll top without the item heights
+        if self.reset {
+            return;
+        }
+
         let scroll_max = (self.items.summary().height - height).max(px(0.));
         let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
             .max(px(0.))
@@ -325,6 +340,8 @@ impl Element for List {
     ) {
         let state = &mut *self.state.0.borrow_mut();
 
+        state.reset = false;
+
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
             last_bounds.size.width != bounds.size.width
@@ -346,8 +363,9 @@ impl Element for List {
             height: AvailableSpace::MinContent,
         };
 
-        // Render items after the scroll top, including those in the trailing overdraw
         let mut cursor = old_items.cursor::<Count>();
+
+        // Render items after the scroll top, including those in the trailing overdraw
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         for (ix, item) in cursor.by_ref().enumerate() {
             let visible_height = rendered_height - scroll_top.offset_in_item;
@@ -461,6 +479,7 @@ impl Element for List {
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
+
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble
                 && bounds.contains(&event.position)
@@ -560,5 +579,51 @@ impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Count {
 impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
     fn cmp(&self, other: &ListItemSummary, _: &()) -> std::cmp::Ordering {
         self.0.partial_cmp(&other.height).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use gpui::{ScrollDelta, ScrollWheelEvent};
+
+    use crate::{self as gpui, TestAppContext};
+
+    #[gpui::test]
+    fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
+        use crate::{div, list, point, px, size, Element, ListState, Styled};
+
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.), |_, _| {
+            div().h(px(10.)).w_full().into_any()
+        });
+
+        // Ensure that the list is scrolled to the top
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 0,
+            offset_in_item: px(0.0),
+        });
+
+        // Paint
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(100.), px(20.)).into(),
+            |_| list(state.clone()).w_full().h_full().z_index(10).into_any(),
+        );
+
+        // Reset
+        state.reset(5);
+
+        // And then recieve a scroll event _before_ the next paint
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(1.), px(1.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-500.))),
+            ..Default::default()
+        });
+
+        // Scroll position should stay at the top of the list
+        assert_eq!(state.logical_scroll_top().item_ix, 0);
+        assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));
     }
 }

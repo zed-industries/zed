@@ -1,6 +1,7 @@
 use super::*;
 
 impl Database {
+    /// Returns the count of all projects, excluding ones marked as admin.
     pub async fn project_count_excluding_admins(&self) -> Result<usize> {
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
         enum QueryAs {
@@ -21,6 +22,7 @@ impl Database {
         .await
     }
 
+    /// Shares a project with the given room.
     pub async fn share_project(
         &self,
         room_id: RoomId,
@@ -100,6 +102,7 @@ impl Database {
         .await
     }
 
+    /// Unshares the given project.
     pub async fn unshare_project(
         &self,
         project_id: ProjectId,
@@ -126,6 +129,7 @@ impl Database {
         .await
     }
 
+    /// Updates the worktrees associated with the given project.
     pub async fn update_project(
         &self,
         project_id: ProjectId,
@@ -346,6 +350,7 @@ impl Database {
         .await
     }
 
+    /// Updates the diagnostic summary for the given connection.
     pub async fn update_diagnostic_summary(
         &self,
         update: &proto::UpdateDiagnosticSummary,
@@ -401,6 +406,7 @@ impl Database {
         .await
     }
 
+    /// Starts the language server for the given connection.
     pub async fn start_language_server(
         &self,
         update: &proto::StartLanguageServer,
@@ -447,6 +453,7 @@ impl Database {
         .await
     }
 
+    /// Updates the worktree settings for the given connection.
     pub async fn update_worktree_settings(
         &self,
         update: &proto::UpdateWorktreeSettings,
@@ -499,6 +506,7 @@ impl Database {
         .await
     }
 
+    /// Adds the given connection to the specified project.
     pub async fn join_project(
         &self,
         project_id: ProjectId,
@@ -704,6 +712,7 @@ impl Database {
         .await
     }
 
+    /// Removes the given connection from the specified project.
     pub async fn leave_project(
         &self,
         project_id: ProjectId,
@@ -805,6 +814,7 @@ impl Database {
         .map(|guard| guard.into_inner())
     }
 
+    /// Returns the host connection for a read-only request to join a shared project.
     pub async fn host_for_read_only_project_request(
         &self,
         project_id: ProjectId,
@@ -842,6 +852,7 @@ impl Database {
         .map(|guard| guard.into_inner())
     }
 
+    /// Returns the host connection for a request to join a shared project.
     pub async fn host_for_mutating_project_request(
         &self,
         project_id: ProjectId,
@@ -927,6 +938,10 @@ impl Database {
         .await
     }
 
+    /// Returns the connection IDs in the given project.
+    ///
+    /// The provided `connection_id` must also be a collaborator in the project,
+    /// otherwise an error will be returned.
     pub async fn project_connection_ids(
         &self,
         project_id: ProjectId,
@@ -976,6 +991,7 @@ impl Database {
         Ok(guest_connection_ids)
     }
 
+    /// Returns the [`RoomId`] for the given project.
     pub async fn room_id_for_project(&self, project_id: ProjectId) -> Result<RoomId> {
         self.transaction(|tx| async move {
             let project = project::Entity::find_by_id(project_id)
@@ -1020,6 +1036,7 @@ impl Database {
         .await
     }
 
+    /// Adds the given follower connection as a follower of the given leader connection.
     pub async fn follow(
         &self,
         room_id: RoomId,
@@ -1050,6 +1067,7 @@ impl Database {
         .await
     }
 
+    /// Removes the given follower connection as a follower of the given leader connection.
     pub async fn unfollow(
         &self,
         room_id: RoomId,

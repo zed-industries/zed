@@ -27,6 +27,8 @@ lazy_static! {
     .unwrap();
 }
 
+/// Validates the authorization header. This has two mechanisms, one for the ADMIN_TOKEN
+/// and one for the access tokens that we issue.
 pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
     let mut auth_header = req
         .headers()
@@ -88,6 +90,8 @@ struct AccessTokenJson {
     token: String,
 }
 
+/// Creates a new access token to identify the given user. before returning it, you should
+/// encrypt it with the user's public key.
 pub async fn create_access_token(db: &db::Database, user_id: UserId) -> Result<String> {
     const VERSION: usize = 1;
     let access_token = rpc::auth::random_token();
@@ -122,6 +126,8 @@ fn hash_access_token(token: &str) -> Result<String> {
         .to_string())
 }
 
+/// Encrypts the given access token with the given public key to avoid leaking it on the way
+/// to the client.
 pub fn encrypt_access_token(access_token: &str, public_key: String) -> Result<String> {
     let native_app_public_key =
         rpc::auth::PublicKey::try_from(public_key).context("failed to parse app public key")?;
@@ -131,6 +137,7 @@ pub fn encrypt_access_token(access_token: &str, public_key: String) -> Result<St
     Ok(encrypted_access_token)
 }
 
+/// verify access token returns true if the given token is valid for the given user.
 pub async fn verify_access_token(token: &str, user_id: UserId, db: &Arc<Database>) -> Result<bool> {
     let token: AccessTokenJson = serde_json::from_str(&token)?;
 

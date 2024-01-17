@@ -249,7 +249,7 @@ async fn test_basic_following(
     executor.run_until_parked();
     cx_c.cx.update(|_| {});
 
-    weak_workspace_c.assert_dropped();
+    weak_workspace_c.assert_released();
 
     // Clients A and B see that client B is following A, and client C is not present in the followers.
     executor.run_until_parked();

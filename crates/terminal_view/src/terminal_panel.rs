@@ -387,7 +387,7 @@ impl Render for TerminalPanel {
             },
             cx,
         );
-        BufferSearchBar::register_inner(&mut registrar);
+        BufferSearchBar::register(&mut registrar);
         registrar.into_div().size_full().child(self.pane.clone())
     }
 }

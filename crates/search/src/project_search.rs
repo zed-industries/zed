@@ -12,10 +12,10 @@ use editor::{
 };
 use editor::{EditorElement, EditorStyle};
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context as _, Element, EntityId, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement,
-    KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
+    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Hsla, InteractiveElement,
+    IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString,
+    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
     WhiteSpace, WindowContext,
 };
 use menu::Confirm;
@@ -36,6 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
+use workspace::{DeploySearch, NewSearch};
 
 use ui::{
     h_flex, prelude::*, v_flex, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
@@ -60,10 +61,64 @@ struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace
-            .register_action(ProjectSearchView::new_search)
-            .register_action(ProjectSearchView::deploy_search)
-            .register_action(ProjectSearchBar::search_in_new);
+        register_workspace_action(workspace, move |search_bar, _: &ToggleFilters, cx| {
+            search_bar.toggle_filters(cx);
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ToggleCaseSensitive, cx| {
+            search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ToggleWholeWord, cx| {
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+        });
+        register_workspace_action(workspace, move |search_bar, action: &ToggleReplace, cx| {
+            search_bar.toggle_replace(action, cx)
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ActivateRegexMode, cx| {
+            search_bar.activate_search_mode(SearchMode::Regex, cx)
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ActivateTextMode, cx| {
+            search_bar.activate_search_mode(SearchMode::Text, cx)
+        });
+        register_workspace_action(
+            workspace,
+            move |search_bar, _: &ActivateSemanticMode, cx| {
+                search_bar.activate_search_mode(SearchMode::Semantic, cx)
+            },
+        );
+        register_workspace_action(workspace, move |search_bar, action: &CycleMode, cx| {
+            search_bar.cycle_mode(action, cx)
+        });
+        register_workspace_action(
+            workspace,
+            move |search_bar, action: &SelectNextMatch, cx| {
+                search_bar.select_next_match(action, cx)
+            },
+        );
+        register_workspace_action(
+            workspace,
+            move |search_bar, action: &SelectPrevMatch, cx| {
+                search_bar.select_prev_match(action, cx)
+            },
+        );
+
+        register_workspace_action_for_dismissed_search(
+            workspace,
+            move |workspace, action: &NewSearch, cx| {
+                ProjectSearchView::new_search(workspace, action, cx)
+            },
+        );
+        register_workspace_action_for_dismissed_search(
+            workspace,
+            move |workspace, action: &DeploySearch, cx| {
+                ProjectSearchView::deploy_search(workspace, action, cx)
+            },
+        );
+        register_workspace_action_for_dismissed_search(
+            workspace,
+            move |workspace, action: &SearchInNew, cx| {
+                ProjectSearchView::search_in_new(workspace, action, cx)
+            },
+        );
     })
     .detach();
 }
@@ -960,6 +1015,37 @@ impl ProjectSearchView {
         Self::existing_or_new_search(workspace, existing, cx)
     }
 
+    fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
+        if let Some(search_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            let new_query = search_view.update(cx, |search_view, cx| {
+                let new_query = search_view.build_search_query(cx);
+                if new_query.is_some() {
+                    if let Some(old_query) = search_view.model.read(cx).active_query.clone() {
+                        search_view.query_editor.update(cx, |editor, cx| {
+                            editor.set_text(old_query.as_str(), cx);
+                        });
+                        search_view.search_options = SearchOptions::from_query(&old_query);
+                    }
+                }
+                new_query
+            });
+            if let Some(new_query) = new_query {
+                let model = cx.new_model(|cx| {
+                    let mut model = ProjectSearch::new(workspace.project().clone(), cx);
+                    model.search(new_query, cx);
+                    model
+                });
+                workspace.add_item(
+                    Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
+                    cx,
+                );
+            }
+        }
+    }
+
     // Add another search tab to the workspace.
     fn new_search(
         workspace: &mut Workspace,
@@ -1262,17 +1348,11 @@ impl ProjectSearchView {
     }
 }
 
-impl Default for ProjectSearchBar {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ProjectSearchBar {
     pub fn new() -> Self {
         Self {
-            active_project_search: Default::default(),
-            subscription: Default::default(),
+            active_project_search: None,
+            subscription: None,
         }
     }
 
@@ -1300,37 +1380,6 @@ impl ProjectSearchBar {
                     search_view.search(cx);
                 }
             });
-        }
-    }
-
-    fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
-        if let Some(search_view) = workspace
-            .active_item(cx)
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            let new_query = search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.build_search_query(cx);
-                if new_query.is_some() {
-                    if let Some(old_query) = search_view.model.read(cx).active_query.clone() {
-                        search_view.query_editor.update(cx, |editor, cx| {
-                            editor.set_text(old_query.as_str(), cx);
-                        });
-                        search_view.search_options = SearchOptions::from_query(&old_query);
-                    }
-                }
-                new_query
-            });
-            if let Some(new_query) = new_query {
-                let model = cx.new_model(|cx| {
-                    let mut model = ProjectSearch::new(workspace.project().clone(), cx);
-                    model.search(new_query, cx);
-                    model
-                });
-                workspace.add_item(
-                    Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
-                    cx,
-                );
-            }
         }
     }
 
@@ -1499,6 +1548,22 @@ impl ProjectSearchBar {
                     search_view.set_query(&new_query, cx);
                 }
             });
+        }
+    }
+
+    pub fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search) = self.active_project_search.as_ref() {
+            search.update(cx, |this, cx| {
+                this.select_match(Direction::Next, cx);
+            })
+        }
+    }
+
+    fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search) = self.active_project_search.as_ref() {
+            search.update(cx, |this, cx| {
+                this.select_match(Direction::Prev, cx);
+            })
         }
     }
 
@@ -1870,6 +1935,8 @@ impl Render for ProjectSearchBar {
                     }))
                 })
             })
+            .on_action(cx.listener(Self::select_next_match))
+            .on_action(cx.listener(Self::select_prev_match))
             .child(
                 h_flex()
                     .justify_between()
@@ -1961,6 +2028,60 @@ impl ToolbarItemView for ProjectSearchBar {
         }
         1
     }
+}
+
+fn register_workspace_action<A: Action>(
+    workspace: &mut Workspace,
+    callback: fn(&mut ProjectSearchBar, &A, &mut ViewContext<ProjectSearchBar>),
+) {
+    workspace.register_action(move |workspace, action: &A, cx| {
+        if workspace.has_active_modal(cx) {
+            cx.propagate();
+            return;
+        }
+
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.toolbar().update(cx, move |workspace, cx| {
+                if let Some(search_bar) = workspace.item_of_type::<ProjectSearchBar>() {
+                    search_bar.update(cx, move |search_bar, cx| {
+                        if search_bar.active_project_search.is_some() {
+                            callback(search_bar, action, cx);
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
+                    });
+                }
+            });
+        })
+    });
+}
+
+fn register_workspace_action_for_dismissed_search<A: Action>(
+    workspace: &mut Workspace,
+    callback: fn(&mut Workspace, &A, &mut ViewContext<Workspace>),
+) {
+    workspace.register_action(move |workspace, action: &A, cx| {
+        if workspace.has_active_modal(cx) {
+            cx.propagate();
+            return;
+        }
+
+        let should_notify = workspace
+            .active_pane()
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<ProjectSearchBar>()
+            .map(|search_bar| search_bar.read(cx).active_project_search.is_none())
+            .unwrap_or(false);
+        if should_notify {
+            callback(workspace, action, cx);
+            cx.notify();
+        } else {
+            cx.propagate();
+        }
+    });
 }
 
 #[cfg(test)]
