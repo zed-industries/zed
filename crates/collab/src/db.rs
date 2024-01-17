@@ -1,5 +1,3 @@
-#![warn(missing_docs)]
-
 #[cfg(test)]
 pub mod tests;
 
