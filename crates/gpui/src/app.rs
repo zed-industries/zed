@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 mod async_context;
 mod entity_map;
 mod model_context;
@@ -42,6 +44,9 @@ use util::{
     http::{self, HttpClient},
     ResultExt,
 };
+
+/// The duration for which futures returned from [AppContext::on_app_context] or [ModelContext::on_app_quit] can run before the application fully quits.
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Temporary(?) wrapper around [`RefCell<AppContext>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
@@ -187,6 +192,9 @@ type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
 
+/// Contains the state of the full application, and passed as a reference to a variety of callbacks.
+/// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
+/// You need a reference to an `AppContext` to access the state of a [Model].
 pub struct AppContext {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
@@ -312,7 +320,7 @@ impl AppContext {
         let futures = futures::future::join_all(futures);
         if self
             .background_executor
-            .block_with_timeout(Duration::from_millis(100), futures)
+            .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
             .is_err()
         {
             log::error!("timed out waiting on app_will_quit");
@@ -446,6 +454,7 @@ impl AppContext {
             .collect()
     }
 
+    /// Returns a handle to the window that is currently focused at the platform level, if one exists.
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()
     }
@@ -474,14 +483,17 @@ impl AppContext {
         self.platform.activate(ignoring_other_apps);
     }
 
+    /// Hide the application at the platform level.
     pub fn hide(&self) {
         self.platform.hide();
     }
 
+    /// Hide other applications at the platform level.
     pub fn hide_other_apps(&self) {
         self.platform.hide_other_apps();
     }
 
+    /// Unhide other applications at the platform level.
     pub fn unhide_other_apps(&self) {
         self.platform.unhide_other_apps();
     }
@@ -521,18 +533,25 @@ impl AppContext {
         self.platform.open_url(url);
     }
 
+    /// Returns the full pathname of the current app bundle.
+    /// If the app is not being run from a bundle, returns an error.
     pub fn app_path(&self) -> Result<PathBuf> {
         self.platform.app_path()
     }
 
+    /// Returns the file URL of the executable with the specified name in the application bundle
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.platform.path_for_auxiliary_executable(name)
     }
 
+    /// Returns the maximum duration in which a second mouse click must occur for an event to be a double-click event.
     pub fn double_click_interval(&self) -> Duration {
         self.platform.double_click_interval()
     }
 
+    /// Displays a platform modal for selecting paths.
+    /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
+    /// If cancelled, a `None` will be relayed instead.
     pub fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
@@ -540,22 +559,30 @@ impl AppContext {
         self.platform.prompt_for_paths(options)
     }
 
+    /// Displays a platform modal for selecting a new path where a file can be saved.
+    /// The provided directory will be used to set the iniital location.
+    /// When a path is selected, it is relayed asynchronously via the returned oneshot channel.
+    /// If cancelled, a `None` will be relayed instead.
     pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         self.platform.prompt_for_new_path(directory)
     }
 
+    /// Reveals the specified path at the platform level, such as in Finder on macOS.
     pub fn reveal_path(&self, path: &Path) {
         self.platform.reveal_path(path)
     }
 
+    /// Returns whether the user has configured scrollbars to auto-hide at the platform level.
     pub fn should_auto_hide_scrollbars(&self) -> bool {
         self.platform.should_auto_hide_scrollbars()
     }
 
+    /// Restart the application.
     pub fn restart(&self) {
         self.platform.restart()
     }
 
+    /// Returns the local timezone at the platform level.
     pub fn local_timezone(&self) -> UtcOffset {
         self.platform.local_timezone()
     }
@@ -745,7 +772,7 @@ impl AppContext {
     }
 
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
-    /// with AsyncAppContext, which allows the application state to be accessed across await points.
+    /// with [AsyncAppContext], which allows the application state to be accessed across await points.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
@@ -896,6 +923,8 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
+    /// Arrange for the given function to be invoked whenever a view of the specified type is created.
+    /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
         &mut self,
         on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
@@ -915,6 +944,8 @@ impl AppContext {
         subscription
     }
 
+    /// Observe the release of a model or view. The callback is invoked after the model or view
+    /// has no more strong references but before it has been dropped.
     pub fn observe_release<E, T>(
         &mut self,
         handle: &E,
@@ -935,6 +966,9 @@ impl AppContext {
         subscription
     }
 
+    /// Register a callback to be invoked when a keystroke is received by the application
+    /// in any window. Note that this fires after all other action and event mechansims have resolved
+    /// and that this API will not be invoked if the event's propogation is stopped.
     pub fn observe_keystrokes(
         &mut self,
         f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
@@ -958,6 +992,7 @@ impl AppContext {
         self.pending_effects.push_back(Effect::Refresh);
     }
 
+    /// Clear all key bindings in the app.
     pub fn clear_key_bindings(&mut self) {
         self.keymap.lock().clear();
         self.pending_effects.push_back(Effect::Refresh);
@@ -992,6 +1027,7 @@ impl AppContext {
         self.propagate_event = true;
     }
 
+    /// Build an action from some arbitrary data, typically a keymap entry.
     pub fn build_action(
         &self,
         name: &str,
@@ -1000,10 +1036,16 @@ impl AppContext {
         self.actions.build_action(name, data)
     }
 
+    /// Get a list of all action names that have been registered.
+    /// in the application. Note that registration only allows for
+    /// actions to be built dynamically, and is unrelated to binding
+    /// actions in the element tree.
     pub fn all_action_names(&self) -> &[SharedString] {
         self.actions.all_action_names()
     }
 
+    /// Register a callback to be invoked when the application is about to quit.
+    /// It is not possible to cancel the quit event at this point.
     pub fn on_app_quit<Fut>(
         &mut self,
         mut on_quit: impl FnMut(&mut AppContext) -> Fut + 'static,
@@ -1039,6 +1081,8 @@ impl AppContext {
         }
     }
 
+    /// Checks if the given action is bound in the current context, as defined by the app's current focus,
+    /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
         if let Some(window) = self.active_window() {
             if let Ok(window_action_available) =
@@ -1052,10 +1096,13 @@ impl AppContext {
             .contains_key(&action.as_any().type_id())
     }
 
+    /// Set the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.lock());
     }
 
+    /// Dispatch an action to the currently active window or global action handler
+    /// See [action::Action] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {
         if let Some(active_window) = self.active_window() {
             active_window
@@ -1110,6 +1157,7 @@ impl AppContext {
         }
     }
 
+    /// Is there currently something being dragged?
     pub fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
     }
@@ -1262,8 +1310,14 @@ impl<G: 'static> DerefMut for GlobalLease<G> {
 /// Contains state associated with an active drag operation, started by dragging an element
 /// within the window or by dragging into the app from the underlying platform.
 pub struct AnyDrag {
+    /// The view used to render this drag
     pub view: AnyView,
+
+    /// The value of the dragged item, to be dropped
     pub value: Box<dyn Any>,
+
+    /// This is used to render the dragged item in the same place
+    /// on the original element that the drag was initiated
     pub cursor_offset: Point<Pixels>,
 }
 
@@ -1271,12 +1325,19 @@ pub struct AnyDrag {
 /// tooltip behavior on a custom element. Otherwise, use [Div::tooltip].
 #[derive(Clone)]
 pub struct AnyTooltip {
+    /// The view used to display the tooltip
     pub view: AnyView,
+
+    /// The offset from the cursor to use, relative to the parent view
     pub cursor_offset: Point<Pixels>,
 }
 
+/// A keystroke event, and potentially the associated action
 #[derive(Debug)]
 pub struct KeystrokeEvent {
+    /// The keystroke that occurred
     pub keystroke: Keystroke,
+
+    /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
 }

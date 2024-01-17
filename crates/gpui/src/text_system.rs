@@ -47,7 +47,7 @@ pub struct TextSystem {
 }
 
 impl TextSystem {
-    pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    pub(crate) fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
             line_layout_cache: Arc::new(LineLayoutCache::new(platform_text_system.clone())),
             platform_text_system,

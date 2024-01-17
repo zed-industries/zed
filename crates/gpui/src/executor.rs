@@ -109,9 +109,10 @@ type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 
 /// BackgroundExecutor lets you run things on background threads.
 /// In production this is a thread pool with no ordering guarantees.
-/// In tests this is simalated by running tasks one by one in a deterministic
+/// In tests this is simulated by running tasks one by one in a deterministic
 /// (but arbitrary) order controlled by the `SEED` environment variable.
 impl BackgroundExecutor {
+    #[doc(hidden)]
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
     }

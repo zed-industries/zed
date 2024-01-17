@@ -93,7 +93,7 @@ impl Scene {
         }
     }
 
-    pub fn insert(&mut self, order: &StackingOrder, primitive: impl Into<Primitive>) {
+    pub(crate) fn insert(&mut self, order: &StackingOrder, primitive: impl Into<Primitive>) {
         let primitive = primitive.into();
         let clipped_bounds = primitive
             .bounds()
@@ -440,7 +440,7 @@ pub enum PrimitiveKind {
     Surface,
 }
 
-pub enum Primitive {
+pub(crate) enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
     Path(Path<ScaledPixels>),
@@ -589,7 +589,7 @@ impl From<Shadow> for Primitive {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
-pub struct MonochromeSprite {
+pub(crate) struct MonochromeSprite {
     pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
@@ -622,7 +622,7 @@ impl From<MonochromeSprite> for Primitive {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
-pub struct PolychromeSprite {
+pub(crate) struct PolychromeSprite {
     pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,

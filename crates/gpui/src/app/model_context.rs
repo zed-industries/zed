@@ -11,6 +11,7 @@ use std::{
     future::Future,
 };
 
+/// The app context, with specialized behavior for the given model.
 #[derive(Deref, DerefMut)]
 pub struct ModelContext<'a, T> {
     #[deref]
@@ -24,20 +25,24 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         Self { app, model_state }
     }
 
+    /// The entity id of the model backing this context.
     pub fn entity_id(&self) -> EntityId {
         self.model_state.entity_id
     }
 
+    /// Returns a handle to the model belonging to this context.
     pub fn handle(&self) -> Model<T> {
         self.weak_model()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
     }
 
+    /// Returns a weak handle to the model belonging to this context.
     pub fn weak_model(&self) -> WeakModel<T> {
         self.model_state.clone()
     }
 
+    /// Arranges for the given function to be called whenever [ModelContext::notify] or [ViewContext::notify] is called with the given model or view.
     pub fn observe<W, E>(
         &mut self,
         entity: &E,
@@ -59,6 +64,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         })
     }
 
+    /// Subscribe to an event type from another model or view
     pub fn subscribe<T2, E, Evt>(
         &mut self,
         entity: &E,
@@ -81,6 +87,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         })
     }
 
+    /// Register a callback to be invoked when GPUI releases this model.
     pub fn on_release(
         &mut self,
         on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
@@ -99,6 +106,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         subscription
     }
 
+    /// Register a callback to be run on the release of another model or view
     pub fn observe_release<T2, E>(
         &mut self,
         entity: &E,
@@ -124,6 +132,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         subscription
     }
 
+    /// Register a callback to for updates to the given global
     pub fn observe_global<G: 'static>(
         &mut self,
         mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + 'static,
@@ -140,6 +149,8 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         subscription
     }
 
+    /// Arrange for the given function to be invoked whenever the application is quit.
+    /// The future returned from this callback will be polled for up to [gpui::SHUTDOWN_TIMEOUT] until the app fully quits.
     pub fn on_app_quit<Fut>(
         &mut self,
         mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + 'static,
@@ -165,6 +176,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         subscription
     }
 
+    /// Tell GPUI that this model has changed and observers of it should be notified.
     pub fn notify(&mut self) {
         if self
             .app
@@ -177,6 +189,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         }
     }
 
+    /// Update the given global
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: 'static,
@@ -187,6 +200,9 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         result
     }
 
+    /// Spawn the future returned by the given function.
+    /// The function is provided a weak handle to the model owned by this context and a context that can be held across await points.
+    /// The returned task must be held or detached.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut) -> Task<R>
     where
         T: 'static,
@@ -199,6 +215,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 }
 
 impl<'a, T> ModelContext<'a, T> {
+    /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
     pub fn emit<Evt>(&mut self, event: Evt)
     where
         T: EventEmitter<Evt>,
