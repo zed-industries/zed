@@ -1,7 +1,7 @@
 mod connection_pool;
 
 use crate::{
-    auth,
+    auth::{self, Impersonator},
     db::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreateChannelResult,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
@@ -65,7 +65,7 @@ use std::{
 use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
-use tracing::{info_span, instrument, Instrument};
+use tracing::{field, info_span, instrument, Instrument};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -561,13 +561,17 @@ impl Server {
         connection: Connection,
         address: String,
         user: User,
+        impersonator: Option<User>,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         let user_id = user.id;
         let login = user.github_login;
-        let span = info_span!("handle connection", %user_id, %login, %address);
+        let span = info_span!("handle connection", %user_id, %login, %address, impersonator = field::Empty);
+        if let Some(impersonator) = impersonator {
+            span.record("impersonator", &impersonator.github_login);
+        }
         let mut teardown = self.teardown.subscribe();
         async move {
             let (connection_id, handle_io, mut incoming_rx) = this
@@ -839,6 +843,7 @@ pub async fn handle_websocket_request(
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(user): Extension<User>,
+    Extension(impersonator): Extension<Impersonator>,
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {
     if protocol_version != rpc::PROTOCOL_VERSION {
@@ -858,7 +863,14 @@ pub async fn handle_websocket_request(
         let connection = Connection::new(Box::pin(socket));
         async move {
             server
-                .handle_connection(connection, socket_address, user, None, Executor::Production)
+                .handle_connection(
+                    connection,
+                    socket_address,
+                    user,
+                    impersonator.0,
+                    None,
+                    Executor::Production,
+                )
                 .await
                 .log_err();
         }

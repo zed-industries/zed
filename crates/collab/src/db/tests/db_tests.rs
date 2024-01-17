@@ -146,7 +146,7 @@ test_both_dbs!(
 );
 
 async fn test_create_access_tokens(db: &Arc<Database>) {
-    let user = db
+    let user_1 = db
         .create_user(
             "u1@example.com",
             false,
@@ -158,14 +158,27 @@ async fn test_create_access_tokens(db: &Arc<Database>) {
         .await
         .unwrap()
         .user_id;
+    let user_2 = db
+        .create_user(
+            "u2@example.com",
+            false,
+            NewUserParams {
+                github_login: "u2".into(),
+                github_user_id: 2,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
 
-    let token_1 = db.create_access_token(user, "h1", 2).await.unwrap();
-    let token_2 = db.create_access_token(user, "h2", 2).await.unwrap();
+    let token_1 = db.create_access_token(user_1, None, "h1", 2).await.unwrap();
+    let token_2 = db.create_access_token(user_1, None, "h2", 2).await.unwrap();
     assert_eq!(
         db.get_access_token(token_1).await.unwrap(),
         access_token::Model {
             id: token_1,
-            user_id: user,
+            user_id: user_1,
+            impersonator_id: None,
             hash: "h1".into(),
         }
     );
@@ -173,17 +186,19 @@ async fn test_create_access_tokens(db: &Arc<Database>) {
         db.get_access_token(token_2).await.unwrap(),
         access_token::Model {
             id: token_2,
-            user_id: user,
+            user_id: user_1,
+            impersonator_id: None,
             hash: "h2".into()
         }
     );
 
-    let token_3 = db.create_access_token(user, "h3", 2).await.unwrap();
+    let token_3 = db.create_access_token(user_1, None, "h3", 2).await.unwrap();
     assert_eq!(
         db.get_access_token(token_3).await.unwrap(),
         access_token::Model {
             id: token_3,
-            user_id: user,
+            user_id: user_1,
+            impersonator_id: None,
             hash: "h3".into()
         }
     );
@@ -191,18 +206,20 @@ async fn test_create_access_tokens(db: &Arc<Database>) {
         db.get_access_token(token_2).await.unwrap(),
         access_token::Model {
             id: token_2,
-            user_id: user,
+            user_id: user_1,
+            impersonator_id: None,
             hash: "h2".into()
         }
     );
     assert!(db.get_access_token(token_1).await.is_err());
 
-    let token_4 = db.create_access_token(user, "h4", 2).await.unwrap();
+    let token_4 = db.create_access_token(user_1, None, "h4", 2).await.unwrap();
     assert_eq!(
         db.get_access_token(token_4).await.unwrap(),
         access_token::Model {
             id: token_4,
-            user_id: user,
+            user_id: user_1,
+            impersonator_id: None,
             hash: "h4".into()
         }
     );
@@ -210,12 +227,77 @@ async fn test_create_access_tokens(db: &Arc<Database>) {
         db.get_access_token(token_3).await.unwrap(),
         access_token::Model {
             id: token_3,
-            user_id: user,
+            user_id: user_1,
+            impersonator_id: None,
             hash: "h3".into()
         }
     );
     assert!(db.get_access_token(token_2).await.is_err());
     assert!(db.get_access_token(token_1).await.is_err());
+
+    // An access token for user 2 impersonating user 1 does not
+    // count against user 1's access token limit (of 2).
+    let token_5 = db
+        .create_access_token(user_1, Some(user_2), "h5", 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_access_token(token_5).await.unwrap(),
+        access_token::Model {
+            id: token_5,
+            user_id: user_1,
+            impersonator_id: Some(user_2),
+            hash: "h5".into()
+        }
+    );
+    assert_eq!(
+        db.get_access_token(token_3).await.unwrap(),
+        access_token::Model {
+            id: token_3,
+            user_id: user_1,
+            impersonator_id: None,
+            hash: "h3".into()
+        }
+    );
+
+    // Only a limited number (2) of access tokens are stored for user 2
+    // impersonating other users.
+    let token_6 = db
+        .create_access_token(user_1, Some(user_2), "h6", 2)
+        .await
+        .unwrap();
+    let token_7 = db
+        .create_access_token(user_1, Some(user_2), "h7", 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_access_token(token_6).await.unwrap(),
+        access_token::Model {
+            id: token_6,
+            user_id: user_1,
+            impersonator_id: Some(user_2),
+            hash: "h6".into()
+        }
+    );
+    assert_eq!(
+        db.get_access_token(token_7).await.unwrap(),
+        access_token::Model {
+            id: token_7,
+            user_id: user_1,
+            impersonator_id: Some(user_2),
+            hash: "h7".into()
+        }
+    );
+    assert!(db.get_access_token(token_5).await.is_err());
+    assert_eq!(
+        db.get_access_token(token_3).await.unwrap(),
+        access_token::Model {
+            id: token_3,
+            user_id: user_1,
+            impersonator_id: None,
+            hash: "h3".into()
+        }
+    );
 }
 
 test_both_dbs!(

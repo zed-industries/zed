@@ -157,9 +157,11 @@ async fn create_access_token(
         .ok_or_else(|| anyhow!("user not found"))?;
 
     let mut user_id = user.id;
+    let mut impersonator_id = None;
     if let Some(impersonate) = params.impersonate {
         if user.admin {
             if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
+                impersonator_id = Some(user_id);
                 user_id = impersonated_user.id;
             } else {
                 return Err(Error::Http(
@@ -175,7 +177,7 @@ async fn create_access_token(
         }
     }
 
-    let access_token = auth::create_access_token(app.db.as_ref(), user_id).await?;
+    let access_token = auth::create_access_token(app.db.as_ref(), user_id, impersonator_id).await?;
     let encrypted_access_token =
         auth::encrypt_access_token(&access_token, params.public_key.clone())?;
 
