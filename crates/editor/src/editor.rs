@@ -569,6 +569,8 @@ pub struct Editor {
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
+    recently_focused: bool,
+    hovered_selections: HashSet<(ReplicaId, usize)>,
     pub show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
@@ -1808,6 +1810,8 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             gutter_width: Default::default(),
             style: None,
+            recently_focused: false,
+            hovered_selections: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
             _subscriptions: vec![
@@ -9196,6 +9200,16 @@ impl Editor {
             cx.focus(&rename_editor_focus_handle);
         } else {
             self.blink_manager.update(cx, BlinkManager::enable);
+            self.recently_focused = true;
+            cx.spawn(|this, mut cx| async move {
+                cx.background_executor().timer(Duration::from_secs(5)).await;
+                this.update(&mut cx, |this, cx| {
+                    this.recently_focused = false;
+                    cx.notify()
+                })
+                .ok()
+            })
+            .detach();
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_peer_id.is_none() {

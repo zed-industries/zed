@@ -586,6 +586,32 @@ impl EditorElement {
         }
     }
 
+    fn update_visible_cursor(
+        editor: &mut Editor,
+        point: DisplayPoint,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let snapshot = editor.snapshot(cx);
+        if let Some(hub) = editor.collaboration_hub() {
+            let range = if point.column() > 0 {
+                DisplayPoint::new(point.row(), point.column() - 1)..point
+            } else {
+                point..DisplayPoint::new(point.row(), point.column() + 1)
+            };
+            let range = snapshot
+                .buffer_snapshot
+                .anchor_at(range.start.to_point(&snapshot.display_snapshot), Bias::Left)
+                ..snapshot
+                    .buffer_snapshot
+                    .anchor_at(range.end.to_point(&snapshot.display_snapshot), Bias::Right);
+            for selection in snapshot.remote_selections_in_range(&range, hub, cx) {
+                let key = (selection.replica_id, selection.selection.id);
+                editor.hovered_selections.insert(key);
+            }
+        }
+        editor.hovered_selections.clear();
+    }
+
     fn paint_background(
         &self,
         gutter_bounds: Bounds<Pixels>,
@@ -1962,6 +1988,7 @@ impl EditorElement {
                     if Some(selection.peer_id) == editor.leader_peer_id {
                         continue;
                     }
+                    let id = (selection.replica_id, selection.selection.id);
 
                     remote_selections
                         .entry(selection.replica_id)
@@ -1974,7 +2001,11 @@ impl EditorElement {
                             &snapshot.display_snapshot,
                             false,
                             false,
-                            selection.user_name,
+                            if editor.recently_focused || editor.hovered_selections.contains(&id) {
+                                selection.user_name
+                            } else {
+                                None
+                            },
                         ));
                 }
 
