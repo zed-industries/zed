@@ -4,12 +4,14 @@ use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
 use crate::{state::Mode, Vim};
 
+/// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
-    pub mode: Option<Mode>,
+    pub(crate) mode: Option<Mode>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ModeIndicator {
+    /// Construct a new mode indicator in this window.
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let _subscriptions = vec![
             cx.observe_global::<Vim>(|this, cx| this.update_mode(cx)),
@@ -35,13 +37,6 @@ impl ModeIndicator {
             self.mode = Some(vim.state().mode);
         } else {
             self.mode = None;
-        }
-    }
-
-    pub fn set_mode(&mut self, mode: Mode, cx: &mut ViewContext<Self>) {
-        if self.mode != Some(mode) {
-            self.mode = Some(mode);
-            cx.notify();
         }
     }
 }

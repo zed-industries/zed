@@ -1,3 +1,5 @@
+//! Vim support for Zed.
+
 #[cfg(test)]
 mod test;
 
@@ -38,12 +40,18 @@ use crate::state::ReplayableAction;
 /// Default: false
 pub struct VimModeSetting(pub bool);
 
+/// An Action to Switch between modes
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SwitchMode(pub Mode);
 
+/// PushOperator is used to put vim into a "minor" mode,
+/// where it's waiting for a specific next set of keystrokes.
+/// For example 'd' needs a motion to complete.
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct PushOperator(pub Operator);
 
+/// Number is used to manage vim's count. Pushing a digit
+/// multiplis the current value by 10 and adds the digit.
 #[derive(Clone, Deserialize, PartialEq)]
 struct Number(usize);
 
@@ -51,11 +59,14 @@ actions!(
     vim,
     [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
 );
+
 // in the workspace namespace so it's not filtered out when vim is disabled.
+/// Action to Toggle vim on and off
 actions!(workspace, [ToggleVimMode]);
 
 impl_actions!(vim, [SwitchMode, PushOperator, Number]);
 
+/// Initializes the `vim` crate.
 pub fn init(cx: &mut AppContext) {
     cx.set_global(Vim::default());
     VimModeSetting::register(cx);
@@ -119,6 +130,7 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     visual::register(workspace, cx);
 }
 
+/// Registers a keystroke observer to observe keystrokes for the Vim integration.
 pub fn observe_keystrokes(cx: &mut WindowContext) {
     cx.observe_keystrokes(|keystroke_event, cx| {
         if let Some(action) = keystroke_event
@@ -160,6 +172,7 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
     .detach()
 }
 
+/// The state pertaining to Vim mode. Stored as a global.
 #[derive(Default)]
 pub struct Vim {
     active_editor: Option<WeakView<Editor>>,
@@ -251,6 +264,8 @@ impl Vim {
         Some(editor.update(cx, update))
     }
 
+    /// When doing an action that modifies the buffer, we start recording so that `.`
+    /// will replay the action.
     pub fn start_recording(&mut self, cx: &mut WindowContext) {
         if !self.workspace_state.replaying {
             self.workspace_state.recording = true;
@@ -295,12 +310,19 @@ impl Vim {
         }
     }
 
+    /// When finishing an action that modifies the buffer, stop recording.
+    /// as you usually call this within a keystroke handler we also ensure that
+    /// the current action is recorded.
     pub fn stop_recording(&mut self) {
         if self.workspace_state.recording {
             self.workspace_state.stop_recording_after_next_action = true;
         }
     }
 
+    /// Stops recording actions immediately rather than waiting until after the
+    /// next action to stop recording.
+    ///
+    /// This doesn't include the current action.
     pub fn stop_recording_immediately(&mut self, action: Box<dyn Action>) {
         if self.workspace_state.recording {
             self.workspace_state
@@ -311,6 +333,7 @@ impl Vim {
         }
     }
 
+    /// Explicitly record one action (equiavlent to start_recording and stop_recording)
     pub fn record_current_action(&mut self, cx: &mut WindowContext) {
         self.start_recording(cx);
         self.stop_recording();
@@ -516,6 +539,7 @@ impl Vim {
         }
     }
 
+    /// Returns the state of the active editor.
     pub fn state(&self) -> &EditorState {
         if let Some(active_editor) = self.active_editor.as_ref() {
             if let Some(state) = self.editor_states.get(&active_editor.entity_id()) {
@@ -526,6 +550,7 @@ impl Vim {
         &self.default_state
     }
 
+    /// Updates the state of the active editor.
     pub fn update_state<T>(&mut self, func: impl FnOnce(&mut EditorState) -> T) -> T {
         let mut state = self.state().clone();
         let ret = func(&mut state);
