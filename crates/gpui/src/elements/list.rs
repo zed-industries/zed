@@ -598,20 +598,30 @@ mod test {
             div().h(px(10.)).w_full().into_any()
         });
 
+        // Ensure that the list is scrolled to the top
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 0,
+            offset_in_item: px(0.0),
+        });
+
+        // Paint
         cx.draw(
             point(px(0.), px(0.)),
             size(px(100.), px(20.)).into(),
             |_| list(state.clone()).w_full().h_full().z_index(10).into_any(),
         );
 
+        // Reset
         state.reset(5);
 
+        // And then recieve a scroll event _before_ the next paint
         cx.simulate_event(ScrollWheelEvent {
             position: point(px(1.), px(1.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-500.))),
             ..Default::default()
         });
 
+        // Scroll position should stay at the top of the list
         assert_eq!(state.logical_scroll_top().item_ix, 0);
         assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));
 
