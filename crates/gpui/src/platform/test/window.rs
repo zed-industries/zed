@@ -1,11 +1,12 @@
 use crate::{
-    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, InputEvent, KeyDownEvent,
-    Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    Size, TestPlatform, TileId, WindowAppearance, WindowBounds, WindowOptions,
+    px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels, InputEvent,
+    KeyDownEvent, Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler,
+    PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance, WindowBounds,
+    WindowOptions,
 };
-use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
+    borrow::Cow,
     rc::{Rc, Weak},
     sync::{self, Arc},
 };
@@ -271,64 +272,35 @@ impl PlatformWindow for TestWindow {
 
 pub struct TestAtlasState {
     next_id: u32,
-    tiles: HashMap<AtlasKey, AtlasTile>,
 }
 
 pub struct TestAtlas(Mutex<TestAtlasState>);
 
 impl TestAtlas {
     pub fn new() -> Self {
-        TestAtlas(Mutex::new(TestAtlasState {
-            next_id: 0,
-            tiles: HashMap::default(),
-        }))
+        TestAtlas(Mutex::new(TestAtlasState { next_id: 0 }))
     }
 }
 
 impl PlatformAtlas for TestAtlas {
-    fn get_or_insert_with<'a>(
-        &self,
-        key: &crate::AtlasKey,
-        build: &mut dyn FnMut() -> anyhow::Result<(
-            Size<crate::DevicePixels>,
-            std::borrow::Cow<'a, [u8]>,
-        )>,
-    ) -> anyhow::Result<crate::AtlasTile> {
+    fn insert(&self, _key: &AtlasKey, size: Size<DevicePixels>, _bytes: Cow<[u8]>) -> AtlasTile {
         let mut state = self.0.lock();
-        if let Some(tile) = state.tiles.get(key) {
-            return Ok(tile.clone());
-        }
 
         state.next_id += 1;
         let texture_id = state.next_id;
         state.next_id += 1;
         let tile_id = state.next_id;
 
-        drop(state);
-        let (size, _) = build()?;
-        let mut state = self.0.lock();
-
-        state.tiles.insert(
-            key.clone(),
-            crate::AtlasTile {
-                texture_id: AtlasTextureId {
-                    index: texture_id,
-                    kind: crate::AtlasTextureKind::Path,
-                },
-                tile_id: TileId(tile_id),
-                bounds: crate::Bounds {
-                    origin: Point::default(),
-                    size,
-                },
+        AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind: crate::AtlasTextureKind::Path,
             },
-        );
-
-        Ok(state.tiles[key].clone())
-    }
-
-    fn clear(&self) {
-        let mut state = self.0.lock();
-        state.tiles = HashMap::default();
-        state.next_id = 0;
+            tile_id: TileId(tile_id),
+            bounds: Bounds {
+                origin: Point::default(),
+                size,
+            },
+        }
     }
 }

@@ -2,16 +2,16 @@
 
 use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyTooltip, AnyView, AppContext, Arena,
-    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
+    AsyncWindowContext, Atlas, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
     Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
     ImageData, InputEvent, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, LayoutId,
     Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, Style, SubscriberSet,
-    Subscription, Surface, TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
+    Path, Pixels, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    Scene, Shadow, SharedString, Size, Style, SubscriberSet, Subscription, Surface,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, View, VisualContext, WeakView,
+    WindowBounds, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -258,7 +258,7 @@ pub struct Window {
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
-    sprite_atlas: Arc<dyn PlatformAtlas>,
+    sprite_atlas: Atlas,
     rem_size: Pixels,
     viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
@@ -414,7 +414,7 @@ impl Window {
     ) -> Self {
         let platform_window = cx.platform.open_window(handle, options);
         let display_id = platform_window.display().id();
-        let sprite_atlas = platform_window.sprite_atlas();
+        let sprite_atlas = Atlas::new(platform_window.sprite_atlas());
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
         let content_size = platform_window.content_size();
@@ -424,7 +424,9 @@ impl Window {
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             move || {
+                let t0 = std::time::Instant::now();
                 handle.update(&mut cx, |_, cx| cx.draw()).log_err();
+                dbg!(t0.elapsed());
             }
         }));
         platform_window.on_resize(Box::new({
@@ -1255,8 +1257,8 @@ impl<'a> WindowContext<'a> {
             let tile =
                 self.window
                     .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    .get_or_insert_with(&params.clone().into(), || {
+                        let (size, bytes) = self.app.text_system().rasterize_glyph(&params)?;
                         Ok((size, Cow::Owned(bytes)))
                     })?;
             let bounds = Bounds {
@@ -1308,8 +1310,8 @@ impl<'a> WindowContext<'a> {
             let tile =
                 self.window
                     .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                    .get_or_insert_with(&params.clone().into(), || {
+                        let (size, bytes) = self.app.text_system().rasterize_glyph(&params)?;
                         Ok((size, Cow::Owned(bytes)))
                     })?;
             let bounds = Bounds {
@@ -1354,13 +1356,13 @@ impl<'a> WindowContext<'a> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let tile =
-            self.window
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    let bytes = self.svg_renderer.render(&params)?;
-                    Ok((params.size, Cow::Owned(bytes)))
-                })?;
+        let tile = self
+            .window
+            .sprite_atlas
+            .get_or_insert_with(&params.clone().into(), || {
+                let bytes = self.app.svg_renderer.render(&params)?;
+                Ok((params.size, Cow::Owned(bytes)))
+            })?;
         let content_mask = self.content_mask().scale(scale_factor);
         let view_id = self.parent_view_id();
 
@@ -1396,7 +1398,7 @@ impl<'a> WindowContext<'a> {
         let tile = self
             .window
             .sprite_atlas
-            .get_or_insert_with(&params.clone().into(), &mut || {
+            .get_or_insert_with(&params.clone().into(), || {
                 Ok((data.size(), Cow::Borrowed(data.as_bytes())))
             })?;
         let content_mask = self.content_mask().scale(scale_factor);

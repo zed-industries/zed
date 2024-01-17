@@ -2,8 +2,6 @@ use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
     Point, Size,
 };
-use anyhow::Result;
-use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use metal::Device;
@@ -19,7 +17,6 @@ impl MetalAtlas {
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
             path_textures: Default::default(),
-            tiles_by_key: Default::default(),
         }))
     }
 
@@ -53,41 +50,29 @@ struct MetalAtlasState {
     monochrome_textures: Vec<MetalAtlasTexture>,
     polychrome_textures: Vec<MetalAtlasTexture>,
     path_textures: Vec<MetalAtlasTexture>,
-    tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
 }
 
 impl PlatformAtlas for MetalAtlas {
-    fn get_or_insert_with<'a>(
-        &self,
-        key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
-    ) -> Result<AtlasTile> {
+    fn insert(&self, key: &AtlasKey, size: Size<DevicePixels>, bytes: Cow<[u8]>) -> AtlasTile {
         let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(tile.clone())
-        } else {
-            let (size, bytes) = build()?;
-            let tile = lock.allocate(size, key.texture_kind());
-            let texture = lock.texture(tile.texture_id);
-            texture.upload(tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
-            Ok(tile)
-        }
+        let tile = lock.allocate(size, key.texture_kind());
+        let texture = lock.texture(tile.texture_id);
+        texture.upload(tile.bounds, &bytes);
+        tile
     }
 
-    fn clear(&self) {
-        let mut lock = self.0.lock();
-        lock.tiles_by_key.clear();
-        for texture in &mut lock.monochrome_textures {
-            texture.clear();
-        }
-        for texture in &mut lock.polychrome_textures {
-            texture.clear();
-        }
-        for texture in &mut lock.path_textures {
-            texture.clear();
-        }
-    }
+    // fn clear(&self) {
+    //     let mut lock = self.0.lock();
+    //     for texture in &mut lock.monochrome_textures {
+    //         texture.clear();
+    //     }
+    //     for texture in &mut lock.polychrome_textures {
+    //         texture.clear();
+    //     }
+    //     for texture in &mut lock.path_textures {
+    //         texture.clear();
+    //     }
+    // }
 }
 
 impl MetalAtlasState {

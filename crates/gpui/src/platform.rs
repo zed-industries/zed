@@ -263,13 +263,7 @@ impl From<RenderImageParams> for AtlasKey {
 }
 
 pub trait PlatformAtlas: Send + Sync {
-    fn get_or_insert_with<'a>(
-        &self,
-        key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
-    ) -> Result<AtlasTile>;
-
-    fn clear(&self);
+    fn insert(&self, key: &AtlasKey, size: Size<DevicePixels>, bytes: Cow<[u8]>) -> AtlasTile;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
