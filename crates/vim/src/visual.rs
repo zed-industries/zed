@@ -206,10 +206,8 @@ pub fn visual_block_motion(
                 row,
                 laid_out_line.closest_index_for_x(positions.start) as u32,
             );
-            let mut end = DisplayPoint::new(
-                row,
-                laid_out_line.closest_index_for_x(positions.end) as u32,
-            );
+            let mut end =
+                DisplayPoint::new(row, laid_out_line.closest_index_for_x(positions.end) as u32);
             if end <= start {
                 if start.column() == map.line_len(start.row()) {
                     end = start;
