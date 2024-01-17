@@ -63,7 +63,57 @@ pub fn init(cx: &mut AppContext) {
         workspace
             .register_action(ProjectSearchView::new_search)
             .register_action(ProjectSearchView::deploy_search)
-            .register_action(ProjectSearchBar::search_in_new);
+            .register_action(ProjectSearchBar::search_in_new)
+            // TODO kb register these too, consider having the methods for &Workspace for that, as above
+            // ToggleCaseSensitive
+            // ToggleWholeWord
+            // ToggleReplace
+            // ActivateRegexMode
+            // SelectPrevMatch
+            // ActivateTextMode
+            // ActivateSemanticMode
+            // CycleMode
+            // SelectNextMatch (see a proto below)
+            /*
+            // Have a generic method similar to the registrar has:
+            fn register_workspace_action<A: Action>(
+                &mut workspace,
+                callback: fn(&mut ProjectSearchBar, &A, &mut ViewContext<ProjectSearchBar>),
+            ) {
+                workspace.register_action(move |workspace, action: &A, cx| {
+                    if workspace.has_active_modal(cx) {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(search_bar) = workspace.active_item(cx).and_then(|item| item.downcast::<ProjectSearchView>()) {
+                        search_bar.update(cx, move |this, cx| callback(this, action, cx));
+                        cx.notify();
+                    }
+                });
+            }
+            */
+            .register_action(move |workspace, action: &SelectNextMatch, cx| {
+                dbg!("@@@@@@@@@1");
+                if workspace.has_active_modal(cx) {
+                    cx.propagate();
+                    return;
+                }
+
+                dbg!("????? 2");
+                let pane = workspace.active_pane();
+                pane.update(cx, move |this, cx| {
+                    this.toolbar().update(cx, move |this, cx| {
+                        dbg!("@@@@@@@@@ 3");
+                        if let Some(search_bar) = this.item_of_type::<ProjectSearchBar>() {
+                            dbg!("$$$$$$$$$ 4");
+                            search_bar.update(cx, move |search_bar, cx| {
+                                search_bar.select_next_match(action, cx)
+                            });
+                            cx.notify();
+                        }
+                    })
+                });
+            });
     })
     .detach();
 }
@@ -1502,6 +1552,22 @@ impl ProjectSearchBar {
         }
     }
 
+    pub fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search) = self.active_project_search.as_ref() {
+            search.update(cx, |this, cx| {
+                this.select_match(Direction::Next, cx);
+            })
+        }
+    }
+
+    fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search) = self.active_project_search.as_ref() {
+            search.update(cx, |this, cx| {
+                this.select_match(Direction::Prev, cx);
+            })
+        }
+    }
+
     fn new_placeholder_text(&self, cx: &mut ViewContext<Self>) -> Option<String> {
         let previous_query_keystrokes = cx
             .bindings_for_action(&PreviousHistoryQuery {})
@@ -1870,6 +1936,8 @@ impl Render for ProjectSearchBar {
                     }))
                 })
             })
+            .on_action(cx.listener(Self::select_next_match))
+            .on_action(cx.listener(Self::select_prev_match))
             .child(
                 h_flex()
                     .justify_between()

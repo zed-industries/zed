@@ -496,67 +496,111 @@ impl SearchActionsRegistrar for Workspace {
         });
     }
 }
+
 impl BufferSearchBar {
-    pub fn register_inner(registrar: &mut impl SearchActionsRegistrar) {
+    pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(|this, action: &ToggleCaseSensitive, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             if this.supported_options().case {
                 this.toggle_case_sensitive(action, cx);
             }
         });
-
         registrar.register_handler(|this, action: &ToggleWholeWord, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             if this.supported_options().word {
                 this.toggle_whole_word(action, cx);
             }
         });
-
         registrar.register_handler(|this, action: &ToggleReplace, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             if this.supported_options().replacement {
                 this.toggle_replace(action, cx);
             }
         });
-
         registrar.register_handler(|this, _: &ActivateRegexMode, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             if this.supported_options().regex {
                 this.activate_search_mode(SearchMode::Regex, cx);
             }
         });
-
         registrar.register_handler(|this, _: &ActivateTextMode, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             this.activate_search_mode(SearchMode::Text, cx);
         });
-
         registrar.register_handler(|this, action: &CycleMode, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             if this.supported_options().regex {
                 // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
                 // cycling.
                 this.cycle_mode(action, cx)
             }
         });
-
         registrar.register_handler(|this, action: &SelectNextMatch, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             this.select_next_match(action, cx);
         });
         registrar.register_handler(|this, action: &SelectPrevMatch, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             this.select_prev_match(action, cx);
         });
         registrar.register_handler(|this, action: &SelectAllMatches, cx| {
+            if this.is_dismissed() {
+                cx.propagate();
+                return;
+            }
+
             this.select_all_matches(action, cx);
         });
         registrar.register_handler(|this, _: &editor::Cancel, cx| {
-            if this.dismissed {
+            if this.is_dismissed() {
                 cx.propagate();
-            } else {
-                this.dismiss(&Dismiss, cx);
+                return;
             }
+
+            this.dismiss(&Dismiss, cx);
         });
         registrar.register_handler(|this, deploy, cx| {
-            this.deploy(deploy, cx);
+            if this.is_dismissed() {
+                this.deploy(deploy, cx);
+                return;
+            }
+
+            cx.propagate();
         })
     }
-    fn register(workspace: &mut Workspace) {
-        Self::register_inner(workspace);
-    }
+
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&query_editor, Self::on_query_editor_event)
