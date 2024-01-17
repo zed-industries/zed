@@ -241,8 +241,9 @@ impl Member {
                                 .w_96()
                                 .bottom_3()
                                 .right_3()
+                                .elevation_2(cx)
+                                .p_1()
                                 .z_index(1)
-                                .bg(cx.theme().colors().element_background)
                                 .child(status_box)
                                 .when_some(
                                     leader_join_data,
