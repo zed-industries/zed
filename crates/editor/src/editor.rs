@@ -1297,7 +1297,7 @@ impl CodeActionsMenu {
     }
 }
 
-pub struct CopilotState {
+pub(crate) struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
     pending_cycling_refresh: Task<Option<()>>,
