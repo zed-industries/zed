@@ -19,19 +19,23 @@ macro_rules! id_type {
             Deserialize,
             DeriveValueType,
         )]
+        #[allow(missing_docs)]
         #[serde(transparent)]
         pub struct $name(pub i32);
 
         impl $name {
             #[allow(unused)]
+            #[allow(missing_docs)]
             pub const MAX: Self = Self(i32::MAX);
 
             #[allow(unused)]
+            #[allow(missing_docs)]
             pub fn from_proto(value: u64) -> Self {
                 Self(value as i32)
             }
 
             #[allow(unused)]
+            #[allow(missing_docs)]
             pub fn to_proto(self) -> u64 {
                 self.0 as u64
             }
@@ -84,21 +88,28 @@ id_type!(FlagId);
 id_type!(NotificationId);
 id_type!(NotificationKindId);
 
+/// ChannelRole gives you permissions for both channels and calls.
 #[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]
 pub enum ChannelRole {
+    /// Admin can read/write and change permissions.
     #[sea_orm(string_value = "admin")]
     Admin,
+    /// Member can read/write, but not change pemissions.
     #[sea_orm(string_value = "member")]
     #[default]
     Member,
+    /// Guest can read, but not write.
+    /// (thought they can use the channel chat)
     #[sea_orm(string_value = "guest")]
     Guest,
+    /// Banned may not read.
     #[sea_orm(string_value = "banned")]
     Banned,
 }
 
 impl ChannelRole {
+    /// Returns true if this role is more powerful than the other role.
     pub fn should_override(&self, other: Self) -> bool {
         use ChannelRole::*;
         match self {
@@ -109,6 +120,7 @@ impl ChannelRole {
         }
     }
 
+    /// Returns the maximal role between the two
     pub fn max(&self, other: Self) -> Self {
         if self.should_override(other) {
             *self
@@ -117,6 +129,7 @@ impl ChannelRole {
         }
     }
 
+    /// True if the role allows access to all descendant channels
     pub fn can_see_all_descendants(&self) -> bool {
         use ChannelRole::*;
         match self {
@@ -125,6 +138,7 @@ impl ChannelRole {
         }
     }
 
+    /// True if the role only allows access to public descendant channels
     pub fn can_only_see_public_descendants(&self) -> bool {
         use ChannelRole::*;
         match self {
@@ -133,6 +147,7 @@ impl ChannelRole {
         }
     }
 
+    /// True if the role can share screen/microphone/projects into rooms.
     pub fn can_publish_to_rooms(&self) -> bool {
         use ChannelRole::*;
         match self {
@@ -141,6 +156,7 @@ impl ChannelRole {
         }
     }
 
+    /// True if the role can edit shared projects.
     pub fn can_edit_projects(&self) -> bool {
         use ChannelRole::*;
         match self {
@@ -149,6 +165,7 @@ impl ChannelRole {
         }
     }
 
+    /// True if the role can read shared projects.
     pub fn can_read_projects(&self) -> bool {
         use ChannelRole::*;
         match self {
@@ -187,11 +204,14 @@ impl Into<i32> for ChannelRole {
     }
 }
 
+/// ChannelVisibility controls whether channels are public or private.
 #[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]
 pub enum ChannelVisibility {
+    /// Public channels are visible to anyone with the link. People join with the Guest role by default.
     #[sea_orm(string_value = "public")]
     Public,
+    /// Members channels are only visible to members of this channel or its parents.
     #[sea_orm(string_value = "members")]
     #[default]
     Members,

@@ -40,6 +40,7 @@ impl Database {
             .id)
     }
 
+    /// Creates a new channel.
     pub async fn create_channel(
         &self,
         name: &str,
@@ -97,6 +98,7 @@ impl Database {
         .await
     }
 
+    /// Adds a user to the specified channel.
     pub async fn join_channel(
         &self,
         channel_id: ChannelId,
@@ -179,6 +181,7 @@ impl Database {
         .await
     }
 
+    /// Sets the visibiltity of the given channel.
     pub async fn set_channel_visibility(
         &self,
         channel_id: ChannelId,
@@ -258,6 +261,7 @@ impl Database {
         .await
     }
 
+    /// Deletes the channel with the specified ID.
     pub async fn delete_channel(
         &self,
         channel_id: ChannelId,
@@ -294,6 +298,7 @@ impl Database {
         .await
     }
 
+    /// Invites a user to a channel as a member.
     pub async fn invite_channel_member(
         &self,
         channel_id: ChannelId,
@@ -349,6 +354,7 @@ impl Database {
         Ok(new_name)
     }
 
+    /// Renames the specified channel.
     pub async fn rename_channel(
         &self,
         channel_id: ChannelId,
@@ -387,6 +393,7 @@ impl Database {
         .await
     }
 
+    /// accept or decline an invite to join a channel
     pub async fn respond_to_channel_invite(
         &self,
         channel_id: ChannelId,
@@ -486,6 +493,7 @@ impl Database {
         })
     }
 
+    /// Removes a channel member.
     pub async fn remove_channel_member(
         &self,
         channel_id: ChannelId,
@@ -530,6 +538,7 @@ impl Database {
         .await
     }
 
+    /// Returns all channel invites for the user with the given ID.
     pub async fn get_channel_invites_for_user(&self, user_id: UserId) -> Result<Vec<Channel>> {
         self.transaction(|tx| async move {
             let mut role_for_channel: HashMap<ChannelId, ChannelRole> = HashMap::default();
@@ -565,6 +574,7 @@ impl Database {
         .await
     }
 
+    /// Returns all channels for the user with the given ID.
     pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<ChannelsForUser> {
         self.transaction(|tx| async move {
             let tx = tx;
@@ -574,6 +584,8 @@ impl Database {
         .await
     }
 
+    /// Returns all channels for the user with the given ID that are descendants
+    /// of the specified ancestor channel.
     pub async fn get_user_channels(
         &self,
         user_id: UserId,
@@ -743,6 +755,7 @@ impl Database {
         Ok(results)
     }
 
+    /// Sets the role for the specified channel member.
     pub async fn set_channel_member_role(
         &self,
         channel_id: ChannelId,
@@ -786,6 +799,7 @@ impl Database {
         .await
     }
 
+    /// Returns the details for the specified channel member.
     pub async fn get_channel_participant_details(
         &self,
         channel_id: ChannelId,
@@ -911,6 +925,7 @@ impl Database {
             .collect())
     }
 
+    /// Returns the participants in the given channel.
     pub async fn get_channel_participants(
         &self,
         channel: &channel::Model,
@@ -925,6 +940,7 @@ impl Database {
             .collect())
     }
 
+    /// Returns whether the given user is an admin in the specified channel.
     pub async fn check_user_is_channel_admin(
         &self,
         channel: &channel::Model,
@@ -943,6 +959,7 @@ impl Database {
         }
     }
 
+    /// Returns whether the given user is a member of the specified channel.
     pub async fn check_user_is_channel_member(
         &self,
         channel: &channel::Model,
@@ -958,6 +975,7 @@ impl Database {
         }
     }
 
+    /// Returns whether the given user is a participant in the specified channel.
     pub async fn check_user_is_channel_participant(
         &self,
         channel: &channel::Model,
@@ -975,6 +993,7 @@ impl Database {
         }
     }
 
+    /// Returns a user's pending invite for the given channel, if one exists.
     pub async fn pending_invite_for_channel(
         &self,
         channel: &channel::Model,
@@ -991,7 +1010,7 @@ impl Database {
         Ok(row)
     }
 
-    pub async fn public_parent_channel(
+    async fn public_parent_channel(
         &self,
         channel: &channel::Model,
         tx: &DatabaseTransaction,
@@ -1003,7 +1022,7 @@ impl Database {
         Ok(path.pop())
     }
 
-    pub async fn public_ancestors_including_self(
+    pub(crate) async fn public_ancestors_including_self(
         &self,
         channel: &channel::Model,
         tx: &DatabaseTransaction,
@@ -1018,6 +1037,7 @@ impl Database {
         Ok(visible_channels)
     }
 
+    /// Returns the role for a user in the given channel.
     pub async fn channel_role_for_user(
         &self,
         channel: &channel::Model,
@@ -1143,7 +1163,7 @@ impl Database {
             .await?)
     }
 
-    /// Returns the channel with the given ID
+    /// Returns the channel with the given ID.
     pub async fn get_channel(&self, channel_id: ChannelId, user_id: UserId) -> Result<Channel> {
         self.transaction(|tx| async move {
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
@@ -1156,7 +1176,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_channel_internal(
+    pub(crate) async fn get_channel_internal(
         &self,
         channel_id: ChannelId,
         tx: &DatabaseTransaction,
