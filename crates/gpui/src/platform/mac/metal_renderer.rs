@@ -658,17 +658,18 @@ impl MetalRenderer {
 
         let underline_bytes_len = mem::size_of_val(underlines);
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+
+        let next_offset = *offset + underline_bytes_len;
+        if next_offset > INSTANCE_BUFFER_SIZE {
+            return false;
+        }
+
         unsafe {
             ptr::copy_nonoverlapping(
                 underlines.as_ptr() as *const u8,
                 buffer_contents,
                 underline_bytes_len,
             );
-        }
-
-        let next_offset = *offset + underline_bytes_len;
-        if next_offset > INSTANCE_BUFFER_SIZE {
-            return false;
         }
 
         command_encoder.draw_primitives_instanced(
