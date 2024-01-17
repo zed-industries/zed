@@ -2,7 +2,7 @@ use crate::{
     div, point, Element, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
 };
 use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
+use std::{any::Any, default, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -30,9 +30,10 @@ impl Deref for ModifiersChangedEvent {
 
 /// The phase of a touch motion event.
 /// Based on the winit enum of the same name.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub enum TouchPhase {
     Started,
+    #[default]
     Moved,
     Ended,
 }
@@ -136,7 +137,7 @@ impl MouseMoveEvent {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
     pub position: Point<Pixels>,
     pub delta: ScrollDelta,

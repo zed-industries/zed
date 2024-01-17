@@ -1,6 +1,6 @@
 use crate::{
     point, px, AnyElement, AvailableSpace, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    DispatchPhase, Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    DispatchPhase, Element, IntoElement, IsZero, Pixels, Point, ScrollWheelEvent, Size, Style,
     StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
@@ -28,6 +28,7 @@ struct StateInner {
     render_item: Box<dyn FnMut(usize, &mut WindowContext) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
+    pending_scroll_delta: Pixels,
     alignment: ListAlignment,
     overdraw: Pixels,
     #[allow(clippy::type_complexity)]
@@ -92,6 +93,7 @@ impl ListState {
             alignment: orientation,
             overdraw,
             scroll_handler: None,
+            pending_scroll_delta: px(0.),
         })))
     }
 
@@ -230,6 +232,8 @@ impl StateInner {
         delta: Point<Pixels>,
         cx: &mut WindowContext,
     ) {
+        // self.pending_scroll_delta += delta.y;
+
         let scroll_max = (self.items.summary().height - height).max(px(0.));
         let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
             .max(px(0.))
@@ -346,104 +350,118 @@ impl Element for List {
             height: AvailableSpace::MinContent,
         };
 
-        // Render items after the scroll top, including those in the trailing overdraw
         let mut cursor = old_items.cursor::<Count>();
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
-        for (ix, item) in cursor.by_ref().enumerate() {
-            let visible_height = rendered_height - scroll_top.offset_in_item;
-            if visible_height >= bounds.size.height + state.overdraw {
-                break;
-            }
 
-            // Use the previously cached height if available
-            let mut height = if let ListItem::Rendered { height } = item {
-                Some(*height)
-            } else {
-                None
-            };
-
-            // If we're within the visible area or the height wasn't cached, render and measure the item's element
-            if visible_height < bounds.size.height || height.is_none() {
-                let mut element = (state.render_item)(scroll_top.item_ix + ix, cx);
-                let element_size = element.measure(available_item_space, cx);
-                height = Some(element_size.height);
-                if visible_height < bounds.size.height {
-                    item_elements.push_back(element);
+        loop {
+            // Render items after the scroll top, including those in the trailing overdraw
+            cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+            for (ix, item) in cursor.by_ref().enumerate() {
+                let visible_height = rendered_height - scroll_top.offset_in_item;
+                if visible_height >= bounds.size.height + state.overdraw {
+                    break;
                 }
+
+                // Use the previously cached height if available
+                let mut height = if let ListItem::Rendered { height } = item {
+                    Some(*height)
+                } else {
+                    None
+                };
+
+                // If we're within the visible area or the height wasn't cached, render and measure the item's element
+                if visible_height < bounds.size.height || height.is_none() {
+                    let mut element = (state.render_item)(scroll_top.item_ix + ix, cx);
+                    let element_size = element.measure(available_item_space, cx);
+                    height = Some(element_size.height);
+                    if visible_height < bounds.size.height {
+                        item_elements.push_back(element);
+                    }
+                }
+
+                let height = height.unwrap();
+                rendered_height += height;
+                measured_items.push_back(ListItem::Rendered { height });
             }
 
-            let height = height.unwrap();
-            rendered_height += height;
-            measured_items.push_back(ListItem::Rendered { height });
-        }
+            // Prepare to start walking upward from the item at the scroll top.
+            cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
 
-        // Prepare to start walking upward from the item at the scroll top.
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+            // If the rendered items do not fill the visible region, then adjust
+            // the scroll top upward.
+            if rendered_height - scroll_top.offset_in_item < bounds.size.height {
+                while rendered_height < bounds.size.height {
+                    cursor.prev(&());
+                    if cursor.item().is_some() {
+                        let mut element = (state.render_item)(cursor.start().0, cx);
+                        let element_size = element.measure(available_item_space, cx);
 
-        // If the rendered items do not fill the visible region, then adjust
-        // the scroll top upward.
-        if rendered_height - scroll_top.offset_in_item < bounds.size.height {
-            while rendered_height < bounds.size.height {
+                        rendered_height += element_size.height;
+                        measured_items.push_front(ListItem::Rendered {
+                            height: element_size.height,
+                        });
+                        item_elements.push_front(element)
+                    } else {
+                        break;
+                    }
+                }
+
+                scroll_top = ListOffset {
+                    item_ix: cursor.start().0,
+                    offset_in_item: rendered_height - bounds.size.height,
+                };
+
+                match state.alignment {
+                    ListAlignment::Top => {
+                        scroll_top.offset_in_item = scroll_top.offset_in_item.max(px(0.));
+                        state.logical_scroll_top = Some(scroll_top);
+                    }
+                    ListAlignment::Bottom => {
+                        scroll_top = ListOffset {
+                            item_ix: cursor.start().0,
+                            offset_in_item: rendered_height - bounds.size.height,
+                        };
+                        state.logical_scroll_top = None;
+                    }
+                };
+            }
+
+            // Measure items in the leading overdraw
+            let mut leading_overdraw = scroll_top.offset_in_item;
+            while leading_overdraw < state.overdraw {
                 cursor.prev(&());
-                if cursor.item().is_some() {
-                    let mut element = (state.render_item)(cursor.start().0, cx);
-                    let element_size = element.measure(available_item_space, cx);
+                if let Some(item) = cursor.item() {
+                    let height = if let ListItem::Rendered { height } = item {
+                        *height
+                    } else {
+                        let mut element = (state.render_item)(cursor.start().0, cx);
+                        element.measure(available_item_space, cx).height
+                    };
 
-                    rendered_height += element_size.height;
-                    measured_items.push_front(ListItem::Rendered {
-                        height: element_size.height,
-                    });
-                    item_elements.push_front(element)
+                    leading_overdraw += height;
+                    measured_items.push_front(ListItem::Rendered { height });
                 } else {
                     break;
                 }
             }
 
-            scroll_top = ListOffset {
-                item_ix: cursor.start().0,
-                offset_in_item: rendered_height - bounds.size.height,
-            };
+            let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
+            let mut cursor = old_items.cursor::<Count>();
+            let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right, &());
+            new_items.extend(measured_items, &());
+            cursor.seek(&Count(measured_range.end), Bias::Right, &());
+            new_items.append(cursor.suffix(&()), &());
 
-            match state.alignment {
-                ListAlignment::Top => {
-                    scroll_top.offset_in_item = scroll_top.offset_in_item.max(px(0.));
-                    state.logical_scroll_top = Some(scroll_top);
-                }
-                ListAlignment::Bottom => {
-                    scroll_top = ListOffset {
-                        item_ix: cursor.start().0,
-                        offset_in_item: rendered_height - bounds.size.height,
-                    };
-                    state.logical_scroll_top = None;
-                }
-            };
+            state.items = new_items;
+            state.last_layout_bounds = Some(bounds);
+
+            // if !state.pending_scroll_delta.is_zero() {
+            //     // Do scroll manipulation
+
+            //     state.pending_scroll_delta = px(0.);
+            // } else {
+            break;
+            // }
         }
-
-        // Measure items in the leading overdraw
-        let mut leading_overdraw = scroll_top.offset_in_item;
-        while leading_overdraw < state.overdraw {
-            cursor.prev(&());
-            if let Some(item) = cursor.item() {
-                let height = if let ListItem::Rendered { height } = item {
-                    *height
-                } else {
-                    let mut element = (state.render_item)(cursor.start().0, cx);
-                    element.measure(available_item_space, cx).height
-                };
-
-                leading_overdraw += height;
-                measured_items.push_front(ListItem::Rendered { height });
-            } else {
-                break;
-            }
-        }
-
-        let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
-        let mut cursor = old_items.cursor::<Count>();
-        let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right, &());
-        new_items.extend(measured_items, &());
-        cursor.seek(&Count(measured_range.end), Bias::Right, &());
-        new_items.append(cursor.suffix(&()), &());
 
         // Paint the visible items
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
@@ -456,12 +474,12 @@ impl Element for List {
             }
         });
 
-        state.items = new_items;
-        state.last_layout_bounds = Some(bounds);
-
         let list_state = self.state.clone();
         let height = bounds.size.height;
+        dbg!("scroll is being bound");
+
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
+            dbg!("scroll dispatched!");
             if phase == DispatchPhase::Bubble
                 && bounds.contains(&event.position)
                 && cx.was_top_layer(&event.position, cx.stacking_order())
@@ -560,5 +578,46 @@ impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Count {
 impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
     fn cmp(&self, other: &ListItemSummary, _: &()) -> std::cmp::Ordering {
         self.0.partial_cmp(&other.height).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use crate::{self as gpui, Entity, TestAppContext};
+
+    #[gpui::test]
+    fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
+        use crate::{div, list, point, px, size, Element, ListState, Styled};
+
+        let (v, cx) = cx.add_window_view(|_| ());
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.), |_, _| {
+            div().h(px(10.)).w_full().into_any()
+        });
+
+        cx.update(|cx| {
+            cx.with_view_id(v.entity_id(), |cx| {
+                list(state.clone())
+                    .w_full()
+                    .h_full()
+                    .z_index(10)
+                    .into_any()
+                    .draw(point(px(0.0), px(0.0)), size(px(100.), px(20.)).into(), cx)
+            });
+        });
+
+        state.reset(5);
+
+        cx.simulate_event(gpui::InputEvent::ScrollWheel(gpui::ScrollWheelEvent {
+            position: point(px(1.), px(1.)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-500.))),
+            ..Default::default()
+        }));
+
+        assert_eq!(state.logical_scroll_top().item_ix, 0);
+        assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));
+
+        panic!("We should not get here yet!")
     }
 }

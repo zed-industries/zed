@@ -3,9 +3,9 @@
 use crate::{
     div, Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter, ForegroundExecutor,
-    IntoElement, Keystroke, Model, ModelContext, Pixels, Platform, Render, Result, Size, Task,
-    TestDispatcher, TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext,
-    WindowContext, WindowHandle, WindowOptions,
+    InputEvent, IntoElement, Keystroke, Model, ModelContext, Pixels, Platform, Render, Result,
+    Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View, ViewContext,
+    VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
@@ -607,6 +607,12 @@ impl<'a> VisualTestContext {
     /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
+    }
+
+    /// Simulate an event from the platform, e.g. a SrollWheelEvent
+    pub fn simulate_event(&mut self, event: InputEvent) {
+        self.update(|cx| cx.dispatch_event(event));
+        self.background_executor.run_until_parked();
     }
 
     /// Simulates the user blurring the window.
