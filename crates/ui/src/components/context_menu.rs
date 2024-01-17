@@ -51,6 +51,7 @@ impl ContextMenu {
             let _on_blur_subscription = cx.on_blur(&focus_handle, |this: &mut ContextMenu, cx| {
                 this.cancel(&menu::Cancel, cx)
             });
+            cx.refresh();
             f(
                 Self {
                     items: Default::default(),
