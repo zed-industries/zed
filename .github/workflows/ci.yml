@@ -40,7 +40,7 @@ jobs:
 
             - name: Check spelling
               run: |
-                  if ! command -v typos > /dev/null; then
+                  if ! which typos > /dev/null; then
                     cargo install typos-cli
                   fi
                   typos
