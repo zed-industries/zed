@@ -67,7 +67,7 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
-    let app = App::production(Arc::new(Assets));
+    let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
