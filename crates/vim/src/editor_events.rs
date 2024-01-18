@@ -1,6 +1,6 @@
-use crate::Vim;
+use crate::{insert::NormalBefore, Vim};
 use editor::{Editor, EditorEvent};
-use gpui::{AppContext, Entity, EntityId, View, ViewContext, WindowContext};
+use gpui::{Action, AppContext, Entity, EntityId, View, ViewContext, WindowContext};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|_, cx: &mut ViewContext<Editor>| {
@@ -34,8 +34,7 @@ fn focused(editor: View<Editor>, cx: &mut WindowContext) {
 
 fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
-        vim.workspace_state.recording = false;
-        vim.workspace_state.recorded_actions.clear();
+        vim.stop_recording_immediately(NormalBefore.boxed_clone());
         if let Some(previous_editor) = vim.active_editor.clone() {
             if previous_editor
                 .upgrade()

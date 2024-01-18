@@ -493,4 +493,17 @@ mod test {
         cx.simulate_keystrokes(["escape"]);
         cx.assert_state("ˇjhello\n", Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_repeat_over_blur(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello hello hello\n").await;
+        cx.simulate_shared_keystrokes(["c", "f", "o", "x", "escape"])
+            .await;
+        cx.assert_shared_state("ˇx hello hello\n").await;
+        cx.simulate_shared_keystrokes([":", "escape"]).await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("ˇx hello\n").await;
+    }
 }
