@@ -71,8 +71,9 @@ const mainDisplayResolution =
 if (!mainDisplayResolution) {
   throw new Error("Could not parse screen resolution");
 }
+const titleBarHeight = 24;
 const screenWidth = parseInt(mainDisplayResolution[1]);
-let screenHeight = parseInt(mainDisplayResolution[2]);
+let screenHeight = parseInt(mainDisplayResolution[2]) - titleBarHeight;
 
 if (isTop) {
   screenHeight = Math.floor(screenHeight / 2);
@@ -114,12 +115,20 @@ if (isReleaseMode) {
   zedBinary = "target/release/Zed";
 }
 
-execFileSync("cargo", buildArgs, { stdio: "inherit" });
+try {
+  execFileSync("cargo", buildArgs, { stdio: "inherit" });
+} catch (e) {
+  process.exit(0);
+}
+
 setTimeout(() => {
   for (let i = 0; i < instanceCount; i++) {
     const row = Math.floor(i / columns);
     const column = i % columns;
-    const position = [column * instanceWidth, row * instanceHeight].join(",");
+    const position = [
+      column * instanceWidth,
+      row * instanceHeight + titleBarHeight,
+    ].join(",");
     const size = [instanceWidth, instanceHeight].join(",");
 
     spawn(zedBinary, i == 0 ? args : [], {
