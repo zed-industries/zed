@@ -88,7 +88,6 @@ use std::{
 };
 use taffy::TaffyLayoutEngine;
 
-/// Here's a spelling mistake: visibile
 pub trait Context {
     type Result<T>;
 
