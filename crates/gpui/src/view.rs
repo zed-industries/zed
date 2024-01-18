@@ -321,10 +321,7 @@ impl Element for AnyView {
                 }
             }
 
-            let mut element = state
-                .element
-                .take()
-                .unwrap_or_else(|| (self.request_layout)(self, cx).1);
+            let mut element = (self.request_layout)(self, cx).1;
             element.draw(bounds.origin, bounds.size.into(), cx);
 
             state.cache_key = Some(ViewCacheKey {
