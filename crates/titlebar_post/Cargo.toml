@@ -1,0 +1,15 @@
+[package]
+name = "titlebar_post"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "titlebar_post"
+path = "src/titlebar_post.rs"
+
+[dependencies]
+assets = { path = "../assets" }
+gpui = { path = "../gpui" }
+# picker = { path = "../picker" }
+theme = { path = "../theme" }
+ui = { path = "../ui" }

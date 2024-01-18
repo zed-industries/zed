@@ -1,5 +1,6 @@
 mod support;
-use picker::*;
+use std::sync::Arc;
+
 use support::*;
 
 // Today, I want to walk through building a tiny subset of Zed's interface in the latest version of our UI framework, [GPUI](https://gpui.rs).
@@ -8,7 +9,9 @@ use support::*;
 // To start, let's think about modeling the above scenario in Rust's type system.
 // First, we'll import everything in GPUI so it's in scope for the rest of the post, along with types from a few other Zed crates.
 
+use assets::Assets;
 use gpui::{prelude::*, *};
+// use picker::*;
 use theme::*;
 use ui::*;
 
@@ -103,41 +106,14 @@ impl RenderOnce for Titlebar {
 //
 // We also arrange to zoom the window when the titlebar is double-clicked.
 // Finally, we give our titlebar a single child, the project menu button.
-// Note that because `RenderOnce::render` moves self, we're free to move the project menu button rather than cloning it.
-
-// Now let's implement `RenderOnce` for `ProjectMenuButton`.
-// Here, we use a `PopoverMenu` from Zed's `ui` crate, one of a handful of reusable components we created in the process of rebuilding Zed's UI on GPUI 2.
-// In the `render` implementation below, we give the popover a unique id, then use method chaining to associate the popover with a `trigger` and a `menu`.
-// In GPUI, any element that supports stateful mouse interactions such as click must be assigned an identifier.
-// The trigger is a `Button` component with an id of `"trigger"`.
-// Note than in GPUI, element identifiers only need to be unique within the context of the containing identifier.
+// Note that because `RenderOnce::render` moves self, we can move the project menu button when adding it as a child rather than cloning it.
 
 impl RenderOnce for ProjectMenuButton {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        let recent_projects = self.recent.clone();
-        PopoverMenu::new("project-menu")
-            .trigger(
-                Button::new("trigger", self.current.name)
-                    .style(ButtonStyle::Subtle)
-                    .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-            )
-            .menu(move |cx| {
-                Some(cx.new_view(|cx| {
-                    Picker::fuzzy(recent_projects.clone(), cx, |project, selected, _cx| {
-                        ListItem::new(project.id.0)
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
-                            .selected(selected)
-                    })
-                }))
-            })
-    }
-}
-
-impl FuzzyPickerItem for Project {
-    fn match_text(&self) -> SharedString {
-        self.name.clone()
+        Button::new("trigger", self.current.name)
+            .style(ButtonStyle::Subtle)
+            .label_size(LabelSize::Small)
+            .tooltip(move |cx| Tooltip::text("Recent Projects", cx))
     }
 }
 
@@ -147,6 +123,39 @@ actions!(
     zed,
     [OpenSettings, OpenTheme, SignIn, SignOut, ShareFeedback]
 );
+
+pub fn main() {
+    App::production(Arc::new(Assets)).run(|cx| {
+        cx.open_window(WindowOptions::default(), |cx| {
+            cx.new_view(|_| TitlebarExample)
+        });
+    });
+}
+
+struct TitlebarExample;
+
+impl Render for TitlebarExample {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Titlebar {
+            project_menu_button: ProjectMenuButton {
+                current: Project {
+                    name: "zed".into(),
+                    id: ProjectId(0),
+                },
+                recent: vec![
+                    Project {
+                        name: "tree-sitter".into(),
+                        id: ProjectId(1),
+                    },
+                    Project {
+                        name: "atom".into(),
+                        id: ProjectId(2),
+                    },
+                ],
+            },
+        }
+    }
+}
 
 #[derive(IntoElement)]
 pub struct UserMenuButton {
