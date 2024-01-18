@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
 use smallvec::SmallVec;
 
@@ -29,7 +31,7 @@ pub struct ListItem {
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -104,7 +106,7 @@ impl ListItem {
         mut self,
         on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.on_toggle = Some(Box::new(on_toggle));
+        self.on_toggle = Some(Arc::new(on_toggle));
         self
     }
 
