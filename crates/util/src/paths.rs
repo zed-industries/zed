@@ -15,6 +15,8 @@ lazy_static::lazy_static! {
     pub static ref COPILOT_DIR: PathBuf = HOME.join("Library/Application Support/Zed/copilot");
     pub static ref DEFAULT_PRETTIER_DIR: PathBuf = HOME.join("Library/Application Support/Zed/prettier");
     pub static ref DB_DIR: PathBuf = HOME.join("Library/Application Support/Zed/db");
+    pub static ref CRASHES_DIR: PathBuf = HOME.join("Library/Logs/DiagnosticReports");
+    pub static ref CRASHES_RETIRED_DIR: PathBuf = HOME.join("Library/Logs/DiagnosticReports/Retired");
     pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
     pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
     pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");

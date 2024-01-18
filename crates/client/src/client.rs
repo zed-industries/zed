@@ -52,6 +52,7 @@ pub use user::*;
 lazy_static! {
     pub static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
+    pub static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
     pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
@@ -933,6 +934,10 @@ impl Client {
         http: Arc<dyn HttpClient>,
         release_channel: Option<ReleaseChannel>,
     ) -> Result<Url> {
+        if let Some(url) = &*ZED_RPC_URL {
+            return Url::parse(url).context("invalid rpc url");
+        }
+
         let mut url = format!("{}/rpc", *ZED_SERVER_URL);
         if let Some(preview_param) =
             release_channel.and_then(|channel| channel.release_query_param())
@@ -941,14 +946,6 @@ impl Client {
             url += preview_param;
         }
         let response = http.get(&url, Default::default(), false).await?;
-
-        // Normally, ZED_SERVER_URL is set to the URL of zed.dev website.
-        // The website's /rpc endpoint redirects to a collab server's /rpc endpoint,
-        // which requires authorization via an HTTP header.
-        //
-        // For testing purposes, ZED_SERVER_URL can also set to the direct URL of
-        // of a collab server. In that case, a request to the /rpc endpoint will
-        // return an 'unauthorized' response.
         let collab_url = if response.status().is_redirection() {
             response
                 .headers()
@@ -957,8 +954,6 @@ impl Client {
                 .to_str()
                 .map_err(EstablishConnectionError::other)?
                 .to_string()
-        } else if response.status() == StatusCode::UNAUTHORIZED {
-            url
         } else {
             Err(anyhow!(
                 "unexpected /rpc response status {}",
