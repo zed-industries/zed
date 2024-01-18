@@ -542,7 +542,22 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
         let mut backtrace = backtrace
             .frames()
             .iter()
-            .filter_map(|frame| Some(format!("{:#}", frame.symbols().first()?.name()?)))
+            .flat_map(|frame| {
+                frame.symbols().iter().filter_map(|symbol| {
+                    let name = symbol.name()?;
+                    let addr = symbol.addr()? as usize;
+                    let position = if let (Some(path), Some(lineno)) = (
+                        symbol.filename().and_then(|path| path.file_name()),
+                        symbol.lineno(),
+                    ) {
+                        format!("{}:{}", path.to_string_lossy(), lineno)
+                    } else {
+                        "?".to_string()
+                    };
+
+                    Some(format!("{:} ({:#x}) at {}", name, addr, position))
+                })
+            })
             .collect::<Vec<_>>();
 
         // Strip out leading stack frames for rust panic-handling.
