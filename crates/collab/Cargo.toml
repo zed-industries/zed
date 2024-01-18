@@ -58,6 +58,7 @@ tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
 uuid.workspace = true
+form-data-builder = "1.0.1"
 
 [dev-dependencies]
 audio = { path = "../audio" }

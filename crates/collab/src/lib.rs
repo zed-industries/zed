@@ -101,6 +101,9 @@ pub struct Config {
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
     pub zed_environment: Arc<str>,
+    pub slack_api_key: Option<String>,
+    pub slack_panic_channel: Option<String>,
+    pub client_token: String,
 }
 
 impl Config {

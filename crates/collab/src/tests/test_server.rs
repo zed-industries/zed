@@ -465,6 +465,7 @@ impl TestServer {
                 database_url: "".into(),
                 database_max_connections: 0,
                 api_token: "".into(),
+                client_token: "".into(),
                 invite_link_prefix: "".into(),
                 live_kit_server: None,
                 live_kit_key: None,
@@ -472,6 +473,8 @@ impl TestServer {
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                slack_api_key: None,
+                slack_panic_channel: None,
             },
         })
     }
