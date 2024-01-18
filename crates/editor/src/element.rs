@@ -3164,7 +3164,7 @@ pub struct CursorName {
     string: SharedString,
     color: Hsla,
     is_top_row: bool,
-    z_index: u8,
+    z_index: u16,
 }
 
 impl Cursor {

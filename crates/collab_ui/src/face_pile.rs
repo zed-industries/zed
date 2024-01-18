@@ -28,7 +28,7 @@ impl RenderOnce for FacePile {
             let isnt_last = ix < player_count - 1;
 
             div()
-                .z_index((player_count - ix) as u8)
+                .z_index((player_count - ix) as u16)
                 .when(isnt_last, |div| div.neg_mr_1())
                 .child(player)
         });
