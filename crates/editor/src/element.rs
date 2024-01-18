@@ -1790,8 +1790,10 @@ impl EditorElement {
                 let descent = cx.text_system().descent(font_id, font_size);
 
                 let gutter_padding_factor = 3.5;
+                // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
+                let min_width_for_number_on_gutter = em_width * 4.0;
                 gutter_padding = (em_width * gutter_padding_factor).round();
-                gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
+                gutter_width = self.max_line_number_width(&snapshot, cx).max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
                 gutter_margin = -descent;
             } else {
                 gutter_padding = Pixels::ZERO;
@@ -3843,7 +3845,9 @@ fn compute_auto_height_layout(
         let descent = cx.text_system().descent(font_id, font_size);
         let gutter_padding_factor = 3.5;
         let gutter_padding = (em_width * gutter_padding_factor).round();
-        gutter_width = max_line_number_width + gutter_padding * 2.0;
+        let min_width_for_number_on_gutter = em_width * 4.0;
+        gutter_width =
+            max_line_number_width.max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
         gutter_margin = -descent;
     } else {
         gutter_width = Pixels::ZERO;
