@@ -27,6 +27,7 @@ enum ContextMenuItem {
 pub struct ContextMenu {
     items: Vec<ContextMenuItem>,
     focus_handle: FocusHandle,
+    action_context: Option<FocusHandle>,
     selected_index: Option<usize>,
     delayed: bool,
     clicked: bool,
@@ -56,6 +57,7 @@ impl ContextMenu {
                 Self {
                     items: Default::default(),
                     focus_handle,
+                    action_context: None,
                     selected_index: None,
                     delayed: false,
                     clicked: false,
@@ -64,6 +66,39 @@ impl ContextMenu {
                 cx,
             )
         })
+    }
+
+    pub fn if_some<T>(self, condition: Option<T>, f: impl FnOnce(Self, T) -> Self) -> Self {
+        if let Some(t) = condition {
+            f(self, t)
+        } else {
+            self
+        }
+    }
+
+    pub fn then_if_else(self, condition: bool, then: impl FnOnce(Self) -> Self, otherwise: impl FnOnce(Self) -> Self) -> Self {
+        if condition {
+            then(self)
+        } else {
+            otherwise(self)
+        }
+    }
+
+    pub fn then_if(self, condition: bool, f: impl FnOnce(Self) -> Self) -> Self {
+        if condition {
+            f(self)
+        } else {
+            self
+        }
+    }
+
+    pub fn map(self, f: impl FnOnce(Self) -> Self) -> Self {
+        f(self)
+    }
+
+    pub fn context(mut self, focus: FocusHandle) -> Self {
+        self.action_context = Some(focus);
+        self
     }
 
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
@@ -305,7 +340,14 @@ impl Render for ContextMenu {
                                         .child(label_element)
                                         .debug_selector(|| format!("MENU_ITEM-{}", label))
                                         .children(action.as_ref().and_then(|action| {
-                                            KeyBinding::for_action(&**action, cx)
+                                            self.action_context
+                                                .as_ref()
+                                                .map(|focus| {
+                                                    KeyBinding::for_action_in(&**action, focus, cx)
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    KeyBinding::for_action(&**action, cx)
+                                                })
                                                 .map(|binding| div().ml_1().child(binding))
                                         })),
                                 )
