@@ -4,12 +4,18 @@ struct Counter {
     count: usize,
 }
 
+struct Change {
+    increment: usize,
+}
+
+impl EventEmitter<Change> for Counter {}
+
 fn main() {
     App::new().run(|cx: &mut AppContext| {
         let counter: Model<Counter> = cx.new_model(|_cx| Counter { count: 0 });
-        let observer = cx.new_model(|cx: &mut ModelContext<Counter>| {
-            cx.observe(&counter, |observer, observed, cx| {
-                observer.count = observed.read(cx).count * 2;
+        let subscriber = cx.new_model(|cx: &mut ModelContext<Counter>| {
+            cx.subscribe(&counter, |subscriber, _emitter, event, _cx| {
+                subscriber.count += event.increment * 2;
             })
             .detach();
 
@@ -19,16 +25,11 @@ fn main() {
         });
 
         counter.update(cx, |counter, cx| {
-            counter.count += 1;
+            counter.count += 2;
             cx.notify();
+            cx.emit(Change { increment: 2 });
         });
 
-        assert_eq!(observer.read(cx).count, 2);
+        assert_eq!(subscriber.read(cx).count, 4);
     });
 }
-
-struct Change {
-    delta: isize,
-}
-
-impl EventEmitter<Change> for Counter {}
