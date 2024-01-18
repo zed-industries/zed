@@ -456,6 +456,7 @@ impl EditorElement {
         event: &MouseUpEvent,
         position_map: &PositionMap,
         text_bounds: Bounds<Pixels>,
+        interactive_bounds: &InteractiveBounds,
         stacking_order: &StackingOrder,
         cx: &mut ViewContext<Editor>,
     ) {
@@ -466,7 +467,8 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
-        if !pending_nonempty_selections
+        if interactive_bounds.visibly_contains(&event.position, cx)
+            && !pending_nonempty_selections
             && event.modifiers.command
             && text_bounds.contains(&event.position)
             && cx.was_top_layer(&event.position, stacking_order)
@@ -2542,15 +2544,14 @@ impl EditorElement {
             let interactive_bounds = interactive_bounds.clone();
 
             move |event: &MouseUpEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && interactive_bounds.visibly_contains(&event.position, cx)
-                {
+                if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
                         Self::mouse_up(
                             editor,
                             event,
                             &position_map,
                             text_bounds,
+                            &interactive_bounds,
                             &stacking_order,
                             cx,
                         )
