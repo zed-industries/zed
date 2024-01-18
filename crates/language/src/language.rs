@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! The `language` crate provides a large chunk of Zed's language-related
 //! features (the other big contributors being project and lsp crates that revolve around LSP features).
 //! Namely, this crate:
@@ -389,7 +388,7 @@ pub struct CodeLabel {
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
-    // The name of the grammar in a WASM bundle.
+    // The name of the grammar in a WASM bundle (experimental).
     pub grammar_name: Option<Arc<str>>,
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     pub path_suffixes: Vec<String>,
