@@ -698,6 +698,7 @@ mod element {
             workspace
                 .update(cx, |this, cx| this.schedule_serialize(cx))
                 .log_err();
+            cx.stop_propagation();
             cx.refresh();
         }
 
@@ -754,8 +755,10 @@ mod element {
                                 workspace
                                     .update(cx, |this, cx| this.schedule_serialize(cx))
                                     .log_err();
+
                                 cx.refresh();
                             }
+                            cx.stop_propagation();
                         }
                     }
                 });
