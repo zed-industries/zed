@@ -19,11 +19,10 @@ CREATE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 CREATE TABLE "access_tokens" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "user_id" INTEGER REFERENCES users (id),
-    "impersonator_id" INTEGER REFERENCES users (id),
+    "impersonated_user_id" INTEGER REFERENCES users (id),
     "hash" VARCHAR(128)
 );
 CREATE INDEX "index_access_tokens_user_id" ON "access_tokens" ("user_id");
-CREATE INDEX "index_access_tokens_impersonator_id" ON "access_tokens" ("impersonator_id");
 
 CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,

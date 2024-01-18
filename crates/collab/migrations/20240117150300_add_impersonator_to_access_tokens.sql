@@ -1,3 +1,1 @@
-ALTER TABLE access_tokens ADD COLUMN impersonator_id integer;
-
-CREATE INDEX "index_access_tokens_impersonator_id" ON "access_tokens" ("impersonator_id");
+ALTER TABLE access_tokens ADD COLUMN impersonated_user_id integer;

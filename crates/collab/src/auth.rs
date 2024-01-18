@@ -120,7 +120,7 @@ struct AccessTokenJson {
 pub async fn create_access_token(
     db: &db::Database,
     user_id: UserId,
-    impersonator_id: Option<UserId>,
+    impersonated_user_id: Option<UserId>,
 ) -> Result<String> {
     const VERSION: usize = 1;
     let access_token = rpc::auth::random_token();
@@ -129,7 +129,7 @@ pub async fn create_access_token(
     let id = db
         .create_access_token(
             user_id,
-            impersonator_id,
+            impersonated_user_id,
             &access_token_hash,
             MAX_ACCESS_TOKENS_TO_STORE,
         )
@@ -185,7 +185,8 @@ pub async fn verify_access_token(
     let token: AccessTokenJson = serde_json::from_str(&token)?;
 
     let db_token = db.get_access_token(token.id).await?;
-    if db_token.user_id != user_id {
+    let token_user_id = db_token.impersonated_user_id.unwrap_or(db_token.user_id);
+    if token_user_id != user_id {
         return Err(anyhow!("no such access token"))?;
     }
 
@@ -199,6 +200,10 @@ pub async fn verify_access_token(
     METRIC_ACCESS_TOKEN_HASHING_TIME.observe(duration.as_millis() as f64);
     Ok(VerifyAccessTokenResult {
         is_valid,
-        impersonator_id: db_token.impersonator_id,
+        impersonator_id: if db_token.impersonated_user_id.is_some() {
+            Some(db_token.user_id)
+        } else {
+            None
+        },
     })
 }
