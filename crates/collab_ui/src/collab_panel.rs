@@ -17,9 +17,8 @@ use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
     AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
     FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset, ListState,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
-    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WhiteSpace,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -2296,7 +2295,7 @@ impl CollabPanel {
                         h_flex()
                             .id(channel_id as usize)
                             .child(Label::new(channel.name.clone()))
-                            .children(face_pile.map(|face_pile| face_pile.render(cx))),
+                            .children(face_pile.map(|face_pile| face_pile.render().p_1())),
                     ),
             )
             .child(
