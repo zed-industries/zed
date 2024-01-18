@@ -2,7 +2,7 @@
 
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    AvailableSpace, BackgroundExecutor, ClipboardItem, Context, Entity, EventEmitter,
+    AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,
     ForegroundExecutor, InputEvent, Keystroke, Model, ModelContext, Pixels, Platform, Point,
     Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow, TextSystem, View,
     ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
@@ -616,6 +616,16 @@ impl<'a> VisualTestContext {
     /// Automatically runs until parked.
     pub fn simulate_input(&mut self, input: &str) {
         self.cx.simulate_input(self.window, input)
+    }
+
+    /// Simulates the user resizing the window to the new size.
+    pub fn simulate_resize(&self, size: Size<Pixels>) {
+        self.simulate_window_resize(self.window, size)
+    }
+
+    /// debug_bounds returns the bounds of the element with the given selector.
+    pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
+        self.update(|cx| cx.window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
     /// Draw an element to the window. Useful for simulating events or actions

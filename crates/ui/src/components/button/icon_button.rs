@@ -24,14 +24,16 @@ pub struct IconButton {
 
 impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
-        Self {
+        let mut this = Self {
             base: ButtonLike::new(id),
             shape: IconButtonShape::Wide,
             icon,
             icon_size: IconSize::default(),
             icon_color: Color::Default,
             selected_icon: None,
-        }
+        };
+        this.base.base = this.base.base.debug_selector(|| format!("ICON-{:?}", icon));
+        this
     }
 
     pub fn shape(mut self, shape: IconButtonShape) -> Self {

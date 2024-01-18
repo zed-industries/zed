@@ -30,7 +30,7 @@ use std::{
     borrow::{Borrow, BorrowMut, Cow},
     cell::RefCell,
     collections::hash_map::Entry,
-    fmt::Debug,
+    fmt::{Debug, Display},
     future::Future,
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -325,6 +325,9 @@ pub(crate) struct Frame {
     requested_cursor_style: Option<CursorStyle>,
     pub(crate) view_stack: Vec<EntityId>,
     pub(crate) reused_views: FxHashSet<EntityId>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) debug_bounds: collections::FxHashMap<String, Bounds<Pixels>>,
 }
 
 impl Frame {
@@ -348,6 +351,9 @@ impl Frame {
             requested_cursor_style: None,
             view_stack: Vec::new(),
             reused_views: FxHashSet::default(),
+
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds: FxHashMap::default(),
         }
     }
 
@@ -3377,6 +3383,20 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
+}
+
+impl Display for ElementId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ElementId::View(entity_id) => write!(f, "view-{}", entity_id)?,
+            ElementId::Integer(ix) => write!(f, "{}", ix)?,
+            ElementId::Name(name) => write!(f, "{}", name)?,
+            ElementId::FocusHandle(__) => write!(f, "FocusHandle")?,
+            ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
+        }
+
+        Ok(())
+    }
 }
 
 impl ElementId {
