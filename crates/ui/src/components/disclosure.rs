@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::ClickEvent;
 
 use crate::{prelude::*, Color, IconButton, IconName, IconSize};
@@ -6,7 +8,7 @@ use crate::{prelude::*, Color, IconButton, IconName, IconSize};
 pub struct Disclosure {
     id: ElementId,
     is_open: bool,
-    on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
 }
 
 impl Disclosure {
@@ -20,7 +22,7 @@ impl Disclosure {
 
     pub fn on_toggle(
         mut self,
-        handler: impl Into<Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
+        handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>>,
     ) -> Self {
         self.on_toggle = handler.into();
         self

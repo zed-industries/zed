@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{h_flex, prelude::*, Disclosure, Label};
 use gpui::{AnyElement, ClickEvent};
 
@@ -14,7 +16,7 @@ pub struct ListHeader {
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
-    on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
     inset: bool,
     selected: bool,
 }
@@ -42,7 +44,7 @@ impl ListHeader {
         mut self,
         on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.on_toggle = Some(Box::new(on_toggle));
+        self.on_toggle = Some(Arc::new(on_toggle));
         self
     }
 
@@ -98,15 +100,19 @@ impl RenderOnce for ListHeader {
                         h_flex()
                             .gap_1()
                             .children(self.toggle.map(|is_open| {
-                                Disclosure::new("toggle", is_open).on_toggle(self.on_toggle)
+                                Disclosure::new("toggle", is_open).on_toggle(self.on_toggle.clone())
                             }))
                             .child(
                                 div()
+                                    .id("label_container")
                                     .flex()
                                     .gap_1()
                                     .items_center()
                                     .children(self.start_slot)
-                                    .child(Label::new(self.label.clone()).color(Color::Muted)),
+                                    .child(Label::new(self.label.clone()).color(Color::Muted))
+                                    .when_some(self.on_toggle, |this, on_toggle| {
+                                        this.on_click(move |event, cx| on_toggle(event, cx))
+                                    }),
                             ),
                     )
                     .child(h_flex().children(self.end_slot))
