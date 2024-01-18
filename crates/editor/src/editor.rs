@@ -368,7 +368,7 @@ pub struct Editor {
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
     recently_focused: bool,
-    hovered_selections: HashSet<(ReplicaId, usize)>,
+    hovered_cursor: Option<HoveredCursor>,
     pub show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
@@ -420,6 +420,7 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
+#[derive(Debug)]
 pub struct RemoteSelection {
     pub replica_id: ReplicaId,
     pub selection: Selection<Anchor>,
@@ -442,6 +443,11 @@ enum SelectionHistoryMode {
     Normal,
     Undoing,
     Redoing,
+}
+
+struct HoveredCursor {
+    replica_id: u16,
+    selection_id: usize,
 }
 
 impl Default for SelectionHistoryMode {
@@ -1608,7 +1614,7 @@ impl Editor {
             gutter_width: Default::default(),
             style: None,
             recently_focused: false,
-            hovered_selections: Default::default(),
+            hovered_cursor: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
             _subscriptions: vec![
@@ -8998,8 +9004,9 @@ impl Editor {
         } else {
             self.blink_manager.update(cx, BlinkManager::enable);
             self.recently_focused = true;
+            cx.notify();
             cx.spawn(|this, mut cx| async move {
-                cx.background_executor().timer(Duration::from_secs(5)).await;
+                cx.background_executor().timer(Duration::from_secs(2)).await;
                 this.update(&mut cx, |this, cx| {
                     this.recently_focused = false;
                     cx.notify()

@@ -635,7 +635,6 @@ impl UserStore {
         cx.spawn(|this, mut cx| async move {
             if let Some(rpc) = client.upgrade() {
                 let response = rpc.request(request).await.context("error loading users")?;
-                dbg!(&response.users);
                 let users = response
                     .users
                     .into_iter()

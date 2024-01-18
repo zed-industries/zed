@@ -567,6 +567,7 @@ impl EditorElement {
                         cx,
                     );
                     hover_at(editor, Some(point), cx);
+                    Self::update_visible_cursor(editor, point, cx);
                 }
                 None => {
                     update_inlay_link_and_hover_points(
@@ -594,24 +595,28 @@ impl EditorElement {
         cx: &mut ViewContext<Editor>,
     ) {
         let snapshot = editor.snapshot(cx);
-        if let Some(hub) = editor.collaboration_hub() {
-            let range = if point.column() > 0 {
-                DisplayPoint::new(point.row(), point.column() - 1)..point
-            } else {
-                point..DisplayPoint::new(point.row(), point.column() + 1)
-            };
-            let range = snapshot
+        let Some(hub) = editor.collaboration_hub() else {
+            return;
+        };
+        let range = DisplayPoint::new(point.row(), point.column().saturating_sub(1))
+            ..DisplayPoint::new(point.row(), point.column() + 1);
+
+        let range = snapshot
+            .buffer_snapshot
+            .anchor_at(range.start.to_point(&snapshot.display_snapshot), Bias::Left)
+            ..snapshot
                 .buffer_snapshot
-                .anchor_at(range.start.to_point(&snapshot.display_snapshot), Bias::Left)
-                ..snapshot
-                    .buffer_snapshot
-                    .anchor_at(range.end.to_point(&snapshot.display_snapshot), Bias::Right);
-            for selection in snapshot.remote_selections_in_range(&range, hub, cx) {
-                let key = (selection.replica_id, selection.selection.id);
-                editor.hovered_selections.insert(key);
-            }
-        }
-        editor.hovered_selections.clear();
+                .anchor_at(range.end.to_point(&snapshot.display_snapshot), Bias::Right);
+
+        let Some(selection) = snapshot.remote_selections_in_range(&range, hub, cx).next() else {
+            editor.hovered_cursor.take();
+            return;
+        };
+        editor.hovered_cursor.replace(crate::HoveredCursor {
+            replica_id: selection.replica_id,
+            selection_id: selection.selection.id,
+        });
+        cx.notify()
     }
 
     fn paint_background(
@@ -1990,7 +1995,7 @@ impl EditorElement {
                     if Some(selection.peer_id) == editor.leader_peer_id {
                         continue;
                     }
-                    let id = (selection.replica_id, selection.selection.id);
+                    let is_shown = editor.recently_focused || editor.hovered_cursor.as_ref().is_some_and(|c| c.replica_id == selection.replica_id && c.selection_id == selection.selection.id);
 
                     remote_selections
                         .entry(selection.replica_id)
@@ -2003,7 +2008,7 @@ impl EditorElement {
                             &snapshot.display_snapshot,
                             false,
                             false,
-                            if editor.recently_focused || editor.hovered_selections.contains(&id) {
+                            if is_shown {
                                 selection.user_name
                             } else {
                                 None
@@ -3209,26 +3214,20 @@ impl Cursor {
             fill(bounds, self.color)
         };
 
-        cx.paint_quad(cursor);
-
-        if let Some(block_text) = &self.block_text {
-            block_text
-                .paint(self.origin + origin, self.line_height, cx)
-                .log_err();
-        }
-
         if let Some(name) = &self.cursor_name {
+            let text_size = self.line_height / 1.5;
+
             let name_origin = if name.is_top_row {
                 point(bounds.right() - px(1.), bounds.top())
             } else {
-                point(bounds.left(), bounds.top() - self.line_height / 4. - px(1.))
+                point(bounds.left(), bounds.top() - text_size / 2. - px(1.))
             };
             cx.with_z_index(name.z_index, |cx| {
                 div()
                     .bg(self.color)
-                    .text_size(self.line_height / 2.)
+                    .text_size(text_size)
                     .px_0p5()
-                    .line_height(self.line_height / 2. + px(1.))
+                    .line_height(text_size + px(2.))
                     .text_color(name.color)
                     .child(name.string.clone())
                     .into_any_element()
@@ -3238,6 +3237,14 @@ impl Cursor {
                         cx,
                     )
             })
+        }
+
+        cx.paint_quad(cursor);
+
+        if let Some(block_text) = &self.block_text {
+            block_text
+                .paint(self.origin + origin, self.line_height, cx)
+                .log_err();
         }
     }
 
