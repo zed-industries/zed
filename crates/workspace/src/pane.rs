@@ -239,6 +239,7 @@ impl Pane {
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
+            cx.on_focus(&focus_handle, Pane::focus_in),
             cx.on_focus_in(&focus_handle, Pane::focus_in),
             cx.on_focus_out(&focus_handle, Pane::focus_out),
         ];
