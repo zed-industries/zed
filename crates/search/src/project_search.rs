@@ -94,31 +94,29 @@ pub fn init(cx: &mut AppContext) {
                 search_bar.select_next_match(action, cx)
             },
         );
-        register_workspace_action(
-            workspace,
-            move |search_bar, action: &SelectPrevMatch, cx| {
-                search_bar.select_prev_match(action, cx)
-            },
-        );
 
-        register_workspace_action_for_dismissed_search(
-            workspace,
-            move |workspace, action: &NewSearch, cx| {
-                ProjectSearchView::new_search(workspace, action, cx)
-            },
-        );
-        register_workspace_action_for_dismissed_search(
-            workspace,
-            move |workspace, action: &DeploySearch, cx| {
-                ProjectSearchView::deploy_search(workspace, action, cx)
-            },
-        );
-        register_workspace_action_for_dismissed_search(
-            workspace,
-            move |workspace, action: &SearchInNew, cx| {
-                ProjectSearchView::search_in_new(workspace, action, cx)
-            },
-        );
+        // Only handle search_in_new if there is a search present
+        register_workspace_action_for_present_search(workspace, |workspace, action, cx| {
+            ProjectSearchView::search_in_new(workspace, action, cx)
+        });
+
+        // Both on present and dismissed search, we need to unconditionally handle those actions to focus from the editor.
+        workspace.register_action(move |workspace, action: &DeploySearch, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+            ProjectSearchView::deploy_search(workspace, action, cx);
+            cx.notify();
+        });
+        workspace.register_action(move |workspace, action: &NewSearch, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+            ProjectSearchView::new_search(workspace, action, cx);
+            cx.notify();
+        });
     })
     .detach();
 }
@@ -2057,7 +2055,7 @@ fn register_workspace_action<A: Action>(
     });
 }
 
-fn register_workspace_action_for_dismissed_search<A: Action>(
+fn register_workspace_action_for_present_search<A: Action>(
     workspace: &mut Workspace,
     callback: fn(&mut Workspace, &A, &mut ViewContext<Workspace>),
 ) {
@@ -2073,7 +2071,7 @@ fn register_workspace_action_for_dismissed_search<A: Action>(
             .toolbar()
             .read(cx)
             .item_of_type::<ProjectSearchBar>()
-            .map(|search_bar| search_bar.read(cx).active_project_search.is_none())
+            .map(|search_bar| search_bar.read(cx).active_project_search.is_some())
             .unwrap_or(false);
         if should_notify {
             callback(workspace, action, cx);
