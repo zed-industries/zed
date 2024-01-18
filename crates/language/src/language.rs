@@ -951,7 +951,7 @@ impl LanguageRegistry {
         if language.fake_adapter.is_some() {
             let task = cx.spawn(|cx| async move {
                 let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
-                let (server, mut fake_server) = lsp::LanguageServer::fake(
+                let (server, mut fake_server) = lsp::FakeLanguageServer::new(
                     fake_adapter.name.to_string(),
                     fake_adapter.capabilities.clone(),
                     cx.clone(),
