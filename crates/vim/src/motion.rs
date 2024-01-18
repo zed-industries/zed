@@ -1,11 +1,10 @@
 use editor::{
-    char_kind,
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
-    Bias, CharKind, DisplayPoint, ToOffset,
+    Bias, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
-use language::{Point, Selection, SelectionGoal};
+use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
 

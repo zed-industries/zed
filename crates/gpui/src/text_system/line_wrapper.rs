@@ -13,7 +13,7 @@ pub struct LineWrapper {
 impl LineWrapper {
     pub const MAX_INDENT: u32 = 256;
 
-    pub fn new(
+    pub(crate) fn new(
         font_id: FontId,
         font_size: Pixels,
         text_system: Arc<dyn PlatformTextSystem>,

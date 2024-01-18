@@ -4,7 +4,7 @@ use gpui::{
     FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
     View, ViewContext, WindowContext,
 };
-use std::{cmp, sync::Arc};
+use std::sync::Arc;
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
 use workspace::ModalView;
 
@@ -103,7 +103,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
-            let ix = cmp::min(index + 1, count - 1);
+            let ix = if index == count - 1 { 0 } else { index + 1 };
             self.delegate.set_selected_index(ix, cx);
             self.scroll_handle.scroll_to_item(ix);
             cx.notify();
@@ -114,7 +114,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
-            let ix = index.saturating_sub(1);
+            let ix = if index == 0 { count - 1 } else { index - 1 };
             self.delegate.set_selected_index(ix, cx);
             self.scroll_handle.scroll_to_item(ix);
             cx.notify();

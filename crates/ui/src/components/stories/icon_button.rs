@@ -113,7 +113,7 @@ impl Render for IconButtonStory {
 
         StoryContainer::new(
             "Icon Button",
-            "crates/ui2/src/components/stories/icon_button.rs",
+            "crates/ui/src/components/stories/icon_button.rs",
         )
         .child(StorySection::new().children(buttons))
         .child(

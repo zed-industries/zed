@@ -616,8 +616,8 @@ impl Workspace {
         let modal_layer = cx.new_view(|_| ModalLayer::new());
 
         let mut active_call = None;
-        if cx.has_global::<Model<ActiveCall>>() {
-            let call = cx.global::<Model<ActiveCall>>().clone();
+        if let Some(call) = cx.try_global::<Model<ActiveCall>>() {
+            let call = call.clone();
             let mut subscriptions = Vec::new();
             subscriptions.push(cx.subscribe(&call, Self::on_active_call_event));
             active_call = Some((call, subscriptions));
@@ -2617,7 +2617,7 @@ impl Workspace {
 
                             // If the item belongs to a particular project, then it should
                             // only be included if this project is shared, and the follower
-                            // is in thie project.
+                            // is in the project.
                             //
                             // Some items, like channel notes, do not belong to a particular
                             // project, so they should be included regardless of whether the
@@ -3686,11 +3686,8 @@ impl WorkspaceStore {
         update: proto::update_followers::Variant,
         cx: &AppContext,
     ) -> Option<()> {
-        if !cx.has_global::<Model<ActiveCall>>() {
-            return None;
-        }
-
-        let room_id = ActiveCall::global(cx).read(cx).room()?.read(cx).id();
+        let active_call = cx.try_global::<Model<ActiveCall>>()?;
+        let room_id = active_call.read(cx).room()?.read(cx).id();
         let follower_ids: Vec<_> = self
             .followers
             .iter()

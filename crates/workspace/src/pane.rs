@@ -195,7 +195,7 @@ struct NavHistoryState {
     next_timestamp: Arc<AtomicUsize>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum NavigationMode {
     Normal,
     GoingBack,
@@ -1462,7 +1462,7 @@ impl Pane {
                                 .icon_size(IconSize::Small)
                                 .on_click({
                                     let view = cx.view().clone();
-                                    move |_, cx| view.update(cx, Self::navigate_backward)
+                                    move |_, cx| view.update(cx, Self::navigate_forward)
                                 })
                                 .disabled(!self.can_navigate_forward())
                                 .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx)),
@@ -1485,7 +1485,7 @@ impl Pane {
             .child(
                 div()
                     .min_w_6()
-                    // HACK: This empty child is currently necessary to force the drop traget to appear
+                    // HACK: This empty child is currently necessary to force the drop target to appear
                     // despite us setting a min width above.
                     .child("")
                     .h_full()

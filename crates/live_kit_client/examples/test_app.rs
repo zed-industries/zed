@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use futures::StreamExt;
 use gpui::{actions, KeyBinding, Menu, MenuItem};
@@ -12,7 +12,7 @@ actions!(live_kit_client, [Quit]);
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui::App::production(Arc::new(())).run(|cx| {
+    gpui::App::new().run(|cx| {
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 

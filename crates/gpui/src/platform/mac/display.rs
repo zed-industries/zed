@@ -11,7 +11,6 @@ use core_graphics::{
     geometry::{CGPoint, CGRect, CGSize},
 };
 use objc::{msg_send, sel, sel_impl};
-use std::any::Any;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -152,10 +151,6 @@ impl PlatformDisplay for MacDisplay {
             bytes.byte14,
             bytes.byte15,
         ]))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn bounds(&self) -> Bounds<GlobalPixels> {

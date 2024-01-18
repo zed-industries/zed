@@ -584,7 +584,7 @@ impl LanguageServer {
         Ok(Arc::new(self))
     }
 
-    /// Sends a shutdown request to the language server process and prepares the `LanguageServer` to be dropped.
+    /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
@@ -645,7 +645,7 @@ impl LanguageServer {
         self.on_custom_request(T::METHOD, f)
     }
 
-    /// Register a handler to inspect all language server process stdio.
+    /// Registers a handler to inspect all language server process stdio.
     #[must_use]
     pub fn on_io<F>(&self, f: F) -> Subscription
     where
@@ -659,17 +659,17 @@ impl LanguageServer {
         }
     }
 
-    /// Removes a request handler registers via [Self::on_request].
+    /// Removes a request handler registers via [`Self::on_request`].
     pub fn remove_request_handler<T: request::Request>(&self) {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
-    /// Removes a notification handler registers via [Self::on_notification].
+    /// Removes a notification handler registers via [`Self::on_notification`].
     pub fn remove_notification_handler<T: notification::Notification>(&self) {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
-    /// Checks if a notification handler has been registered via [Self::on_notification].
+    /// Checks if a notification handler has been registered via [`Self::on_notification`].
     pub fn has_notification_handler<T: notification::Notification>(&self) -> bool {
         self.notification_handlers.lock().contains_key(T::METHOD)
     }
@@ -873,7 +873,7 @@ impl LanguageServer {
             futures::select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
-                    log::trace!("Took {elapsed:?} to recieve response to {method:?} id {id}");
+                    log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     response?
                 }
 
@@ -972,30 +972,18 @@ pub struct FakeLanguageServer {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl LanguageServer {
-    pub fn full_capabilities() -> ServerCapabilities {
-        ServerCapabilities {
-            document_highlight_provider: Some(OneOf::Left(true)),
-            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-            document_formatting_provider: Some(OneOf::Left(true)),
-            document_range_formatting_provider: Some(OneOf::Left(true)),
-            definition_provider: Some(OneOf::Left(true)),
-            type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-            ..Default::default()
-        }
-    }
-
+impl FakeLanguageServer {
     /// Construct a fake language server.
-    pub fn fake(
+    pub fn new(
         name: String,
         capabilities: ServerCapabilities,
         cx: AsyncAppContext,
-    ) -> (Self, FakeLanguageServer) {
+    ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
-        let server = Self::new_internal(
+        let server = LanguageServer::new_internal(
             LanguageServerId(0),
             stdin_writer,
             stdout_reader,
@@ -1008,7 +996,7 @@ impl LanguageServer {
             |_| {},
         );
         let fake = FakeLanguageServer {
-            server: Arc::new(Self::new_internal(
+            server: Arc::new(LanguageServer::new_internal(
                 LanguageServerId(0),
                 stdout_writer,
                 stdin_reader,
@@ -1054,13 +1042,28 @@ impl LanguageServer {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+impl LanguageServer {
+    pub fn full_capabilities() -> ServerCapabilities {
+        ServerCapabilities {
+            document_highlight_provider: Some(OneOf::Left(true)),
+            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+            document_formatting_provider: Some(OneOf::Left(true)),
+            document_range_formatting_provider: Some(OneOf::Left(true)),
+            definition_provider: Some(OneOf::Left(true)),
+            type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
-    /// See [LanguageServer::notify]
+    /// See [`LanguageServer::notify`].
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
-    /// See [LanguageServer::request]
+    /// See [`LanguageServer::request`].
     pub async fn request<T>(&self, params: T::Params) -> Result<T::Result>
     where
         T: request::Request,
@@ -1070,7 +1073,7 @@ impl FakeLanguageServer {
         self.server.request::<T>(params).await
     }
 
-    /// Attempts [try_receive_notification], unwrapping if it has not received the specified type yet.
+    /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
         self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
@@ -1188,7 +1191,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         let (server, mut fake) =
-            LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());
+            FakeLanguageServer::new("the-lsp".to_string(), Default::default(), cx.to_async());
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();

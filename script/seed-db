@@ -2,8 +2,4 @@
 set -e
 
 cd crates/collab
-
-# Export contents of .env.toml
-eval "$(cargo run --quiet --bin dotenv)"
-
 cargo run --quiet --package=collab --features seed-support --bin seed -- $@

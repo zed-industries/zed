@@ -85,7 +85,7 @@ mod tests {
         assert_eq!(
             search_history.current(),
             None,
-            "No current selection should be set fo the default search history"
+            "No current selection should be set for the default search history"
         );
 
         search_history.add("rust".to_string());

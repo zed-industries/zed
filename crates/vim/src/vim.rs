@@ -332,7 +332,7 @@ impl Vim {
         }
     }
 
-    /// Explicitly record one action (equiavlent to start_recording and stop_recording)
+    /// Explicitly record one action (equivalents to start_recording and stop_recording)
     pub fn record_current_action(&mut self, cx: &mut WindowContext) {
         self.start_recording(cx);
         self.stop_recording();

@@ -150,11 +150,9 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
-        let release_channel = if cx.has_global::<ReleaseChannel>() {
-            Some(cx.global::<ReleaseChannel>().display_name())
-        } else {
-            None
-        };
+        let release_channel = cx
+            .try_global::<ReleaseChannel>()
+            .map(|release_channel| release_channel.display_name());
 
         TelemetrySettings::register(cx);
 

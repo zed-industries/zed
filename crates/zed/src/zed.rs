@@ -730,7 +730,7 @@ fn open_bundled_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
+    use editor::{scroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
         VisualTestContext, WindowHandle,
@@ -1809,9 +1809,9 @@ mod tests {
                 assert!(workspace.active_item(cx).is_none());
             })
             .unwrap();
-        editor_1.assert_dropped();
-        editor_2.assert_dropped();
-        buffer.assert_dropped();
+        editor_1.assert_released();
+        editor_2.assert_released();
+        buffer.assert_released();
     }
 
     #[gpui::test]

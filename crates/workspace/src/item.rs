@@ -586,13 +586,9 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
-        if cx.has_global::<FollowableItemBuilders>() {
-            let builders = cx.global::<FollowableItemBuilders>();
-            let item = self.to_any();
-            Some(builders.get(&item.entity_type())?.1(&item))
-        } else {
-            None
-        }
+        let builders = cx.try_global::<FollowableItemBuilders>()?;
+        let item = self.to_any();
+        Some(builders.get(&item.entity_type())?.1(&item))
     }
 
     fn on_release(

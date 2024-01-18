@@ -1,7 +1,7 @@
 use crate::sign_in::CopilotCodeVerification;
 use anyhow::Result;
 use copilot::{Copilot, SignOut, Status};
-use editor::{scroll::autoscroll::Autoscroll, Editor};
+use editor::{scroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
     div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,

@@ -28,11 +28,10 @@ impl ModeIndicator {
 
     fn update_mode(&mut self, cx: &mut ViewContext<Self>) {
         // Vim doesn't exist in some tests
-        if !cx.has_global::<Vim>() {
+        let Some(vim) = cx.try_global::<Vim>() else {
             return;
-        }
+        };
 
-        let vim = Vim::read(cx);
         if vim.enabled {
             self.mode = Some(vim.state().mode);
         } else {

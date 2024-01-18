@@ -1,4 +1,4 @@
-use editor::scroll::autoscroll::Autoscroll;
+use editor::scroll::Autoscroll;
 use gpui::ViewContext;
 use language::{Bias, Point};
 use workspace::Workspace;

@@ -23,7 +23,7 @@ env:
 
 jobs:
     style:
-        name: Check formatting and Clippy lints
+        name: Check formatting, Clippy lints, and spelling
         runs-on:
             - self-hosted
             - test
@@ -37,6 +37,13 @@ jobs:
 
             - name: Set up default .cargo/config.toml
               run: cp ./.cargo/ci-config.toml ~/.cargo/config.toml
+
+            - name: Check spelling
+              run: |
+                  if ! which typos > /dev/null; then
+                    cargo install typos-cli
+                  fi
+                  typos
 
             - name: Run style checks
               uses: ./.github/actions/check_style

@@ -1,22 +1,46 @@
 # Local Collaboration
 
-## Setting up the local collaboration server
+First, make sure you've installed Zed's [backend dependencies](/developing_zed__building_zed.html#backend-dependencies).
 
-### Setting up for the first time?
+## Database setup
 
-1. Make sure you have livekit installed (`brew install livekit`)
-1. Install [Postgres](https://postgresapp.com) and run it.
-1. Then, from the root of the repo, run `script/bootstrap`.
+Before you can run the `collab` server locally, you'll need to set up a `zed` Postgres database.
 
-### Have a db that is out of date? / Need to migrate?
+```
+script/bootstrap
+```
 
-1. Make sure you have livekit installed (`brew install livekit`)
-1. Try `cd crates/collab && cargo run -- migrate` from the root of the repo.
-1. Run `script/seed-db`
+This script will set up the `zed` Postgres database, and populate it with some users. It requires internet access, because it fetches some users from the GitHub API.
 
-## Testing collab locally
+The script will create several *admin* users, who you'll sign in as by default when developing locally. The GitHub logins for these default admin users are specified in this file:
 
-1. Run `foreman start` from the root of the repo.
-1. In another terminal run `script/zed-local`.
-1. Two copies of Zed will open. Add yourself as a contact in the one that is not you.
-1. Start a collaboration session as normal with any open project.
+```
+cat crates/collab/.admins.default.json
+```
+
+To use a different set of admin users, you can create a file called `.admins.json` in the same directory:
+
+```
+cat > crates/collab/.admins.json <<JSON
+[
+  "your-github-login",
+  "another-github-login"
+]
+JSON
+```
+
+## Testing collaborative features locally
+
+In one terminal, run Zed's collaboration server and the `livekit` dev server:
+
+```
+foreman start
+```
+
+In a second terminal, run two or more instances of Zed.
+
+```
+script/zed-local -2
+```
+
+This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.

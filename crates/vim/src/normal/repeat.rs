@@ -12,7 +12,7 @@ actions!(vim, [Repeat, EndRepeat]);
 
 fn should_replay(action: &Box<dyn Action>) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::ShowCharacterPalette.partial_eq(&**action) {
+    if editor::actions::ShowCharacterPalette.partial_eq(&**action) {
         return false;
     }
     true
@@ -152,7 +152,7 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
 
         let mut count = Vim::read(cx).workspace_state.recorded_count.unwrap_or(1);
 
-        // if we came from insert mode we're just doing repititions 2 onwards.
+        // if we came from insert mode we're just doing repetitions 2 onwards.
         if from_insert_mode {
             count -= 1;
             new_actions[0] = actions[0].clone();

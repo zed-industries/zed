@@ -93,7 +93,9 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|_, action: &Check, cx| check(action, cx));
 
-        workspace.register_action(|_, action, cx| view_release_notes(action, cx));
+        workspace.register_action(|_, action, cx| {
+            view_release_notes(action, cx);
+        });
 
         // @nate - code to trigger update notification on launch
         // todo!("remove this when Nate is done")
@@ -140,24 +142,23 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
     }
 }
 
-pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
-    if let Some(auto_updater) = AutoUpdater::get(cx) {
+pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<()> {
+    let auto_updater = AutoUpdater::get(cx)?;
+    let release_channel = cx.try_global::<ReleaseChannel>()?;
+
+    if matches!(
+        release_channel,
+        ReleaseChannel::Stable | ReleaseChannel::Preview
+    ) {
         let auto_updater = auto_updater.read(cx);
         let server_url = &auto_updater.server_url;
+        let release_channel = release_channel.dev_name();
         let current_version = auto_updater.current_version;
-        if cx.has_global::<ReleaseChannel>() {
-            match cx.global::<ReleaseChannel>() {
-                ReleaseChannel::Dev => {}
-                ReleaseChannel::Nightly => {}
-                ReleaseChannel::Preview => {
-                    cx.open_url(&format!("{server_url}/releases/preview/{current_version}"))
-                }
-                ReleaseChannel::Stable => {
-                    cx.open_url(&format!("{server_url}/releases/stable/{current_version}"))
-                }
-            }
-        }
+        let url = format!("{server_url}/releases/{release_channel}/{current_version}");
+        cx.open_url(&url);
     }
+
+    None
 }
 
 pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
@@ -257,11 +258,13 @@ impl AutoUpdater {
             "{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg"
         );
         cx.update(|cx| {
-            if cx.has_global::<ReleaseChannel>() {
-                if let Some(param) = cx.global::<ReleaseChannel>().release_query_param() {
-                    url_string += "&";
-                    url_string += param;
-                }
+            if let Some(param) = cx
+                .try_global::<ReleaseChannel>()
+                .map(|release_channel| release_channel.release_query_param())
+                .flatten()
+            {
+                url_string += "&";
+                url_string += param;
             }
         })?;
 
@@ -313,8 +316,8 @@ impl AutoUpdater {
         let (installation_id, release_channel, telemetry) = cx.update(|cx| {
             let installation_id = cx.global::<Arc<Client>>().telemetry().installation_id();
             let release_channel = cx
-                .has_global::<ReleaseChannel>()
-                .then(|| cx.global::<ReleaseChannel>().display_name());
+                .try_global::<ReleaseChannel>()
+                .map(|release_channel| release_channel.display_name());
             let telemetry = TelemetrySettings::get_global(cx).metrics;
 
             (installation_id, release_channel, telemetry)

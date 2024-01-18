@@ -175,7 +175,7 @@ impl Editor {
         true
     }
 
-    pub fn autoscroll_horizontally(
+    pub(crate) fn autoscroll_horizontally(
         &mut self,
         start_row: u32,
         viewport_width: Pixels,
