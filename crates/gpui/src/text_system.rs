@@ -13,7 +13,7 @@ use crate::{
     SharedString, Size, UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::{FxHashMap, FxHashSet};
+use collections::{BTreeSet, FxHashMap, FxHashSet};
 use core::fmt;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -66,15 +66,18 @@ impl TextSystem {
     }
 
     pub fn all_font_names(&self) -> Vec<String> {
-        let mut families = self.platform_text_system.all_font_names();
-        families.append(
-            &mut self
-                .fallback_font_stack
+        let mut names: BTreeSet<_> = self
+            .platform_text_system
+            .all_font_names()
+            .into_iter()
+            .collect();
+        names.extend(self.platform_text_system.all_font_families().into_iter());
+        names.extend(
+            self.fallback_font_stack
                 .iter()
-                .map(|font| font.family.to_string())
-                .collect(),
+                .map(|font| font.family.to_string()),
         );
-        families
+        names.into_iter().collect()
     }
     pub fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.platform_text_system.add_fonts(fonts)

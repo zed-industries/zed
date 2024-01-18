@@ -972,30 +972,18 @@ pub struct FakeLanguageServer {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl LanguageServer {
-    pub fn full_capabilities() -> ServerCapabilities {
-        ServerCapabilities {
-            document_highlight_provider: Some(OneOf::Left(true)),
-            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-            document_formatting_provider: Some(OneOf::Left(true)),
-            document_range_formatting_provider: Some(OneOf::Left(true)),
-            definition_provider: Some(OneOf::Left(true)),
-            type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-            ..Default::default()
-        }
-    }
-
+impl FakeLanguageServer {
     /// Construct a fake language server.
-    pub fn fake(
+    pub fn new(
         name: String,
         capabilities: ServerCapabilities,
         cx: AsyncAppContext,
-    ) -> (Self, FakeLanguageServer) {
+    ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
-        let server = Self::new_internal(
+        let server = LanguageServer::new_internal(
             LanguageServerId(0),
             stdin_writer,
             stdout_reader,
@@ -1008,7 +996,7 @@ impl LanguageServer {
             |_| {},
         );
         let fake = FakeLanguageServer {
-            server: Arc::new(Self::new_internal(
+            server: Arc::new(LanguageServer::new_internal(
                 LanguageServerId(0),
                 stdout_writer,
                 stdin_reader,
@@ -1050,6 +1038,21 @@ impl LanguageServer {
         });
 
         (server, fake)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LanguageServer {
+    pub fn full_capabilities() -> ServerCapabilities {
+        ServerCapabilities {
+            document_highlight_provider: Some(OneOf::Left(true)),
+            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+            document_formatting_provider: Some(OneOf::Left(true)),
+            document_range_formatting_provider: Some(OneOf::Left(true)),
+            definition_provider: Some(OneOf::Left(true)),
+            type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+            ..Default::default()
+        }
     }
 }
 
@@ -1188,7 +1191,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         let (server, mut fake) =
-            LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());
+            FakeLanguageServer::new("the-lsp".to_string(), Default::default(), cx.to_async());
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();

@@ -308,11 +308,7 @@ impl EventEmitter<Event> for Copilot {}
 
 impl Copilot {
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
-        if cx.has_global::<Model<Self>>() {
-            Some(cx.global::<Model<Self>>().clone())
-        } else {
-            None
-        }
+        cx.try_global::<Model<Self>>().map(|model| model.clone())
     }
 
     fn start(
@@ -373,10 +369,11 @@ impl Copilot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Model<Self>, lsp::FakeLanguageServer) {
+        use lsp::FakeLanguageServer;
         use node_runtime::FakeNodeRuntime;
 
         let (server, fake_server) =
-            LanguageServer::fake("copilot".into(), Default::default(), cx.to_async());
+            FakeLanguageServer::new("copilot".into(), Default::default(), cx.to_async());
         let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.new_model(|cx| Self {

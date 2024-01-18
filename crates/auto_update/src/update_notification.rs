@@ -40,7 +40,9 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(|_, cx| crate::view_release_notes(&Default::default(), cx)),
+                    .on_click(|_, cx| {
+                        crate::view_release_notes(&Default::default(), cx);
+                    }),
             )
     }
 }
