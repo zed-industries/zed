@@ -76,7 +76,7 @@ impl Styles for Div {}
 
 #[derive(IntoElement)]
 struct ZIndexExample {
-    z_index: u8,
+    z_index: u16,
 }
 
 impl RenderOnce for ZIndexExample {
@@ -166,7 +166,7 @@ impl RenderOnce for ZIndexExample {
 }
 
 impl ZIndexExample {
-    pub fn new(z_index: u8) -> Self {
+    pub fn new(z_index: u16) -> Self {
         Self { z_index }
     }
 }

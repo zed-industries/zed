@@ -47,7 +47,7 @@ use std::{
     os::unix::prelude::AsRawFd,
     path::PathBuf,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use thiserror::Error;
 
@@ -385,8 +385,6 @@ impl TerminalBuilder {
             last_content: Default::default(),
             last_mouse: None,
             matches: Vec::new(),
-            last_synced: Instant::now(),
-            sync_task: None,
             selection_head: None,
             shell_fd: fd as u32,
             shell_pid,
@@ -542,8 +540,6 @@ pub struct Terminal {
     last_mouse_position: Option<Point<Pixels>>,
     pub matches: Vec<RangeInclusive<AlacPoint>>,
     pub last_content: TerminalContent,
-    last_synced: Instant,
-    sync_task: Option<Task<()>>,
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
     shell_pid: u32,
@@ -977,40 +973,15 @@ impl Terminal {
         self.input(paste_text);
     }
 
-    pub fn try_sync(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn sync(&mut self, cx: &mut ModelContext<Self>) {
         let term = self.term.clone();
-
-        let mut terminal = if let Some(term) = term.try_lock_unfair() {
-            term
-        } else if self.last_synced.elapsed().as_secs_f32() > 0.25 {
-            term.lock_unfair() // It's been too long, force block
-        } else if let None = self.sync_task {
-            //Skip this frame
-            let delay = cx.background_executor().timer(Duration::from_millis(16));
-            self.sync_task = Some(cx.spawn(|weak_handle, mut cx| async move {
-                delay.await;
-                if let Some(handle) = weak_handle.upgrade() {
-                    handle
-                        .update(&mut cx, |terminal, cx| {
-                            terminal.sync_task.take();
-                            cx.notify();
-                        })
-                        .ok();
-                }
-            }));
-            return;
-        } else {
-            //No lock and delayed rendering already scheduled, nothing to do
-            return;
-        };
-
+        let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, cx)
         }
 
         self.last_content = Self::make_content(&terminal, &self.last_content);
-        self.last_synced = Instant::now();
     }
 
     fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
