@@ -71,10 +71,10 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
     }
 }
 
-pub struct FoldMapWriter<'a>(&'a mut FoldMap);
+pub(crate) struct FoldMapWriter<'a>(&'a mut FoldMap);
 
 impl<'a> FoldMapWriter<'a> {
-    pub fn fold<T: ToOffset>(
+    pub(crate) fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
@@ -129,7 +129,7 @@ impl<'a> FoldMapWriter<'a> {
         (self.0.snapshot.clone(), edits)
     }
 
-    pub fn unfold<T: ToOffset>(
+    pub(crate) fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
@@ -178,14 +178,14 @@ impl<'a> FoldMapWriter<'a> {
     }
 }
 
-pub struct FoldMap {
+pub(crate) struct FoldMap {
     snapshot: FoldSnapshot,
     ellipses_color: Option<Hsla>,
     next_fold_id: FoldId,
 }
 
 impl FoldMap {
-    pub fn new(inlay_snapshot: InlaySnapshot) -> (Self, FoldSnapshot) {
+    pub(crate) fn new(inlay_snapshot: InlaySnapshot) -> (Self, FoldSnapshot) {
         let this = Self {
             snapshot: FoldSnapshot {
                 folds: Default::default(),

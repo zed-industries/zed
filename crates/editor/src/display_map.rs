@@ -1,3 +1,22 @@
+//! This module defines where the text should be displayed in an [`Editor`][Editor].
+//!
+//! Not literally though - rendering, layout and all that jazz is a responsibility of [`EditorElement`][EditorElement].
+//! Instead, [`DisplayMap`] decides where Inlays/Inlay hints are displayed, when
+//! to apply a soft wrap, where to add fold indicators, whether there are any tabs in the buffer that
+//! we display as spaces and where to display custom blocks (like diagnostics).
+//! Seems like a lot? That's because it is. [`DisplayMap`] is conceptually made up
+//! of several smaller structures that form a hierarchy (starting at the bottom):
+//! - [`InlayMap`] that decides where the [`Inlay`]s should be displayed.
+//! - [`FoldMap`] that decides where the fold indicators should be; it also tracks parts of a source file that are currently folded.
+//! - [`TabMap`] that keeps track of hard tabs in a buffer.
+//! - [`WrapMap`] that handles soft wrapping.
+//! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
+//! - [`DisplayMap`] that adds background highlights to the regions of text.
+//! Each one of those builds on top of preceding map.
+//!
+//! [Editor]: crate::Editor
+//! [EditorElement]: crate::element::EditorElement
+
 mod block_map;
 mod fold_map;
 mod inlay_map;
@@ -969,24 +988,6 @@ impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
-}
-
-pub fn next_rows(display_row: u32, display_map: &DisplaySnapshot) -> impl Iterator<Item = u32> {
-    let max_row = display_map.max_point().row();
-    let start_row = display_row + 1;
-    let mut current = None;
-    std::iter::from_fn(move || {
-        if current == None {
-            current = Some(start_row);
-        } else {
-            current = Some(current.unwrap() + 1)
-        }
-        if current.unwrap() > max_row {
-            None
-        } else {
-            current
-        }
-    })
 }
 
 #[cfg(test)]
