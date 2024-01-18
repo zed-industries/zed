@@ -7,7 +7,10 @@ use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
-use gpui::{AppContext, BackgroundExecutor, Model, TestAppContext};
+use gpui::{
+    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
+    TestAppContext,
+};
 use language::{
     language_settings::{AllLanguageSettings, Formatter},
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
@@ -5902,4 +5905,43 @@ async fn test_join_call_after_screen_was_shared(
             1
         );
     });
+}
+
+#[gpui::test]
+async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
+    let mut server = TestServer::start(cx.executor().clone()).await;
+    let client_a = server.create_client(cx, "user_a").await;
+    let (_workspace_a, cx) = client_a.build_test_workspace(cx).await;
+
+    cx.simulate_resize(size(px(300.), px(300.)));
+
+    cx.simulate_keystrokes("cmd-n cmd-n cmd-n");
+    cx.update(|cx| cx.refresh());
+
+    let tab_bounds = cx.debug_bounds("TAB-2").unwrap();
+    let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
+
+    assert!(
+        tab_bounds.intersects(&new_tab_button_bounds),
+        "Tab should overlap with the new tab button, if this is failing check if there's been a redesign!"
+    );
+
+    cx.simulate_event(MouseDownEvent {
+        button: MouseButton::Right,
+        position: new_tab_button_bounds.center(),
+        modifiers: Modifiers::default(),
+        click_count: 1,
+    });
+
+    // regression test that the right click menu for tabs does not open.
+    assert!(cx.debug_bounds("MENU_ITEM-Close").is_none());
+
+    let tab_bounds = cx.debug_bounds("TAB-1").unwrap();
+    cx.simulate_event(MouseDownEvent {
+        button: MouseButton::Right,
+        position: tab_bounds.center(),
+        modifiers: Modifiers::default(),
+        click_count: 1,
+    });
+    assert!(cx.debug_bounds("MENU_ITEM-Close").is_some());
 }
