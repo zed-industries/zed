@@ -1,4 +1,5 @@
 [toolchain]
 channel = "1.75"
-components = [ "rustfmt" ]
+profile = "minimal"
+components = [ "rustfmt", "clippy" ]
 targets = [ "x86_64-apple-darwin", "aarch64-apple-darwin", "wasm32-wasi" ]

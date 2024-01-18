@@ -34,7 +34,7 @@ Rhai actually exposes a pretty nice interface for working with native Rust types
 
 > **Note**: Rhai uses strings, but I wonder if you could get away with something more compact using `TypeIds`. Maybe not, given that `TypeId`s are not deterministic across builds, and we'd need matching IDs both host-side and guest side.
 
-In Rhai, we can alternatively use the method `Engine::register_type_with_name::<T: Variant + Clone>(name: &str)` if we have a different type name host-side (in Rust) and guest-side (in Rhai). 
+In Rhai, we can alternatively use the method `Engine::register_type_with_name::<T: Variant + Clone>(name: &str)` if we have a different type name host-side (in Rust) and guest-side (in Rhai).
 
 With respect to Wasm plugins, I think an interface like this is fairly important, because we don't know whether the original plugin was written in Rust. (This may not be true now, because we write all the plugins Zed uses, but once we allow packaging and shipping plugins, it's important to maintain a consistent interface, because even Rust changes over time.)
 
@@ -72,15 +72,15 @@ Union::Variant(v, ..) => (*v).as_boxed_any().downcast().ok().map(|x| *x),
 Now Rhai can do this because it's implemented in Rust. In other words, unlike Wasm, Rhai scripts can, indirectly, hold references to places in host memory. For us to implement something like this for Wasm plugins, we'd have to keep track of a "`ResourcePool`"—alive for the duration of each function call—that we can check rust types into and out of.
 
  I think I've got a handle on how Rhai works now, so let's stop talking about Rhai and discuss what this opaque object system would look like if we implemented it in Rust.
- 
+
  # Design Sketch
- 
+
 First things first, we'd have to generalize the arguments we can pass to and return from functions host-side. Currently, we support anything that's `serde`able. We'd have to create a new trait, say `Value`, that has blanket implementations for both `serde` and `Clone` (or something like this; if a type is both `serde` and `clone`, we'd have to figure out a way to disambiguate).
- 
- We'd also create a `ResourcePool` struct that essentially is a `Vec` of `Box<dyn Any>`. When calling a function, all `Value` arguments that are resources (e.g. `Clone` instead of `serde`) would be typecasted to `dyn Any` and stored in the `ResourcePool`. 
- 
+
+ We'd also create a `ResourcePool` struct that essentially is a `Vec` of `Box<dyn Any>`. When calling a function, all `Value` arguments that are resources (e.g. `Clone` instead of `serde`) would be typecasted to `dyn Any` and stored in the `ResourcePool`.
+
  We'd probably also need a `Resource` trait that defines an associated handle for a resource. Something like this:
- 
+
  ```rust
  pub trait Resource {
     type Handle: Serialize + DeserializeOwned;
@@ -88,24 +88,24 @@ First things first, we'd have to generalize the arguments we can pass to and ret
     fn index(handle: Self) -> u32;
  }
  ```
- 
+
  Where a handle is just a dead-simple wrapper around a `u32`:
- 
- ```rust 
+
+ ```rust
  #[derive(Serialize, Deserialize)]
  pub struct CoolHandle(u32);
  ```
- 
+
  It's important that this handle be accessible *both* host-side and plugin side. I don't know if this means that we have another crate, like `plugin_handles`, that contains a bunch of u32 wrappers, or something else. Because a `Resource::Handle` is just a u32, it's trivially `serde`, and can cross the ABI boundary.
- 
- So when we add each `T: Resource` to the `ResourcePool`, the resource pool typecasts it to `Any`, appends it to the `Vec`, and returns the associated `Resource::Handle`. This handle is what we pass through to Wasm. 
- 
+
+ So when we add each `T: Resource` to the `ResourcePool`, the resource pool typecasts it to `Any`, appends it to the `Vec`, and returns the associated `Resource::Handle`. This handle is what we pass through to Wasm.
+
  ```rust
  // Implementations and attributes omitted
  pub struct Rope { ... };
  pub struct RopeHandle(u32);
  impl Resource for Arc<RwLock<Rope>> { ... }
- 
+
  let builder: PluginBuilder = ...;
  let builder = builder
     .host_fn_async(
@@ -127,7 +127,7 @@ use plugin_handles::RopeHandle;
 pub fn append(rope: RopeHandle, string: &str);
 ```
 
-This allows us to perform an operation on a `Rope`, but how do we get a `RopeHandle` into a plugin? Well, as plugins, we can only acquire resources to handles we're given, so we'd need to expose a function that takes a handle. 
+This allows us to perform an operation on a `Rope`, but how do we get a `RopeHandle` into a plugin? Well, as plugins, we can only acquire resources to handles we're given, so we'd need to expose a function that takes a handle.
 
 To illustrate that point, here's an example. First, we'd define a plugin-side function as follows:
 

@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
-use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, Task};
+use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, SharedUrl, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
@@ -19,7 +19,7 @@ pub struct ParticipantIndex(pub u32);
 pub struct User {
     pub id: UserId,
     pub github_login: String,
-    pub avatar_uri: SharedString,
+    pub avatar_uri: SharedUrl,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

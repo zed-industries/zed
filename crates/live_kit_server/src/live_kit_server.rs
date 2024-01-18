@@ -1,3 +1,3 @@
 pub mod api;
-mod proto;
+pub mod proto;
 pub mod token;

@@ -275,11 +275,8 @@ pub struct SearchResult {
 
 impl SemanticIndex {
     pub fn global(cx: &mut AppContext) -> Option<Model<SemanticIndex>> {
-        if cx.has_global::<Model<Self>>() {
-            Some(cx.global::<Model<SemanticIndex>>().clone())
-        } else {
-            None
-        }
+        cx.try_global::<Model<Self>>()
+            .map(|semantic_index| semantic_index.clone())
     }
 
     pub fn authenticate(&mut self, cx: &mut AppContext) -> bool {
@@ -1248,7 +1245,7 @@ impl SemanticIndex {
 impl Drop for JobHandle {
     fn drop(&mut self) {
         if let Some(inner) = Arc::get_mut(&mut self.tx) {
-            // This is the last instance of the JobHandle (regardless of it's origin - whether it was cloned or not)
+            // This is the last instance of the JobHandle (regardless of its origin - whether it was cloned or not)
             if let Some(tx) = inner.upgrade() {
                 let mut tx = tx.lock();
                 *tx.borrow_mut() -= 1;

@@ -9,6 +9,8 @@ path = "src/collab_ui.rs"
 doctest = false
 
 [features]
+default = []
+stories = ["dep:story"]
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -44,6 +46,7 @@ project = { path = "../project" }
 recent_projects = { path = "../recent_projects" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
+story = { path = "../story", optional = true }
 feature_flags = { path = "../feature_flags"}
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }

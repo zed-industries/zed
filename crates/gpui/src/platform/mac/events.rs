@@ -1,7 +1,7 @@
 use crate::{
-    point, px, InputEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    point, px, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
+    PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
@@ -82,7 +82,7 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
     }
 }
 
-impl InputEvent {
+impl PlatformInput {
     pub unsafe fn from_native(native_event: id, window_height: Option<Pixels>) -> Option<Self> {
         let event_type = native_event.eventType();
 

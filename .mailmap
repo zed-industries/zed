@@ -1,0 +1,39 @@
+# Canonical author names and emails.
+#
+# Use this to provide a canonical name and email for an author when their
+# name is not always written the same way and/or they have commits authored
+# under different email addresses.
+#
+# Reference: https://git-scm.com/docs/gitmailmap
+
+# Keep these entries sorted alphabetically.
+# In Zed: `editor: sort lines case sensitive`
+
+Antonio Scandurra <me@as-cii.com>
+Antonio Scandurra <me@as-cii.com> <antonio@zed.dev>
+Joseph T. Lyons <JosephTLyons@gmail.com>
+Joseph T. Lyons <JosephTLyons@gmail.com> <JosephTLyons@users.noreply.github.com>
+Julia <floc@unpromptedtirade.com>
+Julia <floc@unpromptedtirade.com> <30666851+ForLoveOfCats@users.noreply.github.com>
+Kaylee Simmons <kay@the-simmons.net>
+Kaylee Simmons <kay@the-simmons.net> <kay@zed.dev>
+Kaylee Simmons <kay@the-simmons.net> <keith@the-simmons.net>
+Kaylee Simmons <kay@the-simmons.net> <keith@zed.dev>
+Kirill Bulatov <kirill@zed.dev>
+Kirill Bulatov <kirill@zed.dev> <mail4score@gmail.com>
+Kyle Caverly <kylebcaverly@gmail.com>
+Kyle Caverly <kylebcaverly@gmail.com> <kyle@zed.dev>
+Marshall Bowers <elliott.codes@gmail.com>
+Marshall Bowers <elliott.codes@gmail.com> <marshall@zed.dev>
+Max Brunsfeld <maxbrunsfeld@gmail.com>
+Max Brunsfeld <maxbrunsfeld@gmail.com> <max@zed.dev>
+Mikayla Maki <mikayla@zed.dev>
+Mikayla Maki <mikayla@zed.dev> <mikayla.c.maki@gmail.com>
+Mikayla Maki <mikayla@zed.dev> <mikayla.c.maki@icloud.com>
+Nate Butler <iamnbutler@gmail.com>
+Nate Butler <iamnbutler@gmail.com> <nate@zed.dev>
+Nathan Sobo <nathan@zed.dev>
+Nathan Sobo <nathan@zed.dev> <nathan@warp.dev>
+Nathan Sobo <nathan@zed.dev> <nathansobo@gmail.com>
+Piotr Osiewicz <piotr@zed.dev>
+Piotr Osiewicz <piotr@zed.dev> <24362066+osiewicz@users.noreply.github.com>

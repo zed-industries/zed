@@ -188,7 +188,7 @@ fn main() -> Result<()> {
 
     let zed1_themes_path = PathBuf::from_str("assets/themes")?;
 
-    let zed1_theme_familes = [
+    let zed1_theme_families = [
         "Andromeda",
         "Atelier",
         "Ayu",
@@ -207,7 +207,7 @@ fn main() -> Result<()> {
     );
 
     let mut zed1_themes_by_family: IndexMap<String, Vec<UserTheme>> = IndexMap::from_iter(
-        zed1_theme_familes
+        zed1_theme_families
             .into_iter()
             .map(|family| (family.to_string(), Vec::new())),
     );

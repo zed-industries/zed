@@ -70,13 +70,23 @@ fn generate_shader_bindings() -> PathBuf {
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;
-    cbindgen::Builder::new()
-        .with_src(crate_dir.join("src/scene.rs"))
-        .with_src(crate_dir.join("src/geometry.rs"))
-        .with_src(crate_dir.join("src/color.rs"))
-        .with_src(crate_dir.join("src/window.rs"))
-        .with_src(crate_dir.join("src/platform.rs"))
-        .with_src(crate_dir.join("src/platform/mac/metal_renderer.rs"))
+
+    let mut builder = cbindgen::Builder::new();
+
+    let src_paths = [
+        crate_dir.join("src/scene.rs"),
+        crate_dir.join("src/geometry.rs"),
+        crate_dir.join("src/color.rs"),
+        crate_dir.join("src/window.rs"),
+        crate_dir.join("src/platform.rs"),
+        crate_dir.join("src/platform/mac/metal_renderer.rs"),
+    ];
+    for src_path in src_paths {
+        println!("cargo:rerun-if-changed={}", src_path.display());
+        builder = builder.with_src(src_path);
+    }
+
+    builder
         .with_config(config)
         .generate()
         .expect("Unable to generate bindings")

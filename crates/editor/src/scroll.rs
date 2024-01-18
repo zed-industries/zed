@@ -1,6 +1,6 @@
-pub mod actions;
-pub mod autoscroll;
-pub mod scroll_amount;
+mod actions;
+pub(crate) mod autoscroll;
+pub(crate) mod scroll_amount;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
@@ -9,19 +9,16 @@ use crate::{
     Anchor, DisplayPoint, Editor, EditorEvent, EditorMode, InlayHintRefreshReason,
     MultiBufferSnapshot, ToPoint,
 };
+pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use gpui::{point, px, AppContext, Entity, Pixels, Task, ViewContext};
 use language::{Bias, Point};
+pub use scroll_amount::ScrollAmount;
 use std::{
     cmp::Ordering,
     time::{Duration, Instant},
 };
 use util::ResultExt;
 use workspace::{ItemId, WorkspaceId};
-
-use self::{
-    autoscroll::{Autoscroll, AutoscrollStrategy},
-    scroll_amount::ScrollAmount,
-};
 
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 pub const VERTICAL_SCROLL_MARGIN: f32 = 3.;
@@ -384,10 +381,12 @@ impl Editor {
     ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
-        let top_row = scroll_anchor
-            .anchor
-            .to_point(&self.buffer().read(cx).snapshot(cx))
-            .row;
+        let snapshot = &self.buffer().read(cx).snapshot(cx);
+        if !scroll_anchor.anchor.is_valid(snapshot) {
+            log::warn!("Invalid scroll anchor: {:?}", scroll_anchor);
+            return;
+        }
+        let top_row = scroll_anchor.anchor.to_point(snapshot).row;
         self.scroll_manager
             .set_anchor(scroll_anchor, top_row, false, false, workspace_id, cx);
     }

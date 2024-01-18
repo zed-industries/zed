@@ -2,7 +2,7 @@ use gpui::{Render, ViewContext};
 use story::Story;
 
 use crate::prelude::*;
-use crate::{h_stack, Checkbox};
+use crate::{h_flex, Checkbox};
 
 pub struct CheckboxStory;
 
@@ -12,7 +12,7 @@ impl Render for CheckboxStory {
             .child(Story::title_for::<Checkbox>())
             .child(Story::label("Default"))
             .child(
-                h_stack()
+                h_flex()
                     .p_2()
                     .gap_2()
                     .rounded_md()
@@ -27,7 +27,7 @@ impl Render for CheckboxStory {
             )
             .child(Story::label("Disabled"))
             .child(
-                h_stack()
+                h_flex()
                     .p_2()
                     .gap_2()
                     .rounded_md()

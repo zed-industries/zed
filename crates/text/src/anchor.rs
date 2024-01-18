@@ -90,7 +90,7 @@ impl Anchor {
         content.summary_for_anchor(self)
     }
 
-    /// Returns true when the [Anchor] is located inside a visible fragment.
+    /// Returns true when the [`Anchor`] is located inside a visible fragment.
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
         if *self == Anchor::MIN || *self == Anchor::MAX {
             true

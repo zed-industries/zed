@@ -4,10 +4,12 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+/// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Selectable {
     fn selected_style(self, style: ButtonStyle) -> Self;
 }
 
+/// A common set of traits all buttons must implement.
 pub trait ButtonCommon: Clickable + Disableable {
     /// A unique element ID to identify the button.
     fn id(&self) -> &ElementId;
@@ -93,6 +95,7 @@ impl From<ButtonStyle> for Color {
     }
 }
 
+/// The visual appearance of a button.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ButtonStyle {
     /// A filled button with a solid background color. Provides emphasis versus
@@ -108,7 +111,7 @@ pub enum ButtonStyle {
     #[default]
     Subtle,
 
-    /// Used for buttons that only change forground color on hover and active states.
+    /// Used for buttons that only change foreground color on hover and active states.
     ///
     /// TODO: Better docs for this.
     Transparent,
@@ -260,8 +263,9 @@ impl ButtonStyle {
     }
 }
 
-/// ButtonSize can also be used to help build  non-button elements
-/// that are consistently sized with buttons.
+/// The height of a button.
+///
+/// Can also be used to size non-button elements to align with [`Button`]s.
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonSize {
     Large,
@@ -289,13 +293,14 @@ impl ButtonSize {
 /// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
 pub struct ButtonLike {
-    base: Div,
+    pub base: Div,
     id: ElementId,
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,
     pub(super) selected: bool,
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
+    pub(super) height: Option<DefiniteLength>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
@@ -313,12 +318,18 @@ impl ButtonLike {
             selected: false,
             selected_style: None,
             width: None,
+            height: None,
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
             children: SmallVec::new(),
             on_click: None,
         }
+    }
+
+    pub(crate) fn height(mut self, height: DefiniteLength) -> Self {
+        self.height = Some(height);
+        self
     }
 
     pub(crate) fn rounding(mut self, rounding: impl Into<Option<ButtonLikeRounding>>) -> Self {
@@ -413,7 +424,7 @@ impl RenderOnce for ButtonLike {
             .id(self.id.clone())
             .group("")
             .flex_none()
-            .h(self.size.height())
+            .h(self.height.unwrap_or(self.size.height().into()))
             .when_some(self.width, |this, width| this.w(width).justify_center())
             .when_some(self.rounding, |this, rounding| match rounding {
                 ButtonLikeRounding::All => this.rounded_md(),

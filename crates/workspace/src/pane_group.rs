@@ -3,16 +3,16 @@ use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
-    point, size, AnyWeakView, Axis, Bounds, Entity as _, IntoElement, Model, Pixels, Point, View,
-    ViewContext,
+    point, size, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton, Pixels,
+    Point, View, ViewContext,
 };
 use parking_lot::Mutex;
 use project::Project;
 use serde::Deserialize;
 use std::sync::Arc;
-use ui::{prelude::*, Button};
+use ui::prelude::*;
 
-const HANDLE_HITBOX_SIZE: f32 = 10.0; //todo!(change this back to 4)
+pub const HANDLE_HITBOX_SIZE: f32 = 4.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
@@ -183,6 +183,7 @@ impl Member {
 
                 let mut leader_border = None;
                 let mut leader_status_box = None;
+                let mut leader_join_data = None;
                 if let Some(leader) = &leader {
                     let mut leader_color = cx
                         .theme()
@@ -199,44 +200,21 @@ impl Member {
                             if Some(leader_project_id) == project.read(cx).remote_id() {
                                 None
                             } else {
-                                let leader_user = leader.user.clone();
-                                let leader_user_id = leader.user.id;
-                                Some(
-                                    Button::new(
-                                        ("leader-status", pane.entity_id()),
-                                        format!(
-                                            "Follow {} to their active project",
-                                            leader_user.github_login,
-                                        ),
-                                    )
-                                    .on_click(cx.listener(
-                                        move |this, _, cx| {
-                                            crate::join_remote_project(
-                                                leader_project_id,
-                                                leader_user_id,
-                                                this.app_state().clone(),
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx);
-                                        },
-                                    )),
-                                )
+                                leader_join_data = Some((leader_project_id, leader.user.id));
+                                Some(Label::new(format!(
+                                    "Follow {} to their active project",
+                                    leader.user.github_login,
+                                )))
                             }
                         }
-                        ParticipantLocation::UnsharedProject => Some(Button::new(
-                            ("leader-status", pane.entity_id()),
-                            format!(
-                                "{} is viewing an unshared Zed project",
-                                leader.user.github_login
-                            ),
-                        )),
-                        ParticipantLocation::External => Some(Button::new(
-                            ("leader-status", pane.entity_id()),
-                            format!(
-                                "{} is viewing a window outside of Zed",
-                                leader.user.github_login
-                            ),
-                        )),
+                        ParticipantLocation::UnsharedProject => Some(Label::new(format!(
+                            "{} is viewing an unshared Zed project",
+                            leader.user.github_login
+                        ))),
+                        ParticipantLocation::External => Some(Label::new(format!(
+                            "{} is viewing a window outside of Zed",
+                            leader.user.github_login
+                        ))),
                     };
                 }
 
@@ -244,7 +222,7 @@ impl Member {
                     .relative()
                     .flex_1()
                     .size_full()
-                    .child(pane.clone())
+                    .child(AnyView::from(pane.clone()).cached())
                     .when_some(leader_border, |this, color| {
                         this.child(
                             div()
@@ -263,20 +241,30 @@ impl Member {
                                 .w_96()
                                 .bottom_3()
                                 .right_3()
+                                .elevation_2(cx)
+                                .p_1()
                                 .z_index(1)
-                                .child(status_box),
+                                .child(status_box)
+                                .when_some(
+                                    leader_join_data,
+                                    |this, (leader_project_id, leader_user_id)| {
+                                        this.cursor_pointer().on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, cx| {
+                                                crate::join_remote_project(
+                                                    leader_project_id,
+                                                    leader_user_id,
+                                                    this.app_state().clone(),
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                            }),
+                                        )
+                                    },
+                                ),
                         )
                     })
                     .into_any()
-
-                // let el = div()
-                //     .flex()
-                //     .flex_1()
-                //     .gap_px()
-                //     .w_full()
-                //     .h_full()
-                //     .bg(cx.theme().colors().editor)
-                //     .children();
             }
             Member::Axis(axis) => axis
                 .render(
@@ -707,11 +695,11 @@ mod element {
                 proposed_current_pixel_change -= current_pixel_change;
             }
 
-            // todo!(schedule serialize)
             workspace
                 .update(cx, |this, cx| this.schedule_serialize(cx))
                 .log_err();
-            cx.notify();
+            cx.stop_propagation();
+            cx.refresh();
         }
 
         fn push_handle(
@@ -767,8 +755,10 @@ mod element {
                                 workspace
                                     .update(cx, |this, cx| this.schedule_serialize(cx))
                                     .log_err();
-                                cx.notify();
+
+                                cx.refresh();
                             }
+                            cx.stop_propagation();
                         }
                     }
                 });

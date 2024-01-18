@@ -74,20 +74,6 @@ impl PlatformAtlas for MetalAtlas {
             Ok(tile)
         }
     }
-
-    fn clear(&self) {
-        let mut lock = self.0.lock();
-        lock.tiles_by_key.clear();
-        for texture in &mut lock.monochrome_textures {
-            texture.clear();
-        }
-        for texture in &mut lock.polychrome_textures {
-            texture.clear();
-        }
-        for texture in &mut lock.path_textures {
-            texture.clear();
-        }
-    }
 }
 
 impl MetalAtlasState {

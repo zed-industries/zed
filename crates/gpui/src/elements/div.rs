@@ -416,6 +416,18 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn debug_selector(mut self, f: impl FnOnce() -> String) -> Self {
+        self.interactivity().debug_selector = Some(f());
+        self
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    #[inline]
+    fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
+        self
+    }
+
     fn capture_any_mouse_down(
         mut self,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
@@ -911,6 +923,9 @@ pub struct Interactivity {
 
     #[cfg(debug_assertions)]
     pub location: Option<core::panic::Location<'static>>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub debug_selector: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -978,12 +993,39 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, &mut WindowContext),
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
+        let z_index = style.z_index.unwrap_or(0);
+
+        #[cfg(any(feature = "test-support", test))]
+        if let Some(debug_selector) = &self.debug_selector {
+            cx.window
+                .next_frame
+                .debug_bounds
+                .insert(debug_selector.clone(), bounds);
+        }
+
+        let paint_hover_group_handler = |cx: &mut WindowContext| {
+            let hover_group_bounds = self
+                .group_hover_style
+                .as_ref()
+                .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
+
+            if let Some(group_bounds) = hover_group_bounds {
+                let hovered = group_bounds.contains(&cx.mouse_position());
+                cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture
+                        && group_bounds.contains(&event.position) != hovered
+                    {
+                        cx.refresh();
+                    }
+                });
+            }
+        };
 
         if style.visibility == Visibility::Hidden {
+            cx.with_z_index(z_index, |cx| paint_hover_group_handler(cx));
             return;
         }
 
-        let z_index = style.z_index.unwrap_or(0);
         cx.with_z_index(z_index, |cx| {
             style.paint(bounds, cx, |cx| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
@@ -1003,7 +1045,7 @@ impl Interactivity {
                                 if let Some(text) = cx
                                     .text_system()
                                     .shape_text(
-                                        &element_id,
+                                        element_id.into(),
                                         FONT_SIZE,
                                         &[cx.text_style().to_run(str_len)],
                                         None,
@@ -1027,7 +1069,7 @@ impl Interactivity {
                                                 if e.modifiers.command != command_held
                                                     && text_bounds.contains(&cx.mouse_position())
                                                 {
-                                                    cx.notify();
+                                                    cx.refresh();
                                                 }
                                             }
                                         });
@@ -1038,7 +1080,7 @@ impl Interactivity {
                                                 if phase == DispatchPhase::Capture
                                                     && bounds.contains(&event.position) != hovered
                                                 {
-                                                    cx.notify();
+                                                    cx.refresh();
                                                 }
                                             },
                                         );
@@ -1055,22 +1097,11 @@ impl Interactivity {
                                                     };
 
                                                     eprintln!(
-                                                        "This element is created at:\n{}:{}:{}",
-                                                        location.file(),
+                                                        "This element was created at:\n{}:{}:{}",
+                                                        dir.join(location.file()).to_string_lossy(),
                                                         location.line(),
                                                         location.column()
                                                     );
-
-                                                    std::process::Command::new("zed")
-                                                        .arg(format!(
-                                                            "{}/{}:{}:{}",
-                                                            dir.to_string_lossy(),
-                                                            location.file(),
-                                                            location.line(),
-                                                            location.column()
-                                                        ))
-                                                        .spawn()
-                                                        .ok();
                                                 }
                                             }
                                         });
@@ -1177,21 +1208,7 @@ impl Interactivity {
                             })
                         }
 
-                        let hover_group_bounds = self
-                            .group_hover_style
-                            .as_ref()
-                            .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
-
-                        if let Some(group_bounds) = hover_group_bounds {
-                            let hovered = group_bounds.contains(&cx.mouse_position());
-                            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                                if phase == DispatchPhase::Capture
-                                    && group_bounds.contains(&event.position) != hovered
-                                {
-                                    cx.notify();
-                                }
-                            });
-                        }
+                        paint_hover_group_handler(cx);
 
                         if self.hover_style.is_some()
                             || self.base_style.mouse_cursor.is_some()
@@ -1203,7 +1220,7 @@ impl Interactivity {
                                 if phase == DispatchPhase::Capture
                                     && bounds.contains(&event.position) != hovered
                                 {
-                                    cx.notify();
+                                    cx.refresh();
                                 }
                             });
                         }
@@ -1237,7 +1254,7 @@ impl Interactivity {
 
                                                     if can_drop {
                                                         listener(drag.value.as_ref(), cx);
-                                                        cx.notify();
+                                                        cx.refresh();
                                                         cx.stop_propagation();
                                                     }
                                                 }
@@ -1268,7 +1285,7 @@ impl Interactivity {
                                         && interactive_bounds.visibly_contains(&event.position, cx)
                                     {
                                         *pending_mouse_down.borrow_mut() = Some(event.clone());
-                                        cx.notify();
+                                        cx.refresh();
                                     }
                                 }
                             });
@@ -1299,7 +1316,7 @@ impl Interactivity {
                                                     cursor_offset,
                                                 });
                                                 pending_mouse_down.take();
-                                                cx.notify();
+                                                cx.refresh();
                                                 cx.stop_propagation();
                                             }
                                         }
@@ -1319,7 +1336,7 @@ impl Interactivity {
                                             pending_mouse_down.borrow_mut();
                                         if pending_mouse_down.is_some() {
                                             captured_mouse_down = pending_mouse_down.take();
-                                            cx.notify();
+                                            cx.refresh();
                                         }
                                     }
                                     // Fire click handlers during the bubble phase.
@@ -1413,7 +1430,7 @@ impl Interactivity {
                                                         _task: None,
                                                     },
                                                 );
-                                                cx.notify();
+                                                cx.refresh();
                                             })
                                             .ok();
                                         }
@@ -1439,8 +1456,8 @@ impl Interactivity {
                                 .borrow()
                                 .as_ref()
                             {
-                                if active_tooltip.tooltip.is_some() {
-                                    cx.active_tooltip = active_tooltip.tooltip.clone()
+                                if let Some(tooltip) = active_tooltip.tooltip.clone() {
+                                    cx.set_tooltip(tooltip);
                                 }
                             }
                         }
@@ -1453,7 +1470,7 @@ impl Interactivity {
                             cx.on_mouse_event(move |_: &MouseUpEvent, phase, cx| {
                                 if phase == DispatchPhase::Capture {
                                     *active_state.borrow_mut() = ElementClickedState::default();
-                                    cx.notify();
+                                    cx.refresh();
                                 }
                             });
                         } else {
@@ -1471,7 +1488,7 @@ impl Interactivity {
                                     if group || element {
                                         *active_state.borrow_mut() =
                                             ElementClickedState { group, element };
-                                        cx.notify();
+                                        cx.refresh();
                                     }
                                 }
                             });
@@ -1531,7 +1548,7 @@ impl Interactivity {
                                     }
 
                                     if *scroll_offset != old_scroll_offset {
-                                        cx.notify();
+                                        cx.refresh();
                                         cx.stop_propagation();
                                     }
                                 }

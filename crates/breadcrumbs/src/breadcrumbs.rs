@@ -31,7 +31,7 @@ impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let element = h_stack().text_ui();
+        let element = h_flex().text_ui();
         let Some(active_item) = self.active_item.as_ref() else {
             return element;
         };
@@ -51,7 +51,7 @@ impl Render for Breadcrumbs {
             Label::new("›").color(Color::Muted).into_any_element()
         });
 
-        let breadcrumbs_stack = h_stack().gap_1().children(breadcrumbs);
+        let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())

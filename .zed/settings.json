@@ -1,5 +1,6 @@
 {
     "JSON": {
         "tab_size": 4
-    }
+    },
+    "formatter": "auto"
 }

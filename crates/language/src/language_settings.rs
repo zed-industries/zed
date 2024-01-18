@@ -14,7 +14,7 @@ use settings::Settings;
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
 /// Initializes the language settings.
-pub(crate) fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     AllLanguageSettings::register(cx);
 }
 

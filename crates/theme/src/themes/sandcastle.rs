@@ -69,7 +69,7 @@ pub fn sandcastle() -> UserThemeFamily {
                     editor_highlighted_line_background: Some(rgba(0x2b3039ff).into()),
                     editor_line_number: Some(rgba(0xfdf4c159).into()),
                     editor_active_line_number: Some(rgba(0xfdf4c1ff).into()),
-                    editor_invisible: Some(rgba(0xa69782ff).into()),
+                    editor_invisible: Some(rgba(0x7c6f64ff).into()),
                     editor_wrap_guide: Some(rgba(0xfdf4c10d).into()),
                     editor_active_wrap_guide: Some(rgba(0xfdf4c11a).into()),
                     editor_document_highlight_read_background: Some(rgba(0x528b8b1a).into()),

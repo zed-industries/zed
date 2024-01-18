@@ -66,18 +66,19 @@ impl Arena {
         }
 
         unsafe {
-            let layout = alloc::Layout::new::<T>().pad_to_align();
-            let next_offset = self.offset.add(layout.size());
-            assert!(next_offset <= self.end);
+            let layout = alloc::Layout::new::<T>();
+            let offset = self.offset.add(self.offset.align_offset(layout.align()));
+            let next_offset = offset.add(layout.size());
+            assert!(next_offset <= self.end, "not enough space in Arena");
 
             let result = ArenaBox {
-                ptr: self.offset.cast(),
+                ptr: offset.cast(),
                 valid: self.valid.clone(),
             };
 
             inner_writer(result.ptr, f);
             self.elements.push(ArenaElement {
-                value: self.offset,
+                value: offset,
                 drop: drop::<T>,
             });
             self.offset = next_offset;
@@ -198,5 +199,44 @@ mod tests {
         arena.alloc(|| DropGuard(dropped.clone()));
         arena.clear();
         assert!(dropped.get());
+    }
+
+    #[test]
+    #[should_panic(expected = "not enough space in Arena")]
+    fn test_arena_overflow() {
+        let mut arena = Arena::new(16);
+        arena.alloc(|| 1u64);
+        arena.alloc(|| 2u64);
+        // This should panic.
+        arena.alloc(|| 3u64);
+    }
+
+    #[test]
+    fn test_arena_alignment() {
+        let mut arena = Arena::new(256);
+        let x1 = arena.alloc(|| 1u8);
+        let x2 = arena.alloc(|| 2u16);
+        let x3 = arena.alloc(|| 3u32);
+        let x4 = arena.alloc(|| 4u64);
+        let x5 = arena.alloc(|| 5u64);
+
+        assert_eq!(*x1, 1);
+        assert_eq!(*x2, 2);
+        assert_eq!(*x3, 3);
+        assert_eq!(*x4, 4);
+        assert_eq!(*x5, 5);
+
+        assert_eq!(x1.ptr.align_offset(std::mem::align_of_val(&*x1)), 0);
+        assert_eq!(x2.ptr.align_offset(std::mem::align_of_val(&*x2)), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "attempted to dereference an ArenaRef after its Arena was cleared")]
+    fn test_arena_use_after_clear() {
+        let mut arena = Arena::new(16);
+        let value = arena.alloc(|| 1u64);
+
+        arena.clear();
+        let _read_value = *value;
     }
 }

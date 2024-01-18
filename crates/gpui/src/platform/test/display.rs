@@ -31,10 +31,6 @@ impl PlatformDisplay for TestDisplay {
         Ok(self.uuid)
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        todo!()
-    }
-
     fn bounds(&self) -> crate::Bounds<crate::GlobalPixels> {
         self.bounds
     }

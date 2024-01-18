@@ -33,6 +33,7 @@ thiserror.workspace = true
 lazy_static.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

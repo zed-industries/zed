@@ -258,19 +258,19 @@ fn test_typing_multiple_new_injections() {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
         &[
-            "fn a() { dbg }",
-            "fn a() { dbg«!» }",
-            "fn a() { dbg!«()» }",
-            "fn a() { dbg!(«b») }",
-            "fn a() { dbg!(b«.») }",
-            "fn a() { dbg!(b.«c») }",
-            "fn a() { dbg!(b.c«()») }",
-            "fn a() { dbg!(b.c(«vec»)) }",
-            "fn a() { dbg!(b.c(vec«!»)) }",
-            "fn a() { dbg!(b.c(vec!«[]»)) }",
-            "fn a() { dbg!(b.c(vec![«d»])) }",
-            "fn a() { dbg!(b.c(vec![d«.»])) }",
-            "fn a() { dbg!(b.c(vec![d.«e»])) }",
+            "fn a() { test_macro }",
+            "fn a() { test_macro«!» }",
+            "fn a() { test_macro!«()» }",
+            "fn a() { test_macro!(«b») }",
+            "fn a() { test_macro!(b«.») }",
+            "fn a() { test_macro!(b.«c») }",
+            "fn a() { test_macro!(b.c«()») }",
+            "fn a() { test_macro!(b.c(«vec»)) }",
+            "fn a() { test_macro!(b.c(vec«!»)) }",
+            "fn a() { test_macro!(b.c(vec!«[]»)) }",
+            "fn a() { test_macro!(b.c(vec![«d»])) }",
+            "fn a() { test_macro!(b.c(vec![d«.»])) }",
+            "fn a() { test_macro!(b.c(vec![d.«e»])) }",
         ],
     );
 
@@ -278,7 +278,7 @@ fn test_typing_multiple_new_injections() {
         &syntax_map,
         &buffer,
         &["field"],
-        "fn a() { dbg!(b.«c»(vec![d.«e»])) }",
+        "fn a() { test_macro!(b.«c»(vec![d.«e»])) }",
     );
 }
 

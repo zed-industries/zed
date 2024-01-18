@@ -7,7 +7,7 @@ mod test;
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlobalPixels, GlyphId, InputEvent, Keymap, LineLayout, Pixels,
+    FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene, SharedString,
     Size, TaskLabel,
 };
@@ -44,8 +44,6 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new())
 }
 
-pub type DrawWindow = Box<dyn FnMut() -> Result<Scene>>;
-
 pub(crate) trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
@@ -66,7 +64,6 @@ pub(crate) trait Platform: 'static {
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
-        draw: DrawWindow,
     ) -> Box<dyn PlatformWindow>;
 
     fn set_display_link_output_callback(
@@ -91,7 +88,7 @@ pub(crate) trait Platform: 'static {
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
+    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
@@ -117,15 +114,20 @@ pub(crate) trait Platform: 'static {
     fn delete_credentials(&self, url: &str) -> Result<()>;
 }
 
+/// A handle to a platform's display, e.g. a monitor or laptop screen.
 pub trait PlatformDisplay: Send + Sync + Debug {
+    /// Get the ID for this display
     fn id(&self) -> DisplayId;
+
     /// Returns a stable identifier for this display that can be persisted and used
     /// across system restarts.
     fn uuid(&self) -> Result<Uuid>;
-    fn as_any(&self) -> &dyn Any;
+
+    /// Get the bounds for this display
     fn bounds(&self) -> Bounds<GlobalPixels>;
 }
 
+/// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct DisplayId(pub(crate) u32);
 
@@ -137,7 +139,7 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
-pub trait PlatformWindow {
+pub(crate) trait PlatformWindow {
     fn bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
@@ -148,7 +150,7 @@ pub trait PlatformWindow {
     fn modifiers(&self) -> Modifiers;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
-    fn clear_input_handler(&mut self);
+    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>>;
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
@@ -157,7 +159,8 @@ pub trait PlatformWindow {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
-    fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
+    fn on_request_frame(&self, callback: Box<dyn FnMut()>);
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);
@@ -167,6 +170,7 @@ pub trait PlatformWindow {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn invalidate(&self);
+    fn draw(&self, scene: &Scene);
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
@@ -176,6 +180,9 @@ pub trait PlatformWindow {
     }
 }
 
+/// This type is public so that our test macro can generate and use it, but it should not
+/// be considered part of our public API.
+#[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
@@ -191,8 +198,9 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 }
 
-pub trait PlatformTextSystem: Send + Sync {
+pub(crate) trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
+    fn all_font_names(&self) -> Vec<String>;
     fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
@@ -215,15 +223,21 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
+/// Basic metadata about the current application and operating system.
 #[derive(Clone, Debug)]
 pub struct AppMetadata {
+    /// The name of the current operating system
     pub os_name: &'static str,
+
+    /// The operating system's version
     pub os_version: Option<SemanticVersion>,
+
+    /// The current version of the application
     pub app_version: Option<SemanticVersion>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub enum AtlasKey {
+pub(crate) enum AtlasKey {
     Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
     Image(RenderImageParams),
@@ -263,19 +277,17 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
-pub trait PlatformAtlas: Send + Sync {
+pub(crate) trait PlatformAtlas: Send + Sync {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
     ) -> Result<AtlasTile>;
-
-    fn clear(&self);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub struct AtlasTile {
+pub(crate) struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
     pub(crate) tile_id: TileId,
     pub(crate) bounds: Bounds<DevicePixels>,

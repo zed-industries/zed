@@ -378,7 +378,7 @@ fn toggle_open_type_feature(
                 new_descriptor.as_concrete_TypeRef(),
             );
             let new_font = CTFont::wrap_under_create_rule(new_font);
-            *font = Font::from_native_font(new_font);
+            *font = Font::from_native_font(&new_font);
         }
     }
 }

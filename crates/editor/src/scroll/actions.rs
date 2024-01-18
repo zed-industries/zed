@@ -11,10 +11,9 @@ impl Editor {
             return;
         }
 
-        // todo!()
-        // if self.mouse_context_menu.read(cx).visible() {
-        //     return None;
-        // }
+        if self.mouse_context_menu.is_some() {
+            return;
+        }
 
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();

@@ -11,9 +11,17 @@ pub trait Client: Send + Sync {
     async fn create_room(&self, name: String) -> Result<()>;
     async fn delete_room(&self, name: String) -> Result<()>;
     async fn remove_participant(&self, room: String, identity: String) -> Result<()>;
+    async fn update_participant(
+        &self,
+        room: String,
+        identity: String,
+        permission: proto::ParticipantPermission,
+    ) -> Result<()>;
     fn room_token(&self, room: &str, identity: &str) -> Result<String>;
     fn guest_token(&self, room: &str, identity: &str) -> Result<String>;
 }
+
+pub struct LiveKitParticipantUpdate {}
 
 #[derive(Clone)]
 pub struct LiveKitClient {
@@ -125,6 +133,27 @@ impl Client for LiveKitClient {
                 proto::RoomParticipantIdentity {
                     room: room.clone(),
                     identity,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn update_participant(
+        &self,
+        room: String,
+        identity: String,
+        permission: proto::ParticipantPermission,
+    ) -> Result<()> {
+        let _: proto::ParticipantInfo = self
+            .request(
+                "twirp/livekit.RoomService/UpdateParticipant",
+                token::VideoGrant::to_admin(&room),
+                proto::UpdateParticipantRequest {
+                    room: room.clone(),
+                    identity,
+                    metadata: "".to_string(),
+                    permission: Some(permission),
                 },
             )
             .await?;

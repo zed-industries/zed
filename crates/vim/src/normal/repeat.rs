@@ -12,7 +12,7 @@ actions!(vim, [Repeat, EndRepeat]);
 
 fn should_replay(action: &Box<dyn Action>) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::ShowCharacterPalette.partial_eq(&**action) {
+    if editor::actions::ShowCharacterPalette.partial_eq(&**action) {
         return false;
     }
     true
@@ -152,7 +152,7 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
 
         let mut count = Vim::read(cx).workspace_state.recorded_count.unwrap_or(1);
 
-        // if we came from insert mode we're just doing repititions 2 onwards.
+        // if we came from insert mode we're just doing repetitions 2 onwards.
         if from_insert_mode {
             count -= 1;
             new_actions[0] = actions[0].clone();
@@ -492,5 +492,18 @@ mod test {
         cx.simulate_keystrokes(["4", "i", "j", "cmd-shift-p", "escape"]);
         cx.simulate_keystrokes(["escape"]);
         cx.assert_state("ˇjhello\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_repeat_over_blur(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello hello hello\n").await;
+        cx.simulate_shared_keystrokes(["c", "f", "o", "x", "escape"])
+            .await;
+        cx.assert_shared_state("ˇx hello hello\n").await;
+        cx.simulate_shared_keystrokes([":", "escape"]).await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("ˇx hello\n").await;
     }
 }

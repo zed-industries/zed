@@ -1,6 +1,6 @@
 use crate::{
-    h_stack, prelude::*, v_stack, Icon, IconElement, KeyBinding, Label, List, ListItem,
-    ListSeparator, ListSubHeader,
+    h_flex, prelude::*, v_flex, Icon, IconName, KeyBinding, Label, List, ListItem, ListSeparator,
+    ListSubHeader,
 };
 use gpui::{
     px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -14,7 +14,7 @@ enum ContextMenuItem {
     Header(SharedString),
     Entry {
         label: SharedString,
-        icon: Option<Icon>,
+        icon: Option<IconName>,
         handler: Rc<dyn Fn(&mut WindowContext)>,
         action: Option<Box<dyn Action>>,
     },
@@ -51,6 +51,7 @@ impl ContextMenu {
             let _on_blur_subscription = cx.on_blur(&focus_handle, |this: &mut ContextMenu, cx| {
                 this.cancel(&menu::Cancel, cx)
             });
+            cx.refresh();
             f(
                 Self {
                     items: Default::default(),
@@ -117,7 +118,7 @@ impl ContextMenu {
             label: label.into(),
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
-            icon: Some(Icon::Link),
+            icon: Some(IconName::Link),
         });
         self
     }
@@ -234,7 +235,7 @@ impl ContextMenuItem {
 impl Render for ContextMenu {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().elevation_2(cx).flex().flex_row().child(
-            v_stack()
+            v_flex()
                 .min_w(px(200.))
                 .track_focus(&self.focus_handle)
                 .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
@@ -277,10 +278,10 @@ impl Render for ContextMenu {
                             let menu = cx.view().downgrade();
 
                             let label_element = if let Some(icon) = icon {
-                                h_stack()
+                                h_flex()
                                     .gap_1()
                                     .child(Label::new(label.clone()))
-                                    .child(IconElement::new(*icon))
+                                    .child(Icon::new(*icon))
                                     .into_any_element()
                             } else {
                                 Label::new(label.clone()).into_any_element()
@@ -298,10 +299,11 @@ impl Render for ContextMenu {
                                     .ok();
                                 })
                                 .child(
-                                    h_stack()
+                                    h_flex()
                                         .w_full()
                                         .justify_between()
                                         .child(label_element)
+                                        .debug_selector(|| format!("MENU_ITEM-{}", label))
                                         .children(action.as_ref().and_then(|action| {
                                             KeyBinding::for_action(&**action, cx)
                                                 .map(|binding| div().ml_1().child(binding))

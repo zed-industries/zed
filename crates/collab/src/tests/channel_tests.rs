@@ -203,7 +203,7 @@ async fn test_core_channels(
     executor.run_until_parked();
 
     // Observe that client B is now an admin of channel A, and that
-    // their admin priveleges extend to subchannels of channel A.
+    // their admin privileges extend to subchannels of channel A.
     assert_channel_invitations(client_b.channel_store(), cx_b, &[]);
     assert_channels(
         client_b.channel_store(),
@@ -1337,6 +1337,7 @@ async fn test_guest_access(
         })
         .await
         .unwrap();
+    executor.run_until_parked();
 
     assert_channels_list_shape(client_b.channel_store(), cx_b, &[]);
 
@@ -1417,8 +1418,6 @@ async fn test_channel_moving(
 ) {
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
-    // let client_b = server.create_client(cx_b, "user_b").await;
-    // let client_c = server.create_client(cx_c, "user_c").await;
 
     let channels = server
         .make_channel_tree(

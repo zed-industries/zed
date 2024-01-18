@@ -9,11 +9,11 @@ pub use line_layout::*;
 pub use line_wrapper::*;
 
 use crate::{
-    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    UnderlineStyle,
+    px, Bounds, DevicePixels, EntityId, Hsla, Pixels, PlatformTextSystem, Point, Result,
+    SharedString, Size, UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::FxHashMap;
+use collections::{BTreeSet, FxHashMap, FxHashSet};
 use core::fmt;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -47,7 +47,7 @@ pub struct TextSystem {
 }
 
 impl TextSystem {
-    pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    pub(crate) fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
             line_layout_cache: Arc::new(LineLayoutCache::new(platform_text_system.clone())),
             platform_text_system,
@@ -65,6 +65,20 @@ impl TextSystem {
         }
     }
 
+    pub fn all_font_names(&self) -> Vec<String> {
+        let mut names: BTreeSet<_> = self
+            .platform_text_system
+            .all_font_names()
+            .into_iter()
+            .collect();
+        names.extend(self.platform_text_system.all_font_families().into_iter());
+        names.extend(
+            self.fallback_font_stack
+                .iter()
+                .map(|font| font.family.to_string()),
+        );
+        names.into_iter().collect()
+    }
     pub fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.platform_text_system.add_fonts(fonts)
     }
@@ -90,7 +104,6 @@ impl TextSystem {
         if let Ok(font_id) = self.font_id(font) {
             return font_id;
         }
-
         for fallback in &self.fallback_font_stack {
             if let Ok(font_id) = self.font_id(fallback) {
                 return font_id;
@@ -186,6 +199,10 @@ impl TextSystem {
         }
     }
 
+    pub fn with_view<R>(&self, view_id: EntityId, f: impl FnOnce() -> R) -> R {
+        self.line_layout_cache.with_view(view_id, f)
+    }
+
     pub fn layout_line(
         &self,
         text: &str,
@@ -258,7 +275,7 @@ impl TextSystem {
 
     pub fn shape_text(
         &self,
-        text: &str, // todo!("pass a SharedString and preserve it when passed a single line?")
+        text: SharedString,
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
@@ -268,8 +285,8 @@ impl TextSystem {
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
-        for line_text in text.split('\n') {
-            let line_text = SharedString::from(line_text.to_string());
+
+        let mut process_line = |line_text: SharedString| {
             let line_end = line_start + line_text.len();
 
             let mut last_font: Option<Font> = None;
@@ -335,6 +352,24 @@ impl TextSystem {
             }
 
             font_runs.clear();
+        };
+
+        let mut split_lines = text.split('\n');
+        let mut processed = false;
+
+        if let Some(first_line) = split_lines.next() {
+            if let Some(second_line) = split_lines.next() {
+                processed = true;
+                process_line(first_line.to_string().into());
+                process_line(second_line.to_string().into());
+                for line_text in split_lines {
+                    process_line(line_text.to_string().into());
+                }
+            }
+        }
+
+        if !processed {
+            process_line(text);
         }
 
         self.font_runs_pool.lock().push(font_runs);
@@ -342,32 +377,24 @@ impl TextSystem {
         Ok(lines)
     }
 
-    pub fn start_frame(&self) {
-        self.line_layout_cache.start_frame()
+    pub fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
+        self.line_layout_cache.finish_frame(reused_views)
     }
 
-    pub fn line_wrapper(
-        self: &Arc<Self>,
-        font: Font,
-        font_size: Pixels,
-    ) -> Result<LineWrapperHandle> {
+    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
-        let font_id = self.font_id(&font)?;
+        let font_id = self.resolve_font(&font);
         let wrappers = lock
             .entry(FontIdWithSize { font_id, font_size })
             .or_default();
-        let wrapper = wrappers.pop().map(anyhow::Ok).unwrap_or_else(|| {
-            Ok(LineWrapper::new(
-                font_id,
-                font_size,
-                self.platform_text_system.clone(),
-            ))
-        })?;
+        let wrapper = wrappers.pop().unwrap_or_else(|| {
+            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
+        });
 
-        Ok(LineWrapperHandle {
+        LineWrapperHandle {
             wrapper: Some(wrapper),
             text_system: self.clone(),
-        })
+        }
     }
 
     pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {

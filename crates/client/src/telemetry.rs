@@ -1,3 +1,5 @@
+mod event_coalescer;
+
 use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use chrono::{DateTime, Utc};
 use futures::Future;
@@ -5,7 +7,6 @@ use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
-use serde_json;
 use settings::{Settings, SettingsStore};
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{
@@ -13,7 +14,11 @@ use sysinfo::{
 };
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
+#[cfg(not(debug_assertions))]
+use util::ResultExt;
 use util::{channel::ReleaseChannel, TryFutureExt};
+
+use self::event_coalescer::EventCoalescer;
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
@@ -34,6 +39,7 @@ struct TelemetryState {
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
     first_event_datetime: Option<DateTime<Utc>>,
+    event_coalescer: EventCoalescer,
 }
 
 const EVENTS_URL_PATH: &'static str = "/api/events";
@@ -110,7 +116,7 @@ pub enum Event {
         milliseconds_since_first_event: i64,
     },
     App {
-        operation: &'static str,
+        operation: String,
         milliseconds_since_first_event: i64,
     },
     Setting {
@@ -118,27 +124,35 @@ pub enum Event {
         value: String,
         milliseconds_since_first_event: i64,
     },
+    Edit {
+        duration: i64,
+        environment: &'static str,
+        milliseconds_since_first_event: i64,
+    },
+    Action {
+        source: &'static str,
+        action: String,
+        milliseconds_since_first_event: i64,
+    },
 }
 
 #[cfg(debug_assertions)]
-const MAX_QUEUE_LEN: usize = 1;
+const MAX_QUEUE_LEN: usize = 5;
 
 #[cfg(not(debug_assertions))]
 const MAX_QUEUE_LEN: usize = 50;
 
 #[cfg(debug_assertions)]
-const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(1);
+const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
-const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(60 * 5);
+const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Arc<Self> {
-        let release_channel = if cx.has_global::<ReleaseChannel>() {
-            Some(cx.global::<ReleaseChannel>().display_name())
-        } else {
-            None
-        };
+        let release_channel = cx
+            .try_global::<ReleaseChannel>()
+            .map(|release_channel| release_channel.display_name());
 
         TelemetrySettings::register(cx);
 
@@ -150,12 +164,27 @@ impl Telemetry {
             installation_id: None,
             metrics_id: None,
             session_id: None,
-            events_queue: Default::default(),
-            flush_events_task: Default::default(),
+            events_queue: Vec::new(),
+            flush_events_task: None,
             log_file: None,
             is_staff: None,
             first_event_datetime: None,
+            event_coalescer: EventCoalescer::new(),
         }));
+
+        #[cfg(not(debug_assertions))]
+        cx.background_executor()
+            .spawn({
+                let state = state.clone();
+                async move {
+                    if let Some(tempfile) =
+                        NamedTempFile::new_in(util::paths::CONFIG_DIR.as_path()).log_err()
+                    {
+                        state.lock().log_file = Some(tempfile);
+                    }
+                }
+            })
+            .detach();
 
         cx.observe_global::<SettingsStore>({
             let state = state.clone();
@@ -193,8 +222,8 @@ impl Telemetry {
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
-        self.report_app_event("close");
-        self.flush_events();
+        self.report_app_event("close".to_string());
+        // TODO: close final edit period and make sure it's sent
         Task::ready(())
     }
 
@@ -359,7 +388,7 @@ impl Telemetry {
         self.report_event(event)
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: &'static str) {
+    pub fn report_app_event(self: &Arc<Self>, operation: String) {
         let event = Event::App {
             operation,
             milliseconds_since_first_event: self.milliseconds_since_first_event(),
@@ -378,8 +407,35 @@ impl Telemetry {
         self.report_event(event)
     }
 
+    pub fn log_edit_event(self: &Arc<Self>, environment: &'static str) {
+        let mut state = self.state.lock();
+        let period_data = state.event_coalescer.log_event(environment);
+        drop(state);
+
+        if let Some((start, end, environment)) = period_data {
+            let event = Event::Edit {
+                duration: end.timestamp_millis() - start.timestamp_millis(),
+                environment,
+                milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            };
+
+            self.report_event(event);
+        }
+    }
+
+    pub fn report_action_event(self: &Arc<Self>, source: &'static str, action: String) {
+        let event = Event::Action {
+            source,
+            action,
+            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+        };
+
+        self.report_event(event)
+    }
+
     fn milliseconds_since_first_event(&self) -> i64 {
         let mut state = self.state.lock();
+
         match state.first_event_datetime {
             Some(first_event_datetime) => {
                 let now: DateTime<Utc> = Utc::now();
@@ -399,6 +455,15 @@ impl Telemetry {
             return;
         }
 
+        if state.flush_events_task.is_none() {
+            let this = self.clone();
+            let executor = self.executor.clone();
+            state.flush_events_task = Some(self.executor.spawn(async move {
+                executor.timer(FLUSH_INTERVAL).await;
+                this.flush_events();
+            }));
+        }
+
         let signed_in = state.metrics_id.is_some();
         state.events_queue.push(EventWrapper { signed_in, event });
 
@@ -406,13 +471,6 @@ impl Telemetry {
             if state.events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
                 self.flush_events();
-            } else {
-                let this = self.clone();
-                let executor = self.executor.clone();
-                state.flush_events_task = Some(self.executor.spawn(async move {
-                    executor.timer(DEBOUNCE_INTERVAL).await;
-                    this.flush_events();
-                }));
             }
         }
     }
@@ -435,6 +493,9 @@ impl Telemetry {
         let mut events = mem::take(&mut state.events_queue);
         state.flush_events_task.take();
         drop(state);
+        if events.is_empty() {
+            return;
+        }
 
         let this = self.clone();
         self.executor

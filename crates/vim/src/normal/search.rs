@@ -278,7 +278,7 @@ fn parse_replace_all(query: &str) -> Replacement {
         return Replacement::default();
     }
 
-    let Some(delimeter) = chars.next() else {
+    let Some(delimiter) = chars.next() else {
         return Replacement::default();
     };
 
@@ -301,13 +301,13 @@ fn parse_replace_all(query: &str) -> Replacement {
                 buffer.push('$')
             // unescape escaped parens
             } else if phase == 0 && c == '(' || c == ')' {
-            } else if c != delimeter {
+            } else if c != delimiter {
                 buffer.push('\\')
             }
             buffer.push(c)
         } else if c == '\\' {
             escaped = true;
-        } else if c == delimeter {
+        } else if c == delimiter {
             if phase == 0 {
                 buffer = &mut replacement;
                 phase = 1;

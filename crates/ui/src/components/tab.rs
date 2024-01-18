@@ -37,8 +37,11 @@ pub struct Tab {
 
 impl Tab {
     pub fn new(id: impl Into<ElementId>) -> Self {
+        let id = id.into();
         Self {
-            div: div().id(id),
+            div: div()
+                .id(id.clone())
+                .debug_selector(|| format!("TAB-{}", id)),
             selected: false,
             position: TabPosition::First,
             close_side: TabCloseSide::End,
@@ -48,7 +51,9 @@ impl Tab {
         }
     }
 
-    pub const HEIGHT_IN_REMS: f32 = 30. / 16.;
+    pub const CONTAINER_HEIGHT_IN_REMS: f32 = 29. / 16.;
+
+    const CONTENT_HEIGHT_IN_REMS: f32 = 28. / 16.;
 
     pub fn position(mut self, position: TabPosition) -> Self {
         self.position = position;
@@ -111,7 +116,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(rems(Self::HEIGHT_IN_REMS))
+            .h(rems(Self::CONTAINER_HEIGHT_IN_REMS))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
@@ -135,17 +140,17 @@ impl RenderOnce for Tab {
             })
             .cursor_pointer()
             .child(
-                h_stack()
+                h_flex()
                     .group("")
                     .relative()
-                    .h_full()
+                    .h(rems(Self::CONTENT_HEIGHT_IN_REMS))
                     .px_5()
                     .gap_1()
                     .text_color(text_color)
                     // .hover(|style| style.bg(tab_hover_bg))
                     // .active(|style| style.bg(tab_active_bg))
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_3()
                             .h_3()
                             .justify_center()
@@ -157,7 +162,7 @@ impl RenderOnce for Tab {
                             .children(self.start_slot),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_3()
                             .h_3()
                             .justify_center()

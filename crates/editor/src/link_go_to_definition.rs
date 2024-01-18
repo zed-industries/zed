@@ -69,7 +69,7 @@ pub enum GoToDefinitionLink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InlayHighlight {
+pub(crate) struct InlayHighlight {
     pub inlay: InlayId,
     pub inlay_position: Anchor,
     pub range: Range<usize>,

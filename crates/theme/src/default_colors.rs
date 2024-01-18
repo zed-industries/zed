@@ -8,6 +8,11 @@ pub(crate) fn neutral() -> ColorScaleSet {
     sand()
 }
 
+// Note: We aren't currently making use of the default colors, as all of the
+// themes have a value set for each color.
+//
+// We'll need to revisit these once we're ready to launch user themes, which may
+// not specify a value for each color (and thus should fall back to the defaults).
 impl ThemeColors {
     pub fn light() -> Self {
         let system = SystemColors::default();
@@ -23,12 +28,12 @@ impl ThemeColors {
             surface_background: neutral().light().step_2(),
             background: neutral().light().step_1(),
             element_background: neutral().light().step_3(),
-            element_hover: neutral().light_alpha().step_4(), // todo!("pick the right colors")
+            element_hover: neutral().light_alpha().step_4(),
             element_active: neutral().light_alpha().step_5(),
             element_selected: neutral().light_alpha().step_5(),
-            element_disabled: neutral().light_alpha().step_3(), // todo!("pick the right colors")
-            drop_target_background: blue().light_alpha().step_2(), // todo!("pick the right colors")
-            ghost_element_background: system.transparent,       // todo!("pick the right colors")
+            element_disabled: neutral().light_alpha().step_3(),
+            drop_target_background: blue().light_alpha().step_2(),
+            ghost_element_background: system.transparent,
             ghost_element_hover: neutral().light_alpha().step_3(),
             ghost_element_active: neutral().light_alpha().step_4(),
             ghost_element_selected: neutral().light_alpha().step_5(),
@@ -59,7 +64,7 @@ impl ThemeColors {
             scrollbar_track_background: gpui::transparent_black(),
             scrollbar_track_border: neutral().light().step_5(),
             editor_foreground: neutral().light().step_12(),
-            editor_background: neutral().light().step_1(), // todo!(this was inserted by Mikayla)
+            editor_background: neutral().light().step_1(),
             editor_gutter_background: neutral().light().step_1(),
             editor_subheader_background: neutral().light().step_2(),
             editor_active_line_background: neutral().light_alpha().step_3(),
@@ -106,17 +111,17 @@ impl ThemeColors {
             surface_background: neutral().dark().step_2(),
             background: neutral().dark().step_1(),
             element_background: neutral().dark().step_3(),
-            element_hover: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
+            element_hover: neutral().dark_alpha().step_4(),
             element_active: neutral().dark_alpha().step_5(),
-            element_selected: neutral().dark_alpha().step_5(), // todo!("pick the right colors")
-            element_disabled: neutral().dark_alpha().step_3(), // todo!("pick the right colors")
+            element_selected: neutral().dark_alpha().step_5(),
+            element_disabled: neutral().dark_alpha().step_3(),
             drop_target_background: blue().dark_alpha().step_2(),
             ghost_element_background: system.transparent,
-            ghost_element_hover: neutral().dark_alpha().step_4(), // todo!("pick the right colors")
-            ghost_element_active: neutral().dark_alpha().step_5(), // todo!("pick the right colors")
+            ghost_element_hover: neutral().dark_alpha().step_4(),
+            ghost_element_active: neutral().dark_alpha().step_5(),
             ghost_element_selected: neutral().dark_alpha().step_5(),
             ghost_element_disabled: neutral().dark_alpha().step_3(),
-            text: neutral().dark().step_12(), // todo!("pick the right colors")
+            text: neutral().dark().step_12(),
             text_muted: neutral().dark().step_11(),
             text_placeholder: neutral().dark().step_10(),
             text_disabled: neutral().dark().step_9(),
@@ -140,7 +145,7 @@ impl ThemeColors {
             scrollbar_thumb_hover_background: neutral().dark_alpha().step_4(),
             scrollbar_thumb_border: gpui::transparent_black(),
             scrollbar_track_background: gpui::transparent_black(),
-            scrollbar_track_border: neutral().dark().step_5(), // todo!(this was inserted by Mikayla)
+            scrollbar_track_border: neutral().dark().step_5(),
             editor_foreground: neutral().dark().step_12(),
             editor_background: neutral().dark().step_1(),
             editor_gutter_background: neutral().dark().step_1(),

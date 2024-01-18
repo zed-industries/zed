@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     point, size, BorrowWindow, Bounds, DevicePixels, Element, ImageData, InteractiveElement,
-    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedString, Size,
+    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUrl, Size,
     StyleRefinement, Styled, WindowContext,
 };
 use futures::FutureExt;
@@ -12,13 +12,13 @@ use util::ResultExt;
 #[derive(Clone, Debug)]
 pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
-    Uri(SharedString),
+    Uri(SharedUrl),
     Data(Arc<ImageData>),
     Surface(CVImageBuffer),
 }
 
-impl From<SharedString> for ImageSource {
-    fn from(value: SharedString) -> Self {
+impl From<SharedUrl> for ImageSource {
+    fn from(value: SharedUrl) -> Self {
         Self::Uri(value)
     }
 }
@@ -109,7 +109,7 @@ impl Element for Img {
                             } else {
                                 cx.spawn(|mut cx| async move {
                                     if image_future.await.ok().is_some() {
-                                        cx.on_next_frame(|cx| cx.notify());
+                                        cx.on_next_frame(|cx| cx.refresh());
                                     }
                                 })
                                 .detach();

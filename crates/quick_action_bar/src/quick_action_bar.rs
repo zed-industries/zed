@@ -6,7 +6,7 @@ use gpui::{
     Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
-use ui::{prelude::*, ButtonSize, ButtonStyle, Icon, IconButton, IconSize, Tooltip};
+use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -43,15 +43,15 @@ impl Render for QuickActionBar {
 
         let inlay_hints_button = Some(QuickActionBarButton::new(
             "toggle inlay hints",
-            Icon::InlayHint,
+            IconName::InlayHint,
             editor.read(cx).inlay_hints_enabled(),
-            Box::new(editor::ToggleInlayHints),
+            Box::new(editor::actions::ToggleInlayHints),
             "Toggle Inlay Hints",
             {
                 let editor = editor.clone();
                 move |_, cx| {
                     editor.update(cx, |editor, cx| {
-                        editor.toggle_inlay_hints(&editor::ToggleInlayHints, cx);
+                        editor.toggle_inlay_hints(&editor::actions::ToggleInlayHints, cx);
                     });
                 }
             },
@@ -60,7 +60,7 @@ impl Render for QuickActionBar {
 
         let search_button = Some(QuickActionBarButton::new(
             "toggle buffer search",
-            Icon::MagnifyingGlass,
+            IconName::MagnifyingGlass,
             !self.buffer_search_bar.read(cx).is_dismissed(),
             Box::new(buffer_search::Deploy { focus: false }),
             "Buffer Search",
@@ -77,7 +77,7 @@ impl Render for QuickActionBar {
 
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
-            Icon::MagicWand,
+            IconName::MagicWand,
             false,
             Box::new(InlineAssist),
             "Inline Assist",
@@ -93,7 +93,7 @@ impl Render for QuickActionBar {
             },
         );
 
-        h_stack()
+        h_flex()
             .id("quick action bar")
             .gap_2()
             .children(inlay_hints_button)
@@ -107,7 +107,7 @@ impl EventEmitter<ToolbarItemEvent> for QuickActionBar {}
 #[derive(IntoElement)]
 struct QuickActionBarButton {
     id: ElementId,
-    icon: Icon,
+    icon: IconName,
     toggled: bool,
     action: Box<dyn Action>,
     tooltip: SharedString,
@@ -117,7 +117,7 @@ struct QuickActionBarButton {
 impl QuickActionBarButton {
     fn new(
         id: impl Into<ElementId>,
-        icon: Icon,
+        icon: IconName,
         toggled: bool,
         action: Box<dyn Action>,
         tooltip: impl Into<SharedString>,

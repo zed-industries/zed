@@ -7,7 +7,10 @@ use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
-use gpui::{AppContext, BackgroundExecutor, Model, TestAppContext};
+use gpui::{
+    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
+    TestAppContext,
+};
 use language::{
     language_settings::{AllLanguageSettings, Formatter},
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
@@ -1876,6 +1879,186 @@ fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> 
     events
 }
 
+#[gpui::test]
+async fn test_mute_deafen(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+
+    // User A calls user B, B answers.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+
+    room_a.read_with(cx_a, |room, _| assert!(!room.is_muted()));
+    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
+
+    // Users A and B are both muted.
+    assert_eq!(
+        participant_audio_state(&room_a, cx_a),
+        &[ParticipantAudioState {
+            user_id: client_b.user_id().unwrap(),
+            is_muted: false,
+            audio_tracks_playing: vec![true],
+        }]
+    );
+    assert_eq!(
+        participant_audio_state(&room_b, cx_b),
+        &[ParticipantAudioState {
+            user_id: client_a.user_id().unwrap(),
+            is_muted: false,
+            audio_tracks_playing: vec![true],
+        }]
+    );
+
+    // User A mutes
+    room_a.update(cx_a, |room, cx| room.toggle_mute(cx));
+    executor.run_until_parked();
+
+    // User A hears user B, but B doesn't hear A.
+    room_a.read_with(cx_a, |room, _| assert!(room.is_muted()));
+    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
+    assert_eq!(
+        participant_audio_state(&room_a, cx_a),
+        &[ParticipantAudioState {
+            user_id: client_b.user_id().unwrap(),
+            is_muted: false,
+            audio_tracks_playing: vec![true],
+        }]
+    );
+    assert_eq!(
+        participant_audio_state(&room_b, cx_b),
+        &[ParticipantAudioState {
+            user_id: client_a.user_id().unwrap(),
+            is_muted: true,
+            audio_tracks_playing: vec![true],
+        }]
+    );
+
+    // User A deafens
+    room_a.update(cx_a, |room, cx| room.toggle_deafen(cx));
+    executor.run_until_parked();
+
+    // User A does not hear user B.
+    room_a.read_with(cx_a, |room, _| assert!(room.is_muted()));
+    room_b.read_with(cx_b, |room, _| assert!(!room.is_muted()));
+    assert_eq!(
+        participant_audio_state(&room_a, cx_a),
+        &[ParticipantAudioState {
+            user_id: client_b.user_id().unwrap(),
+            is_muted: false,
+            audio_tracks_playing: vec![false],
+        }]
+    );
+    assert_eq!(
+        participant_audio_state(&room_b, cx_b),
+        &[ParticipantAudioState {
+            user_id: client_a.user_id().unwrap(),
+            is_muted: true,
+            audio_tracks_playing: vec![true],
+        }]
+    );
+
+    // User B calls user C, C joins.
+    active_call_b
+        .update(cx_b, |call, cx| {
+            call.invite(client_c.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    active_call_c
+        .update(cx_c, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    // User A does not hear users B or C.
+    assert_eq!(
+        participant_audio_state(&room_a, cx_a),
+        &[
+            ParticipantAudioState {
+                user_id: client_b.user_id().unwrap(),
+                is_muted: false,
+                audio_tracks_playing: vec![false],
+            },
+            ParticipantAudioState {
+                user_id: client_c.user_id().unwrap(),
+                is_muted: false,
+                audio_tracks_playing: vec![false],
+            }
+        ]
+    );
+    assert_eq!(
+        participant_audio_state(&room_b, cx_b),
+        &[
+            ParticipantAudioState {
+                user_id: client_a.user_id().unwrap(),
+                is_muted: true,
+                audio_tracks_playing: vec![true],
+            },
+            ParticipantAudioState {
+                user_id: client_c.user_id().unwrap(),
+                is_muted: false,
+                audio_tracks_playing: vec![true],
+            }
+        ]
+    );
+
+    #[derive(PartialEq, Eq, Debug)]
+    struct ParticipantAudioState {
+        user_id: u64,
+        is_muted: bool,
+        audio_tracks_playing: Vec<bool>,
+    }
+
+    fn participant_audio_state(
+        room: &Model<Room>,
+        cx: &TestAppContext,
+    ) -> Vec<ParticipantAudioState> {
+        room.read_with(cx, |room, _| {
+            room.remote_participants()
+                .iter()
+                .map(|(user_id, participant)| ParticipantAudioState {
+                    user_id: *user_id,
+                    is_muted: participant.muted,
+                    audio_tracks_playing: participant
+                        .audio_tracks
+                        .values()
+                        .map(|track| track.is_playing())
+                        .collect(),
+                })
+                .collect::<Vec<_>>()
+        })
+    }
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_room_location(
     executor: BackgroundExecutor,
@@ -3065,6 +3248,7 @@ async fn test_local_settings(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
+    executor.run_until_parked();
 
     // As client B, join that project and observe the local settings.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -5721,4 +5905,43 @@ async fn test_join_call_after_screen_was_shared(
             1
         );
     });
+}
+
+#[gpui::test]
+async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
+    let mut server = TestServer::start(cx.executor().clone()).await;
+    let client_a = server.create_client(cx, "user_a").await;
+    let (_workspace_a, cx) = client_a.build_test_workspace(cx).await;
+
+    cx.simulate_resize(size(px(300.), px(300.)));
+
+    cx.simulate_keystrokes("cmd-n cmd-n cmd-n");
+    cx.update(|cx| cx.refresh());
+
+    let tab_bounds = cx.debug_bounds("TAB-2").unwrap();
+    let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
+
+    assert!(
+        tab_bounds.intersects(&new_tab_button_bounds),
+        "Tab should overlap with the new tab button, if this is failing check if there's been a redesign!"
+    );
+
+    cx.simulate_event(MouseDownEvent {
+        button: MouseButton::Right,
+        position: new_tab_button_bounds.center(),
+        modifiers: Modifiers::default(),
+        click_count: 1,
+    });
+
+    // regression test that the right click menu for tabs does not open.
+    assert!(cx.debug_bounds("MENU_ITEM-Close").is_none());
+
+    let tab_bounds = cx.debug_bounds("TAB-1").unwrap();
+    cx.simulate_event(MouseDownEvent {
+        button: MouseButton::Right,
+        position: tab_bounds.center(),
+        modifiers: Modifiers::default(),
+        click_count: 1,
+    });
+    assert!(cx.debug_bounds("MENU_ITEM-Close").is_some());
 }

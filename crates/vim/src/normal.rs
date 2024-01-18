@@ -18,7 +18,7 @@ use crate::{
     Vim,
 };
 use collections::HashSet;
-use editor::scroll::autoscroll::Autoscroll;
+use editor::scroll::Autoscroll;
 use editor::{Bias, DisplayPoint};
 use gpui::{actions, ViewContext, WindowContext};
 use language::SelectionGoal;

@@ -114,6 +114,8 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     }
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
 
+    fn telemetry_event_text(&self) -> Option<&'static str>;
+
     /// (model id, Item)
     fn for_each_project_item(
         &self,
@@ -225,6 +227,7 @@ pub trait ItemHandle: 'static + Send {
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
@@ -311,6 +314,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
+    }
+
+    fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str> {
+        self.read(cx).telemetry_event_text()
     }
 
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
@@ -441,11 +448,13 @@ impl<T: Item> ItemHandle for View<T> {
                             workspace.unfollow(&pane, cx);
                         }
 
-                        if item.add_event_to_update_proto(
-                            event,
-                            &mut *pending_update.borrow_mut(),
-                            cx,
-                        ) && !pending_update_scheduled.load(Ordering::SeqCst)
+                        if item.focus_handle(cx).contains_focused(cx)
+                            && item.add_event_to_update_proto(
+                                event,
+                                &mut *pending_update.borrow_mut(),
+                                cx,
+                            )
+                            && !pending_update_scheduled.load(Ordering::SeqCst)
                         {
                             pending_update_scheduled.store(true, Ordering::SeqCst);
                             cx.defer({
@@ -579,13 +588,9 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
-        if cx.has_global::<FollowableItemBuilders>() {
-            let builders = cx.global::<FollowableItemBuilders>();
-            let item = self.to_any();
-            Some(builders.get(&item.entity_type())?.1(&item))
-        } else {
-            None
-        }
+        let builders = cx.try_global::<FollowableItemBuilders>()?;
+        let item = self.to_any();
+        Some(builders.get(&item.entity_type())?.1(&item))
     }
 
     fn on_release(
@@ -809,27 +814,6 @@ pub mod test {
         Edit,
     }
 
-    // impl Clone for TestItem {
-    //     fn clone(&self) -> Self {
-    //         Self {
-    //             state: self.state.clone(),
-    //             label: self.label.clone(),
-    //             save_count: self.save_count,
-    //             save_as_count: self.save_as_count,
-    //             reload_count: self.reload_count,
-    //             is_dirty: self.is_dirty,
-    //             is_singleton: self.is_singleton,
-    //             has_conflict: self.has_conflict,
-    //             project_items: self.project_items.clone(),
-    //             nav_history: None,
-    //             tab_descriptions: None,
-    //             tab_detail: Default::default(),
-    //             workspace_id: self.workspace_id,
-    //             focus_handle: self.focus_handle.clone(),
-    //         }
-    //     }
-    // }
-
     impl TestProjectItem {
         pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Model<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
@@ -941,6 +925,10 @@ pub mod test {
                 let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
                 Some(description.into())
             })
+        }
+
+        fn telemetry_event_text(&self) -> Option<&'static str> {
+            None
         }
 
         fn tab_content(

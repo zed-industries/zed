@@ -78,15 +78,6 @@ pub struct StatusColors {
     pub warning_border: Hsla,
 }
 
-impl Default for StatusColors {
-    /// Don't use this!
-    /// We have to have a default to be `[refineable::Refinable]`.
-    /// todo!("Find a way to not need this for Refinable")
-    fn default() -> Self {
-        Self::dark()
-    }
-}
-
 pub struct DiagnosticColors {
     pub error: Hsla,
     pub warning: Hsla,

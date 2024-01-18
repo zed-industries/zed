@@ -2,13 +2,13 @@ use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     link_go_to_definition::{InlayHighlight, RangeInEditor},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
-    ExcerptId, RangeToAnchorExt,
+    ExcerptId, Hover, RangeToAnchorExt,
 };
 use futures::FutureExt;
 use gpui::{
-    actions, div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, Model,
-    MouseButton, ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled,
-    Task, ViewContext, WeakView,
+    div, px, AnyElement, CursorStyle, Hsla, InteractiveElement, IntoElement, Model, MouseButton,
+    ParentElement, Pixels, SharedString, Size, StatefulInteractiveElement, Styled, Task,
+    ViewContext, WeakView,
 };
 use language::{markdown, Bias, DiagnosticEntry, Language, LanguageRegistry, ParsedMarkdown};
 
@@ -16,7 +16,7 @@ use lsp::DiagnosticSeverity;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
-use ui::{StyledExt, Tooltip};
+use ui::{prelude::*, Tooltip};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -26,8 +26,6 @@ pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
-
-actions!(editor, [Hover]);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
@@ -341,6 +339,7 @@ fn show_hover(
 
                 this.hover_state.info_popover = hover_popover;
                 cx.notify();
+                cx.refresh();
             })?;
 
             Ok::<_, anyhow::Error>(())
@@ -514,6 +513,8 @@ impl DiagnosticPopover {
             None => self.local_diagnostic.diagnostic.message.clone(),
         };
 
+        let status_colors = cx.theme().status();
+
         struct DiagnosticColors {
             pub background: Hsla,
             pub border: Hsla,
@@ -521,24 +522,24 @@ impl DiagnosticPopover {
 
         let diagnostic_colors = match self.local_diagnostic.diagnostic.severity {
             DiagnosticSeverity::ERROR => DiagnosticColors {
-                background: style.status.error_background,
-                border: style.status.error_border,
+                background: status_colors.error_background,
+                border: status_colors.error_border,
             },
             DiagnosticSeverity::WARNING => DiagnosticColors {
-                background: style.status.warning_background,
-                border: style.status.warning_border,
+                background: status_colors.warning_background,
+                border: status_colors.warning_border,
             },
             DiagnosticSeverity::INFORMATION => DiagnosticColors {
-                background: style.status.info_background,
-                border: style.status.info_border,
+                background: status_colors.info_background,
+                border: status_colors.info_border,
             },
             DiagnosticSeverity::HINT => DiagnosticColors {
-                background: style.status.hint_background,
-                border: style.status.hint_border,
+                background: status_colors.hint_background,
+                border: status_colors.hint_border,
             },
             _ => DiagnosticColors {
-                background: style.status.ignored_background,
-                border: style.status.ignored_border,
+                background: status_colors.ignored_background,
+                border: status_colors.ignored_border,
             },
         };
 

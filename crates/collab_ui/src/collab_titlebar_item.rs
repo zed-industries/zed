@@ -1,9 +1,9 @@
 use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ParticipantIndex, User, UserStore};
+use client::{proto::PeerId, Client, User, UserStore};
 use gpui::{
-    actions, canvas, div, point, px, rems, Action, AnyElement, AppContext, Element, Hsla,
+    actions, canvas, div, point, px, Action, AnyElement, AppContext, Element, Hsla,
     InteractiveElement, IntoElement, Model, ParentElement, Path, Render,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
     WindowBounds,
@@ -12,14 +12,14 @@ use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
 use rpc::proto;
 use std::sync::Arc;
-use theme::{ActiveTheme, PlayerColors};
+use theme::ActiveTheme;
 use ui::{
-    h_stack, popover_menu, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon,
-    IconButton, IconElement, TintColor, Tooltip,
+    h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{notifications::NotifyResultExt, titlebar_height, Workspace};
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -41,12 +41,6 @@ pub fn init(cx: &mut AppContext) {
         workspace.set_titlebar_item(titlebar_item.into(), cx)
     })
     .detach();
-    // todo!()
-    // cx.add_action(CollabTitlebarItem::share_project);
-    // cx.add_action(CollabTitlebarItem::unshare_project);
-    // cx.add_action(CollabTitlebarItem::toggle_user_menu);
-    // cx.add_action(CollabTitlebarItem::toggle_vcs_menu);
-    // cx.add_action(CollabTitlebarItem::toggle_project_menu);
 }
 
 pub struct CollabTitlebarItem {
@@ -63,15 +57,13 @@ impl Render for CollabTitlebarItem {
         let current_user = self.user_store.read(cx).current_user();
         let client = self.client.clone();
         let project_id = self.project.read(cx).remote_id();
+        let workspace = self.workspace.upgrade();
 
-        h_stack()
+        h_flex()
             .id("titlebar")
             .justify_between()
             .w_full()
-            .h(rems(1.75))
-            // Set a non-scaling min-height here to ensure the titlebar is
-            // always at least the height of the traffic lights.
-            .min_h(px(32.))
+            .h(titlebar_height(cx))
             .map(|this| {
                 if matches!(cx.window_bounds(), WindowBounds::Fullscreen) {
                     this.pl_2()
@@ -89,7 +81,7 @@ impl Render for CollabTitlebarItem {
             })
             // left side
             .child(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
@@ -103,19 +95,32 @@ impl Render for CollabTitlebarItem {
                                 room.remote_participants().values().collect::<Vec<_>>();
                             remote_participants.sort_by_key(|p| p.participant_index.0);
 
-                            this.children(self.render_collaborator(
+                            let current_user_face_pile = self.render_collaborator(
                                 &current_user,
                                 peer_id,
                                 true,
                                 room.is_speaking(),
-                                room.is_muted(cx),
+                                room.is_muted(),
+                                None,
                                 &room,
                                 project_id,
                                 &current_user,
                                 cx,
-                            ))
+                            );
+
+                            this.children(current_user_face_pile.map(|face_pile| {
+                                v_flex()
+                                    .child(face_pile)
+                                    .child(render_color_ribbon(player_colors.local().cursor))
+                            }))
                             .children(
                                 remote_participants.iter().filter_map(|collaborator| {
+                                    let player_color = player_colors
+                                        .color_for_participant(collaborator.participant_index.0);
+                                    let is_following = workspace
+                                        .as_ref()?
+                                        .read(cx)
+                                        .is_being_followed(collaborator.peer_id);
                                     let is_present = project_id.map_or(false, |project_id| {
                                         collaborator.location
                                             == ParticipantLocation::SharedProject { project_id }
@@ -127,6 +132,7 @@ impl Render for CollabTitlebarItem {
                                         is_present,
                                         collaborator.speaking,
                                         collaborator.muted,
+                                        is_following.then_some(player_color.selection),
                                         &room,
                                         project_id,
                                         &current_user,
@@ -134,13 +140,10 @@ impl Render for CollabTitlebarItem {
                                     )?;
 
                                     Some(
-                                        v_stack()
+                                        v_flex()
                                             .id(("collaborator", collaborator.user.id))
                                             .child(face_pile)
-                                            .child(render_color_ribbon(
-                                                collaborator.participant_index,
-                                                player_colors,
-                                            ))
+                                            .child(render_color_ribbon(player_color.cursor))
                                             .cursor_pointer()
                                             .on_click({
                                                 let peer_id = collaborator.peer_id;
@@ -166,7 +169,7 @@ impl Render for CollabTitlebarItem {
             )
             // right side
             .child(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .pr_1()
                     .when_some(room, |this, room| {
@@ -174,7 +177,7 @@ impl Render for CollabTitlebarItem {
                         let project = self.project.read(cx);
                         let is_local = project.is_local();
                         let is_shared = is_local && project.is_shared();
-                        let is_muted = room.is_muted(cx);
+                        let is_muted = room.is_muted();
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
                         let read_only = room.read_only();
@@ -213,7 +216,7 @@ impl Render for CollabTitlebarItem {
                         .child(
                             div()
                                 .child(
-                                    IconButton::new("leave-call", ui::Icon::Exit)
+                                    IconButton::new("leave-call", ui::IconName::Exit)
                                         .style(ButtonStyle::Subtle)
                                         .tooltip(|cx| Tooltip::text("Leave call", cx))
                                         .icon_size(IconSize::Small)
@@ -230,9 +233,9 @@ impl Render for CollabTitlebarItem {
                                 IconButton::new(
                                     "mute-microphone",
                                     if is_muted {
-                                        ui::Icon::MicMute
+                                        ui::IconName::MicMute
                                     } else {
-                                        ui::Icon::Mic
+                                        ui::IconName::Mic
                                     },
                                 )
                                 .tooltip(move |cx| {
@@ -256,9 +259,9 @@ impl Render for CollabTitlebarItem {
                             IconButton::new(
                                 "mute-sound",
                                 if is_deafened {
-                                    ui::Icon::AudioOff
+                                    ui::IconName::AudioOff
                                 } else {
-                                    ui::Icon::AudioOn
+                                    ui::IconName::AudioOn
                                 },
                             )
                             .style(ButtonStyle::Subtle)
@@ -281,7 +284,7 @@ impl Render for CollabTitlebarItem {
                         )
                         .when(!read_only, |this| {
                             this.child(
-                                IconButton::new("screen-share", ui::Icon::Screen)
+                                IconButton::new("screen-share", ui::IconName::Screen)
                                     .style(ButtonStyle::Subtle)
                                     .icon_size(IconSize::Small)
                                     .selected(is_screen_sharing)
@@ -318,8 +321,7 @@ impl Render for CollabTitlebarItem {
     }
 }
 
-fn render_color_ribbon(participant_index: ParticipantIndex, colors: &PlayerColors) -> gpui::Canvas {
-    let color = colors.color_for_participant(participant_index.0).cursor;
+fn render_color_ribbon(color: Hsla) -> gpui::Canvas {
     canvas(move |bounds, cx| {
         let height = bounds.size.height;
         let horizontal_offset = height;
@@ -469,43 +471,86 @@ impl CollabTitlebarItem {
         is_present: bool,
         is_speaking: bool,
         is_muted: bool,
+        leader_selection_color: Option<Hsla>,
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
         cx: &ViewContext<Self>,
-    ) -> Option<FacePile> {
+    ) -> Option<Div> {
         if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
             return None;
         }
 
+        const FACEPILE_LIMIT: usize = 3;
         let followers = project_id.map_or(&[] as &[_], |id| room.followers_for(peer_id, id));
+        let extra_count = followers.len().saturating_sub(FACEPILE_LIMIT);
 
-        let pile = FacePile::default()
-            .child(
-                Avatar::new(user.avatar_uri.clone())
-                    .grayscale(!is_present)
-                    .border_color(if is_speaking {
-                        cx.theme().status().info_border
-                    } else if is_muted {
-                        cx.theme().status().error_border
-                    } else {
-                        Hsla::default()
-                    }),
-            )
-            .children(followers.iter().filter_map(|follower_peer_id| {
-                let follower = room
-                    .remote_participants()
-                    .values()
-                    .find_map(|p| (p.peer_id == *follower_peer_id).then_some(&p.user))
-                    .or_else(|| {
-                        (self.client.peer_id() == Some(*follower_peer_id)).then_some(current_user)
-                    })?
-                    .clone();
+        Some(
+            div()
+                .m_0p5()
+                .p_0p5()
+                // When the collaborator is not followed, still draw this wrapper div, but leave
+                // it transparent, so that it does not shift the layout when following.
+                .when_some(leader_selection_color, |div, color| {
+                    div.rounded_md().bg(color)
+                })
+                .child(
+                    FacePile::default()
+                        .child(
+                            Avatar::new(user.avatar_uri.clone())
+                                .grayscale(!is_present)
+                                .border_color(if is_speaking {
+                                    cx.theme().status().info
+                                } else {
+                                    // We draw the border in a transparent color rather to avoid
+                                    // the layout shift that would come with adding/removing the border.
+                                    gpui::transparent_black()
+                                })
+                                .when(is_muted, |avatar| {
+                                    avatar.indicator(
+                                        AvatarAudioStatusIndicator::new(ui::AudioStatus::Muted)
+                                            .tooltip({
+                                                let github_login = user.github_login.clone();
+                                                move |cx| {
+                                                    Tooltip::text(
+                                                        format!("{} is muted", github_login),
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                                }),
+                        )
+                        .children(followers.iter().take(FACEPILE_LIMIT).filter_map(
+                            |follower_peer_id| {
+                                let follower = room
+                                    .remote_participants()
+                                    .values()
+                                    .find_map(|p| {
+                                        (p.peer_id == *follower_peer_id).then_some(&p.user)
+                                    })
+                                    .or_else(|| {
+                                        (self.client.peer_id() == Some(*follower_peer_id))
+                                            .then_some(current_user)
+                                    })?
+                                    .clone();
 
-                Some(Avatar::new(follower.avatar_uri.clone()))
-            }));
-
-        Some(pile)
+                                Some(Avatar::new(follower.avatar_uri.clone()))
+                            },
+                        ))
+                        .children(if extra_count > 0 {
+                            Some(
+                                div()
+                                    .ml_1()
+                                    .child(Label::new(format!("+{extra_count}")))
+                                    .into_any_element(),
+                            )
+                        } else {
+                            None
+                        })
+                        .render(),
+                ),
+        )
     }
 
     fn window_activation_changed(&mut self, cx: &mut ViewContext<Self>) {
@@ -573,7 +618,7 @@ impl CollabTitlebarItem {
             | client::Status::ReconnectionError { .. } => Some(
                 div()
                     .id("disconnected")
-                    .child(IconElement::new(Icon::Disconnected).size(IconSize::Small))
+                    .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
                     .tooltip(|cx| Tooltip::text("Disconnected", cx))
                     .into_any_element(),
             ),
@@ -640,10 +685,10 @@ impl CollabTitlebarItem {
                 .trigger(
                     ButtonLike::new("user-menu")
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_0p5()
                                 .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(IconElement::new(Icon::ChevronDown).color(Color::Muted)),
+                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
@@ -663,9 +708,9 @@ impl CollabTitlebarItem {
                 .trigger(
                     ButtonLike::new("user-menu")
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_0p5()
-                                .child(IconElement::new(Icon::ChevronDown).color(Color::Muted)),
+                                .child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),

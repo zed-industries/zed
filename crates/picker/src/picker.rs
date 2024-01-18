@@ -4,8 +4,8 @@ use gpui::{
     FocusableView, Length, MouseButton, MouseDownEvent, Render, Task, UniformListScrollHandle,
     View, ViewContext, WindowContext,
 };
-use std::{cmp, sync::Arc};
-use ui::{prelude::*, v_stack, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
+use std::sync::Arc;
+use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
 use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
@@ -103,7 +103,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
-            let ix = cmp::min(index + 1, count - 1);
+            let ix = if index == count - 1 { 0 } else { index + 1 };
             self.delegate.set_selected_index(ix, cx);
             self.scroll_handle.scroll_to_item(ix);
             cx.notify();
@@ -114,7 +114,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
-            let ix = index.saturating_sub(1);
+            let ix = if index == 0 { count - 1 } else { index - 1 };
             self.delegate.set_selected_index(ix, cx);
             self.scroll_handle.scroll_to_item(ix);
             cx.notify();
@@ -236,7 +236,7 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let picker_editor = h_stack()
+        let picker_editor = h_flex()
             .overflow_hidden()
             .flex_none()
             .h_9()
@@ -264,7 +264,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
-                    v_stack()
+                    v_flex()
                         .flex_grow()
                         .py_2()
                         .max_h(self.max_height.unwrap_or(rems(18.).into()))
@@ -309,7 +309,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             })
             .when(self.delegate.match_count() == 0, |el| {
                 el.child(
-                    v_stack().flex_grow().py_2().child(
+                    v_flex().flex_grow().py_2().child(
                         ListItem::new("empty_state")
                             .inset(true)
                             .spacing(ListItemSpacing::Sparse)

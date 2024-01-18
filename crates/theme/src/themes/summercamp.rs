@@ -69,7 +69,7 @@ pub fn summercamp() -> UserThemeFamily {
                     editor_highlighted_line_background: Some(rgba(0x231f16ff).into()),
                     editor_line_number: Some(rgba(0xf8f5de59).into()),
                     editor_active_line_number: Some(rgba(0xf8f5deff).into()),
-                    editor_invisible: Some(rgba(0x736e55ff).into()),
+                    editor_invisible: Some(rgba(0x494433ff).into()),
                     editor_wrap_guide: Some(rgba(0xf8f5de0d).into()),
                     editor_active_wrap_guide: Some(rgba(0xf8f5de1a).into()),
                     editor_document_highlight_read_background: Some(rgba(0x499bef1a).into()),

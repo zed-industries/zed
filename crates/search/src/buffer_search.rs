@@ -7,7 +7,7 @@ use crate::{
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{Editor, EditorElement, EditorStyle, Tab};
+use editor::{actions::Tab, Editor, EditorElement, EditorStyle};
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
@@ -21,7 +21,7 @@ use settings::Settings;
 use std::{any::Any, sync::Arc};
 use theme::ThemeSettings;
 
-use ui::{h_stack, prelude::*, Icon, IconButton, IconElement, ToggleButton, Tooltip};
+use ui::{h_flex, prelude::*, Icon, IconButton, IconName, ToggleButton, Tooltip};
 use util::ResultExt;
 use workspace::{
     item::ItemHandle,
@@ -43,7 +43,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|editor: &mut Workspace, _| BufferSearchBar::register(editor))
+    cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
         .detach();
 }
 
@@ -186,7 +186,7 @@ impl Render for BufferSearchBar {
         } else {
             cx.theme().colors().border
         };
-        h_stack()
+        h_flex()
             .w_full()
             .gap_2()
             .key_context(key_context)
@@ -216,7 +216,7 @@ impl Render for BufferSearchBar {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
             .child(
-                h_stack()
+                h_flex()
                     .flex_1()
                     .px_2()
                     .py_1()
@@ -225,7 +225,7 @@ impl Render for BufferSearchBar {
                     .border_color(editor_border)
                     .min_w(rems(384. / 16.))
                     .rounded_lg()
-                    .child(IconElement::new(Icon::MagnifyingGlass))
+                    .child(Icon::new(IconName::MagnifyingGlass))
                     .child(self.render_text_input(&self.query_editor, cx))
                     .children(supported_options.case.then(|| {
                         self.render_search_option_button(
@@ -243,11 +243,11 @@ impl Render for BufferSearchBar {
                     })),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_2()
                     .flex_none()
                     .child(
-                        h_stack()
+                        h_flex()
                             .child(
                                 ToggleButton::new("search-mode-text", SearchMode::Text.label())
                                     .style(ButtonStyle::Filled)
@@ -287,7 +287,7 @@ impl Render for BufferSearchBar {
                         this.child(
                             IconButton::new(
                                 "buffer-search-bar-toggle-replace-button",
-                                Icon::Replace,
+                                IconName::Replace,
                             )
                             .style(ButtonStyle::Subtle)
                             .when(self.replace_enabled, |button| {
@@ -303,12 +303,12 @@ impl Render for BufferSearchBar {
                     }),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_0p5()
                     .flex_1()
                     .when(self.replace_enabled, |this| {
                         this.child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 // We're giving this a fixed height to match the height of the search input,
                                 // which has an icon inside that is increasing its height.
@@ -323,7 +323,7 @@ impl Render for BufferSearchBar {
                         )
                         .when(should_show_replace_input, |this| {
                             this.child(
-                                IconButton::new("search-replace-next", ui::Icon::ReplaceNext)
+                                IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
                                     .tooltip(move |cx| {
                                         Tooltip::for_action("Replace next", &ReplaceNext, cx)
                                     })
@@ -332,7 +332,7 @@ impl Render for BufferSearchBar {
                                     })),
                             )
                             .child(
-                                IconButton::new("search-replace-all", ui::Icon::ReplaceAll)
+                                IconButton::new("search-replace-all", ui::IconName::ReplaceAll)
                                     .tooltip(move |cx| {
                                         Tooltip::for_action("Replace all", &ReplaceAll, cx)
                                     })
@@ -346,11 +346,11 @@ impl Render for BufferSearchBar {
                     }),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_0p5()
                     .flex_none()
                     .child(
-                        IconButton::new("select-all", ui::Icon::SelectAll)
+                        IconButton::new("select-all", ui::IconName::SelectAll)
                             .on_click(|_, cx| cx.dispatch_action(SelectAllMatches.boxed_clone()))
                             .tooltip(|cx| {
                                 Tooltip::for_action("Select all matches", &SelectAllMatches, cx)
@@ -358,13 +358,13 @@ impl Render for BufferSearchBar {
                     )
                     .children(match_count)
                     .child(render_nav_button(
-                        ui::Icon::ChevronLeft,
+                        ui::IconName::ChevronLeft,
                         self.active_match_index.is_some(),
                         "Select previous match",
                         &SelectPrevMatch,
                     ))
                     .child(render_nav_button(
-                        ui::Icon::ChevronRight,
+                        ui::IconName::ChevronRight,
                         self.active_match_index.is_some(),
                         "Select next match",
                         &SelectNextMatch,
@@ -423,9 +423,14 @@ impl ToolbarItemView for BufferSearchBar {
     }
 }
 
-/// Registrar inverts the dependency between search and it's downstream user, allowing said downstream user to register search action without knowing exactly what those actions are.
+/// Registrar inverts the dependency between search and its downstream user, allowing said downstream user to register search action without knowing exactly what those actions are.
 pub trait SearchActionsRegistrar {
     fn register_handler<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    );
+
+    fn register_handler_for_dismissed_search<A: Action>(
         &mut self,
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     );
@@ -457,16 +462,62 @@ impl<'a, 'b, T: 'static> DivRegistrar<'a, 'b, T> {
 }
 
 impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
-    fn register_handler<A: gpui::Action>(
+    fn register_handler<A: Action>(
         &mut self,
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     ) {
         let getter = self.search_getter;
         self.div = self.div.take().map(|div| {
             div.on_action(self.cx.listener(move |this, action, cx| {
-                (getter)(this, cx)
+                let should_notify = (getter)(this, cx)
                     .clone()
-                    .map(|search_bar| search_bar.update(cx, |this, cx| callback(this, action, cx)));
+                    .map(|search_bar| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            if search_bar.is_dismissed()
+                                || search_bar.active_searchable_item.is_none()
+                            {
+                                false
+                            } else {
+                                callback(search_bar, action, cx);
+                                true
+                            }
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_notify {
+                    cx.notify();
+                } else {
+                    cx.propagate();
+                }
+            }))
+        });
+    }
+
+    fn register_handler_for_dismissed_search<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        let getter = self.search_getter;
+        self.div = self.div.take().map(|div| {
+            div.on_action(self.cx.listener(move |this, action, cx| {
+                let should_notify = (getter)(this, cx)
+                    .clone()
+                    .map(|search_bar| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            if search_bar.is_dismissed() {
+                                callback(search_bar, action, cx);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_notify {
+                    cx.notify();
+                } else {
+                    cx.propagate();
+                }
             }))
         });
     }
@@ -479,48 +530,95 @@ impl SearchActionsRegistrar for Workspace {
         callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
     ) {
         self.register_action(move |workspace, action: &A, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+
             let pane = workspace.active_pane();
             pane.update(cx, move |this, cx| {
                 this.toolbar().update(cx, move |this, cx| {
                     if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
-                        search_bar.update(cx, move |this, cx| callback(this, action, cx));
-                        cx.notify();
+                        let should_notify = search_bar.update(cx, move |search_bar, cx| {
+                            if search_bar.is_dismissed()
+                                || search_bar.active_searchable_item.is_none()
+                            {
+                                false
+                            } else {
+                                callback(search_bar, action, cx);
+                                true
+                            }
+                        });
+                        if should_notify {
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
+                    }
+                })
+            });
+        });
+    }
+
+    fn register_handler_for_dismissed_search<A: Action>(
+        &mut self,
+        callback: fn(&mut BufferSearchBar, &A, &mut ViewContext<BufferSearchBar>),
+    ) {
+        self.register_action(move |workspace, action: &A, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+
+            let pane = workspace.active_pane();
+            pane.update(cx, move |this, cx| {
+                this.toolbar().update(cx, move |this, cx| {
+                    if let Some(search_bar) = this.item_of_type::<BufferSearchBar>() {
+                        let should_notify = search_bar.update(cx, move |search_bar, cx| {
+                            if search_bar.is_dismissed() {
+                                callback(search_bar, action, cx);
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                        if should_notify {
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
                     }
                 })
             });
         });
     }
 }
+
 impl BufferSearchBar {
-    pub fn register_inner(registrar: &mut impl SearchActionsRegistrar) {
+    pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(|this, action: &ToggleCaseSensitive, cx| {
             if this.supported_options().case {
                 this.toggle_case_sensitive(action, cx);
             }
         });
-
         registrar.register_handler(|this, action: &ToggleWholeWord, cx| {
             if this.supported_options().word {
                 this.toggle_whole_word(action, cx);
             }
         });
-
         registrar.register_handler(|this, action: &ToggleReplace, cx| {
             if this.supported_options().replacement {
                 this.toggle_replace(action, cx);
             }
         });
-
         registrar.register_handler(|this, _: &ActivateRegexMode, cx| {
             if this.supported_options().regex {
                 this.activate_search_mode(SearchMode::Regex, cx);
             }
         });
-
         registrar.register_handler(|this, _: &ActivateTextMode, cx| {
             this.activate_search_mode(SearchMode::Text, cx);
         });
-
         registrar.register_handler(|this, action: &CycleMode, cx| {
             if this.supported_options().regex {
                 // If regex is not supported then search has just one mode (text) - in that case there's no point in supporting
@@ -528,7 +626,6 @@ impl BufferSearchBar {
                 this.cycle_mode(action, cx)
             }
         });
-
         registrar.register_handler(|this, action: &SelectNextMatch, cx| {
             this.select_next_match(action, cx);
         });
@@ -538,20 +635,20 @@ impl BufferSearchBar {
         registrar.register_handler(|this, action: &SelectAllMatches, cx| {
             this.select_all_matches(action, cx);
         });
-        registrar.register_handler(|this, _: &editor::Cancel, cx| {
-            if !this.dismissed {
-                this.dismiss(&Dismiss, cx);
-                return;
-            }
-            cx.propagate();
+        registrar.register_handler(|this, _: &editor::actions::Cancel, cx| {
+            this.dismiss(&Dismiss, cx);
         });
+
+        // register deploy buffer search for both search bar states, since we want to focus into the search bar
+        // when the deploy action is triggered in the buffer.
         registrar.register_handler(|this, deploy, cx| {
+            this.deploy(deploy, cx);
+        });
+        registrar.register_handler_for_dismissed_search(|this, deploy, cx| {
             this.deploy(deploy, cx);
         })
     }
-    fn register(workspace: &mut Workspace) {
-        Self::register_inner(workspace);
-    }
+
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&query_editor, Self::on_query_editor_event)
@@ -1076,7 +1173,7 @@ mod tests {
 
     use super::*;
     use editor::{DisplayPoint, Editor};
-    use gpui::{Context, EmptyView, Hsla, TestAppContext, VisualTestContext};
+    use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
     use language::Buffer;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
@@ -1109,7 +1206,7 @@ mod tests {
                 .unindent(),
             )
         });
-        let (_, cx) = cx.add_window_view(|_| EmptyView {});
+        let cx = cx.add_empty_window();
         let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 
         let search_bar = cx.new_view(|cx| {
@@ -1125,7 +1222,6 @@ mod tests {
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        // todo! osiewicz: these tests asserted on background color as well, that should be brought back.
         let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
             background_highlights
                 .into_iter()
@@ -1390,7 +1486,6 @@ mod tests {
             })
             .await
             .unwrap();
-        // todo! osiewicz: these tests previously asserted on background color highlights; that should be introduced back.
         let display_points_of = |background_highlights: Vec<(Range<DisplayPoint>, Hsla)>| {
             background_highlights
                 .into_iter()
@@ -1458,7 +1553,7 @@ mod tests {
             "Should pick a query with multiple results"
         );
         let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
-        let window = cx.add_window(|_| EmptyView {});
+        let window = cx.add_window(|_| ());
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
@@ -1645,7 +1740,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
-        //crate::project_search::tests::init_test(cx);
         init_globals(cx);
         let buffer_text = r#"
         A regular expression (shortened as regex or regexp;[1] also referred to as
@@ -1655,7 +1749,7 @@ mod tests {
         "#
         .unindent();
         let buffer = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), buffer_text));
-        let (_, cx) = cx.add_window_view(|_| EmptyView {});
+        let cx = cx.add_empty_window();
 
         let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));
 

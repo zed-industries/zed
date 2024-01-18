@@ -2,6 +2,7 @@ use crate::db::UserId;
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
+/// A user model.
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "users")]
 pub struct Model {

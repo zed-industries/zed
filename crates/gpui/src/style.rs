@@ -1,10 +1,10 @@
 use std::{iter, mem, ops::Range};
 
 use crate::{
-    black, phi, point, quad, rems, AbsoluteLength, BorrowWindow, Bounds, ContentMask, Corners,
-    CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
-    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
-    SizeRefinement, Styled, TextRun, WindowContext,
+    black, phi, point, quad, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds,
+    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement,
+    Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
+    SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
 use collections::HashSet;
 use refineable::{Cascade, Refineable};
@@ -42,7 +42,7 @@ pub struct Style {
     #[refineable]
     pub inset: Edges<Length>,
 
-    // Size properies
+    // Size properties
     /// Sets the initial size of the item
     #[refineable]
     pub size: Size<Length>,
@@ -79,7 +79,7 @@ pub struct Style {
     #[refineable]
     pub gap: Size<DefiniteLength>,
 
-    // Flexbox properies
+    // Flexbox properties
     /// Which direction does the main axis flow in?
     pub flex_direction: FlexDirection,
     /// Should elements wrap, or stay in a single line?
@@ -146,7 +146,7 @@ pub enum WhiteSpace {
     Nowrap,
 }
 
-#[derive(Refineable, Clone, Debug)]
+#[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug)]
 pub struct TextStyle {
     pub color: Hsla,
@@ -165,7 +165,8 @@ impl Default for TextStyle {
     fn default() -> Self {
         TextStyle {
             color: black(),
-            font_family: "Helvetica".into(), // todo!("Get a font we know exists on the system")
+            // Helvetica is a web safe font, so it should be available
+            font_family: "Helvetica".into(),
             font_features: FontFeatures::default(),
             font_size: rems(1.).into(),
             line_height: phi(),
@@ -307,54 +308,54 @@ impl Style {
         }
     }
 
-    // pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
-    // where
-    //     C: BorrowAppContext,
-    //     F: FnOnce(&mut C) -> R,
-    // {
-    //     if self.text.is_some() {
-    //         cx.with_text_style(Some(self.text.clone()), f)
-    //     } else {
-    //         f(cx)
-    //     }
-    // }
+    pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&mut C) -> R,
+    {
+        if self.text.is_some() {
+            cx.with_text_style(Some(self.text.clone()), f)
+        } else {
+            f(cx)
+        }
+    }
 
-    // /// Apply overflow to content mask
-    // pub fn apply_overflow<C, F, R>(&self, bounds: Bounds<Pixels>, cx: &mut C, f: F) -> R
-    // where
-    //     C: BorrowWindow,
-    //     F: FnOnce(&mut C) -> R,
-    // {
-    //     let current_mask = cx.content_mask();
+    /// Apply overflow to content mask
+    pub fn apply_overflow<C, F, R>(&self, bounds: Bounds<Pixels>, cx: &mut C, f: F) -> R
+    where
+        C: BorrowWindow,
+        F: FnOnce(&mut C) -> R,
+    {
+        let current_mask = cx.content_mask();
 
-    //     let min = current_mask.bounds.origin;
-    //     let max = current_mask.bounds.lower_right();
+        let min = current_mask.bounds.origin;
+        let max = current_mask.bounds.lower_right();
 
-    //     let mask_bounds = match (
-    //         self.overflow.x == Overflow::Visible,
-    //         self.overflow.y == Overflow::Visible,
-    //     ) {
-    //         // x and y both visible
-    //         (true, true) => return f(cx),
-    //         // x visible, y hidden
-    //         (true, false) => Bounds::from_corners(
-    //             point(min.x, bounds.origin.y),
-    //             point(max.x, bounds.lower_right().y),
-    //         ),
-    //         // x hidden, y visible
-    //         (false, true) => Bounds::from_corners(
-    //             point(bounds.origin.x, min.y),
-    //             point(bounds.lower_right().x, max.y),
-    //         ),
-    //         // both hidden
-    //         (false, false) => bounds,
-    //     };
-    //     let mask = ContentMask {
-    //         bounds: mask_bounds,
-    //     };
+        let mask_bounds = match (
+            self.overflow.x == Overflow::Visible,
+            self.overflow.y == Overflow::Visible,
+        ) {
+            // x and y both visible
+            (true, true) => return f(cx),
+            // x visible, y hidden
+            (true, false) => Bounds::from_corners(
+                point(min.x, bounds.origin.y),
+                point(max.x, bounds.lower_right().y),
+            ),
+            // x hidden, y visible
+            (false, true) => Bounds::from_corners(
+                point(bounds.origin.x, min.y),
+                point(bounds.lower_right().x, max.y),
+            ),
+            // both hidden
+            (false, false) => bounds,
+        };
+        let mask = ContentMask {
+            bounds: mask_bounds,
+        };
 
-    //     cx.with_content_mask(Some(mask), f)
-    // }
+        cx.with_content_mask(Some(mask), f)
+    }
 
     /// Paints the background of an element styled with this style.
     pub fn paint(
@@ -385,7 +386,7 @@ impl Style {
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
-            cx.with_z_index(1, |cx| {
+            cx.with_z_index(0, |cx| {
                 let mut border_color = background_color.unwrap_or_default();
                 border_color.a = 0.;
                 cx.paint_quad(quad(
@@ -398,12 +399,12 @@ impl Style {
             });
         }
 
-        cx.with_z_index(2, |cx| {
+        cx.with_z_index(0, |cx| {
             continuation(cx);
         });
 
         if self.is_border_visible() {
-            cx.with_z_index(3, |cx| {
+            cx.with_z_index(0, |cx| {
                 let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
                 let border_widths = self.border_widths.to_pixels(rem_size);
                 let max_border_width = border_widths.max();
@@ -501,7 +502,7 @@ impl Default for Style {
             max_size: Size::auto(),
             aspect_ratio: None,
             gap: Size::default(),
-            // Aligment
+            // Alignment
             align_items: None,
             align_self: None,
             align_content: None,

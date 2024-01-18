@@ -146,7 +146,7 @@ impl ParentElement for ListItem {
 
 impl RenderOnce for ListItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_stack()
+        h_flex()
             .id(self.id)
             .w_full()
             .relative()
@@ -169,7 +169,7 @@ impl RenderOnce for ListItem {
                     })
             })
             .child(
-                h_stack()
+                h_flex()
                     .id("inner_list_item")
                     .w_full()
                     .relative()
@@ -219,9 +219,9 @@ impl RenderOnce for ListItem {
                             .child(Disclosure::new("toggle", is_open).on_toggle(self.on_toggle))
                     }))
                     .child(
-                        h_stack()
+                        h_flex()
                             // HACK: We need to set *any* width value here in order for this container to size correctly.
-                            // Without this the `h_stack` will overflow the parent `inner_list_item`.
+                            // Without this the `h_flex` will overflow the parent `inner_list_item`.
                             .w_px()
                             .flex_1()
                             .gap_1()
@@ -230,7 +230,7 @@ impl RenderOnce for ListItem {
                     )
                     .when_some(self.end_slot, |this, end_slot| {
                         this.justify_between().child(
-                            h_stack()
+                            h_flex()
                                 .when(self.end_hover_slot.is_some(), |this| {
                                     this.visible()
                                         .group_hover("list_item", |this| this.invisible())
@@ -240,7 +240,7 @@ impl RenderOnce for ListItem {
                     })
                     .when_some(self.end_hover_slot, |this, end_hover_slot| {
                         this.child(
-                            h_stack()
+                            h_flex()
                                 .h_full()
                                 .absolute()
                                 .right_2()

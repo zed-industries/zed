@@ -8,7 +8,7 @@ Zed uses the [Language Server Protocol](https://microsoft.github.io/language-ser
 
 ### Defining syntax highlighting rules
 
-We use tree-sitter queries to match certian properties to highlight.
+We use tree-sitter queries to match certain properties to highlight.
 
 #### Simple Example:
 

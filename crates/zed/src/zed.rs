@@ -23,7 +23,7 @@ use quick_action_bar::QuickActionBar;
 use search::project_search::ProjectSearchBar;
 use settings::{initial_local_settings_content, KeymapFile, Settings, SettingsStore};
 use std::{borrow::Cow, ops::Deref, sync::Arc};
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
     channel::{AppCommitSha, ReleaseChannel},
@@ -113,12 +113,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        // cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
-
-        //     let collab_titlebar_item =
-        //         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
-        //     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
-
         let copilot = cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
@@ -148,6 +142,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.on_window_should_close(move |cx| {
             handle
                 .update(cx, |workspace, cx| {
+                    // We'll handle closing asynchoronously
                     workspace.close_window(&Default::default(), cx);
                     false
                 })
@@ -183,7 +178,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let position = project_panel.read(cx).position(cx);
+                let (position, was_deserialized) = {
+                    let project_panel = project_panel.read(cx);
+                    (project_panel.position(cx), project_panel.was_deserialized())
+                };
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
@@ -191,15 +189,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
 
-                if workspace
-                    .project()
-                    .read(cx)
-                    .visible_worktrees(cx)
-                    .any(|tree| {
-                        tree.read(cx)
-                            .root_entry()
-                            .map_or(false, |entry| entry.is_dir())
-                    })
+                if !was_deserialized
+                    && workspace
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .any(|tree| {
+                            tree.read(cx)
+                                .root_entry()
+                                .map_or(false, |entry| entry.is_dir())
+                        })
                 {
                     workspace.toggle_dock(position, cx);
                 }
@@ -299,79 +298,42 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                     );
                 },
             )
-            //todo!()
-            // cx.add_action({
-            //     move |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
-            //         let app_state = workspace.app_state().clone();
-            //         let markdown = app_state.languages.language_for_name("JSON");
-            //         let window = cx.window();
-            //         cx.spawn(|workspace, mut cx| async move {
-            //             let markdown = markdown.await.log_err();
-            //             let content = to_string_pretty(&window.debug_elements(&cx).ok_or_else(|| {
-            //                 anyhow!("could not debug elements for window {}", window.id())
-            //             })?)
-            //             .unwrap();
-            //             workspace
-            //                 .update(&mut cx, |workspace, cx| {
-            //                     workspace.with_local_workspace(cx, move |workspace, cx| {
-            //                         let project = workspace.project().clone();
-            //                         let buffer = project
-            //                             .update(cx, |project, cx| {
-            //                                 project.create_buffer(&content, markdown, cx)
-            //                             })
-            //                             .expect("creating buffers on a local workspace always succeeds");
-            //                         let buffer = cx.add_model(|cx| {
-            //                             MultiBuffer::singleton(buffer, cx)
-            //                                 .with_title("Debug Elements".into())
-            //                         });
-            //                         workspace.add_item(
-            //                             Box::new(cx.add_view(|cx| {
-            //                                 Editor::for_multibuffer(buffer, Some(project.clone()), cx)
-            //                             })),
-            //                             cx,
-            //                         );
-            //                     })
-            //                 })?
-            //                 .await
-            //         })
-            //         .detach_and_log_err(cx);
-            //     }
-            // });
-            // .register_action(
-            //     |workspace: &mut Workspace,
-            //      _: &project_panel::ToggleFocus,
-            //      cx: &mut ViewContext<Workspace>| {
-            //         workspace.toggle_panel_focus::<ProjectPanel>(cx);
-            //     },
-            // );
-            // cx.add_action(
-            //     |workspace: &mut Workspace,
-            //      _: &collab_ui::collab_panel::ToggleFocus,
-            //      cx: &mut ViewContext<Workspace>| {
-            //         workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
-            //     },
-            // );
-            // cx.add_action(
-            //     |workspace: &mut Workspace,
-            //      _: &collab_ui::chat_panel::ToggleFocus,
-            //      cx: &mut ViewContext<Workspace>| {
-            //         workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(cx);
-            //     },
-            // );
-            // cx.add_action(
-            //     |workspace: &mut Workspace,
-            //      _: &collab_ui::notification_panel::ToggleFocus,
-            //      cx: &mut ViewContext<Workspace>| {
-            //         workspace.toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
-            //     },
-            // );
-            // cx.add_action(
-            //     |workspace: &mut Workspace,
-            //      _: &terminal_panel::ToggleFocus,
-            //      cx: &mut ViewContext<Workspace>| {
-            //         workspace.toggle_panel_focus::<TerminalPanel>(cx);
-            //     },
-            // );
+            .register_action(
+                |workspace: &mut Workspace,
+                 _: &project_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace.toggle_panel_focus::<ProjectPanel>(cx);
+                },
+            )
+            .register_action(
+                |workspace: &mut Workspace,
+                 _: &collab_ui::collab_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
+                },
+            )
+            .register_action(
+                |workspace: &mut Workspace,
+                 _: &collab_ui::chat_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(cx);
+                },
+            )
+            .register_action(
+                |workspace: &mut Workspace,
+                 _: &collab_ui::notification_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace
+                        .toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(cx);
+                },
+            )
+            .register_action(
+                |workspace: &mut Workspace,
+                 _: &terminal_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace.toggle_panel_focus::<TerminalPanel>(cx);
+                },
+            )
             .register_action({
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewWindow, cx| {
@@ -764,12 +726,11 @@ fn open_bundled_file(
     .detach_and_log_err(cx);
 }
 
-// todo!()
 #[cfg(test)]
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
+    use editor::{scroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
         VisualTestContext, WindowHandle,
@@ -1659,8 +1620,8 @@ mod tests {
             })
             .unwrap();
         save_task.await.unwrap();
-        // todo!() po
-        //assert!(!cx.did_prompt_for_new_path());
+
+        assert!(!cx.did_prompt_for_new_path());
         window
             .update(cx, |_, cx| {
                 editor.update(cx, |editor, cx| {
@@ -1848,9 +1809,9 @@ mod tests {
                 assert!(workspace.active_item(cx).is_none());
             })
             .unwrap();
-        editor_1.assert_dropped();
-        editor_2.assert_dropped();
-        buffer.assert_dropped();
+        editor_1.assert_released();
+        editor_2.assert_released();
+        buffer.assert_released();
     }
 
     #[gpui::test]

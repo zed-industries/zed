@@ -55,7 +55,7 @@ impl<M: ManagedView> PopoverMenu<M> {
                                     }
                                 }
                                 *menu2.borrow_mut() = None;
-                                cx.notify();
+                                cx.refresh();
                             })
                             .detach();
                             cx.focus_view(&new_menu);
@@ -108,6 +108,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 }
 
+/// Creates a [`PopoverMenu`]
 pub fn popover_menu<M: ManagedView>(id: impl Into<ElementId>) -> PopoverMenu<M> {
     PopoverMenu {
         id: id.into(),

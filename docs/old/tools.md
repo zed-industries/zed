@@ -56,7 +56,7 @@ We use Vercel for all of our web deployments and some backend things. If you sig
 
 ### Environment Variables
 
-You can get access to many of our shared enviroment variables through 1Password and Vercel. For 1Password search the value you are looking for, or sort by passwords or API credentials.
+You can get access to many of our shared environment variables through 1Password and Vercel. For 1Password search the value you are looking for, or sort by passwords or API credentials.
 
 For Vercel, go to `settings` -> `Environment Variables` (either on the entire org, or on a specific project depending on where it is shared.) For a given Vercel project if you have their CLI installed you can use `vercel pull` or `vercel env` to pull values down directly. More on those in their [CLI docs](https://vercel.com/docs/cli/env).
 

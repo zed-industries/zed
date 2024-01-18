@@ -14,9 +14,8 @@ pub struct Overlay {
     children: SmallVec<[AnyElement; 2]>,
     anchor_corner: AnchorCorner,
     fit_mode: OverlayFitMode,
-    // todo!();
     anchor_position: Option<Point<Pixels>>,
-    // position_mode: OverlayPositionMode,
+    position_mode: OverlayPositionMode,
 }
 
 /// overlay gives you a floating element that will avoid overflowing the window bounds.
@@ -27,6 +26,7 @@ pub fn overlay() -> Overlay {
         anchor_corner: AnchorCorner::TopLeft,
         fit_mode: OverlayFitMode::SwitchAnchor,
         anchor_position: None,
+        position_mode: OverlayPositionMode::Window,
     }
 }
 
@@ -41,6 +41,14 @@ impl Overlay {
     /// (otherwise the location the overlay is rendered is used)
     pub fn position(mut self, anchor: Point<Pixels>) -> Self {
         self.anchor_position = Some(anchor);
+        self
+    }
+
+    /// Sets the position mode for this overlay. Local will have this
+    /// interpret its [`Overlay::position`] as relative to the parent element.
+    /// While Window will have it interpret the position as relative to the window.
+    pub fn position_mode(mut self, mode: OverlayPositionMode) -> Self {
+        self.position_mode = mode;
         self
     }
 
@@ -100,9 +108,14 @@ impl Element for Overlay {
             child_max = child_max.max(&child_bounds.lower_right());
         }
         let size: Size<Pixels> = (child_max - child_min).into();
-        let origin = self.anchor_position.unwrap_or(bounds.origin);
 
-        let mut desired = self.anchor_corner.get_bounds(origin, size);
+        let (origin, mut desired) = self.position_mode.get_position_and_bounds(
+            self.anchor_position,
+            self.anchor_corner,
+            size,
+            bounds,
+        );
+
         let limits = Bounds {
             origin: Point::default(),
             size: cx.viewport_size(),
@@ -182,6 +195,35 @@ enum Axis {
 pub enum OverlayFitMode {
     SnapToWindow,
     SwitchAnchor,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum OverlayPositionMode {
+    Window,
+    Local,
+}
+
+impl OverlayPositionMode {
+    fn get_position_and_bounds(
+        &self,
+        anchor_position: Option<Point<Pixels>>,
+        anchor_corner: AnchorCorner,
+        size: Size<Pixels>,
+        bounds: Bounds<Pixels>,
+    ) -> (Point<Pixels>, Bounds<Pixels>) {
+        match self {
+            OverlayPositionMode::Window => {
+                let anchor_position = anchor_position.unwrap_or_else(|| bounds.origin);
+                let bounds = anchor_corner.get_bounds(anchor_position, size);
+                (anchor_position, bounds)
+            }
+            OverlayPositionMode::Local => {
+                let anchor_position = anchor_position.unwrap_or_default();
+                let bounds = anchor_corner.get_bounds(bounds.origin + anchor_position, size);
+                (anchor_position, bounds)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

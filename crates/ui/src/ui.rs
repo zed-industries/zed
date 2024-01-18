@@ -3,8 +3,6 @@
 //! This crate provides a set of UI primitives and components that are used to build all of the elements in Zed's UI.
 //!
 
-#![doc = include_str!("../docs/building-ui.md")]
-
 mod clickable;
 mod components;
 mod disableable;

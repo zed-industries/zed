@@ -6,7 +6,7 @@ use gpui::{
     InteractiveElementState, Interactivity, IntoElement, LayoutId, Model, ModelContext,
     ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, PlatformInputHandler, Point,
     ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle,
-    WhiteSpace, WindowContext,
+    WeakView, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -24,6 +24,7 @@ use terminal::{
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::Tooltip;
+use workspace::Workspace;
 
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
@@ -142,6 +143,7 @@ impl LayoutRect {
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
+    workspace: WeakView<Workspace>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -160,6 +162,7 @@ impl StatefulInteractiveElement for TerminalElement {}
 impl TerminalElement {
     pub fn new(
         terminal: Model<Terminal>,
+        workspace: WeakView<Workspace>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -167,6 +170,7 @@ impl TerminalElement {
     ) -> TerminalElement {
         TerminalElement {
             terminal,
+            workspace,
             focused,
             focus: focus.clone(),
             cursor_visible,
@@ -246,8 +250,8 @@ impl TerminalElement {
 
                 //Layout current cell text
                 {
-                    let cell_text = cell.c.to_string();
                     if !is_blank(&cell) {
+                        let cell_text = cell.c.to_string();
                         let cell_style =
                             TerminalElement::cell_style(&cell, fg, theme, text_style, hyperlink);
 
@@ -424,7 +428,6 @@ impl TerminalElement {
             let line_height = font_pixels * line_height.to_pixels(rem_size);
             let font_id = cx.text_system().resolve_font(&text_style.font());
 
-            // todo!(do we need to keep this unwrap?)
             let cell_width = text_system
                 .advance(font_id, font_pixels, 'm')
                 .unwrap()
@@ -443,7 +446,7 @@ impl TerminalElement {
 
         let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
-            terminal.try_sync(cx);
+            terminal.sync(cx);
             if self.can_navigate_to_selected_word && terminal.can_navigate_to_selected_word() {
                 terminal.last_content.last_hovered_word.clone()
             } else {
@@ -524,7 +527,6 @@ impl TerminalElement {
                             underline: Default::default(),
                         }],
                     )
-                    //todo!(do we need to keep this unwrap?)
                     .unwrap()
             };
 
@@ -582,24 +584,6 @@ impl TerminalElement {
                 cx.notify();
             })
         }
-    }
-
-    fn register_key_listeners(&self, cx: &mut WindowContext) {
-        cx.on_key_event({
-            let this = self.terminal.clone();
-            move |event: &ModifiersChangedEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble {
-                    return;
-                }
-
-                let handled =
-                    this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
-
-                if handled {
-                    cx.notify();
-                }
-            }
-        });
     }
 
     fn register_mouse_listeners(
@@ -664,21 +648,6 @@ impl TerminalElement {
                 },
             ),
         );
-        self.interactivity.on_click({
-            let terminal = terminal.clone();
-            move |e, cx| {
-                if e.down.button == MouseButton::Right {
-                    let mouse_mode = terminal.update(cx, |terminal, _cx| {
-                        terminal.mouse_mode(e.down.modifiers.shift)
-                    });
-
-                    if !mouse_mode {
-                        //todo!(context menu)
-                        // view.deploy_context_menu(e.position, cx);
-                    }
-                }
-            }
-        });
         self.interactivity.on_scroll_wheel({
             let terminal = terminal.clone();
             move |e, cx| {
@@ -779,57 +748,73 @@ impl Element for TerminalElement {
                 .cursor
                 .as_ref()
                 .map(|cursor| cursor.bounding_rect(origin)),
+            workspace: self.workspace.clone(),
         };
 
         self.register_mouse_listeners(origin, layout.mode, bounds, cx);
 
-        let mut interactivity = mem::take(&mut self.interactivity);
-        interactivity.paint(bounds, bounds.size, state, cx, |_, _, cx| {
-            cx.handle_input(&self.focus, terminal_input_handler);
+        self.interactivity
+            .paint(bounds, bounds.size, state, cx, |_, _, cx| {
+                cx.handle_input(&self.focus, terminal_input_handler);
 
-            self.register_key_listeners(cx);
+                cx.on_key_event({
+                    let this = self.terminal.clone();
+                    move |event: &ModifiersChangedEvent, phase, cx| {
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
 
-            for rect in &layout.rects {
-                rect.paint(origin, &layout, cx);
-            }
+                        let handled =
+                            this.update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 
-            cx.with_z_index(1, |cx| {
-                for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
-                {
-                    if let Some((start_y, highlighted_range_lines)) =
-                        to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
-                    {
-                        let hr = HighlightedRange {
-                            start_y, //Need to change this
-                            line_height: layout.dimensions.line_height,
-                            lines: highlighted_range_lines,
-                            color: color.clone(),
-                            //Copied from editor. TODO: move to theme or something
-                            corner_radius: 0.15 * layout.dimensions.line_height,
-                        };
-                        hr.paint(bounds, cx);
-                    }
-                }
-            });
-
-            cx.with_z_index(2, |cx| {
-                for cell in &layout.cells {
-                    cell.paint(origin, &layout, bounds, cx);
-                }
-            });
-
-            if self.cursor_visible {
-                cx.with_z_index(3, |cx| {
-                    if let Some(cursor) = &layout.cursor {
-                        cursor.paint(origin, cx);
+                        if handled {
+                            cx.refresh();
+                        }
                     }
                 });
-            }
 
-            if let Some(mut element) = layout.hyperlink_tooltip.take() {
-                element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
-            }
-        });
+                for rect in &layout.rects {
+                    rect.paint(origin, &layout, cx);
+                }
+
+                cx.with_z_index(1, |cx| {
+                    for (relative_highlighted_range, color) in
+                        layout.relative_highlighted_ranges.iter()
+                    {
+                        if let Some((start_y, highlighted_range_lines)) =
+                            to_highlighted_range_lines(relative_highlighted_range, &layout, origin)
+                        {
+                            let hr = HighlightedRange {
+                                start_y, //Need to change this
+                                line_height: layout.dimensions.line_height,
+                                lines: highlighted_range_lines,
+                                color: color.clone(),
+                                //Copied from editor. TODO: move to theme or something
+                                corner_radius: 0.15 * layout.dimensions.line_height,
+                            };
+                            hr.paint(bounds, cx);
+                        }
+                    }
+                });
+
+                cx.with_z_index(2, |cx| {
+                    for cell in &layout.cells {
+                        cell.paint(origin, &layout, bounds, cx);
+                    }
+                });
+
+                if self.cursor_visible {
+                    cx.with_z_index(3, |cx| {
+                        if let Some(cursor) = &layout.cursor {
+                            cursor.paint(origin, cx);
+                        }
+                    });
+                }
+
+                if let Some(mut element) = layout.hyperlink_tooltip.take() {
+                    element.draw(origin, bounds.size.map(AvailableSpace::Definite), cx)
+                }
+            });
     }
 }
 
@@ -848,6 +833,7 @@ impl IntoElement for TerminalElement {
 struct TerminalInputHandler {
     cx: AsyncWindowContext,
     terminal: Model<Terminal>,
+    workspace: WeakView<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -888,7 +874,14 @@ impl PlatformInputHandler for TerminalInputHandler {
             .update(|_, cx| {
                 self.terminal.update(cx, |terminal, _| {
                     terminal.input(text.into());
-                })
+                });
+
+                self.workspace
+                    .update(cx, |this, cx| {
+                        let telemetry = this.project().read(cx).client().telemetry().clone();
+                        telemetry.log_edit_event("terminal");
+                    })
+                    .ok();
             })
             .ok();
     }

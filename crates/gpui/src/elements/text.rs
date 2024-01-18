@@ -202,7 +202,10 @@ impl TextState {
                 let Some(lines) = cx
                     .text_system()
                     .shape_text(
-                        &text, font_size, &runs, wrap_width, // Wrap if we know the width.
+                        text.clone(),
+                        font_size,
+                        &runs,
+                        wrap_width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {
@@ -389,7 +392,7 @@ impl Element for InteractiveText {
                         }
 
                         mouse_down.take();
-                        cx.notify();
+                        cx.refresh();
                     }
                 });
             } else {
@@ -399,7 +402,7 @@ impl Element for InteractiveText {
                             text_state.index_for_position(bounds, event.position)
                         {
                             mouse_down.set(Some(mouse_down_index));
-                            cx.notify();
+                            cx.refresh();
                         }
                     }
                 });

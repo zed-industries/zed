@@ -36,7 +36,7 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  "ui_font_family": "Zed Mono",
+  "ui_font_family": "Zed Sans",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:

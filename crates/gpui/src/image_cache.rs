@@ -1,4 +1,4 @@
-use crate::{ImageData, ImageId, SharedString};
+use crate::{ImageData, ImageId, SharedUrl};
 use collections::HashMap;
 use futures::{
     future::{BoxFuture, Shared},
@@ -44,7 +44,7 @@ impl From<ImageError> for Error {
 
 pub struct ImageCache {
     client: Arc<dyn HttpClient>,
-    images: Arc<Mutex<HashMap<SharedString, FetchImageFuture>>>,
+    images: Arc<Mutex<HashMap<SharedUrl, FetchImageFuture>>>,
 }
 
 type FetchImageFuture = Shared<BoxFuture<'static, Result<Arc<ImageData>, Error>>>;
@@ -59,7 +59,7 @@ impl ImageCache {
 
     pub fn get(
         &self,
-        uri: impl Into<SharedString>,
+        uri: impl Into<SharedUrl>,
     ) -> Shared<BoxFuture<'static, Result<Arc<ImageData>, Error>>> {
         let uri = uri.into();
         let mut images = self.images.lock();

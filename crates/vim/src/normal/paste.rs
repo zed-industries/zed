@@ -1,8 +1,7 @@
 use std::{borrow::Cow, cmp};
 
 use editor::{
-    display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, ClipboardSelection,
-    DisplayPoint,
+    display_map::ToDisplayPoint, movement, scroll::Autoscroll, ClipboardSelection, DisplayPoint,
 };
 use gpui::{impl_actions, ViewContext};
 use language::{Bias, SelectionGoal};

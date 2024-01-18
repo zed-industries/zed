@@ -7,15 +7,15 @@ use crate::{
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use editor::{
-    items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, EditorEvent,
-    MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN,
+    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor, EditorEvent,
+    MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use editor::{EditorElement, EditorStyle};
 use gpui::{
-    actions, div, AnyElement, AnyView, AppContext, Context as _, Element, EntityId, EventEmitter,
-    FocusHandle, FocusableView, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement,
-    KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
+    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, Element, EntityId,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, Hsla, InteractiveElement,
+    IntoElement, KeyContext, Model, ModelContext, ParentElement, PromptLevel, Render, SharedString,
+    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakModel, WeakView,
     WhiteSpace, WindowContext,
 };
 use menu::Confirm;
@@ -36,9 +36,10 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::ThemeSettings;
+use workspace::{DeploySearch, NewSearch};
 
 use ui::{
-    h_stack, prelude::*, v_stack, Icon, IconButton, IconElement, Label, LabelCommon, LabelSize,
+    h_flex, prelude::*, v_flex, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
     Selectable, ToggleButton, Tooltip,
 };
 use util::{paths::PathMatcher, ResultExt as _};
@@ -55,19 +56,67 @@ actions!(
 );
 
 #[derive(Default)]
-struct ActiveSearches(HashMap<WeakModel<Project>, WeakView<ProjectSearchView>>);
-
-#[derive(Default)]
 struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 
 pub fn init(cx: &mut AppContext) {
-    cx.set_global(ActiveSearches::default());
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace
-            .register_action(ProjectSearchView::new_search)
-            .register_action(ProjectSearchView::deploy_search)
-            .register_action(ProjectSearchBar::search_in_new);
+        register_workspace_action(workspace, move |search_bar, _: &ToggleFilters, cx| {
+            search_bar.toggle_filters(cx);
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ToggleCaseSensitive, cx| {
+            search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ToggleWholeWord, cx| {
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+        });
+        register_workspace_action(workspace, move |search_bar, action: &ToggleReplace, cx| {
+            search_bar.toggle_replace(action, cx)
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ActivateRegexMode, cx| {
+            search_bar.activate_search_mode(SearchMode::Regex, cx)
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ActivateTextMode, cx| {
+            search_bar.activate_search_mode(SearchMode::Text, cx)
+        });
+        register_workspace_action(
+            workspace,
+            move |search_bar, _: &ActivateSemanticMode, cx| {
+                search_bar.activate_search_mode(SearchMode::Semantic, cx)
+            },
+        );
+        register_workspace_action(workspace, move |search_bar, action: &CycleMode, cx| {
+            search_bar.cycle_mode(action, cx)
+        });
+        register_workspace_action(
+            workspace,
+            move |search_bar, action: &SelectNextMatch, cx| {
+                search_bar.select_next_match(action, cx)
+            },
+        );
+
+        // Only handle search_in_new if there is a search present
+        register_workspace_action_for_present_search(workspace, |workspace, action, cx| {
+            ProjectSearchView::search_in_new(workspace, action, cx)
+        });
+
+        // Both on present and dismissed search, we need to unconditionally handle those actions to focus from the editor.
+        workspace.register_action(move |workspace, action: &DeploySearch, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+            ProjectSearchView::deploy_search(workspace, action, cx);
+            cx.notify();
+        });
+        workspace.register_action(move |workspace, action: &NewSearch, cx| {
+            if workspace.has_active_modal(cx) {
+                cx.propagate();
+                return;
+            }
+            ProjectSearchView::new_search(workspace, action, cx);
+            cx.notify();
+        });
     })
     .detach();
 }
@@ -282,6 +331,8 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const PLEASE_AUTHENTICATE: &str = "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables. If you authenticated using the Assistant Panel, please restart Zed to Authenticate.";
+
         if self.has_matches() {
             div()
                 .flex_1()
@@ -303,40 +354,39 @@ impl Render for ProjectSearchView {
             let mut show_minor_text = true;
             let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
                 let status = semantic.index_status;
-                                match status {
-                                    SemanticIndexStatus::NotAuthenticated => {
-                                        major_text = Label::new("Not Authenticated");
-                                        show_minor_text = false;
-                                        Some(
-                                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables. If you authenticated using the Assistant Panel, please restart Zed to Authenticate.".to_string())
-                                    }
-                                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
-                                    SemanticIndexStatus::Indexing {
-                                        remaining_files,
-                                        rate_limit_expiry,
-                                    } => {
-                                        if remaining_files == 0 {
-                                            Some("Indexing...".to_string())
-                                        } else {
-                                            if let Some(rate_limit_expiry) = rate_limit_expiry {
-                                                let remaining_seconds =
-                                                    rate_limit_expiry.duration_since(Instant::now());
-                                                if remaining_seconds > Duration::from_secs(0) {
-                                                    Some(format!(
-                                                        "Remaining files to index (rate limit resets in {}s): {}",
-                                                        remaining_seconds.as_secs(),
-                                                        remaining_files
-                                                    ))
-                                                } else {
-                                                    Some(format!("Remaining files to index: {}", remaining_files))
-                                                }
-                                            } else {
-                                                Some(format!("Remaining files to index: {}", remaining_files))
-                                            }
-                                        }
-                                    }
-                                    SemanticIndexStatus::NotIndexed => None,
+                match status {
+                    SemanticIndexStatus::NotAuthenticated => {
+                        major_text = Label::new("Not Authenticated");
+                        show_minor_text = false;
+                        Some(PLEASE_AUTHENTICATE.to_string())
+                    }
+                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
+                    SemanticIndexStatus::Indexing {
+                        remaining_files,
+                        rate_limit_expiry,
+                    } => {
+                        if remaining_files == 0 {
+                            Some("Indexing...".to_string())
+                        } else {
+                            if let Some(rate_limit_expiry) = rate_limit_expiry {
+                                let remaining_seconds =
+                                    rate_limit_expiry.duration_since(Instant::now());
+                                if remaining_seconds > Duration::from_secs(0) {
+                                    Some(format!(
+                                        "Remaining files to index (rate limit resets in {}s): {}",
+                                        remaining_seconds.as_secs(),
+                                        remaining_files
+                                    ))
+                                } else {
+                                    Some(format!("Remaining files to index: {}", remaining_files))
                                 }
+                            } else {
+                                Some(format!("Remaining files to index: {}", remaining_files))
+                            }
+                        }
+                    }
+                    SemanticIndexStatus::NotIndexed => None,
+                }
             });
             let major_text = div().justify_center().max_w_96().child(major_text);
 
@@ -360,19 +410,19 @@ impl Render for ProjectSearchView {
                     .max_w_96()
                     .child(Label::new(text).size(LabelSize::Small))
             });
-            v_stack()
+            v_flex()
                 .flex_1()
                 .size_full()
                 .justify_center()
                 .bg(cx.theme().colors().editor_background)
                 .track_focus(&self.focus_handle)
                 .child(
-                    h_stack()
+                    h_flex()
                         .size_full()
                         .justify_center()
-                        .child(h_stack().flex_1())
-                        .child(v_stack().child(major_text).children(minor_text))
-                        .child(h_stack().flex_1()),
+                        .child(h_flex().flex_1())
+                        .child(v_flex().child(major_text).children(minor_text))
+                        .child(h_flex().flex_1()),
                 )
         }
     }
@@ -424,15 +474,16 @@ impl Item for ProjectSearchView {
             .current()
             .as_ref()
             .map(|query| {
-                let query_text = util::truncate_and_trailoff(query, MAX_TAB_TITLE_LEN);
+                let query = query.replace('\n', "");
+                let query_text = util::truncate_and_trailoff(&query, MAX_TAB_TITLE_LEN);
                 query_text.into()
             });
         let tab_name = last_query
             .filter(|query| !query.is_empty())
             .unwrap_or_else(|| "Project search".into());
-        h_stack()
+        h_flex()
             .gap_2()
-            .child(IconElement::new(Icon::MagnifyingGlass).color(if selected {
+            .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
                 Color::Default
             } else {
                 Color::Muted
@@ -443,6 +494,10 @@ impl Item for ProjectSearchView {
                 Color::Muted
             }))
             .into_any()
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        Some("project search")
     }
 
     fn for_each_project_item(
@@ -942,26 +997,51 @@ impl ProjectSearchView {
         });
     }
 
-    // Re-activate the most recently activated search or the most recent if it has been closed.
+    // Re-activate the most recently activated search in this pane or the most recent if it has been closed.
     // If no search exists in the workspace, create a new one.
     fn deploy_search(
         workspace: &mut Workspace,
         _: &workspace::DeploySearch,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let active_search = cx
-            .global::<ActiveSearches>()
-            .0
-            .get(&workspace.project().downgrade());
-        let existing = active_search
-            .and_then(|active_search| {
-                workspace
-                    .items_of_type::<ProjectSearchView>(cx)
-                    .filter(|search| &search.downgrade() == active_search)
-                    .last()
-            })
-            .or_else(|| workspace.item_of_type::<ProjectSearchView>(cx));
+        let existing = workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .find_map(|item| item.downcast::<ProjectSearchView>());
+
         Self::existing_or_new_search(workspace, existing, cx)
+    }
+
+    fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
+        if let Some(search_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            let new_query = search_view.update(cx, |search_view, cx| {
+                let new_query = search_view.build_search_query(cx);
+                if new_query.is_some() {
+                    if let Some(old_query) = search_view.model.read(cx).active_query.clone() {
+                        search_view.query_editor.update(cx, |editor, cx| {
+                            editor.set_text(old_query.as_str(), cx);
+                        });
+                        search_view.search_options = SearchOptions::from_query(&old_query);
+                    }
+                }
+                new_query
+            });
+            if let Some(new_query) = new_query {
+                let model = cx.new_model(|cx| {
+                    let mut model = ProjectSearch::new(workspace.project().clone(), cx);
+                    model.search(new_query, cx);
+                    model
+                });
+                workspace.add_item(
+                    Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
+                    cx,
+                );
+            }
+        }
     }
 
     // Add another search tab to the workspace.
@@ -978,11 +1058,6 @@ impl ProjectSearchView {
         existing: Option<View<ProjectSearchView>>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        // Clean up entries for dropped projects
-        cx.update_global(|state: &mut ActiveSearches, _cx| {
-            state.0.retain(|project, _| project.is_upgradable())
-        });
-
         let query = workspace.active_item(cx).and_then(|item| {
             let editor = item.act_as::<Editor>(cx)?;
             let query = editor.query_suggestion(cx);
@@ -1014,8 +1089,6 @@ impl ProjectSearchView {
             workspace.add_item(Box::new(view.clone()), cx);
             view
         };
-
-        workspace.add_item(Box::new(search.clone()), cx);
 
         search.update(cx, |search, cx| {
             if let Some(query) = query {
@@ -1273,17 +1346,11 @@ impl ProjectSearchView {
     }
 }
 
-impl Default for ProjectSearchBar {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ProjectSearchBar {
     pub fn new() -> Self {
         Self {
-            active_project_search: Default::default(),
-            subscription: Default::default(),
+            active_project_search: None,
+            subscription: None,
         }
     }
 
@@ -1314,42 +1381,11 @@ impl ProjectSearchBar {
         }
     }
 
-    fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
-        if let Some(search_view) = workspace
-            .active_item(cx)
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            let new_query = search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.build_search_query(cx);
-                if new_query.is_some() {
-                    if let Some(old_query) = search_view.model.read(cx).active_query.clone() {
-                        search_view.query_editor.update(cx, |editor, cx| {
-                            editor.set_text(old_query.as_str(), cx);
-                        });
-                        search_view.search_options = SearchOptions::from_query(&old_query);
-                    }
-                }
-                new_query
-            });
-            if let Some(new_query) = new_query {
-                let model = cx.new_model(|cx| {
-                    let mut model = ProjectSearch::new(workspace.project().clone(), cx);
-                    model.search(new_query, cx);
-                    model
-                });
-                workspace.add_item(
-                    Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
-                    cx,
-                );
-            }
-        }
-    }
-
-    fn tab(&mut self, _: &editor::Tab, cx: &mut ViewContext<Self>) {
+    fn tab(&mut self, _: &editor::actions::Tab, cx: &mut ViewContext<Self>) {
         self.cycle_field(Direction::Next, cx);
     }
 
-    fn tab_previous(&mut self, _: &editor::TabPrev, cx: &mut ViewContext<Self>) {
+    fn tab_previous(&mut self, _: &editor::actions::TabPrev, cx: &mut ViewContext<Self>) {
         self.cycle_field(Direction::Prev, cx);
     }
 
@@ -1513,6 +1549,22 @@ impl ProjectSearchBar {
         }
     }
 
+    pub fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search) = self.active_project_search.as_ref() {
+            search.update(cx, |this, cx| {
+                this.select_match(Direction::Next, cx);
+            })
+        }
+    }
+
+    fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
+        if let Some(search) = self.active_project_search.as_ref() {
+            search.update(cx, |this, cx| {
+                this.select_match(Direction::Prev, cx);
+            })
+        }
+    }
+
     fn new_placeholder_text(&self, cx: &mut ViewContext<Self>) -> Option<String> {
         let previous_query_keystrokes = cx
             .bindings_for_action(&PreviousHistoryQuery {})
@@ -1603,8 +1655,8 @@ impl Render for ProjectSearchBar {
         let search = search.read(cx);
         let semantic_is_available = SemanticIndex::enabled(cx);
 
-        let query_column = v_stack().child(
-            h_stack()
+        let query_column = v_flex().child(
+            h_flex()
                 .min_w(rems(512. / 16.))
                 .px_2()
                 .py_1()
@@ -1616,12 +1668,12 @@ impl Render for ProjectSearchBar {
                 .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
                 .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
-                .child(IconElement::new(Icon::MagnifyingGlass))
+                .child(Icon::new(IconName::MagnifyingGlass))
                 .child(self.render_text_input(&search.query_editor, cx))
                 .child(
-                    h_stack()
+                    h_flex()
                         .child(
-                            IconButton::new("project-search-filter-button", Icon::Filter)
+                            IconButton::new("project-search-filter-button", IconName::Filter)
                                 .tooltip(|cx| {
                                     Tooltip::for_action("Toggle filters", &ToggleFilters, cx)
                                 })
@@ -1639,7 +1691,7 @@ impl Render for ProjectSearchBar {
                             this.child(
                                 IconButton::new(
                                     "project-search-case-sensitive",
-                                    Icon::CaseSensitive,
+                                    IconName::CaseSensitive,
                                 )
                                 .tooltip(|cx| {
                                     Tooltip::for_action(
@@ -1659,7 +1711,7 @@ impl Render for ProjectSearchBar {
                                 )),
                             )
                             .child(
-                                IconButton::new("project-search-whole-word", Icon::WholeWord)
+                                IconButton::new("project-search-whole-word", IconName::WholeWord)
                                     .tooltip(|cx| {
                                         Tooltip::for_action(
                                             "Toggle whole word",
@@ -1676,11 +1728,11 @@ impl Render for ProjectSearchBar {
                 ),
         );
 
-        let mode_column = v_stack().items_start().justify_start().child(
-            h_stack()
+        let mode_column = v_flex().items_start().justify_start().child(
+            h_flex()
                 .gap_2()
                 .child(
-                    h_stack()
+                    h_flex()
                         .child(
                             ToggleButton::new("project-search-text-button", "Text")
                                 .style(ButtonStyle::Filled)
@@ -1738,7 +1790,7 @@ impl Render for ProjectSearchBar {
                         }),
                 )
                 .child(
-                    IconButton::new("project-search-toggle-replace", Icon::Replace)
+                    IconButton::new("project-search-toggle-replace", IconName::Replace)
                         .on_click(cx.listener(|this, _, cx| {
                             this.toggle_replace(&ToggleReplace, cx);
                         }))
@@ -1746,7 +1798,7 @@ impl Render for ProjectSearchBar {
                 ),
         );
         let replace_column = if search.replace_enabled {
-            h_stack()
+            h_flex()
                 .flex_1()
                 .h_full()
                 .gap_2()
@@ -1755,16 +1807,16 @@ impl Render for ProjectSearchBar {
                 .border_1()
                 .border_color(cx.theme().colors().border)
                 .rounded_lg()
-                .child(IconElement::new(Icon::Replace).size(ui::IconSize::Small))
+                .child(Icon::new(IconName::Replace).size(ui::IconSize::Small))
                 .child(self.render_text_input(&search.replacement_editor, cx))
         } else {
             // Fill out the space if we don't have a replacement editor.
-            h_stack().flex_1()
+            h_flex().flex_1()
         };
-        let actions_column = h_stack()
+        let actions_column = h_flex()
             .when(search.replace_enabled, |this| {
                 this.child(
-                    IconButton::new("project-search-replace-next", Icon::ReplaceNext)
+                    IconButton::new("project-search-replace-next", IconName::ReplaceNext)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
                                 search.update(cx, |this, cx| {
@@ -1775,7 +1827,7 @@ impl Render for ProjectSearchBar {
                         .tooltip(|cx| Tooltip::for_action("Replace next match", &ReplaceNext, cx)),
                 )
                 .child(
-                    IconButton::new("project-search-replace-all", Icon::ReplaceAll)
+                    IconButton::new("project-search-replace-all", IconName::ReplaceAll)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
                                 search.update(cx, |this, cx| {
@@ -1796,7 +1848,7 @@ impl Render for ProjectSearchBar {
                 this
             })
             .child(
-                IconButton::new("project-search-prev-match", Icon::ChevronLeft)
+                IconButton::new("project-search-prev-match", IconName::ChevronLeft)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(search) = this.active_project_search.as_ref() {
@@ -1810,7 +1862,7 @@ impl Render for ProjectSearchBar {
                     }),
             )
             .child(
-                IconButton::new("project-search-next-match", Icon::ChevronRight)
+                IconButton::new("project-search-next-match", IconName::ChevronRight)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(search) = this.active_project_search.as_ref() {
@@ -1822,7 +1874,7 @@ impl Render for ProjectSearchBar {
                     .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
             );
 
-        v_stack()
+        v_flex()
             .key_context(key_context)
             .flex_grow()
             .gap_2()
@@ -1881,8 +1933,10 @@ impl Render for ProjectSearchBar {
                     }))
                 })
             })
+            .on_action(cx.listener(Self::select_next_match))
+            .on_action(cx.listener(Self::select_prev_match))
             .child(
-                h_stack()
+                h_flex()
                     .justify_between()
                     .gap_2()
                     .child(query_column)
@@ -1892,12 +1946,12 @@ impl Render for ProjectSearchBar {
             )
             .when(search.filters_enabled, |this| {
                 this.child(
-                    h_stack()
+                    h_flex()
                         .flex_1()
                         .gap_2()
                         .justify_between()
                         .child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 .h_full()
                                 .px_2()
@@ -1923,7 +1977,7 @@ impl Render for ProjectSearchBar {
                                 }),
                         )
                         .child(
-                            h_stack()
+                            h_flex()
                                 .flex_1()
                                 .h_full()
                                 .px_2()
@@ -1974,6 +2028,60 @@ impl ToolbarItemView for ProjectSearchBar {
     }
 }
 
+fn register_workspace_action<A: Action>(
+    workspace: &mut Workspace,
+    callback: fn(&mut ProjectSearchBar, &A, &mut ViewContext<ProjectSearchBar>),
+) {
+    workspace.register_action(move |workspace, action: &A, cx| {
+        if workspace.has_active_modal(cx) {
+            cx.propagate();
+            return;
+        }
+
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.toolbar().update(cx, move |workspace, cx| {
+                if let Some(search_bar) = workspace.item_of_type::<ProjectSearchBar>() {
+                    search_bar.update(cx, move |search_bar, cx| {
+                        if search_bar.active_project_search.is_some() {
+                            callback(search_bar, action, cx);
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
+                    });
+                }
+            });
+        })
+    });
+}
+
+fn register_workspace_action_for_present_search<A: Action>(
+    workspace: &mut Workspace,
+    callback: fn(&mut Workspace, &A, &mut ViewContext<Workspace>),
+) {
+    workspace.register_action(move |workspace, action: &A, cx| {
+        if workspace.has_active_modal(cx) {
+            cx.propagate();
+            return;
+        }
+
+        let should_notify = workspace
+            .active_pane()
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<ProjectSearchBar>()
+            .map(|search_bar| search_bar.read(cx).active_project_search.is_some())
+            .unwrap_or(false);
+        if should_notify {
+            callback(workspace, action, cx);
+            cx.notify();
+        } else {
+            cx.propagate();
+        }
+    });
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -1983,6 +2091,7 @@ pub mod tests {
     use semantic_index::semantic_index_settings::SemanticIndexSettings;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
+    use workspace::DeploySearch;
 
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
@@ -2589,7 +2698,7 @@ pub mod tests {
                     );
                     assert!(
                         search_view_2.query_editor.focus_handle(cx).is_focused(cx),
-                        "Focus should be moved into query editor fo the new window"
+                        "Focus should be moved into query editor of the new window"
                     );
                 });
         }).unwrap();
@@ -3110,11 +3219,161 @@ pub mod tests {
             .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_deploy_search_with_multiple_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Setup 2 panes, both with a file open and one with a project search.
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.update(cx, |this, cx| {
+            this.worktrees().next().unwrap().read(cx).id()
+        });
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let panes: Vec<_> = window
+            .update(cx, |this, _| this.panes().to_owned())
+            .unwrap();
+        assert_eq!(panes.len(), 1);
+        let first_pane = panes.get(0).cloned().unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 0);
+        window
+            .update(cx, |workspace, cx| {
+                workspace.open_path(
+                    (worktree_id, "one.rs"),
+                    Some(first_pane.downgrade()),
+                    true,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 1);
+        let second_pane = window
+            .update(cx, |workspace, cx| {
+                workspace.split_and_clone(first_pane.clone(), workspace::SplitDirection::Right, cx)
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
+        assert!(window
+            .update(cx, |_, cx| second_pane
+                .focus_handle(cx)
+                .contains_focused(cx))
+            .unwrap());
+        let search_bar = window.build_view(cx, |_| ProjectSearchBar::new());
+        window
+            .update(cx, {
+                let search_bar = search_bar.clone();
+                let pane = first_pane.clone();
+                move |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+                }
+            })
+            .unwrap();
+
+        // Add a project search item to the second pane
+        window
+            .update(cx, {
+                let search_bar = search_bar.clone();
+                let pane = second_pane.clone();
+                move |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    pane.update(cx, move |pane, cx| {
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
+                    });
+
+                    ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
+                }
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 2);
+        assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 1);
+
+        // Focus the first pane
+        window
+            .update(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane(), &second_pane);
+                second_pane.update(cx, |this, cx| {
+                    assert_eq!(this.active_item_index(), 1);
+                    this.activate_prev_item(false, cx);
+                    assert_eq!(this.active_item_index(), 0);
+                });
+                workspace.activate_pane_in_direction(workspace::SplitDirection::Left, cx);
+            })
+            .unwrap();
+        window
+            .update(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane(), &first_pane);
+                assert_eq!(first_pane.read(cx).items_len(), 1);
+                assert_eq!(second_pane.read(cx).items_len(), 2);
+            })
+            .unwrap();
+
+        // Deploy a new search
+        cx.dispatch_action(window.into(), DeploySearch);
+
+        // Both panes should now have a project search in them
+        window
+            .update(cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane(), &first_pane);
+                first_pane.update(cx, |this, _| {
+                    assert_eq!(this.active_item_index(), 1);
+                    assert_eq!(this.items_len(), 2);
+                });
+                second_pane.update(cx, |this, cx| {
+                    assert!(!cx.focus_handle().contains_focused(cx));
+                    assert_eq!(this.items_len(), 2);
+                });
+            })
+            .unwrap();
+
+        // Focus the second pane's non-search item
+        window
+            .update(cx, |_workspace, cx| {
+                second_pane.update(cx, |pane, cx| pane.activate_next_item(true, cx));
+            })
+            .unwrap();
+
+        // Deploy a new search
+        cx.dispatch_action(window.into(), DeploySearch);
+
+        // The project search view should now be focused in the second pane
+        // And the number of items should be unchanged.
+        window
+            .update(cx, |_workspace, cx| {
+                second_pane.update(cx, |pane, _cx| {
+                    assert!(pane
+                        .active_item()
+                        .unwrap()
+                        .downcast::<ProjectSearchView>()
+                        .is_some());
+
+                    assert_eq!(pane.items_len(), 2);
+                });
+            })
+            .unwrap();
+    }
+
     pub fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            cx.set_global(ActiveSearches::default());
+
             SemanticIndexSettings::register(cx);
 
             theme::init(theme::LoadThemes::JustBase, cx);

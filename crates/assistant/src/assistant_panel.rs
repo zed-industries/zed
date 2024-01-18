@@ -19,12 +19,13 @@ use chrono::{DateTime, Local};
 use client::telemetry::AssistantKind;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
+    actions::{MoveDown, MoveUp},
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
-    scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MoveDown, MoveUp, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    scroll::{Autoscroll, AutoscrollStrategy},
+    Anchor, Editor, EditorElement, EditorEvent, EditorStyle, MultiBufferSnapshot, ToOffset,
+    ToPoint,
 };
 use fs::Fs;
 use futures::StreamExt;
@@ -40,7 +41,7 @@ use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset a
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use semantic_index::{SemanticIndex, SemanticIndexStatus};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::{
     cell::Cell,
     cmp,
@@ -165,7 +166,7 @@ impl AssistantPanel {
                     cx.on_focus_in(&focus_handle, Self::focus_in).detach();
                     cx.on_focus_out(&focus_handle, Self::focus_out).detach();
 
-                    let mut this = Self {
+                    Self {
                         workspace: workspace_handle,
                         active_editor_index: Default::default(),
                         prev_active_editor_index: Default::default(),
@@ -190,20 +191,7 @@ impl AssistantPanel {
                         _watch_saved_conversations,
                         semantic_index,
                         retrieve_context_in_next_inline_assist: false,
-                    };
-
-                    let mut old_dock_position = this.position(cx);
-                    this.subscriptions =
-                        vec![cx.observe_global::<SettingsStore>(move |this, cx| {
-                            let new_dock_position = this.position(cx);
-                            if new_dock_position != old_dock_position {
-                                old_dock_position = new_dock_position;
-                                cx.emit(PanelEvent::ChangePosition);
-                            }
-                            cx.notify();
-                        })];
-
-                    this
+                    }
                 })
             })
         })
@@ -492,7 +480,7 @@ impl AssistantPanel {
 
     fn cancel_last_inline_assist(
         workspace: &mut Workspace,
-        _: &editor::Cancel,
+        _: &editor::actions::Cancel,
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
@@ -904,7 +892,7 @@ impl AssistantPanel {
         }
     }
 
-    fn handle_editor_cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+    fn handle_editor_cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         if let Some(search_bar) = self.toolbar.read(cx).item_of_type::<BufferSearchBar>() {
             if !search_bar.read(cx).is_dismissed() {
                 search_bar.update(cx, |search_bar, cx| {
@@ -932,8 +920,41 @@ impl AssistantPanel {
         self.editors.get(self.active_editor_index?)
     }
 
+    fn render_api_key_editor(
+        &self,
+        editor: &View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only(cx) {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+        EditorElement::new(
+            &editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
     fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("hamburger_button", Icon::Menu)
+        IconButton::new("hamburger_button", IconName::Menu)
             .on_click(cx.listener(|this, _event, cx| {
                 if this.active_editor().is_some() {
                     this.set_active_editor_index(None, cx);
@@ -957,7 +978,7 @@ impl AssistantPanel {
     }
 
     fn render_split_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("split_button", Icon::Snip)
+        IconButton::new("split_button", IconName::Snip)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.split(&Default::default(), cx));
@@ -968,7 +989,7 @@ impl AssistantPanel {
     }
 
     fn render_assist_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("assist_button", Icon::MagicWand)
+        IconButton::new("assist_button", IconName::MagicWand)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(active_editor) = this.active_editor() {
                     active_editor.update(cx, |editor, cx| editor.assist(&Default::default(), cx));
@@ -979,7 +1000,7 @@ impl AssistantPanel {
     }
 
     fn render_quote_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("quote_button", Icon::Quote)
+        IconButton::new("quote_button", IconName::Quote)
             .on_click(cx.listener(|this, _event, cx| {
                 if let Some(workspace) = this.workspace.upgrade() {
                     cx.window_context().defer(move |cx| {
@@ -994,7 +1015,7 @@ impl AssistantPanel {
     }
 
     fn render_plus_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("plus_button", Icon::Plus)
+        IconButton::new("plus_button", IconName::Plus)
             .on_click(cx.listener(|this, _event, cx| {
                 this.new_conversation(cx);
             }))
@@ -1004,12 +1025,12 @@ impl AssistantPanel {
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let zoomed = self.zoomed;
-        IconButton::new("zoom_button", Icon::Maximize)
+        IconButton::new("zoom_button", IconName::Maximize)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
             .selected(zoomed)
-            .selected_icon(Icon::Minimize)
+            .selected_icon(IconName::Minimize)
             .icon_size(IconSize::Small)
             .tooltip(move |cx| {
                 Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
@@ -1103,51 +1124,65 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
-            v_stack()
+            const INSTRUCTIONS: [&'static str; 5] = [
+                "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
+                " - You can create an API key at: platform.openai.com/api-keys",
+                " - Having a subscription for another service like GitHub Copilot won't work.",
+                " ",
+                "Paste your OpenAI API key and press Enter to use the assistant:"
+            ];
+
+            v_flex()
+                .p_4()
+                .size_full()
                 .on_action(cx.listener(AssistantPanel::save_credentials))
                 .track_focus(&self.focus_handle)
-                .child(Label::new(
-                    "To use the assistant panel or inline assistant, you need to add your OpenAI api key.",
-                ))
-                .child(Label::new(
-                    " - Having a subscription for another service like GitHub Copilot won't work."
-                ))
-                .child(Label::new(
-                    " - You can create a api key at: platform.openai.com/api-keys"
-                ))
-                .child(Label::new(
-                    " "
-                ))
-                .child(Label::new(
-                    "Paste your OpenAI API key and press Enter to use the assistant"
-                ))
-                .child(api_key_editor)
-                .child(Label::new(
-                    "Click on the Z button in the status bar to close this panel."
-                ))
+                .children(
+                    INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .my_2()
+                        .px_2()
+                        .py_1()
+                        .bg(cx.theme().colors().editor_background)
+                        .rounded_md()
+                        .child(self.render_api_key_editor(&api_key_editor, cx)),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Label::new("Click on").size(LabelSize::Small))
+                        .child(Icon::new(IconName::Ai).size(IconSize::XSmall))
+                        .child(
+                            Label::new("in the status bar to close this panel.")
+                                .size(LabelSize::Small),
+                        ),
+                )
         } else {
             let header = TabBar::new("assistant_header")
                 .start_child(
-                    h_stack().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
+                    h_flex().gap_1().child(Self::render_hamburger_button(cx)), // .children(title),
                 )
                 .children(self.active_editor().map(|editor| {
-                    h_stack()
-                        .h(rems(Tab::HEIGHT_IN_REMS))
+                    h_flex()
+                        .h(rems(Tab::CONTAINER_HEIGHT_IN_REMS))
                         .flex_1()
                         .px_2()
                         .child(Label::new(editor.read(cx).title(cx)).into_element())
                 }))
                 .end_child(if self.focus_handle.contains_focused(cx) {
-                    h_stack()
+                    h_flex()
                         .gap_2()
-                        .child(h_stack().gap_1().children(self.render_editor_tools(cx)))
+                        .child(h_flex().gap_1().children(self.render_editor_tools(cx)))
                         .child(
                             ui::Divider::vertical()
                                 .inset()
                                 .color(ui::DividerColor::Border),
                         )
                         .child(
-                            h_stack()
+                            h_flex()
                                 .gap_1()
                                 .child(Self::render_plus_button(cx))
                                 .child(self.render_zoom_button(cx)),
@@ -1161,12 +1196,12 @@ impl Render for AssistantPanel {
                     |panel, cx| panel.toolbar.read(cx).item_of_type::<BufferSearchBar>(),
                     cx,
                 );
-                BufferSearchBar::register_inner(&mut registrar);
+                BufferSearchBar::register(&mut registrar);
                 registrar.into_div()
             } else {
                 div()
             };
-            v_stack()
+            v_flex()
                 .key_context("AssistantPanel")
                 .size_full()
                 .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
@@ -1286,8 +1321,8 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<Icon> {
-        Some(Icon::Ai).filter(|_| AssistantSettings::get_global(cx).button)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        Some(IconName::Ai).filter(|_| AssistantSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -2171,7 +2206,7 @@ impl ConversationEditor {
         }
     }
 
-    fn cancel_last_assist(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel_last_assist(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         if !self
             .conversation
             .update(cx, |conversation, _| conversation.cancel_last_assist())
@@ -2324,8 +2359,7 @@ impl ConversationEditor {
                                     }
                                 });
 
-                            div()
-                                .h_flex()
+                            h_flex()
                                 .id(("message_header", message_id.0))
                                 .h_11()
                                 .relative()
@@ -2341,6 +2375,7 @@ impl ConversationEditor {
                                         .add_suffix(true)
                                         .to_string(),
                                     )
+                                    .size(LabelSize::XSmall)
                                     .color(Color::Muted),
                                 )
                                 .children(
@@ -2349,7 +2384,7 @@ impl ConversationEditor {
                                             div()
                                                 .id("error")
                                                 .tooltip(move |cx| Tooltip::text(error.clone(), cx))
-                                                .child(IconElement::new(Icon::XCircle)),
+                                                .child(Icon::new(IconName::XCircle)),
                                         )
                                     } else {
                                         None
@@ -2430,7 +2465,7 @@ impl ConversationEditor {
         }
     }
 
-    fn copy(&mut self, _: &editor::Copy, cx: &mut ViewContext<Self>) {
+    fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         let editor = self.editor.read(cx);
         let conversation = self.conversation.read(cx);
         if editor.selections.count() == 1 {
@@ -2543,7 +2578,7 @@ impl Render for ConversationEditor {
                     .child(self.editor.clone()),
             )
             .child(
-                h_stack()
+                h_flex()
                     .absolute()
                     .gap_1()
                     .top_3()
@@ -2629,7 +2664,7 @@ impl EventEmitter<InlineAssistantEvent> for InlineAssistant {}
 impl Render for InlineAssistant {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let measurements = self.measurements.get();
-        h_stack()
+        h_flex()
             .w_full()
             .py_2()
             .border_y_1()
@@ -2641,11 +2676,11 @@ impl Render for InlineAssistant {
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::move_down))
             .child(
-                h_stack()
+                h_flex()
                     .justify_center()
                     .w(measurements.gutter_width)
                     .child(
-                        IconButton::new("include_conversation", Icon::Ai)
+                        IconButton::new("include_conversation", IconName::Ai)
                             .on_click(cx.listener(|this, _, cx| {
                                 this.toggle_include_conversation(&ToggleIncludeConversation, cx)
                             }))
@@ -2660,7 +2695,7 @@ impl Render for InlineAssistant {
                     )
                     .children(if SemanticIndex::enabled(cx) {
                         Some(
-                            IconButton::new("retrieve_context", Icon::MagnifyingGlass)
+                            IconButton::new("retrieve_context", IconName::MagnifyingGlass)
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.toggle_retrieve_context(&ToggleRetrieveContext, cx)
                                 }))
@@ -2682,14 +2717,14 @@ impl Render for InlineAssistant {
                             div()
                                 .id("error")
                                 .tooltip(move |cx| Tooltip::text(error_message.clone(), cx))
-                                .child(IconElement::new(Icon::XCircle).color(Color::Error)),
+                                .child(Icon::new(IconName::XCircle).color(Color::Error)),
                         )
                     } else {
                         None
                     }),
             )
             .child(
-                h_stack()
+                h_flex()
                     .w_full()
                     .ml(measurements.anchor_x - measurements.gutter_width)
                     .child(self.render_prompt_editor(cx)),
@@ -2841,7 +2876,7 @@ impl InlineAssistant {
         cx.notify();
     }
 
-    fn cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(InlineAssistantEvent::Canceled);
     }
 
@@ -2930,7 +2965,7 @@ impl InlineAssistant {
         let semantic_permissioned = self.semantic_permissioned(cx);
         if let Some(semantic_index) = SemanticIndex::global(cx) {
             cx.spawn(|_, mut cx| async move {
-                // This has to be updated to accomodate for semantic_permissions
+                // This has to be updated to accommodate for semantic_permissions
                 if semantic_permissioned.await.unwrap_or(false) {
                     semantic_index
                         .update(&mut cx, |index, cx| index.index_project(project, cx))?
@@ -2957,7 +2992,7 @@ impl InlineAssistant {
                 div()
                     .id("error")
                     .tooltip(|cx| Tooltip::text("Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.", cx))
-                    .child(IconElement::new(Icon::XCircle))
+                    .child(Icon::new(IconName::XCircle))
                     .into_any_element()
             ),
 
@@ -2965,7 +3000,7 @@ impl InlineAssistant {
                 div()
                     .id("error")
                     .tooltip(|cx| Tooltip::text("Not Indexed", cx))
-                    .child(IconElement::new(Icon::XCircle))
+                    .child(Icon::new(IconName::XCircle))
                     .into_any_element()
             ),
 
@@ -2996,7 +3031,7 @@ impl InlineAssistant {
                     div()
                         .id("update")
                         .tooltip(move |cx| Tooltip::text(status_text.clone(), cx))
-                        .child(IconElement::new(Icon::Update).color(Color::Info))
+                        .child(Icon::new(IconName::Update).color(Color::Info))
                         .into_any_element()
                 )
             }
@@ -3005,7 +3040,7 @@ impl InlineAssistant {
                 div()
                     .id("check")
                     .tooltip(|cx| Tooltip::text("Index up to date", cx))
-                    .child(IconElement::new(Icon::Check).color(Color::Success))
+                    .child(Icon::new(IconName::Check).color(Color::Success))
                     .into_any_element()
             ),
         }
@@ -3133,6 +3168,7 @@ mod tests {
     use crate::MessageId;
     use ai::test::FakeCompletionProvider;
     use gpui::AppContext;
+    use settings::SettingsStore;
 
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {

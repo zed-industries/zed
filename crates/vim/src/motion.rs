@@ -1,17 +1,17 @@
 use editor::{
-    char_kind,
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
-    Bias, CharKind, DisplayPoint, ToOffset,
+    Bias, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
-use language::{Point, Selection, SelectionGoal};
+use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
 
 use crate::{
     normal::normal_motion,
     state::{Mode, Operator},
+    utils::coerce_punctuation,
     visual::visual_motion,
     Vim,
 };
@@ -712,7 +712,7 @@ fn next_word_end(
         }
         point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
             let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = ccoerce_punctuation(har_kind(&scope, right), ignore_punctuation);
+            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
             left_kind != right_kind && left_kind != CharKind::Whitespace
         });
@@ -950,14 +950,6 @@ pub(crate) fn next_line_end(
         point = start_of_relative_buffer_row(map, point, times as isize - 1);
     }
     end_of_line(map, false, point)
-}
-
-fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> Self {
-    if treat_punctuation_as_word && kind == CharKind::Punctuation {
-        CharKind::Word
-    } else {
-        kind
-    }
 }
 
 #[cfg(test)]

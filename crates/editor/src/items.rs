@@ -32,7 +32,7 @@ use std::{
 };
 use text::Selection;
 use theme::Theme;
-use ui::{h_stack, prelude::*, Label};
+use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::{
     item::{BreadcrumbText, FollowEvent, FollowableItemHandle},
@@ -82,7 +82,9 @@ impl FollowableItem for Editor {
 
         let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
-            let mut buffers = futures::future::try_join_all(buffers).await?;
+            let mut buffers = futures::future::try_join_all(buffers)
+                .await
+                .debug_assert_ok("leaders don't share views for unshared buffers")?;
             let editor = pane.update(&mut cx, |pane, cx| {
                 let mut editors = pane.items_of_type::<Self>();
                 editors.find(|editor| {
@@ -576,6 +578,10 @@ impl Item for Editor {
         Some(file_path.into())
     }
 
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<SharedString> {
         let path = path_for_buffer(&self.buffer, detail, true, cx)?;
         Some(path.to_string_lossy().to_string().into())
@@ -617,7 +623,7 @@ impl Item for Editor {
             Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
         });
 
-        h_stack()
+        h_flex()
             .gap_2()
             .child(Label::new(self.title(cx).to_string()).color(label_color))
             .when_some(description, |this, description| {

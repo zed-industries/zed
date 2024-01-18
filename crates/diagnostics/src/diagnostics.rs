@@ -8,7 +8,7 @@ use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
     highlight_diagnostic_message,
-    scroll::autoscroll::Autoscroll,
+    scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use futures::future::try_join_all;
@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_stack, prelude::*, Icon, IconElement, Label};
+use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -654,13 +654,13 @@ impl Item for ProjectDiagnosticsEditor {
                 })
                 .into_any_element()
         } else {
-            h_stack()
+            h_flex()
                 .gap_1()
                 .when(self.summary.error_count > 0, |then| {
                     then.child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
-                            .child(IconElement::new(Icon::XCircle).color(Color::Error))
+                            .child(Icon::new(IconName::XCircle).color(Color::Error))
                             .child(Label::new(self.summary.error_count.to_string()).color(
                                 if selected {
                                     Color::Default
@@ -672,11 +672,9 @@ impl Item for ProjectDiagnosticsEditor {
                 })
                 .when(self.summary.warning_count > 0, |then| {
                     then.child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
-                            .child(
-                                IconElement::new(Icon::ExclamationTriangle).color(Color::Warning),
-                            )
+                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
                             .child(Label::new(self.summary.warning_count.to_string()).color(
                                 if selected {
                                     Color::Default
@@ -688,6 +686,10 @@ impl Item for ProjectDiagnosticsEditor {
                 })
                 .into_any_element()
         }
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        Some("project diagnostics")
     }
 
     fn for_each_project_item(
@@ -798,7 +800,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let message: SharedString = message.into();
     Arc::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
-        h_stack()
+        h_flex()
             .id("diagnostic header")
             .py_2()
             .pl_10()
@@ -807,7 +809,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .justify_between()
             .gap_2()
             .child(
-                h_stack()
+                h_flex()
                     .gap_3()
                     .map(|stack| {
                         stack.child(
@@ -816,17 +818,17 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                 .flex_none()
                                 .map(|icon| {
                                     if diagnostic.severity == DiagnosticSeverity::ERROR {
-                                        icon.path(Icon::XCircle.path())
+                                        icon.path(IconName::XCircle.path())
                                             .text_color(Color::Error.color(cx))
                                     } else {
-                                        icon.path(Icon::ExclamationTriangle.path())
+                                        icon.path(IconName::ExclamationTriangle.path())
                                             .text_color(Color::Warning.color(cx))
                                     }
                                 }),
                         )
                     })
                     .child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
                             .child(
                                 StyledText::new(message.clone()).with_highlights(
@@ -846,7 +848,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                     ),
             )
             .child(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .when_some(diagnostic.source.as_ref(), |stack, source| {
                         stack.child(

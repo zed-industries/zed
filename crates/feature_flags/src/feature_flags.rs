@@ -16,12 +16,6 @@ pub trait FeatureFlag {
     const NAME: &'static str;
 }
 
-pub enum ChannelsAlpha {}
-
-impl FeatureFlag for ChannelsAlpha {
-    const NAME: &'static str = "channels_alpha";
-}
-
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
@@ -63,18 +57,14 @@ impl FeatureFlagAppExt for AppContext {
     }
 
     fn has_flag<T: FeatureFlag>(&self) -> bool {
-        if self.has_global::<FeatureFlags>() {
-            self.global::<FeatureFlags>().has_flag(T::NAME)
-        } else {
-            false
-        }
+        self.try_global::<FeatureFlags>()
+            .map(|flags| flags.has_flag(T::NAME))
+            .unwrap_or(false)
     }
 
     fn is_staff(&self) -> bool {
-        if self.has_global::<FeatureFlags>() {
-            return self.global::<FeatureFlags>().staff;
-        } else {
-            false
-        }
+        self.try_global::<FeatureFlags>()
+            .map(|flags| flags.staff)
+            .unwrap_or(false)
     }
 }

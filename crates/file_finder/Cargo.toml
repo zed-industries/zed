@@ -23,6 +23,7 @@ theme = { path = "../theme" }
 ui = { path = "../ui" }
 workspace = { path = "../workspace" }
 postage.workspace = true
+anyhow.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

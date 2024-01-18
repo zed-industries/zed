@@ -99,7 +99,7 @@
       "ctrl-i": "pane::GoForward",
       "ctrl-]": "editor::GoToDefinition",
       "escape": ["vim::SwitchMode", "Normal"],
-      "ctrl+[": ["vim::SwitchMode", "Normal"],
+      "ctrl-[": ["vim::SwitchMode", "Normal"],
       "v": "vim::ToggleVisual",
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
@@ -288,7 +288,7 @@
     "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
     "bindings": {
       "escape": "editor::Cancel",
-      "ctrl+[": "editor::Cancel"
+      "ctrl-[": "editor::Cancel"
     }
   },
   {
@@ -441,7 +441,7 @@
       "r": ["vim::PushOperator", "Replace"],
       "ctrl-c": ["vim::SwitchMode", "Normal"],
       "escape": ["vim::SwitchMode", "Normal"],
-      "ctrl+[": ["vim::SwitchMode", "Normal"],
+      "ctrl-[": ["vim::SwitchMode", "Normal"],
       ">": "editor::Indent",
       "<": "editor::Outdent",
       "i": [
@@ -481,7 +481,7 @@
       "tab": "vim::Tab",
       "enter": "vim::Enter",
       "escape": ["vim::SwitchMode", "Normal"],
-      "ctrl+[": ["vim::SwitchMode", "Normal"]
+      "ctrl-[": ["vim::SwitchMode", "Normal"]
     }
   },
   {

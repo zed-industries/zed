@@ -38,6 +38,7 @@ impl UiTextSize {
     }
 }
 
+/// The size of a [`Headline`] element
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum HeadlineSize {
     XSmall,

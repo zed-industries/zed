@@ -39,6 +39,7 @@ pub struct RichText {
 
 /// Allows one to specify extra links to the rendered markdown, which can be used
 /// for e.g. mentions.
+#[derive(Debug)]
 pub struct Mention {
     pub range: Range<usize>,
     pub is_self_mention: bool,
@@ -85,31 +86,6 @@ impl RichText {
         })
         .into_any_element()
     }
-
-    // pub fn add_mention(
-    //     &mut self,
-    //     range: Range<usize>,
-    //     is_current_user: bool,
-    //     mention_style: HighlightStyle,
-    // ) -> anyhow::Result<()> {
-    //     if range.end > self.text.len() {
-    //         bail!(
-    //             "Mention in range {range:?} is outside of bounds for a message of length {}",
-    //             self.text.len()
-    //         );
-    //     }
-
-    //     if is_current_user {
-    //         self.region_ranges.push(range.clone());
-    //         self.regions.push(RenderedRegion {
-    //             background_kind: Some(BackgroundKind::Mention),
-    //             link_url: None,
-    //         });
-    //     }
-    //     self.highlights
-    //         .push((range, Highlight::Highlight(mention_style)));
-    //     Ok(())
-    // }
 }
 
 pub fn render_markdown_mut(
@@ -138,20 +114,21 @@ pub fn render_markdown_mut(
                 if let Some(language) = &current_language {
                     render_code(text, highlights, t.as_ref(), language);
                 } else {
-                    if let Some(mention) = mentions.first() {
-                        if source_range.contains_inclusive(&mention.range) {
-                            mentions = &mentions[1..];
-                            let range = (prev_len + mention.range.start - source_range.start)
-                                ..(prev_len + mention.range.end - source_range.start);
-                            highlights.push((
-                                range.clone(),
-                                if mention.is_self_mention {
-                                    Highlight::SelfMention
-                                } else {
-                                    Highlight::Mention
-                                },
-                            ));
+                    while let Some(mention) = mentions.first() {
+                        if !source_range.contains_inclusive(&mention.range) {
+                            break;
                         }
+                        mentions = &mentions[1..];
+                        let range = (prev_len + mention.range.start - source_range.start)
+                            ..(prev_len + mention.range.end - source_range.start);
+                        highlights.push((
+                            range.clone(),
+                            if mention.is_self_mention {
+                                Highlight::SelfMention
+                            } else {
+                                Highlight::Mention
+                            },
+                        ));
                     }
 
                     text.push_str(t.as_ref());
@@ -272,13 +249,6 @@ pub fn render_markdown(
     language_registry: &Arc<LanguageRegistry>,
     language: Option<&Arc<Language>>,
 ) -> RichText {
-    // let mut data = RichText {
-    //     text: Default::default(),
-    //     highlights: Default::default(),
-    //     region_ranges: Default::default(),
-    //     regions: Default::default(),
-    // };
-
     let mut text = String::new();
     let mut highlights = Vec::new();
     let mut link_ranges = Vec::new();

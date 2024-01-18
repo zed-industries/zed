@@ -1,7 +1,7 @@
 use gpui::AnyElement;
 use smallvec::SmallVec;
 
-use crate::{prelude::*, v_stack, Label, ListHeader};
+use crate::{prelude::*, v_flex, Label, ListHeader};
 
 #[derive(IntoElement)]
 pub struct List {
@@ -47,7 +47,7 @@ impl ParentElement for List {
 
 impl RenderOnce for List {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        v_stack().w_full().py_1().children(self.header).map(|this| {
+        v_flex().w_full().py_1().children(self.header).map(|this| {
             match (self.children.is_empty(), self.toggle) {
                 (false, _) => this.children(self.children),
                 (true, Some(false)) => this,

@@ -72,7 +72,7 @@ pub enum Event {
         ids: Vec<ExcerptId>,
     },
     Edited {
-        sigleton_buffer_edited: bool,
+        singleton_buffer_edited: bool,
     },
     TransactionUndone {
         transaction_id: TransactionId,
@@ -80,6 +80,7 @@ pub enum Event {
     Reloaded,
     DiffBaseChanged,
     LanguageChanged,
+    CapabilityChanged,
     Reparsed,
     Saved,
     FileHandleChanged,
@@ -1111,7 +1112,7 @@ impl MultiBuffer {
             new: edit_start..edit_end,
         }]);
         cx.emit(Event::Edited {
-            sigleton_buffer_edited: false,
+            singleton_buffer_edited: false,
         });
         cx.emit(Event::ExcerptsAdded {
             buffer,
@@ -1137,7 +1138,7 @@ impl MultiBuffer {
             new: 0..0,
         }]);
         cx.emit(Event::Edited {
-            sigleton_buffer_edited: false,
+            singleton_buffer_edited: false,
         });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
@@ -1347,7 +1348,7 @@ impl MultiBuffer {
 
         self.subscriptions.publish_mut(edits);
         cx.emit(Event::Edited {
-            sigleton_buffer_edited: false,
+            singleton_buffer_edited: false,
         });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
@@ -1404,13 +1405,13 @@ impl MultiBuffer {
 
     fn on_buffer_event(
         &mut self,
-        _: Model<Buffer>,
+        buffer: Model<Buffer>,
         event: &language::Event,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(match event {
             language::Event::Edited => Event::Edited {
-                sigleton_buffer_edited: true,
+                singleton_buffer_edited: true,
             },
             language::Event::DirtyChanged => Event::DirtyChanged,
             language::Event::Saved => Event::Saved,
@@ -1421,6 +1422,10 @@ impl MultiBuffer {
             language::Event::Reparsed => Event::Reparsed,
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             language::Event::Closed => Event::Closed,
+            language::Event::CapabilityChanged => {
+                self.capability = buffer.read(cx).capability();
+                Event::CapabilityChanged
+            }
 
             //
             language::Event::Operation(_) => return,
@@ -4275,13 +4280,13 @@ mod tests {
             events.read().as_slice(),
             &[
                 Event::Edited {
-                    sigleton_buffer_edited: false
+                    singleton_buffer_edited: false
                 },
                 Event::Edited {
-                    sigleton_buffer_edited: false
+                    singleton_buffer_edited: false
                 },
                 Event::Edited {
-                    sigleton_buffer_edited: false
+                    singleton_buffer_edited: false
                 }
             ]
         );

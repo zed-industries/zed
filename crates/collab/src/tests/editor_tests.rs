@@ -8,9 +8,11 @@ use std::{
 
 use call::ActiveCall;
 use editor::{
+    actions::{
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, ToggleCodeActions, Undo,
+    },
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
-    ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToggleCodeActions,
-    Undo,
+    Editor,
 };
 use futures::StreamExt;
 use gpui::{TestAppContext, VisualContext, VisualTestContext};
@@ -71,6 +73,7 @@ async fn test_host_disconnect(
     let workspace_b =
         cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
+    let workspace_b_view = workspace_b.root_view(cx_b).unwrap();
 
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -85,8 +88,10 @@ async fn test_host_disconnect(
     //TODO: focus
     assert!(cx_b.update_view(&editor_b, |editor, cx| editor.is_focused(cx)));
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
-    //todo(is_edited)
-    // assert!(workspace_b.is_edited(cx_b));
+
+    cx_b.update(|cx| {
+        assert!(workspace_b_view.read(cx).is_edited());
+    });
 
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
     server.forbid_connections();
@@ -105,11 +110,11 @@ async fn test_host_disconnect(
     // Ensure client B's edited state is reset and that the whole window is blurred.
 
     workspace_b
-        .update(cx_b, |_, cx| {
+        .update(cx_b, |workspace, cx| {
             assert_eq!(cx.focused(), None);
+            assert!(!workspace.is_edited())
         })
         .unwrap();
-    // assert!(!workspace_b.is_edited(cx_b));
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b
@@ -182,31 +187,27 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let window_a = cx_a.add_empty_window();
-    let editor_a =
-        window_a.build_view(cx_a, |cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
+    let cx_a = cx_a.add_empty_window();
+    let editor_a = cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a), cx));
 
     let mut editor_cx_a = EditorTestContext {
-        cx: VisualTestContext::from_window(window_a, cx_a),
-        window: window_a.into(),
+        cx: cx_a.clone(),
+        window: cx_a.handle(),
         editor: editor_a,
         assertion_cx: AssertionContextManager::new(),
     };
 
-    let window_b = cx_b.add_empty_window();
-    let mut cx_b = VisualTestContext::from_window(window_b, cx_b);
-
+    let cx_b = cx_b.add_empty_window();
     // Open a buffer as client B
     let buffer_b = project_b
-        .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let editor_b = window_b.build_view(&mut cx_b, |cx| {
-        Editor::for_buffer(buffer_b, Some(project_b), cx)
-    });
+    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b), cx));
+
     let mut editor_cx_b = EditorTestContext {
-        cx: cx_b,
-        window: window_b.into(),
+        cx: cx_b.clone(),
+        window: cx_b.handle(),
         editor: editor_b,
         assertion_cx: AssertionContextManager::new(),
     };
@@ -218,7 +219,8 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     editor_cx_b.set_selections_state(indoc! {"
         Some textˇ
     "});
-    editor_cx_a.update_editor(|editor, cx| editor.newline_above(&editor::NewlineAbove, cx));
+    editor_cx_a
+        .update_editor(|editor, cx| editor.newline_above(&editor::actions::NewlineAbove, cx));
     executor.run_until_parked();
     editor_cx_a.assert_editor_state(indoc! {"
         ˇ
@@ -238,7 +240,8 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
         Some textˇ
     "});
-    editor_cx_a.update_editor(|editor, cx| editor.newline_below(&editor::NewlineBelow, cx));
+    editor_cx_a
+        .update_editor(|editor, cx| editor.newline_below(&editor::actions::NewlineBelow, cx));
     executor.run_until_parked();
     editor_cx_a.assert_editor_state(indoc! {"
 
@@ -308,10 +311,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let window_b = cx_b.add_empty_window();
-    let editor_b = window_b.build_view(cx_b, |cx| {
-        Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
-    });
+    let cx_b = cx_b.add_empty_window();
+    let editor_b =
+        cx_b.new_view(|cx| Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     cx_a.background_executor.run_until_parked();
@@ -320,10 +322,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         assert!(!buffer.completion_triggers().is_empty())
     });
 
-    let mut cx_b = VisualTestContext::from_window(window_b, cx_b);
-
     // Type a completion trigger character as the guest.
-    editor_b.update(&mut cx_b, |editor, cx| {
+    editor_b.update(cx_b, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
         editor.handle_input(".", cx);
     });
@@ -389,8 +389,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     });
 
     // Confirm a completion on the guest.
-
-    editor_b.update(&mut cx_b, |editor, cx| {
+    editor_b.update(cx_b, |editor, cx| {
         assert!(editor.context_menu_visible());
         editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
         assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
@@ -428,7 +427,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         );
     });
 
-    buffer_b.read_with(&mut cx_b, |buffer, _| {
+    buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(
             buffer.text(),
             "use d::SomeTrait;\nfn main() { a.first_method() }"
@@ -957,7 +956,7 @@ async fn test_share_project(
     cx_c: &mut TestAppContext,
 ) {
     let executor = cx_a.executor();
-    let window_b = cx_b.add_empty_window();
+    let cx_b = cx_b.add_empty_window();
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -1072,7 +1071,7 @@ async fn test_share_project(
         .await
         .unwrap();
 
-    let editor_b = window_b.build_view(cx_b, |cx| Editor::for_buffer(buffer_b, None, cx));
+    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, None, cx));
 
     // Client A sees client B's selection
     executor.run_until_parked();
@@ -1086,8 +1085,7 @@ async fn test_share_project(
     });
 
     // Edit the buffer as client B and see that edit as client A.
-    let mut cx_b = VisualTestContext::from_window(window_b, cx_b);
-    editor_b.update(&mut cx_b, |editor, cx| editor.handle_input("ok, ", cx));
+    editor_b.update(cx_b, |editor, cx| editor.handle_input("ok, ", cx));
     executor.run_until_parked();
 
     buffer_a.read_with(cx_a, |buffer, _| {
@@ -1096,7 +1094,7 @@ async fn test_share_project(
 
     // Client B can invite client C on a project shared by client A.
     active_call_b
-        .update(&mut cx_b, |call, cx| {
+        .update(cx_b, |call, cx| {
             call.invite(client_c.user_id().unwrap(), Some(project_b.clone()), cx)
         })
         .await
@@ -1187,18 +1185,14 @@ async fn test_on_input_format_from_host_to_guest(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let window_a = cx_a.add_empty_window();
-    let editor_a = window_a
-        .update(cx_a, |_, cx| {
-            cx.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), cx))
-        })
-        .unwrap();
+    let cx_a = cx_a.add_empty_window();
+    let editor_a = cx_a.new_view(|cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
 
     // Receive an OnTypeFormatting request as the host's language server.
-    // Return some formattings from the host's language server.
+    // Return some formatting from the host's language server.
     fake_language_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(
         |params, _| async move {
             assert_eq!(
@@ -1217,16 +1211,15 @@ async fn test_on_input_format_from_host_to_guest(
         },
     );
 
-    // Open the buffer on the guest and see that the formattings worked
+    // Open the buffer on the guest and see that the formatting worked
     let buffer_b = project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
 
-    let mut cx_a = VisualTestContext::from_window(window_a, cx_a);
     // Type a on type formatting trigger character as the guest.
     cx_a.focus_view(&editor_a);
-    editor_a.update(&mut cx_a, |editor, cx| {
+    editor_a.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
         editor.handle_input(">", cx);
     });
@@ -1238,7 +1231,7 @@ async fn test_on_input_format_from_host_to_guest(
     });
 
     // Undo should remove LSP edits first
-    editor_a.update(&mut cx_a, |editor, cx| {
+    editor_a.update(cx_a, |editor, cx| {
         assert_eq!(editor.text(cx), "fn main() { a>~< }");
         editor.undo(&Undo, cx);
         assert_eq!(editor.text(cx), "fn main() { a> }");
@@ -1249,7 +1242,7 @@ async fn test_on_input_format_from_host_to_guest(
         assert_eq!(buffer.text(), "fn main() { a> }")
     });
 
-    editor_a.update(&mut cx_a, |editor, cx| {
+    editor_a.update(cx_a, |editor, cx| {
         assert_eq!(editor.text(cx), "fn main() { a> }");
         editor.undo(&Undo, cx);
         assert_eq!(editor.text(cx), "fn main() { a }");
@@ -1320,23 +1313,21 @@ async fn test_on_input_format_from_guest_to_host(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let window_b = cx_b.add_empty_window();
-    let editor_b = window_b.build_view(cx_b, |cx| {
-        Editor::for_buffer(buffer_b, Some(project_b.clone()), cx)
-    });
+    let cx_b = cx_b.add_empty_window();
+    let editor_b = cx_b.new_view(|cx| Editor::for_buffer(buffer_b, Some(project_b.clone()), cx));
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
-    let mut cx_b = VisualTestContext::from_window(window_b, cx_b);
+
     // Type a on type formatting trigger character as the guest.
     cx_b.focus_view(&editor_b);
-    editor_b.update(&mut cx_b, |editor, cx| {
+    editor_b.update(cx_b, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
         editor.handle_input(":", cx);
     });
 
     // Receive an OnTypeFormatting request as the host's language server.
-    // Return some formattings from the host's language server.
+    // Return some formatting from the host's language server.
     executor.start_waiting();
     fake_language_server
         .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
@@ -1359,7 +1350,7 @@ async fn test_on_input_format_from_guest_to_host(
         .unwrap();
     executor.finish_waiting();
 
-    // Open the buffer on the host and see that the formattings worked
+    // Open the buffer on the host and see that the formatting worked
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
@@ -1371,7 +1362,7 @@ async fn test_on_input_format_from_guest_to_host(
     });
 
     // Undo should remove LSP edits first
-    editor_b.update(&mut cx_b, |editor, cx| {
+    editor_b.update(cx_b, |editor, cx| {
         assert_eq!(editor.text(cx), "fn main() { a:~: }");
         editor.undo(&Undo, cx);
         assert_eq!(editor.text(cx), "fn main() { a: }");
@@ -1382,7 +1373,7 @@ async fn test_on_input_format_from_guest_to_host(
         assert_eq!(buffer.text(), "fn main() { a: }")
     });
 
-    editor_b.update(&mut cx_b, |editor, cx| {
+    editor_b.update(cx_b, |editor, cx| {
         assert_eq!(editor.text(cx), "fn main() { a: }");
         editor.undo(&Undo, cx);
         assert_eq!(editor.text(cx), "fn main() { a }");
@@ -1833,7 +1824,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         assert_eq!(
             inlay_cache.version(),
             1,
-            "Should update cache verison after first hints"
+            "Should update cache version after first hints"
         );
     });
 

@@ -1,6 +1,6 @@
 use gpui::DefiniteLength;
 
-/// A trait for elements that have a fixed with.
+/// A trait for elements that can have a fixed with. Enables the use of the `width` and `full_width` methods.
 pub trait FixedWidth {
     /// Sets the width of the element.
     fn width(self, width: DefiniteLength) -> Self;

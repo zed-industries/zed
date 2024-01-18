@@ -1,16 +1,3 @@
-// Input:
-//
-// struct FooBar {}
-
-// Output:
-//
-// struct FooBar {}
-//
-// #[allow(non_snake_case)]
-// #[gpui2::ctor]
-// fn register_foobar_builder() {
-//     gpui2::register_action_builder::<Foo>()
-// }
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::{format_ident, quote};

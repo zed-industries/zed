@@ -1,9 +1,9 @@
 pub mod file_associations;
 mod project_panel_settings;
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
-use editor::{scroll::autoscroll::Autoscroll, Cancel, Editor};
+use editor::{actions::Cancel, scroll::Autoscroll, Editor};
 use file_associations::FileAssociations;
 
 use anyhow::{anyhow, Result};
@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_stack, ContextMenu, IconElement, KeyBinding, Label, ListItem};
+use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem};
 use unicase::UniCase;
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -58,6 +58,7 @@ pub struct ProjectPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    was_deserialized: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -221,10 +222,10 @@ impl ProjectPanel {
             })
             .detach();
 
-            // cx.observe_global::<FileAssociations, _>(|_, cx| {
-            //     cx.notify();
-            // })
-            // .detach();
+            cx.observe_global::<FileAssociations>(|_, cx| {
+                cx.notify();
+            })
+            .detach();
 
             let mut this = Self {
                 project: project.clone(),
@@ -243,20 +244,9 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
+                was_deserialized: false,
             };
             this.update_visible_entries(None, cx);
-
-            // Update the dock position when the setting changes.
-            let mut old_dock_position = this.position(cx);
-            ProjectPanelSettings::register(cx);
-            cx.observe_global::<SettingsStore>(move |this, cx| {
-                let new_dock_position = this.position(cx);
-                if new_dock_position != old_dock_position {
-                    old_dock_position = new_dock_position;
-                    cx.emit(PanelEvent::ChangePosition);
-                }
-            })
-            .detach();
 
             this
         });
@@ -292,16 +282,16 @@ impl ProjectPanel {
                 }
                 &Event::SplitEntry { entry_id } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-                        if let Some(_entry) = worktree.read(cx).entry_for_id(entry_id) {
-                            // workspace
-                            //     .split_path(
-                            //         ProjectPath {
-                            //             worktree_id: worktree.read(cx).id(),
-                            //             path: entry.path.clone(),
-                            //         },
-                            //         cx,
-                            //     )
-                            //     .detach_and_log_err(cx);
+                        if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            workspace
+                                .split_path(
+                                    ProjectPath {
+                                        worktree_id: worktree.read(cx).id(),
+                                        path: entry.path.clone(),
+                                    },
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
                         }
                     }
                 }
@@ -334,6 +324,7 @@ impl ProjectPanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
+                    panel.was_deserialized = true;
                     cx.notify();
                 });
             }
@@ -788,10 +779,6 @@ impl ProjectPanel {
                     cx.notify();
                 }
             }
-
-            // cx.update_global(|drag_and_drop: &mut DragAndDrop<Workspace>, cx| {
-            //     drag_and_drop.cancel_dragging::<ProjectEntryId>(cx);
-            // })
         }
     }
 
@@ -1403,7 +1390,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(IconElement::from_path(icon.to_string()).color(Color::Muted))
+                        div().child(Icon::from_path(icon.to_string()).color(Color::Muted))
                     } else {
                         div().size(IconSize::default().rems()).invisible()
                     })
@@ -1433,6 +1420,9 @@ impl ProjectPanel {
                     }))
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, cx| {
+                            // Stop propagation to prevent the catch-all context menu for the project
+                            // panel from being deployed.
+                            cx.stop_propagation();
                             this.deploy_context_menu(event.position, entry_id, cx);
                         },
                     )),
@@ -1477,6 +1467,9 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         }
+    }
+    pub fn was_deserialized(&self) -> bool {
+        self.was_deserialized
     }
 }
 
@@ -1554,7 +1547,7 @@ impl Render for ProjectPanel {
                         .child(menu.clone())
                 }))
         } else {
-            v_stack()
+            v_flex()
                 .id("empty-project_panel")
                 .size_full()
                 .p_4()
@@ -1578,7 +1571,7 @@ impl Render for DraggedProjectEntryView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        h_stack()
+        h_flex()
             .font(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
@@ -1587,7 +1580,7 @@ impl Render for DraggedProjectEntryView {
                     .indent_level(self.details.depth)
                     .indent_step_size(px(settings.indent_size))
                     .child(if let Some(icon) = &self.details.icon {
-                        div().child(IconElement::from_path(icon.to_string()))
+                        div().child(Icon::from_path(icon.to_string()))
                     } else {
                         div()
                     })
@@ -1637,8 +1630,8 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
-        Some(ui::Icon::FileTree)
+    fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
+        Some(ui::IconName::FileTree)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

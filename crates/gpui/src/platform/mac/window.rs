@@ -1,9 +1,9 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, DrawWindow, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, GlobalPixels, InputEvent, KeyDownEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputHandler, PlatformWindow, Point,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
@@ -46,7 +46,6 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -269,6 +268,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(windowShouldClose:),
         window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
     );
+
     decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
 
     decl.add_method(
@@ -317,9 +317,9 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     renderer: MetalRenderer,
-    draw: Option<DrawWindow>,
     kind: WindowKind,
-    event_callback: Option<Box<dyn FnMut(InputEvent) -> bool>>,
+    request_frame_callback: Option<Box<dyn FnMut()>>,
+    event_callback: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
@@ -333,11 +333,12 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Point<Pixels>>,
-    previous_modifiers_changed_event: Option<InputEvent>,
+    previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
     ime_state: ImeState,
     // Retains the last IME Text
     ime_text: Option<String>,
+    external_files_dragged: bool,
 }
 
 impl MacWindowState {
@@ -453,7 +454,6 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         options: WindowOptions,
-        draw: DrawWindow,
         executor: ForegroundExecutor,
     ) -> Self {
         unsafe {
@@ -484,7 +484,7 @@ impl MacWindow {
 
             let display = options
                 .display_id
-                .and_then(|display_id| MacDisplay::all().find(|display| display.id() == display_id))
+                .and_then(MacDisplay::find_by_id)
                 .unwrap_or_else(MacDisplay::primary);
 
             let mut target_screen = nil;
@@ -545,8 +545,8 @@ impl MacWindow {
                 executor,
                 native_window,
                 renderer: MetalRenderer::new(true),
-                draw: Some(draw),
                 kind: options.kind,
+                request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
                 resize_callback: None,
@@ -567,6 +567,7 @@ impl MacWindow {
                 previous_modifiers_changed_event: None,
                 ime_state: ImeState::None,
                 ime_text: None,
+                external_files_dragged: false,
             })));
 
             (*native_window).set_ivar(
@@ -683,9 +684,6 @@ impl Drop for MacWindow {
         this.executor
             .spawn(async move {
                 unsafe {
-                    // todo!() this panic()s when you click the red close button
-                    // unless should_close returns false.
-                    // (luckliy in zed it always returns false)
                     window.close();
                 }
             })
@@ -770,8 +768,8 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
-    fn clear_input_handler(&mut self) {
-        self.0.as_ref().lock().input_handler = None;
+    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>> {
+        self.0.as_ref().lock().input_handler.take()
     }
 
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {
@@ -926,7 +924,11 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().request_frame_callback = Some(callback);
+    }
+
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
         self.0.as_ref().lock().event_callback = Some(callback);
     }
 
@@ -990,6 +992,11 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn draw(&self, scene: &crate::Scene) {
+        let mut this = self.0.lock();
+        this.renderer.draw(scene);
+    }
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
@@ -1046,9 +1053,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let mut lock = window_state.as_ref().lock();
 
     let window_height = lock.content_size().height;
-    let event = unsafe { InputEvent::from_native(native_event, Some(window_height)) };
+    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
-    if let Some(InputEvent::KeyDown(event)) = event {
+    if let Some(PlatformInput::KeyDown(event)) = event {
         // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
         // If that event isn't handled, it will then dispatch a "key down" event. GPUI
         // makes no distinction between these two types of events, so we need to ignore
@@ -1095,37 +1102,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                         .flatten()
                         .is_some();
                 if !is_composing {
-                    // if the IME has changed the key, we'll first emit an event with the character
-                    // generated by the IME system; then fallback to the keystroke if that is not
-                    // handled.
-                    // cases that we have working:
-                    // - " on a brazillian layout by typing <quote><space>
-                    // - ctrl-` on a brazillian layout by typing <ctrl-`>
-                    // - $ on a czech QWERTY layout by typing <alt-4>
-                    // - 4 on a czech QWERTY layout by typing <shift-4>
-                    // - ctrl-4 on a czech QWERTY layout by typing <ctrl-alt-4> (or <ctrl-shift-4>)
-                    if ime_text.is_some() && ime_text.as_ref() != Some(&event.keystroke.key) {
-                        let event_with_ime_text = KeyDownEvent {
-                            is_held: false,
-                            keystroke: Keystroke {
-                                // we match ctrl because some use-cases need it.
-                                // we don't match alt because it's often used to generate the optional character
-                                // we don't match shift because we're not here with letters (usually)
-                                // we don't match cmd/fn because they don't seem to use IME
-                                modifiers: Default::default(),
-                                key: ime_text.clone().unwrap(),
-                                ime_key: None, // todo!("handle IME key")
-                            },
-                        };
-                        handled = callback(InputEvent::KeyDown(event_with_ime_text));
-                    }
-                    if !handled {
-                        // empty key happens when you type a deadkey in input composition.
-                        // (e.g. on a brazillian keyboard typing quote is a deadkey)
-                        if !event.keystroke.key.is_empty() {
-                            handled = callback(InputEvent::KeyDown(event));
-                        }
-                    }
+                    handled = callback(PlatformInput::KeyDown(event));
                 }
 
                 if !handled {
@@ -1169,11 +1146,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     let window_height = lock.content_size().height;
-    let event = unsafe { InputEvent::from_native(native_event, Some(window_height)) };
+    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
         match &mut event {
-            InputEvent::MouseDown(
+            PlatformInput::MouseDown(
                 event @ MouseDownEvent {
                     button: MouseButton::Left,
                     modifiers: Modifiers { control: true, .. },
@@ -1195,7 +1172,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
             // the ctrl-left_up to avoid having a mismatch in button down/up events if the
             // user is still holding ctrl when releasing the left mouse button
-            InputEvent::MouseUp(
+            PlatformInput::MouseUp(
                 event @ MouseUpEvent {
                     button: MouseButton::Left,
                     modifiers: Modifiers { control: true, .. },
@@ -1217,32 +1194,37 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         };
 
         match &event {
-            InputEvent::MouseMove(
+            PlatformInput::MouseMove(
                 event @ MouseMoveEvent {
                     pressed_button: Some(_),
                     ..
                 },
             ) => {
-                lock.synthetic_drag_counter += 1;
-                let executor = lock.executor.clone();
-                executor
-                    .spawn(synthetic_drag(
-                        weak_window_state,
-                        lock.synthetic_drag_counter,
-                        event.clone(),
-                    ))
-                    .detach();
+                // Synthetic drag is used for selecting long buffer contents while buffer is being scrolled.
+                // External file drag and drop is able to emit its own synthetic mouse events which will conflict
+                // with these ones.
+                if !lock.external_files_dragged {
+                    lock.synthetic_drag_counter += 1;
+                    let executor = lock.executor.clone();
+                    executor
+                        .spawn(synthetic_drag(
+                            weak_window_state,
+                            lock.synthetic_drag_counter,
+                            event.clone(),
+                        ))
+                        .detach();
+                }
             }
 
-            InputEvent::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
+            PlatformInput::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
 
-            InputEvent::MouseUp(MouseUpEvent { .. }) => {
+            PlatformInput::MouseUp(MouseUpEvent { .. }) => {
                 lock.synthetic_drag_counter += 1;
             }
 
-            InputEvent::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
                 // Only raise modifiers changed event when they have actually changed
-                if let Some(InputEvent::ModifiersChanged(ModifiersChangedEvent {
+                if let Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: prev_modifiers,
                 })) = &lock.previous_modifiers_changed_event
                 {
@@ -1276,7 +1258,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         key: ".".into(),
         ime_key: None,
     };
-    let event = InputEvent::KeyDown(KeyDownEvent {
+    let event = PlatformInput::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),
         is_held: false,
     });
@@ -1462,15 +1444,12 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
-    unsafe {
-        let window_state = get_window_state(this);
-        let mut draw = window_state.lock().draw.take().unwrap();
-        let scene = draw().log_err();
-        let mut window_state = window_state.lock();
-        window_state.draw = Some(draw);
-        if let Some(scene) = scene {
-            window_state.renderer.draw(&scene);
-        }
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.lock();
+    if let Some(mut callback) = lock.request_frame_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().request_frame_callback = Some(callback);
     }
 }
 
@@ -1563,6 +1542,9 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 replacement_range,
                 text: text.to_string(),
             });
+            if text.to_string().to_ascii_lowercase() != pending_key_down.0.keystroke.key {
+                pending_key_down.0.keystroke.ime_key = Some(text.to_string());
+            }
             window_state.lock().pending_key_down = Some(pending_key_down);
         }
     }
@@ -1673,8 +1655,9 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     if send_new_event(&window_state, {
         let position = drag_event_position(&window_state, dragging_info);
         let paths = external_paths_from_event(dragging_info);
-        InputEvent::FileDrop(FileDropEvent::Entered { position, paths })
+        PlatformInput::FileDrop(FileDropEvent::Entered { position, paths })
     }) {
+        window_state.lock().external_files_dragged = true;
         NSDragOperationCopy
     } else {
         NSDragOperationNone
@@ -1686,7 +1669,7 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let position = drag_event_position(&window_state, dragging_info);
     if send_new_event(
         &window_state,
-        InputEvent::FileDrop(FileDropEvent::Pending { position }),
+        PlatformInput::FileDrop(FileDropEvent::Pending { position }),
     ) {
         NSDragOperationCopy
     } else {
@@ -1696,7 +1679,11 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 
 extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::Exited));
+    send_new_event(
+        &window_state,
+        PlatformInput::FileDrop(FileDropEvent::Exited),
+    );
+    window_state.lock().external_files_dragged = false;
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
@@ -1704,7 +1691,7 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     let position = drag_event_position(&window_state, dragging_info);
     if send_new_event(
         &window_state,
-        InputEvent::FileDrop(FileDropEvent::Submit { position }),
+        PlatformInput::FileDrop(FileDropEvent::Submit { position }),
     ) {
         YES
     } else {
@@ -1728,7 +1715,10 @@ fn external_paths_from_event(dragging_info: *mut Object) -> ExternalPaths {
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(&window_state, InputEvent::FileDrop(FileDropEvent::Exited));
+    send_new_event(
+        &window_state,
+        PlatformInput::FileDrop(FileDropEvent::Exited),
+    );
 }
 
 async fn synthetic_drag(
@@ -1743,7 +1733,7 @@ async fn synthetic_drag(
             if lock.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
-                    callback(InputEvent::MouseMove(event.clone()));
+                    callback(PlatformInput::MouseMove(event.clone()));
                     window_state.lock().event_callback = Some(callback);
                 }
             } else {
@@ -1753,7 +1743,7 @@ async fn synthetic_drag(
     }
 }
 
-fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: InputEvent) -> bool {
+fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -> bool {
     let window_state = window_state_lock.lock().event_callback.take();
     if let Some(mut callback) = window_state {
         callback(e);

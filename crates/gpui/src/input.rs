@@ -34,7 +34,7 @@ pub trait InputHandler: 'static + Sized {
     ) -> Option<Bounds<Pixels>>;
 }
 
-/// The canonical implementation of `PlatformInputHandler`. Call `WindowContext::handle_input`
+/// The canonical implementation of [`PlatformInputHandler`]. Call [`WindowContext::handle_input`]
 /// with an instance during your element's paint.
 pub struct ElementInputHandler<V> {
     view: View<V>,

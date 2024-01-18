@@ -77,9 +77,6 @@ impl ActivityIndicator {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
 
-            // cx.observe_active_labeled_tasks(|_, cx| cx.notify())
-            //     .detach();
-
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
@@ -288,15 +285,6 @@ impl ActivityIndicator {
             };
         }
 
-        // todo!(show active tasks)
-        // if let Some(most_recent_active_task) = cx.active_labeled_tasks().last() {
-        //     return Content {
-        //         icon: None,
-        //         message: most_recent_active_task.to_string(),
-        //         on_click: None,
-        //     };
-        // }
-
         Default::default()
     }
 }
@@ -307,7 +295,7 @@ impl Render for ActivityIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let content = self.content_to_render(cx);
 
-        let mut result = h_stack()
+        let mut result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_error_message));

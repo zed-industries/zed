@@ -402,7 +402,7 @@
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
-      "cmd-shift-f": "workspace::DeploySearch",
+      "cmd-shift-f": "pane::DeploySearch",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-t": "project_symbols::Toggle",
@@ -412,7 +412,8 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
-      "cmd-k m": "language_selector::Toggle"
+      "cmd-k m": "language_selector::Toggle",
+      "escape": "workspace::Unfollow"
     }
   },
   // Bindings from Sublime Text

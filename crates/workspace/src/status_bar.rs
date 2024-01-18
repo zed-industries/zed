@@ -4,7 +4,7 @@ use gpui::{
     WindowContext,
 };
 use std::any::TypeId;
-use ui::{h_stack, prelude::*};
+use ui::{h_flex, prelude::*};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -50,14 +50,14 @@ impl Render for StatusBar {
 
 impl StatusBar {
     fn render_left_tools(&self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        h_stack()
+        h_flex()
             .items_center()
             .gap_2()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
     fn render_right_tools(&self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        h_stack()
+        h_flex()
             .items_center()
             .gap_2()
             .children(self.right_items.iter().rev().map(|item| item.to_any()))

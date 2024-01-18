@@ -4,7 +4,7 @@ use gpui::{
 };
 use menu::Cancel;
 use util::channel::ReleaseChannel;
-use workspace::ui::{h_stack, v_stack, Icon, IconElement, Label, StyledExt};
+use workspace::ui::{h_flex, v_flex, Icon, IconName, Label, StyledExt};
 
 pub struct UpdateNotification {
     version: SemanticVersion,
@@ -16,12 +16,12 @@ impl Render for UpdateNotification {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let app_name = cx.global::<ReleaseChannel>().display_name();
 
-        v_stack()
+        v_flex()
             .on_action(cx.listener(UpdateNotification::dismiss))
             .elevation_3(cx)
             .p_4()
             .child(
-                h_stack()
+                h_flex()
                     .justify_between()
                     .child(Label::new(format!(
                         "Updated to {app_name} {}",
@@ -30,7 +30,7 @@ impl Render for UpdateNotification {
                     .child(
                         div()
                             .id("cancel")
-                            .child(IconElement::new(Icon::Close))
+                            .child(Icon::new(IconName::Close))
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
                     ),
@@ -40,7 +40,9 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(|_, cx| crate::view_release_notes(&Default::default(), cx)),
+                    .on_click(|_, cx| {
+                        crate::view_release_notes(&Default::default(), cx);
+                    }),
             )
     }
 }

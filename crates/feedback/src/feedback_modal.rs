@@ -186,6 +186,7 @@ impl FeedbackModal {
                 cx,
             );
             editor.set_show_gutter(false, cx);
+            editor.set_show_copilot_suggestions(false);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -421,7 +422,7 @@ impl Render for FeedbackModal {
         let open_community_repo =
             cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
 
-        v_stack()
+        v_flex()
             .elevation_3(cx)
             .key_context("GiveFeedback")
             .on_action(cx.listener(Self::cancel))
@@ -460,10 +461,10 @@ impl Render for FeedbackModal {
                     .child(self.feedback_editor.clone()),
             )
             .child(
-                v_stack()
+                v_flex()
                     .gap_1()
                     .child(
-                        h_stack()
+                        h_flex()
                             .bg(cx.theme().colors().editor_background)
                             .p_2()
                             .border()
@@ -482,19 +483,19 @@ impl Render for FeedbackModal {
                     ),
             )
             .child(
-                h_stack()
+                h_flex()
                     .justify_between()
                     .gap_1()
                     .child(
                         Button::new("community_repository", "Community Repository")
                             .style(ButtonStyle::Transparent)
-                            .icon(Icon::ExternalLink)
+                            .icon(IconName::ExternalLink)
                             .icon_position(IconPosition::End)
                             .icon_size(IconSize::Small)
                             .on_click(open_community_repo),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .gap_1()
                             .child(
                                 Button::new("cancel_feedback", "Cancel")
@@ -525,43 +526,4 @@ impl Render for FeedbackModal {
     }
 }
 
-// TODO: Testing of various button states, dismissal prompts, etc.
-
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-
-//     #[test]
-//     fn test_invalid_email_addresses() {
-//         let markdown = markdown.await.log_err();
-//         let buffer = project.update(&mut cx, |project, cx| {
-//             project.create_buffer("", markdown, cx)
-//         })??;
-
-//         workspace.update(&mut cx, |workspace, cx| {
-//             let system_specs = SystemSpecs::new(cx);
-
-//             workspace.toggle_modal(cx, move |cx| {
-//                 let feedback_modal = FeedbackModal::new(system_specs, project, buffer, cx);
-
-//                 assert!(!feedback_modal.can_submit());
-//                 assert!(!feedback_modal.valid_email_address(cx));
-//                 assert!(!feedback_modal.valid_character_count());
-
-//                 feedback_modal
-//                     .email_address_editor
-//                     .update(cx, |this, cx| this.set_text("a", cx));
-//                 feedback_modal.set_submission_state(cx);
-
-//                 assert!(!feedback_modal.valid_email_address(cx));
-
-//                 feedback_modal
-//                     .email_address_editor
-//                     .update(cx, |this, cx| this.set_text("a&b.com", cx));
-//                 feedback_modal.set_submission_state(cx);
-
-//                 assert!(feedback_modal.valid_email_address(cx));
-//             });
-//         })?;
-//     }
-// }
+// TODO: Testing of various button states, dismissal prompts, etc. :)

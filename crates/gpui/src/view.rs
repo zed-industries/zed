@@ -1,8 +1,10 @@
+#![deny(missing_docs)]
+
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
-    Bounds, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
-    LayoutId, Model, Pixels, Point, Render, Size, ViewContext, VisualContext, WeakModel,
-    WindowContext,
+    Bounds, ContentMask, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
+    IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style, TextStyle,
+    ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -11,11 +13,28 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+/// A view is a piece of state that can be presented on screen by implementing the [Render] trait.
+/// Views implement [Element] and can composed with other views, and every window is created with a root view.
 pub struct View<V> {
+    /// A view is just a [Model] whose type implements `Render`, and the model is accessible via this field.
     pub model: Model<V>,
 }
 
 impl<V> Sealed for View<V> {}
+
+#[doc(hidden)]
+pub struct AnyViewState {
+    root_style: Style,
+    cache_key: Option<ViewCacheKey>,
+    element: Option<AnyElement>,
+}
+
+struct ViewCacheKey {
+    bounds: Bounds<Pixels>,
+    stacking_order: StackingOrder,
+    content_mask: ContentMask<Pixels>,
+    text_style: TextStyle,
+}
 
 impl<V: 'static> Entity<V> for View<V> {
     type Weak = WeakView<V>;
@@ -45,6 +64,7 @@ impl<V: 'static> View<V> {
         Entity::downgrade(self)
     }
 
+    /// Update the view's state with the given function, which is passed a mutable reference and a context.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -56,20 +76,12 @@ impl<V: 'static> View<V> {
         cx.update_view(self, f)
     }
 
+    /// Obtain a read-only reference to this view's state.
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
         self.model.read(cx)
     }
 
-    // pub fn render_with<E>(&self, component: E) -> RenderViewWith<E, V>
-    // where
-    //     E: 'static + Element,
-    // {
-    //     RenderViewWith {
-    //         view: self.clone(),
-    //         element: Some(component),
-    //     }
-    // }
-
+    /// Gets a [FocusHandle] for this view when its state implements [FocusableView].
     pub fn focus_handle(&self, cx: &AppContext) -> FocusHandle
     where
         V: FocusableView,
@@ -86,13 +98,15 @@ impl<V: Render> Element for View<V> {
         _state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
-        let layout_id = element.request_layout(cx);
-        (layout_id, Some(element))
+        cx.with_view_id(self.entity_id(), |cx| {
+            let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
+            let layout_id = element.request_layout(cx);
+            (layout_id, Some(element))
+        })
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
-        element.take().unwrap().paint(cx);
+        cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
     }
 }
 
@@ -126,19 +140,24 @@ impl<V> PartialEq for View<V> {
 
 impl<V> Eq for View<V> {}
 
+/// A weak variant of [View] which does not prevent the view from being released.
 pub struct WeakView<V> {
     pub(crate) model: WeakModel<V>,
 }
 
 impl<V: 'static> WeakView<V> {
+    /// Gets the entity id associated with this handle.
     pub fn entity_id(&self) -> EntityId {
         self.model.entity_id
     }
 
+    /// Obtain a strong handle for the view if it hasn't been released.
     pub fn upgrade(&self) -> Option<View<V>> {
         Entity::upgrade_from(self)
     }
 
+    /// Update this view's state if it hasn't been released.
+    /// Returns an error if this view has been released.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -152,9 +171,10 @@ impl<V: 'static> WeakView<V> {
         Ok(view.update(cx, f)).flatten()
     }
 
+    /// Assert that the view referenced by this handle has been released.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_dropped(&self) {
-        self.model.assert_dropped()
+    pub fn assert_released(&self) {
+        self.model.assert_released()
     }
 }
 
@@ -180,37 +200,50 @@ impl<V> PartialEq for WeakView<V> {
 
 impl<V> Eq for WeakView<V> {}
 
+/// A dynamically-typed handle to a view, which can be downcast to a [View] for a specific type.
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
-    paint: fn(&AnyView, &mut AnyElement, &mut WindowContext),
+    request_layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
+    cache: bool,
 }
 
 impl AnyView {
+    /// Indicate that this view should be cached when using it as an element.
+    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
+    /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
+    pub fn cached(mut self) -> Self {
+        self.cache = true;
+        self
+    }
+
+    /// Convert this to a weak handle.
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             model: self.model.downgrade(),
-            layout: self.layout,
-            paint: self.paint,
+            layout: self.request_layout,
         }
     }
 
+    /// Convert this to a [View] of a specific type.
+    /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
     pub fn downcast<T: 'static>(self) -> Result<View<T>, Self> {
         match self.model.downcast() {
             Ok(model) => Ok(View { model }),
             Err(model) => Err(Self {
                 model,
-                layout: self.layout,
-                paint: self.paint,
+                request_layout: self.request_layout,
+                cache: self.cache,
             }),
         }
     }
 
+    /// Gets the [TypeId] of the underlying view.
     pub fn entity_type(&self) -> TypeId {
         self.model.entity_type
     }
 
+    /// Gets the entity id of this handle.
     pub fn entity_id(&self) -> EntityId {
         self.model.entity_id()
     }
@@ -221,10 +254,12 @@ impl AnyView {
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
     ) {
-        cx.with_absolute_element_offset(origin, |cx| {
-            let (layout_id, mut rendered_element) = (self.layout)(self, cx);
-            cx.compute_layout(layout_id, available_space);
-            (self.paint)(self, &mut rendered_element, cx);
+        cx.paint_view(self.entity_id(), |cx| {
+            cx.with_absolute_element_offset(origin, |cx| {
+                let (layout_id, mut rendered_element) = (self.request_layout)(self, cx);
+                cx.compute_layout(layout_id, available_space);
+                rendered_element.paint(cx)
+            });
         })
     }
 }
@@ -233,30 +268,69 @@ impl<V: Render> From<View<V>> for AnyView {
     fn from(value: View<V>) -> Self {
         AnyView {
             model: value.model.into_any(),
-            layout: any_view::layout::<V>,
-            paint: any_view::paint,
+            request_layout: any_view::request_layout::<V>,
+            cache: false,
         }
     }
 }
 
 impl Element for AnyView {
-    type State = Option<AnyElement>;
+    type State = AnyViewState;
 
     fn request_layout(
         &mut self,
-        _state: Option<Self::State>,
+        state: Option<Self::State>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::State) {
-        let (layout_id, state) = (self.layout)(self, cx);
-        (layout_id, Some(state))
+        cx.with_view_id(self.entity_id(), |cx| {
+            if self.cache {
+                if let Some(state) = state {
+                    let layout_id = cx.request_layout(&state.root_style, None);
+                    return (layout_id, state);
+                }
+            }
+
+            let (layout_id, element) = (self.request_layout)(self, cx);
+            let root_style = cx.layout_style(layout_id).unwrap().clone();
+            let state = AnyViewState {
+                root_style,
+                cache_key: None,
+                element: Some(element),
+            };
+            (layout_id, state)
+        })
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
-        debug_assert!(
-            state.is_some(),
-            "state is None. Did you include an AnyView twice in the tree?"
-        );
-        (self.paint)(self, state.as_mut().unwrap(), cx)
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+        cx.paint_view(self.entity_id(), |cx| {
+            if !self.cache {
+                state.element.take().unwrap().paint(cx);
+                return;
+            }
+
+            if let Some(cache_key) = state.cache_key.as_mut() {
+                if cache_key.bounds == bounds
+                    && cache_key.content_mask == cx.content_mask()
+                    && cache_key.stacking_order == *cx.stacking_order()
+                    && cache_key.text_style == cx.text_style()
+                    && !cx.window.dirty_views.contains(&self.entity_id())
+                    && !cx.window.refreshing
+                {
+                    cx.reuse_view();
+                    return;
+                }
+            }
+
+            let mut element = (self.request_layout)(self, cx).1;
+            element.draw(bounds.origin, bounds.size.into(), cx);
+
+            state.cache_key = Some(ViewCacheKey {
+                bounds,
+                stacking_order: cx.stacking_order().clone(),
+                content_mask: cx.content_mask(),
+                text_style: cx.text_style(),
+            });
+        })
     }
 }
 
@@ -284,19 +358,20 @@ impl IntoElement for AnyView {
     }
 }
 
+/// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
     model: AnyWeakModel,
     layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
-    paint: fn(&AnyView, &mut AnyElement, &mut WindowContext),
 }
 
 impl AnyWeakView {
+    /// Convert to a strongly-typed handle if the referenced view has not yet been released.
     pub fn upgrade(&self) -> Option<AnyView> {
         let model = self.model.upgrade()?;
         Some(AnyView {
             model,
-            layout: self.layout,
-            paint: self.paint,
+            request_layout: self.layout,
+            cache: false,
         })
     }
 }
@@ -305,8 +380,7 @@ impl<V: 'static + Render> From<WeakView<V>> for AnyWeakView {
     fn from(view: WeakView<V>) -> Self {
         Self {
             model: view.model.into(),
-            layout: any_view::layout::<V>,
-            paint: any_view::paint,
+            layout: any_view::request_layout::<V>,
         }
     }
 }
@@ -328,7 +402,7 @@ impl std::fmt::Debug for AnyWeakView {
 mod any_view {
     use crate::{AnyElement, AnyView, IntoElement, LayoutId, Render, WindowContext};
 
-    pub(crate) fn layout<V: 'static + Render>(
+    pub(crate) fn request_layout<V: 'static + Render>(
         view: &AnyView,
         cx: &mut WindowContext,
     ) -> (LayoutId, AnyElement) {
@@ -336,9 +410,5 @@ mod any_view {
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());
         let layout_id = element.request_layout(cx);
         (layout_id, element)
-    }
-
-    pub(crate) fn paint(_view: &AnyView, element: &mut AnyElement, cx: &mut WindowContext) {
-        element.paint(cx);
     }
 }

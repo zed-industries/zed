@@ -60,7 +60,9 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 pub use lsp::DiagnosticSeverity;
 
 lazy_static! {
-    static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
+    /// A label for the background task spawned by the buffer to compute
+    /// a diff against the contents of its file.
+    pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
 }
 
 /// Indicate whether a [Buffer] has permissions to edit.
@@ -337,6 +339,8 @@ pub enum Event {
     Reparsed,
     /// The buffer's diagnostics were updated.
     DiagnosticsUpdated,
+    /// The buffer gained or lost editing capabilities.
+    CapabilityChanged,
     /// The buffer was explicitly requested to close.
     Closed,
 }
@@ -711,6 +715,7 @@ impl Buffer {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn as_text_snapshot(&self) -> &text::BufferSnapshot {
         &self.text
     }
@@ -731,6 +736,7 @@ impl Buffer {
         &self.saved_version
     }
 
+    /// The fingerprint of the buffer's text when the buffer was last saved or reloaded from disk.
     pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
         self.file_fingerprint
     }
@@ -754,6 +760,12 @@ impl Buffer {
         self.syntax_map
             .lock()
             .set_language_registry(language_registry);
+    }
+
+    /// Assign the buffer a new [Capability].
+    pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
+        self.capability = capability;
+        cx.emit(Event::CapabilityChanged)
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -967,6 +979,8 @@ impl Buffer {
         self.parsing_in_background
     }
 
+    /// Indicates whether the buffer contains any regions that may be
+    /// written in a language that hasn't been loaded yet.
     pub fn contains_unknown_injections(&self) -> bool {
         self.syntax_map.lock().contains_unknown_injections()
     }

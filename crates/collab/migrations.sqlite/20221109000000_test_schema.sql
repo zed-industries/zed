@@ -19,6 +19,7 @@ CREATE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 CREATE TABLE "access_tokens" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "user_id" INTEGER REFERENCES users (id),
+    "impersonated_user_id" INTEGER REFERENCES users (id),
     "hash" VARCHAR(128)
 );
 CREATE INDEX "index_access_tokens_user_id" ON "access_tokens" ("user_id");
@@ -37,7 +38,7 @@ CREATE INDEX "index_contacts_user_id_b" ON "contacts" ("user_id_b");
 CREATE TABLE "rooms" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "live_kit_room" VARCHAR NOT NULL,
-    "enviroment" VARCHAR,
+    "environment" VARCHAR,
     "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");

@@ -266,6 +266,10 @@ impl Item for ChannelView {
             .into_any_element()
     }
 
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
+    }
+
     fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<View<Self>> {
         Some(cx.new_view(|cx| {
             Self::new(

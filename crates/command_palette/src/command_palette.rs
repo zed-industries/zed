@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use client::telemetry::Telemetry;
 use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -11,7 +12,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 
-use ui::{h_stack, prelude::*, v_stack, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
+use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::{
     channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
@@ -39,11 +40,18 @@ impl CommandPalette {
             let Some(previous_focus_handle) = cx.focused() else {
                 return;
             };
-            workspace.toggle_modal(cx, move |cx| CommandPalette::new(previous_focus_handle, cx));
+            let telemetry = workspace.client().telemetry().clone();
+            workspace.toggle_modal(cx, move |cx| {
+                CommandPalette::new(previous_focus_handle, telemetry, cx)
+            });
         });
     }
 
-    fn new(previous_focus_handle: FocusHandle, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        previous_focus_handle: FocusHandle,
+        telemetry: Arc<Telemetry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let filter = cx.try_global::<CommandPaletteFilter>();
 
         let commands = cx
@@ -66,8 +74,12 @@ impl CommandPalette {
             })
             .collect();
 
-        let delegate =
-            CommandPaletteDelegate::new(cx.view().downgrade(), commands, previous_focus_handle);
+        let delegate = CommandPaletteDelegate::new(
+            cx.view().downgrade(),
+            commands,
+            telemetry,
+            previous_focus_handle,
+        );
 
         let picker = cx.new_view(|cx| Picker::new(delegate, cx));
         Self { picker }
@@ -84,7 +96,7 @@ impl FocusableView for CommandPalette {
 
 impl Render for CommandPalette {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack().w(rems(34.)).child(self.picker.clone())
+        v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -103,6 +115,7 @@ pub struct CommandPaletteDelegate {
     commands: Vec<Command>,
     matches: Vec<StringMatch>,
     selected_ix: usize,
+    telemetry: Arc<Telemetry>,
     previous_focus_handle: FocusHandle,
 }
 
@@ -130,6 +143,7 @@ impl CommandPaletteDelegate {
     fn new(
         command_palette: WeakView<CommandPalette>,
         commands: Vec<Command>,
+        telemetry: Arc<Telemetry>,
         previous_focus_handle: FocusHandle,
     ) -> Self {
         Self {
@@ -138,6 +152,7 @@ impl CommandPaletteDelegate {
             matches: vec![],
             commands,
             selected_ix: 0,
+            telemetry,
             previous_focus_handle,
         }
     }
@@ -284,6 +299,10 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
         let action_ix = self.matches[self.selected_ix].candidate_id;
         let command = self.commands.swap_remove(action_ix);
+
+        self.telemetry
+            .report_action_event("command palette", command.name.clone());
+
         self.matches.clear();
         self.commands.clear();
         cx.update_global(|hit_counts: &mut HitCounts, _| {
@@ -311,7 +330,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    h_stack()
+                    h_flex()
                         .w_full()
                         .justify_between()
                         .child(HighlightedLabel::new(

@@ -7,14 +7,14 @@ use gpui::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{h_stack, ContextMenu, IconButton, Tooltip};
+use ui::{h_flex, ContextMenu, IconButton, Tooltip};
 use ui::{prelude::*, right_click_menu};
 
 const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
 
 pub enum PanelEvent {
-    ChangePosition,
     ZoomIn,
     ZoomOut,
     Activate,
@@ -28,7 +28,7 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
     fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
@@ -52,7 +52,7 @@ pub trait PanelHandle: Send + Sync {
     fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, cx: &mut WindowContext);
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon>;
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
     fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str>;
     fn toggle_action(&self, cx: &WindowContext) -> Box<dyn Action>;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -104,7 +104,7 @@ where
         self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<ui::Icon> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         self.read(cx).icon(cx)
     }
 
@@ -167,15 +167,6 @@ impl DockPosition {
         }
     }
 
-    // todo!()
-    // fn to_resize_handle_side(self) -> HandleSide {
-    //     match self {
-    //         Self::Left => HandleSide::Right,
-    //         Self::Bottom => HandleSide::Top,
-    //         Self::Right => HandleSide::Left,
-    //     }
-    // }
-
     pub fn axis(&self) -> Axis {
         match self {
             Self::Left | Self::Right => Axis::Horizontal,
@@ -186,9 +177,7 @@ impl DockPosition {
 
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
-    // todo!()
-    // context_menu: View<ContextMenu>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 pub struct PanelButtons {
@@ -265,12 +254,6 @@ impl Dock {
         self.is_open
     }
 
-    // todo!()
-    //     pub fn has_focus(&self, cx: &WindowContext) -> bool {
-    //         self.visible_panel()
-    //             .map_or(false, |panel| panel.has_focus(cx))
-    //     }
-
     pub fn panel<T: Panel>(&self) -> Option<View<T>> {
         self.panel_entries
             .iter()
@@ -338,9 +321,15 @@ impl Dock {
     ) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
-            cx.subscribe(&panel, move |this, panel, event, cx| match event {
-                PanelEvent::ChangePosition => {
+            cx.observe_global::<SettingsStore>({
+                let workspace = workspace.clone();
+                let panel = panel.clone();
+
+                move |this, cx| {
                     let new_position = panel.read(cx).position(cx);
+                    if new_position == this.position {
+                        return;
+                    }
 
                     let Ok(new_dock) = workspace.update(cx, |workspace, cx| {
                         if panel.is_zoomed(cx) {
@@ -371,6 +360,8 @@ impl Dock {
                         }
                     });
                 }
+            }),
+            cx.subscribe(&panel, move |this, panel, event, cx| match event {
                 PanelEvent::ZoomIn => {
                     this.set_panel_zoomed(&panel.to_any(), true, cx);
                     if !panel.focus_handle(cx).contains_focused(cx) {
@@ -395,7 +386,6 @@ impl Dock {
                         })
                         .ok();
                 }
-                // todo!() we do not use this event in the production code (even in zed1), remove it
                 PanelEvent::Activate => {
                     if let Some(ix) = this
                         .panel_entries
@@ -418,16 +408,8 @@ impl Dock {
             }),
         ];
 
-        // todo!()
-        // let dock_view_id = cx.view_id();
         self.panel_entries.push(PanelEntry {
             panel: Arc::new(panel),
-            // todo!()
-            // context_menu: cx.add_view(|cx| {
-            //     let mut menu = ContextMenu::new(dock_view_id, cx);
-            //     menu.set_position_mode(OverlayPositionMode::Local);
-            //     menu
-            // }),
             _subscriptions: subscriptions,
         });
         cx.notify()
@@ -601,7 +583,7 @@ impl Render for Dock {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
                         })
-                        .child(entry.panel.to_any()),
+                        .child(entry.panel.to_any().cached()),
                 )
                 .child(handle)
         } else {
@@ -619,7 +601,6 @@ impl PanelButtons {
 
 impl Render for PanelButtons {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // todo!()
         let dock = self.dock.read(cx);
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
@@ -701,7 +682,7 @@ impl Render for PanelButtons {
                 )
             });
 
-        h_stack().gap_0p5().children(buttons)
+        h_flex().gap_0p5().children(buttons)
     }
 }
 
@@ -764,7 +745,7 @@ pub mod test {
 
         fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
             self.position = position;
-            cx.emit(PanelEvent::ChangePosition);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
         }
 
         fn size(&self, _: &WindowContext) -> Pixels {
@@ -775,7 +756,7 @@ pub mod test {
             self.size = size.unwrap_or(px(300.));
         }
 
-        fn icon(&self, _: &WindowContext) -> Option<ui::Icon> {
+        fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
             None
         }
 

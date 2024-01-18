@@ -43,7 +43,8 @@ use util::{
     async_maybe,
     channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
     http::{self, HttpClient},
-    paths, ResultExt,
+    paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
+    ResultExt,
 };
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
@@ -67,7 +68,7 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
-    let app = App::production(Arc::new(Assets));
+    let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -102,13 +103,15 @@ fn main() {
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
     app.on_reopen(move |cx| {
-        if cx.has_global::<Weak<AppState>>() {
-            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-                workspace::open_new(&app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
-                })
-                .detach();
-            }
+        if let Some(app_state) = cx
+            .try_global::<Weak<AppState>>()
+            .map(|app_state| app_state.upgrade())
+            .flatten()
+        {
+            workspace::open_new(&app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
         }
     });
 
@@ -176,10 +179,13 @@ fn main() {
         telemetry.start(installation_id, session_id, cx);
         telemetry.report_setting_event("theme", cx.theme().name.to_string());
         telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
-        telemetry.report_app_event(match existing_installation_id_found {
-            Some(false) => "first open",
-            _ => "open",
-        });
+        telemetry.report_app_event(
+            match existing_installation_id_found {
+                Some(false) => "first open",
+                _ => "open",
+            }
+            .to_string(),
+        );
         telemetry.flush_events();
 
         let app_state = Arc::new(AppState {
@@ -224,14 +230,14 @@ fn main() {
         initialize_workspace(app_state.clone(), cx);
 
         if stdout_is_a_pty() {
+            upload_panics_and_crashes(http.clone(), cx);
             cx.activate(true);
             let urls = collect_url_args();
             if !urls.is_empty() {
                 listener.open_urls(&urls)
             }
         } else {
-            upload_previous_panics(http.clone(), cx);
-
+            upload_panics_and_crashes(http.clone(), cx);
             // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
             // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
             if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
@@ -538,7 +544,22 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
         let mut backtrace = backtrace
             .frames()
             .iter()
-            .filter_map(|frame| Some(format!("{:#}", frame.symbols().first()?.name()?)))
+            .flat_map(|frame| {
+                frame.symbols().iter().filter_map(|symbol| {
+                    let name = symbol.name()?;
+                    let addr = symbol.addr()? as usize;
+                    let position = if let (Some(path), Some(lineno)) = (
+                        symbol.filename().and_then(|path| path.file_name()),
+                        symbol.lineno(),
+                    ) {
+                        format!("{}:{}", path.to_string_lossy(), lineno)
+                    } else {
+                        "?".to_string()
+                    };
+
+                    Some(format!("{:} ({:#x}) at {}", name, addr, position))
+                })
+            })
             .collect::<Vec<_>>();
 
         // Strip out leading stack frames for rust panic-handling.
@@ -594,77 +615,154 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
     }));
 }
 
-fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
+fn upload_panics_and_crashes(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
-
     cx.background_executor()
         .spawn(async move {
-            let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-            let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
-            while let Some(child) = children.next().await {
-                let child = child?;
-                let child_path = child.path();
-
-                if child_path.extension() != Some(OsStr::new("panic")) {
-                    continue;
-                }
-                let filename = if let Some(filename) = child_path.file_name() {
-                    filename.to_string_lossy()
-                } else {
-                    continue;
-                };
-
-                if !filename.starts_with("zed") {
-                    continue;
-                }
-
-                if telemetry_settings.diagnostics {
-                    let panic_file_content = smol::fs::read_to_string(&child_path)
-                        .await
-                        .context("error reading panic file")?;
-
-                    let panic = serde_json::from_str(&panic_file_content)
-                        .ok()
-                        .or_else(|| {
-                            panic_file_content
-                                .lines()
-                                .next()
-                                .and_then(|line| serde_json::from_str(line).ok())
-                        })
-                        .unwrap_or_else(|| {
-                            log::error!(
-                                "failed to deserialize panic file {:?}",
-                                panic_file_content
-                            );
-                            None
-                        });
-
-                    if let Some(panic) = panic {
-                        let body = serde_json::to_string(&PanicRequest {
-                            panic,
-                            token: client::ZED_SECRET_CLIENT_TOKEN.into(),
-                        })
-                        .unwrap();
-
-                        let request = Request::post(&panic_report_url)
-                            .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                            .header("Content-Type", "application/json")
-                            .body(body.into())?;
-                        let response = http.send(request).await.context("error sending panic")?;
-                        if !response.status().is_success() {
-                            log::error!("Error uploading panic to server: {}", response.status());
-                        }
-                    }
-                }
-
-                // We've done what we can, delete the file
-                std::fs::remove_file(child_path)
-                    .context("error removing panic")
-                    .log_err();
-            }
-            Ok::<_, anyhow::Error>(())
+            upload_previous_panics(http.clone(), telemetry_settings)
+                .await
+                .log_err();
+            upload_previous_crashes(http, telemetry_settings)
+                .await
+                .log_err()
         })
-        .detach_and_log_err(cx);
+        .detach()
+}
+
+/// upload panics to us (via zed.dev)
+async fn upload_previous_panics(
+    http: Arc<dyn HttpClient>,
+    telemetry_settings: client::TelemetrySettings,
+) -> Result<()> {
+    let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+    let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+    while let Some(child) = children.next().await {
+        let child = child?;
+        let child_path = child.path();
+
+        if child_path.extension() != Some(OsStr::new("panic")) {
+            continue;
+        }
+        let filename = if let Some(filename) = child_path.file_name() {
+            filename.to_string_lossy()
+        } else {
+            continue;
+        };
+
+        if !filename.starts_with("zed") {
+            continue;
+        }
+
+        if telemetry_settings.diagnostics {
+            let panic_file_content = smol::fs::read_to_string(&child_path)
+                .await
+                .context("error reading panic file")?;
+
+            let panic = serde_json::from_str(&panic_file_content)
+                .ok()
+                .or_else(|| {
+                    panic_file_content
+                        .lines()
+                        .next()
+                        .and_then(|line| serde_json::from_str(line).ok())
+                })
+                .unwrap_or_else(|| {
+                    log::error!("failed to deserialize panic file {:?}", panic_file_content);
+                    None
+                });
+
+            if let Some(panic) = panic {
+                let body = serde_json::to_string(&PanicRequest {
+                    panic,
+                    token: client::ZED_SECRET_CLIENT_TOKEN.into(),
+                })
+                .unwrap();
+
+                let request = Request::post(&panic_report_url)
+                    .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                    .header("Content-Type", "application/json")
+                    .body(body.into())?;
+                let response = http.send(request).await.context("error sending panic")?;
+                if !response.status().is_success() {
+                    log::error!("Error uploading panic to server: {}", response.status());
+                }
+            }
+        }
+
+        // We've done what we can, delete the file
+        std::fs::remove_file(child_path)
+            .context("error removing panic")
+            .log_err();
+    }
+    Ok::<_, anyhow::Error>(())
+}
+
+static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
+
+/// upload crashes from apple's diagnostic reports to our server.
+/// (only if telemetry is enabled)
+async fn upload_previous_crashes(
+    http: Arc<dyn HttpClient>,
+    telemetry_settings: client::TelemetrySettings,
+) -> Result<()> {
+    if !telemetry_settings.diagnostics {
+        return Ok(());
+    }
+    let last_uploaded = KEY_VALUE_STORE
+        .read_kvp(LAST_CRASH_UPLOADED)?
+        .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
+    let mut uploaded = last_uploaded.clone();
+
+    let crash_report_url = format!("{}/api/crash", &*client::ZED_SERVER_URL);
+
+    for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
+        let mut children = smol::fs::read_dir(&dir).await?;
+        while let Some(child) = children.next().await {
+            let child = child?;
+            let Some(filename) = child
+                .path()
+                .file_name()
+                .map(|f| f.to_string_lossy().to_lowercase())
+            else {
+                continue;
+            };
+
+            if !filename.starts_with("zed-") || !filename.ends_with(".ips") {
+                continue;
+            }
+
+            if filename <= last_uploaded {
+                continue;
+            }
+
+            let body = smol::fs::read_to_string(&child.path())
+                .await
+                .context("error reading crash file")?;
+
+            let request = Request::post(&crash_report_url)
+                .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                .header("Content-Type", "text/plain")
+                .header(
+                    "Authorization",
+                    format!("token {}", client::ZED_SECRET_CLIENT_TOKEN),
+                )
+                .body(body.into())?;
+
+            let response = http.send(request).await.context("error sending crash")?;
+            if !response.status().is_success() {
+                log::error!("Error uploading crash to server: {}", response.status());
+            }
+
+            if uploaded < filename {
+                uploaded = filename.clone();
+                KEY_VALUE_STORE
+                    .write_kvp(LAST_CRASH_UPLOADED.to_string(), filename)
+                    .await?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn load_login_shell_environment() -> Result<()> {

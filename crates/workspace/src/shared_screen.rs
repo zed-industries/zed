@@ -12,7 +12,7 @@ use gpui::{
     WindowContext,
 };
 use std::sync::{Arc, Weak};
-use ui::{h_stack, prelude::*, Icon, IconElement, Label};
+use ui::{h_flex, prelude::*, Icon, IconName, Label};
 
 pub enum Event {
     Close,
@@ -98,9 +98,9 @@ impl Item for SharedScreen {
         selected: bool,
         _: &WindowContext<'_>,
     ) -> gpui::AnyElement {
-        h_stack()
+        h_flex()
             .gap_1()
-            .child(IconElement::new(Icon::Screen))
+            .child(Icon::new(IconName::Screen))
             .child(
                 Label::new(format!("{}'s screen", self.user.github_login)).color(if selected {
                     Color::Default
@@ -109,6 +109,10 @@ impl Item for SharedScreen {
                 }),
             )
             .into_any()
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {

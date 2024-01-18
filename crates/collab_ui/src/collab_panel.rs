@@ -12,32 +12,30 @@ use client::{Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
-use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
     AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
     FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset, ListState,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, RenderOnce,
-    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WhiteSpace,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use rpc::proto::{self, PeerId};
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    prelude::*, Avatar, Button, Color, ContextMenu, Icon, IconButton, IconElement, IconSize, Label,
-    ListHeader, ListItem, Tooltip,
+    prelude::*, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Icon, IconButton,
+    IconName, IconSize, Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::NotifyResultExt,
+    notifications::{NotifyResultExt, NotifyTaskExt},
     Workspace,
 };
 
@@ -140,6 +138,7 @@ enum ListEntry {
         user: Arc<User>,
         peer_id: Option<PeerId>,
         is_pending: bool,
+        role: proto::ChannelRole,
     },
     ParticipantProject {
         project_id: u64,
@@ -150,10 +149,6 @@ enum ListEntry {
     ParticipantScreen {
         peer_id: Option<PeerId>,
         is_last: bool,
-    },
-    GuestCount {
-        count: usize,
-        has_visible_participants: bool,
     },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
@@ -257,19 +252,6 @@ impl CollabPanel {
 
             this.update_entries(false, cx);
 
-            // Update the dock position when the setting changes.
-            let mut old_dock_position = this.position(cx);
-            this.subscriptions.push(cx.observe_global::<SettingsStore>(
-                move |this: &mut Self, cx| {
-                    let new_dock_position = this.position(cx);
-                    if new_dock_position != old_dock_position {
-                        old_dock_position = new_dock_position;
-                        cx.emit(PanelEvent::ChangePosition);
-                    }
-                    cx.notify();
-                },
-            ));
-
             let active_call = ActiveCall::global(cx);
             this.subscriptions
                 .push(cx.observe(&this.user_store, |this, _, cx| {
@@ -281,10 +263,6 @@ impl CollabPanel {
                 }));
             this.subscriptions
                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
-            this.subscriptions
-                .push(cx.observe_flag::<ChannelsAlpha, _>(move |_, this, cx| {
-                    this.update_entries(true, cx)
-                }));
             this.subscriptions.push(cx.subscribe(
                 &this.channel_store,
                 |this, _channel_store, e, cx| match e {
@@ -384,14 +362,10 @@ impl CollabPanel {
 
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
-                let mut guest_count_ix = 0;
-                let mut guest_count = if room.read_only() { 1 } else { 0 };
-                let mut non_guest_count = if room.read_only() { 0 } else { 1 };
 
                 if let Some(channel_id) = room.channel_id() {
                     self.entries.push(ListEntry::ChannelNotes { channel_id });
                     self.entries.push(ListEntry::ChannelChat { channel_id });
-                    guest_count_ix = self.entries.len();
                 }
 
                 // Populate the active user.
@@ -410,12 +384,13 @@ impl CollabPanel {
                         &Default::default(),
                         executor.clone(),
                     ));
-                    if !matches.is_empty() && !room.read_only() {
+                    if !matches.is_empty() {
                         let user_id = user.id;
                         self.entries.push(ListEntry::CallParticipant {
                             user,
                             peer_id: None,
                             is_pending: false,
+                            role: room.local_participant().role,
                         });
                         let mut projects = room.local_participant().projects.iter().peekable();
                         while let Some(project) = projects.next() {
@@ -442,12 +417,6 @@ impl CollabPanel {
                         room.remote_participants()
                             .iter()
                             .filter_map(|(_, participant)| {
-                                if participant.role == proto::ChannelRole::Guest {
-                                    guest_count += 1;
-                                    return None;
-                                } else {
-                                    non_guest_count += 1;
-                                }
                                 Some(StringMatchCandidate {
                                     id: participant.user.id as usize,
                                     string: participant.user.github_login.clone(),
@@ -455,7 +424,7 @@ impl CollabPanel {
                                 })
                             }),
                     );
-                let matches = executor.block(match_strings(
+                let mut matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
                     true,
@@ -463,6 +432,15 @@ impl CollabPanel {
                     &Default::default(),
                     executor.clone(),
                 ));
+                matches.sort_by(|a, b| {
+                    let a_is_guest = room.role_for_user(a.candidate_id as u64)
+                        == Some(proto::ChannelRole::Guest);
+                    let b_is_guest = room.role_for_user(b.candidate_id as u64)
+                        == Some(proto::ChannelRole::Guest);
+                    a_is_guest
+                        .cmp(&b_is_guest)
+                        .then_with(|| a.string.cmp(&b.string))
+                });
                 for mat in matches {
                     let user_id = mat.candidate_id as u64;
                     let participant = &room.remote_participants()[&user_id];
@@ -470,6 +448,7 @@ impl CollabPanel {
                         user: participant.user.clone(),
                         peer_id: Some(participant.peer_id),
                         is_pending: false,
+                        role: participant.role,
                     });
                     let mut projects = participant.projects.iter().peekable();
                     while let Some(project) = projects.next() {
@@ -487,15 +466,6 @@ impl CollabPanel {
                             is_last: true,
                         });
                     }
-                }
-                if guest_count > 0 {
-                    self.entries.insert(
-                        guest_count_ix,
-                        ListEntry::GuestCount {
-                            count: guest_count,
-                            has_visible_participants: non_guest_count > 0,
-                        },
-                    );
                 }
 
                 // Populate pending participants.
@@ -521,121 +491,125 @@ impl CollabPanel {
                         user: room.pending_participants()[mat.candidate_id].clone(),
                         peer_id: None,
                         is_pending: true,
+                        role: proto::ChannelRole::Member,
                     }));
             }
         }
 
         let mut request_entries = Vec::new();
 
-        if cx.has_flag::<ChannelsAlpha>() {
-            self.entries.push(ListEntry::Header(Section::Channels));
+        self.entries.push(ListEntry::Header(Section::Channels));
 
-            if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(channel_store.ordered_channels().enumerate().map(
-                        |(ix, (_, channel))| StringMatchCandidate {
+        if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    channel_store
+                        .ordered_channels()
+                        .enumerate()
+                        .map(|(ix, (_, channel))| StringMatchCandidate {
                             id: ix,
                             string: channel.name.clone().into(),
                             char_bag: channel.name.chars().collect(),
-                        },
-                    ));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                if let Some(state) = &self.channel_editing_state {
-                    if matches!(state, ChannelEditingState::Create { location: None, .. }) {
-                        self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            if let Some(state) = &self.channel_editing_state {
+                if matches!(state, ChannelEditingState::Create { location: None, .. }) {
+                    self.entries.push(ListEntry::ChannelEditor { depth: 0 });
+                }
+            }
+            let mut collapse_depth = None;
+            for mat in matches {
+                let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
+                let depth = channel.parent_path.len();
+
+                if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
+                    collapse_depth = Some(depth);
+                } else if let Some(collapsed_depth) = collapse_depth {
+                    if depth > collapsed_depth {
+                        continue;
+                    }
+                    if self.is_channel_collapsed(channel.id) {
+                        collapse_depth = Some(depth);
+                    } else {
+                        collapse_depth = None;
                     }
                 }
-                let mut collapse_depth = None;
-                for mat in matches {
-                    let channel = channel_store.channel_at_index(mat.candidate_id).unwrap();
-                    let depth = channel.parent_path.len();
 
-                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
-                        collapse_depth = Some(depth);
-                    } else if let Some(collapsed_depth) = collapse_depth {
-                        if depth > collapsed_depth {
-                            continue;
-                        }
-                        if self.is_channel_collapsed(channel.id) {
-                            collapse_depth = Some(depth);
-                        } else {
-                            collapse_depth = None;
-                        }
-                    }
+                let has_children = channel_store
+                    .channel_at_index(mat.candidate_id + 1)
+                    .map_or(false, |next_channel| {
+                        next_channel.parent_path.ends_with(&[channel.id])
+                    });
 
-                    let has_children = channel_store
-                        .channel_at_index(mat.candidate_id + 1)
-                        .map_or(false, |next_channel| {
-                            next_channel.parent_path.ends_with(&[channel.id])
+                match &self.channel_editing_state {
+                    Some(ChannelEditingState::Create {
+                        location: parent_id,
+                        ..
+                    }) if *parent_id == Some(channel.id) => {
+                        self.entries.push(ListEntry::Channel {
+                            channel: channel.clone(),
+                            depth,
+                            has_children: false,
                         });
-
-                    match &self.channel_editing_state {
-                        Some(ChannelEditingState::Create {
-                            location: parent_id,
-                            ..
-                        }) if *parent_id == Some(channel.id) => {
-                            self.entries.push(ListEntry::Channel {
-                                channel: channel.clone(),
-                                depth,
-                                has_children: false,
-                            });
-                            self.entries
-                                .push(ListEntry::ChannelEditor { depth: depth + 1 });
-                        }
-                        Some(ChannelEditingState::Rename {
-                            location: parent_id,
-                            ..
-                        }) if parent_id == &channel.id => {
-                            self.entries.push(ListEntry::ChannelEditor { depth });
-                        }
-                        _ => {
-                            self.entries.push(ListEntry::Channel {
-                                channel: channel.clone(),
-                                depth,
-                                has_children,
-                            });
-                        }
+                        self.entries
+                            .push(ListEntry::ChannelEditor { depth: depth + 1 });
+                    }
+                    Some(ChannelEditingState::Rename {
+                        location: parent_id,
+                        ..
+                    }) if parent_id == &channel.id => {
+                        self.entries.push(ListEntry::ChannelEditor { depth });
+                    }
+                    _ => {
+                        self.entries.push(ListEntry::Channel {
+                            channel: channel.clone(),
+                            depth,
+                            has_children,
+                        });
                     }
                 }
             }
+        }
 
-            let channel_invites = channel_store.channel_invitations();
-            if !channel_invites.is_empty() {
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
-                        StringMatchCandidate {
-                            id: ix,
-                            string: channel.name.clone().into(),
-                            char_bag: channel.name.chars().collect(),
-                        }
-                    }));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                request_entries.extend(matches.iter().map(|mat| {
-                    ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())
-                }));
-
-                if !request_entries.is_empty() {
-                    self.entries
-                        .push(ListEntry::Header(Section::ChannelInvites));
-                    if !self.collapsed_sections.contains(&Section::ChannelInvites) {
-                        self.entries.append(&mut request_entries);
+        let channel_invites = channel_store.channel_invitations();
+        if !channel_invites.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
+                    StringMatchCandidate {
+                        id: ix,
+                        string: channel.name.clone().into(),
+                        char_bag: channel.name.chars().collect(),
                     }
+                }));
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            request_entries.extend(
+                matches
+                    .iter()
+                    .map(|mat| ListEntry::ChannelInvite(channel_invites[mat.candidate_id].clone())),
+            );
+
+            if !request_entries.is_empty() {
+                self.entries
+                    .push(ListEntry::Header(Section::ChannelInvites));
+                if !self.collapsed_sections.contains(&Section::ChannelInvites) {
+                    self.entries.append(&mut request_entries);
                 }
             }
         }
@@ -834,12 +808,18 @@ impl CollabPanel {
         user: &Arc<User>,
         peer_id: Option<PeerId>,
         is_pending: bool,
+        role: proto::ChannelRole,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> ListItem {
+        let user_id = user.id;
         let is_current_user =
-            self.user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
+            self.user_store.read(cx).current_user().map(|user| user.id) == Some(user_id);
         let tooltip = format!("Follow {}", user.github_login);
+
+        let is_call_admin = ActiveCall::global(cx).read(cx).room().is_some_and(|room| {
+            room.read(cx).local_participant().role == proto::ChannelRole::Admin
+        });
 
         ListItem::new(SharedString::from(user.github_login.clone()))
             .start_slot(Avatar::new(user.avatar_uri.clone()))
@@ -848,21 +828,31 @@ impl CollabPanel {
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
             } else if is_current_user {
-                IconButton::new("leave-call", Icon::Exit)
+                IconButton::new("leave-call", IconName::Exit)
                     .style(ButtonStyle::Subtle)
                     .on_click(move |_, cx| Self::leave_call(cx))
                     .tooltip(|cx| Tooltip::text("Leave Call", cx))
                     .into_any_element()
+            } else if role == proto::ChannelRole::Guest {
+                Label::new("Guest").color(Color::Muted).into_any_element()
             } else {
                 div().into_any_element()
             })
-            .when_some(peer_id, |this, peer_id| {
-                this.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+            .when_some(peer_id, |el, peer_id| {
+                if role == proto::ChannelRole::Guest {
+                    return el;
+                }
+                el.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                     .on_click(cx.listener(move |this, _, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| workspace.follow(peer_id, cx))
                             .ok();
                     }))
+            })
+            .when(is_call_admin, |el| {
+                el.on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, cx| {
+                    this.deploy_participant_context_menu(event.position, user_id, role, cx)
+                }))
             })
     }
 
@@ -894,10 +884,10 @@ impl CollabPanel {
                     .ok();
             }))
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(is_last, false, cx))
-                    .child(IconButton::new(0, Icon::Folder)),
+                    .child(IconButton::new(0, IconName::Folder)),
             )
             .child(Label::new(project_name.clone()))
             .tooltip(move |cx| Tooltip::text(format!("Open {}", project_name), cx))
@@ -915,10 +905,10 @@ impl CollabPanel {
         ListItem::new(("screen", id))
             .selected(is_selected)
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(is_last, false, cx))
-                    .child(IconButton::new(0, Icon::Screen)),
+                    .child(IconButton::new(0, IconName::Screen)),
             )
             .child(Label::new("Screen"))
             .when_some(peer_id, |this, _| {
@@ -956,10 +946,10 @@ impl CollabPanel {
                 this.open_channel_notes(channel_id, cx);
             }))
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(false, true, cx))
-                    .child(IconButton::new(0, Icon::File)),
+                    .child(IconButton::new(0, IconName::File)),
             )
             .child(div().h_7().w_full().child(Label::new("notes")))
             .tooltip(move |cx| Tooltip::text("Open Channel Notes", cx))
@@ -977,48 +967,13 @@ impl CollabPanel {
                 this.join_channel_chat(channel_id, cx);
             }))
             .start_slot(
-                h_stack()
+                h_flex()
                     .gap_1()
                     .child(render_tree_branch(false, false, cx))
-                    .child(IconButton::new(0, Icon::MessageBubbles)),
+                    .child(IconButton::new(0, IconName::MessageBubbles)),
             )
             .child(Label::new("chat"))
             .tooltip(move |cx| Tooltip::text("Open Chat", cx))
-    }
-
-    fn render_guest_count(
-        &self,
-        count: usize,
-        has_visible_participants: bool,
-        is_selected: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let manageable_channel_id = ActiveCall::global(cx).read(cx).room().and_then(|room| {
-            let room = room.read(cx);
-            if room.local_participant_is_admin() {
-                room.channel_id()
-            } else {
-                None
-            }
-        });
-
-        ListItem::new("guest_count")
-            .selected(is_selected)
-            .start_slot(
-                h_stack()
-                    .gap_1()
-                    .child(render_tree_branch(!has_visible_participants, false, cx))
-                    .child(""),
-            )
-            .child(Label::new(if count == 1 {
-                format!("{} guest", count)
-            } else {
-                format!("{} guests", count)
-            }))
-            .when_some(manageable_channel_id, |el, channel_id| {
-                el.tooltip(move |cx| Tooltip::text("Manage Members", cx))
-                    .on_click(cx.listener(move |this, _, cx| this.manage_members(channel_id, cx)))
-            })
     }
 
     fn has_subchannels(&self, ix: usize) -> bool {
@@ -1029,6 +984,80 @@ impl CollabPanel {
                 false
             }
         })
+    }
+
+    fn deploy_participant_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        user_id: u64,
+        role: proto::ChannelRole,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let this = cx.view().clone();
+        if !(role == proto::ChannelRole::Guest || role == proto::ChannelRole::Member) {
+            return;
+        }
+
+        let context_menu = ContextMenu::build(cx, |context_menu, cx| {
+            if role == proto::ChannelRole::Guest {
+                context_menu.entry(
+                    "Grant Write Access",
+                    None,
+                    cx.handler_for(&this, move |_, cx| {
+                        ActiveCall::global(cx)
+                            .update(cx, |call, cx| {
+                                let Some(room) = call.room() else {
+                                    return Task::ready(Ok(()));
+                                };
+                                room.update(cx, |room, cx| {
+                                    room.set_participant_role(
+                                        user_id,
+                                        proto::ChannelRole::Member,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .detach_and_notify_err(cx)
+                    }),
+                )
+            } else if role == proto::ChannelRole::Member {
+                context_menu.entry(
+                    "Revoke Write Access",
+                    None,
+                    cx.handler_for(&this, move |_, cx| {
+                        ActiveCall::global(cx)
+                            .update(cx, |call, cx| {
+                                let Some(room) = call.room() else {
+                                    return Task::ready(Ok(()));
+                                };
+                                room.update(cx, |room, cx| {
+                                    room.set_participant_role(
+                                        user_id,
+                                        proto::ChannelRole::Guest,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .detach_and_notify_err(cx)
+                    }),
+                )
+            } else {
+                unreachable!()
+            }
+        });
+
+        cx.focus_view(&context_menu);
+        let subscription =
+            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                }) {
+                    cx.focus_self();
+                }
+                this.context_menu.take();
+                cx.notify();
+            });
+        self.context_menu = Some((context_menu, position, subscription));
     }
 
     fn deploy_channel_context_menu(
@@ -1242,18 +1271,6 @@ impl CollabPanel {
                             });
                         }
                     }
-                    ListEntry::GuestCount { .. } => {
-                        let Some(room) = ActiveCall::global(cx).read(cx).room() else {
-                            return;
-                        };
-                        let room = room.read(cx);
-                        let Some(channel_id) = room.channel_id() else {
-                            return;
-                        };
-                        if room.local_participant_is_admin() {
-                            self.manage_members(channel_id, cx)
-                        }
-                    }
                     ListEntry::Channel { channel, .. } => {
                         let is_active = maybe!({
                             let call_channel = ActiveCall::global(cx)
@@ -1392,14 +1409,6 @@ impl CollabPanel {
 
         self.toggle_channel_collapsed(id, cx)
     }
-
-    //     fn toggle_channel_collapsed_action(
-    //         &mut self,
-    //         action: &ToggleCollapse,
-    //         cx: &mut ViewContext<Self>,
-    //     ) {
-    //         self.toggle_channel_collapsed(action.location, cx);
-    //     }
 
     fn toggle_channel_collapsed<'a>(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         match self.collapsed_channels.binary_search(&channel_id) {
@@ -1714,17 +1723,17 @@ impl CollabPanel {
     fn render_signed_out(&mut self, cx: &mut ViewContext<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
-        v_stack()
+        v_flex()
             .gap_6()
             .p_4()
             .child(Label::new(collab_blurb))
             .child(
-                v_stack()
+                v_flex()
                     .gap_2()
                     .child(
                         Button::new("sign_in", "Sign in")
                             .icon_color(Color::Muted)
-                            .icon(Icon::Github)
+                            .icon(IconName::Github)
                             .icon_position(IconPosition::Start)
                             .style(ButtonStyle::Filled)
                             .full_width()
@@ -1788,8 +1797,9 @@ impl CollabPanel {
                 user,
                 peer_id,
                 is_pending,
+                role,
             } => self
-                .render_call_participant(user, *peer_id, *is_pending, is_selected, cx)
+                .render_call_participant(user, *peer_id, *is_pending, *role, is_selected, cx)
                 .into_any_element(),
             ListEntry::ParticipantProject {
                 project_id,
@@ -1809,12 +1819,6 @@ impl CollabPanel {
             ListEntry::ParticipantScreen { peer_id, is_last } => self
                 .render_participant_screen(*peer_id, *is_last, is_selected, cx)
                 .into_any_element(),
-            ListEntry::GuestCount {
-                count,
-                has_visible_participants,
-            } => self
-                .render_guest_count(*count, *has_visible_participants, is_selected, cx)
-                .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
                 .render_channel_notes(*channel_id, is_selected, cx)
                 .into_any_element(),
@@ -1825,14 +1829,14 @@ impl CollabPanel {
     }
 
     fn render_signed_in(&mut self, cx: &mut ViewContext<Self>) -> Div {
-        v_stack()
+        v_flex()
             .size_full()
             .child(list(self.list_state.clone()).full())
             .child(
-                v_stack()
+                v_flex()
                     .child(div().mx_2().border_primary(cx).border_t())
                     .child(
-                        v_stack()
+                        v_flex()
                             .p_2()
                             .child(self.render_filter_input(&self.filter_editor, cx)),
                     ),
@@ -1882,7 +1886,6 @@ impl CollabPanel {
         let mut channel_link = None;
         let mut channel_tooltip_text = None;
         let mut channel_icon = None;
-        // let mut is_dragged_over = false;
 
         let text = match section {
             Section::ActiveCall => {
@@ -1921,7 +1924,7 @@ impl CollabPanel {
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
                 let channel_link_copy = channel_link.clone();
-                IconButton::new("channel-link", Icon::Copy)
+                IconButton::new("channel-link", IconName::Copy)
                     .icon_size(IconSize::Small)
                     .size(ButtonSize::None)
                     .visible_on_hover("section-header")
@@ -1933,13 +1936,13 @@ impl CollabPanel {
                     .into_any_element()
             }),
             Section::Contacts => Some(
-                IconButton::new("add-contact", Icon::Plus)
+                IconButton::new("add-contact", IconName::Plus)
                     .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
                     .tooltip(|cx| Tooltip::text("Search for new contact", cx))
                     .into_any_element(),
             ),
             Section::Channels => Some(
-                IconButton::new("add-channel", Icon::Plus)
+                IconButton::new("add-channel", IconName::Plus)
                     .on_click(cx.listener(|this, _, cx| this.new_root_channel(cx)))
                     .tooltip(|cx| Tooltip::text("Create a channel", cx))
                     .into_any_element(),
@@ -1955,7 +1958,7 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        h_stack()
+        h_flex()
             .w_full()
             .group("section-header")
             .child(
@@ -1994,43 +1997,49 @@ impl CollabPanel {
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let github_login = SharedString::from(contact.user.github_login.clone());
-        let item =
-            ListItem::new(github_login.clone())
-                .indent_level(1)
-                .indent_step_size(px(20.))
-                .selected(is_selected)
-                .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
-                .child(
-                    h_stack()
-                        .w_full()
-                        .justify_between()
-                        .child(Label::new(github_login.clone()))
-                        .when(calling, |el| {
-                            el.child(Label::new("Calling").color(Color::Muted))
-                        })
-                        .when(!calling, |el| {
-                            el.child(
-                                IconButton::new("remove_contact", Icon::Close)
-                                    .icon_color(Color::Muted)
-                                    .visible_on_hover("")
-                                    .tooltip(|cx| Tooltip::text("Remove Contact", cx))
-                                    .on_click(cx.listener({
-                                        let github_login = github_login.clone();
-                                        move |this, _, cx| {
-                                            this.remove_contact(user_id, &github_login, cx);
-                                        }
-                                    })),
-                            )
-                        }),
-                )
-                .start_slot(
-                    // todo!() handle contacts with no avatar
-                    Avatar::new(contact.user.avatar_uri.clone())
-                        .availability_indicator(if online { Some(!busy) } else { None }),
-                )
-                .when(online && !busy, |el| {
-                    el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
-                });
+        let item = ListItem::new(github_login.clone())
+            .indent_level(1)
+            .indent_step_size(px(20.))
+            .selected(is_selected)
+            .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new(github_login.clone()))
+                    .when(calling, |el| {
+                        el.child(Label::new("Calling").color(Color::Muted))
+                    })
+                    .when(!calling, |el| {
+                        el.child(
+                            IconButton::new("remove_contact", IconName::Close)
+                                .icon_color(Color::Muted)
+                                .visible_on_hover("")
+                                .tooltip(|cx| Tooltip::text("Remove Contact", cx))
+                                .on_click(cx.listener({
+                                    let github_login = github_login.clone();
+                                    move |this, _, cx| {
+                                        this.remove_contact(user_id, &github_login, cx);
+                                    }
+                                })),
+                        )
+                    }),
+            )
+            .start_slot(
+                // todo handle contacts with no avatar
+                Avatar::new(contact.user.avatar_uri.clone())
+                    .indicator::<AvatarAvailabilityIndicator>(if online {
+                        Some(AvatarAvailabilityIndicator::new(match busy {
+                            true => ui::Availability::Busy,
+                            false => ui::Availability::Free,
+                        }))
+                    } else {
+                        None
+                    }),
+            )
+            .when(online && !busy, |el| {
+                el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
+            });
 
         div()
             .id(github_login.clone())
@@ -2071,13 +2080,13 @@ impl CollabPanel {
 
         let controls = if is_incoming {
             vec![
-                IconButton::new("decline-contact", Icon::Close)
+                IconButton::new("decline-contact", IconName::Close)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, false, cx);
                     }))
                     .icon_color(color)
                     .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-                IconButton::new("accept-contact", Icon::Check)
+                IconButton::new("accept-contact", IconName::Check)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.respond_to_contact_request(user_id, true, cx);
                     }))
@@ -2086,7 +2095,7 @@ impl CollabPanel {
             ]
         } else {
             let github_login = github_login.clone();
-            vec![IconButton::new("remove_contact", Icon::Close)
+            vec![IconButton::new("remove_contact", IconName::Close)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.remove_contact(user_id, &github_login, cx);
                 }))
@@ -2099,11 +2108,11 @@ impl CollabPanel {
             .indent_step_size(px(20.))
             .selected(is_selected)
             .child(
-                h_stack()
+                h_flex()
                     .w_full()
                     .justify_between()
                     .child(Label::new(github_login.clone()))
-                    .child(h_stack().children(controls)),
+                    .child(h_flex().children(controls)),
             )
             .start_slot(Avatar::new(user.avatar_uri.clone()))
     }
@@ -2126,13 +2135,13 @@ impl CollabPanel {
         };
 
         let controls = [
-            IconButton::new("reject-invite", Icon::Close)
+            IconButton::new("reject-invite", IconName::Close)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.respond_to_channel_invite(channel_id, false, cx);
                 }))
                 .icon_color(color)
                 .tooltip(|cx| Tooltip::text("Decline invite", cx)),
-            IconButton::new("accept-invite", Icon::Check)
+            IconButton::new("accept-invite", IconName::Check)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.respond_to_channel_invite(channel_id, true, cx);
                 }))
@@ -2143,14 +2152,14 @@ impl CollabPanel {
         ListItem::new(("channel-invite", channel.id as usize))
             .selected(is_selected)
             .child(
-                h_stack()
+                h_flex()
                     .w_full()
                     .justify_between()
                     .child(Label::new(channel.name.clone()))
-                    .child(h_stack().children(controls)),
+                    .child(h_flex().children(controls)),
             )
             .start_slot(
-                IconElement::new(Icon::Hash)
+                Icon::new(IconName::Hash)
                     .size(IconSize::Small)
                     .color(Color::Muted),
             )
@@ -2162,7 +2171,7 @@ impl CollabPanel {
         cx: &mut ViewContext<Self>,
     ) -> ListItem {
         ListItem::new("contact-placeholder")
-            .child(IconElement::new(Icon::Plus))
+            .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))
             .selected(is_selected)
             .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
@@ -2228,47 +2237,6 @@ impl CollabPanel {
             None
         };
 
-        let button_container = |cx: &mut ViewContext<Self>| {
-            h_stack()
-                .absolute()
-                // We're using a negative coordinate for the right anchor to
-                // counteract the padding of the `ListItem`.
-                //
-                // This prevents a gap from showing up between the background
-                // of this element and the edge of the collab panel.
-                .right(rems(-0.5))
-                // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
-                .z_index(10)
-                .bg(cx.theme().colors().panel_background)
-                .when(is_selected || is_active, |this| {
-                    this.bg(cx.theme().colors().ghost_element_selected)
-                })
-        };
-
-        let messages_button = |cx: &mut ViewContext<Self>| {
-            IconButton::new("channel_chat", Icon::MessageBubbles)
-                .icon_size(IconSize::Small)
-                .icon_color(if has_messages_notification {
-                    Color::Default
-                } else {
-                    Color::Muted
-                })
-                .on_click(cx.listener(move |this, _, cx| this.join_channel_chat(channel_id, cx)))
-                .tooltip(|cx| Tooltip::text("Open channel chat", cx))
-        };
-
-        let notes_button = |cx: &mut ViewContext<Self>| {
-            IconButton::new("channel_notes", Icon::File)
-                .icon_size(IconSize::Small)
-                .icon_color(if has_notes_notification {
-                    Color::Default
-                } else {
-                    Color::Muted
-                })
-                .on_click(cx.listener(move |this, _, cx| this.open_channel_notes(channel_id, cx)))
-                .tooltip(|cx| Tooltip::text("Open channel notes", cx))
-        };
-
         let width = self.width.unwrap_or(px(240.));
 
         div()
@@ -2315,65 +2283,69 @@ impl CollabPanel {
                         },
                     ))
                     .start_slot(
-                        IconElement::new(if is_public { Icon::Public } else { Icon::Hash })
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
+                        Icon::new(if is_public {
+                            IconName::Public
+                        } else {
+                            IconName::Hash
+                        })
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .id(channel_id as usize)
-                            // HACK: This is a dirty hack to help with the positioning of the button container.
-                            //
-                            // We're using a pixel width for the elements but then allowing the contents to
-                            // overflow. This means that the label and facepile will be shown, but will not
-                            // push the button container off the edge of the panel.
-                            .w_px()
                             .child(Label::new(channel.name.clone()))
-                            .children(face_pile.map(|face_pile| face_pile.render(cx))),
-                    )
-                    .end_slot::<Div>(
-                        // If we have a notification for either button, we want to show the corresponding
-                        // button(s) as indicators.
-                        if has_messages_notification || has_notes_notification {
-                            Some(
-                                button_container(cx).child(
-                                    h_stack()
-                                        .px_1()
-                                        .children(
-                                            // We only want to render the messages button if there are unseen messages.
-                                            // This way we don't take up any space that might overlap the channel name
-                                            // when there are no notifications.
-                                            has_messages_notification.then(|| messages_button(cx)),
-                                        )
-                                        .child(
-                                            // We always want the notes button to take up space to prevent layout
-                                            // shift when hovering over the channel.
-                                            // However, if there are is no notes notification we just show an empty slot.
-                                            notes_button(cx)
-                                                .when(!has_notes_notification, |this| {
-                                                    this.visible_on_hover("")
-                                                }),
-                                        ),
-                                ),
+                            .children(face_pile.map(|face_pile| face_pile.render().p_1())),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .absolute()
+                    .right(rems(0.))
+                    .h_full()
+                    // HACK: Without this the channel name clips on top of the icons, but I'm not sure why.
+                    .z_index(10)
+                    .child(
+                        h_flex()
+                            .h_full()
+                            .gap_1()
+                            .px_1()
+                            .child(
+                                IconButton::new("channel_chat", IconName::MessageBubbles)
+                                    .style(ButtonStyle::Filled)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(if has_messages_notification {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.join_channel_chat(channel_id, cx)
+                                    }))
+                                    .tooltip(|cx| Tooltip::text("Open channel chat", cx))
+                                    .when(!has_messages_notification, |this| {
+                                        this.visible_on_hover("")
+                                    }),
                             )
-                        } else {
-                            None
-                        },
-                    )
-                    .end_hover_slot(
-                        // When we hover the channel entry we want to always show both buttons.
-                        button_container(cx).child(
-                            h_stack()
-                                .px_1()
-                                // The element hover background has a slight transparency to it, so we
-                                // need to apply it to the inner element so that it blends with the solid
-                                // background color of the absolutely-positioned element.
-                                .group_hover("", |style| {
-                                    style.bg(cx.theme().colors().ghost_element_hover)
-                                })
-                                .child(messages_button(cx))
-                                .child(notes_button(cx)),
-                        ),
+                            .child(
+                                IconButton::new("channel_notes", IconName::File)
+                                    .style(ButtonStyle::Filled)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(if has_notes_notification {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .on_click(cx.listener(move |this, _, cx| {
+                                        this.open_channel_notes(channel_id, cx)
+                                    }))
+                                    .tooltip(|cx| Tooltip::text("Open channel notes", cx))
+                                    .when(!has_notes_notification, |this| {
+                                        this.visible_on_hover("")
+                                    }),
+                            ),
                     ),
             )
             .tooltip(|cx| Tooltip::text("Join channel", cx))
@@ -2386,7 +2358,7 @@ impl CollabPanel {
             .indent_level(depth + 1)
             .indent_step_size(px(20.))
             .start_slot(
-                IconElement::new(Icon::Hash)
+                Icon::new(IconName::Hash)
                     .size(IconSize::Small)
                     .color(Color::Muted),
             );
@@ -2441,7 +2413,7 @@ fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> 
 
 impl Render for CollabPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_stack()
+        v_flex()
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
             .on_action(cx.listener(CollabPanel::select_next))
@@ -2500,10 +2472,10 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::Icon> {
+    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
-            .then(|| ui::Icon::Collab)
+            .then(|| ui::IconName::Collab)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -2621,11 +2593,6 @@ impl PartialEq for ListEntry {
                     return true;
                 }
             }
-            ListEntry::GuestCount { .. } => {
-                if let ListEntry::GuestCount { .. } = other {
-                    return true;
-                }
-            }
         }
         false
     }
@@ -2639,18 +2606,18 @@ struct DraggedChannelView {
 impl Render for DraggedChannelView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        h_stack()
+        h_flex()
             .font(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
             .p_1()
             .gap_1()
             .child(
-                IconElement::new(
+                Icon::new(
                     if self.channel.visibility == proto::ChannelVisibility::Public {
-                        Icon::Public
+                        IconName::Public
                     } else {
-                        Icon::Hash
+                        IconName::Hash
                     },
                 )
                 .size(IconSize::Small)

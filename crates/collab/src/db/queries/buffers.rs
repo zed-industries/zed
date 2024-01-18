@@ -9,6 +9,8 @@ pub struct LeftChannelBuffer {
 }
 
 impl Database {
+    /// Open a channel buffer. Returns the current contents, and adds you to the list of people
+    /// to notify on changes.
     pub async fn join_channel_buffer(
         &self,
         channel_id: ChannelId,
@@ -121,6 +123,7 @@ impl Database {
         .await
     }
 
+    /// Rejoin a channel buffer (after a connection interruption)
     pub async fn rejoin_channel_buffers(
         &self,
         buffers: &[proto::ChannelBufferVersion],
@@ -149,7 +152,7 @@ impl Database {
                     .await?;
 
                 // If the buffer epoch hasn't changed since the client lost
-                // connection, then the client's buffer can be syncronized with
+                // connection, then the client's buffer can be synchronized with
                 // the server's buffer.
                 if buffer.epoch as u64 != client_buffer.epoch {
                     log::info!("can't rejoin buffer, epoch has changed");
@@ -232,6 +235,7 @@ impl Database {
         .await
     }
 
+    /// Clear out any buffer collaborators who are no longer collaborating.
     pub async fn clear_stale_channel_buffer_collaborators(
         &self,
         channel_id: ChannelId,
@@ -274,6 +278,7 @@ impl Database {
         .await
     }
 
+    /// Close the channel buffer, and stop receiving updates for it.
     pub async fn leave_channel_buffer(
         &self,
         channel_id: ChannelId,
@@ -286,6 +291,7 @@ impl Database {
         .await
     }
 
+    /// Close the channel buffer, and stop receiving updates for it.
     pub async fn channel_buffer_connection_lost(
         &self,
         connection: ConnectionId,
@@ -309,6 +315,7 @@ impl Database {
         Ok(())
     }
 
+    /// Close all open channel buffers
     pub async fn leave_channel_buffers(
         &self,
         connection: ConnectionId,
@@ -342,7 +349,7 @@ impl Database {
         .await
     }
 
-    pub async fn leave_channel_buffer_internal(
+    async fn leave_channel_buffer_internal(
         &self,
         channel_id: ChannelId,
         connection: ConnectionId,
@@ -798,6 +805,7 @@ impl Database {
         Ok(changes)
     }
 
+    /// Returns the latest operations for the buffers with the specified IDs.
     pub async fn get_latest_operations_for_buffers(
         &self,
         buffer_ids: impl IntoIterator<Item = BufferId>,
@@ -962,7 +970,7 @@ fn version_from_storage(version: &Vec<storage::VectorClockEntry>) -> Vec<proto::
         .collect()
 }
 
-// This is currently a manual copy of the deserialization code in the client's langauge crate
+// This is currently a manual copy of the deserialization code in the client's language crate
 pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operation> {
     match operation.variant? {
         proto::operation::Variant::Edit(edit) => Some(text::Operation::Edit(EditOperation {

@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
-use ui::{h_stack, prelude::*, Button, ButtonLike, Color, Icon, IconElement, Label, Tooltip};
+use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::{Deploy, ProjectDiagnosticsEditor};
@@ -23,39 +23,39 @@ pub struct DiagnosticIndicator {
 impl Render for DiagnosticIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_stack().map(|this| {
+            (0, 0) => h_flex().map(|this| {
                 this.child(
-                    IconElement::new(Icon::Check)
+                    Icon::new(IconName::Check)
                         .size(IconSize::Small)
                         .color(Color::Default),
                 )
             }),
-            (0, warning_count) => h_stack()
+            (0, warning_count) => h_flex()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::ExclamationTriangle)
+                    Icon::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
                 .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
-            (error_count, 0) => h_stack()
+            (error_count, 0) => h_flex()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::XCircle)
+                    Icon::new(IconName::XCircle)
                         .size(IconSize::Small)
                         .color(Color::Error),
                 )
                 .child(Label::new(error_count.to_string()).size(LabelSize::Small)),
-            (error_count, warning_count) => h_stack()
+            (error_count, warning_count) => h_flex()
                 .gap_1()
                 .child(
-                    IconElement::new(Icon::XCircle)
+                    Icon::new(IconName::XCircle)
                         .size(IconSize::Small)
                         .color(Color::Error),
                 )
                 .child(Label::new(error_count.to_string()).size(LabelSize::Small))
                 .child(
-                    IconElement::new(Icon::ExclamationTriangle)
+                    Icon::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
@@ -64,9 +64,9 @@ impl Render for DiagnosticIndicator {
 
         let status = if !self.in_progress_checks.is_empty() {
             Some(
-                h_stack()
+                h_flex()
                     .gap_2()
-                    .child(IconElement::new(Icon::ArrowCircle).size(IconSize::Small))
+                    .child(Icon::new(IconName::ArrowCircle).size(IconSize::Small))
                     .child(
                         Label::new("Checking…")
                             .size(LabelSize::Small)
@@ -80,7 +80,7 @@ impl Render for DiagnosticIndicator {
                 Button::new("diagnostic_message", message)
                     .label_size(LabelSize::Small)
                     .tooltip(|cx| {
-                        Tooltip::for_action("Next Diagnostic", &editor::GoToDiagnostic, cx)
+                        Tooltip::for_action("Next Diagnostic", &editor::actions::GoToDiagnostic, cx)
                     })
                     .on_click(cx.listener(|this, _, cx| {
                         this.go_to_next_diagnostic(cx);
@@ -91,7 +91,7 @@ impl Render for DiagnosticIndicator {
             None
         };
 
-        h_stack()
+        h_flex()
             .h(rems(1.375))
             .gap_2()
             .child(

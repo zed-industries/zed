@@ -18,33 +18,33 @@ fn test_action_macros() {
 
     impl gpui::Action for RegisterableAction {
         fn boxed_clone(&self) -> Box<dyn gpui::Action> {
-            todo!()
+            unimplemented!()
         }
 
         fn as_any(&self) -> &dyn std::any::Any {
-            todo!()
+            unimplemented!()
         }
 
         fn partial_eq(&self, _action: &dyn gpui::Action) -> bool {
-            todo!()
+            unimplemented!()
         }
 
         fn name(&self) -> &str {
-            todo!()
+            unimplemented!()
         }
 
         fn debug_name() -> &'static str
         where
             Self: Sized,
         {
-            todo!()
+            unimplemented!()
         }
 
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn gpui::Action>>
         where
             Self: Sized,
         {
-            todo!()
+            unimplemented!()
         }
     }
 }

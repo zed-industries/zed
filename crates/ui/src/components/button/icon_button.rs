@@ -1,28 +1,44 @@
 use gpui::{AnyView, DefiniteLength};
 
 use crate::{prelude::*, SelectableButton};
-use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, IconSize};
+use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
+
+/// The shape of an [`IconButton`].
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum IconButtonShape {
+    Square,
+    Wide,
+}
 
 #[derive(IntoElement)]
 pub struct IconButton {
     base: ButtonLike,
-    icon: Icon,
+    shape: IconButtonShape,
+    icon: IconName,
     icon_size: IconSize,
     icon_color: Color,
-    selected_icon: Option<Icon>,
+    selected_icon: Option<IconName>,
 }
 
 impl IconButton {
-    pub fn new(id: impl Into<ElementId>, icon: Icon) -> Self {
-        Self {
+    pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
+        let mut this = Self {
             base: ButtonLike::new(id),
+            shape: IconButtonShape::Wide,
             icon,
             icon_size: IconSize::default(),
             icon_color: Color::Default,
             selected_icon: None,
-        }
+        };
+        this.base.base = this.base.base.debug_selector(|| format!("ICON-{:?}", icon));
+        this
+    }
+
+    pub fn shape(mut self, shape: IconButtonShape) -> Self {
+        self.shape = shape;
+        self
     }
 
     pub fn icon_size(mut self, icon_size: IconSize) -> Self {
@@ -35,7 +51,7 @@ impl IconButton {
         self
     }
 
-    pub fn selected_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+    pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
         self
     }
@@ -113,19 +129,35 @@ impl VisibleOnHover for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;
 
-        self.base.child(
-            ButtonIcon::new(self.icon)
-                .disabled(is_disabled)
-                .selected(is_selected)
-                .selected_icon(self.selected_icon)
-                .when_some(selected_style, |this, style| this.selected_style(style))
-                .size(self.icon_size)
-                .color(self.icon_color),
-        )
+        self.base
+            .map(|this| match self.shape {
+                IconButtonShape::Square => {
+                    let icon_size = self.icon_size.rems() * cx.rem_size();
+                    let padding = match self.icon_size {
+                        IconSize::Indicator => px(0.),
+                        IconSize::XSmall => px(0.),
+                        IconSize::Small => px(2.),
+                        IconSize::Medium => px(2.),
+                    };
+
+                    this.width((icon_size + padding * 2.).into())
+                        .height((icon_size + padding * 2.).into())
+                }
+                IconButtonShape::Wide => this,
+            })
+            .child(
+                ButtonIcon::new(self.icon)
+                    .disabled(is_disabled)
+                    .selected(is_selected)
+                    .selected_icon(self.selected_icon)
+                    .when_some(selected_style, |this, style| this.selected_style(style))
+                    .size(self.icon_size)
+                    .color(self.icon_color),
+            )
     }
 }

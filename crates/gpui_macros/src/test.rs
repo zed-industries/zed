@@ -106,7 +106,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                             let cx_varname = format_ident!("cx_{}", ix);
                             cx_vars.extend(quote!(
                                 let mut #cx_varname = gpui::TestAppContext::new(
-                                    dispatcher.clone()
+                                    dispatcher.clone(),
+                                    Some(stringify!(#outer_fn_name)),
                                 );
                             ));
                             cx_teardowns.extend(quote!(
@@ -140,8 +141,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         executor.block_test(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
                     },
-                    #on_failure_fn_name,
-                    stringify!(#outer_fn_name).to_string(),
+                    #on_failure_fn_name
                 );
             }
         }
@@ -169,7 +169,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 let cx_varname_lock = format_ident!("cx_{}_lock", ix);
                                 cx_vars.extend(quote!(
                                     let mut #cx_varname = gpui::TestAppContext::new(
-                                       dispatcher.clone()
+                                       dispatcher.clone(),
+                                       Some(stringify!(#outer_fn_name))
                                     );
                                     let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
                                 ));
@@ -186,7 +187,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 let cx_varname = format_ident!("cx_{}", ix);
                                 cx_vars.extend(quote!(
                                     let mut #cx_varname = gpui::TestAppContext::new(
-                                        dispatcher.clone()
+                                        dispatcher.clone(),
+                                        Some(stringify!(#outer_fn_name))
                                     );
                                 ));
                                 cx_teardowns.extend(quote!(
@@ -222,7 +224,6 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         #cx_teardowns
                     },
                     #on_failure_fn_name,
-                    stringify!(#outer_fn_name).to_string(),
                 );
             }
         }

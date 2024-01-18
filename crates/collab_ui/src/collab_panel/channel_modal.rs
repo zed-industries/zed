@@ -111,7 +111,7 @@ impl ChannelModal {
         .detach();
     }
 
-    fn set_channel_visiblity(&mut self, selection: &Selection, cx: &mut ViewContext<Self>) {
+    fn set_channel_visibility(&mut self, selection: &Selection, cx: &mut ViewContext<Self>) {
         self.channel_store.update(cx, |channel_store, cx| {
             channel_store
                 .set_channel_visibility(
@@ -152,33 +152,33 @@ impl Render for ChannelModal {
         let visibility = channel.visibility;
         let mode = self.picker.read(cx).delegate.mode;
 
-        v_stack()
+        v_flex()
             .key_context("ChannelModal")
             .on_action(cx.listener(Self::toggle_mode))
             .on_action(cx.listener(Self::dismiss))
             .elevation_3(cx)
             .w(rems(34.))
             .child(
-                v_stack()
+                v_flex()
                     .px_2()
                     .py_1()
                     .gap_2()
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_px()
                             .flex_1()
                             .gap_1()
-                            .child(IconElement::new(Icon::Hash).size(IconSize::Medium))
+                            .child(Icon::new(IconName::Hash).size(IconSize::Medium))
                             .child(Label::new(channel_name)),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .w_full()
                             .h(rems(22. / 16.))
                             .justify_between()
                             .line_height(rems(1.25))
                             .child(
-                                h_stack()
+                                h_flex()
                                     .gap_2()
                                     .child(
                                         Checkbox::new(
@@ -189,7 +189,7 @@ impl Render for ChannelModal {
                                                 ui::Selection::Unselected
                                             },
                                         )
-                                        .on_click(cx.listener(Self::set_channel_visiblity)),
+                                        .on_click(cx.listener(Self::set_channel_visibility)),
                                     )
                                     .child(Label::new("Public").size(LabelSize::Small)),
                             )
@@ -212,7 +212,7 @@ impl Render for ChannelModal {
                             ),
                     )
                     .child(
-                        h_stack()
+                        h_flex()
                             .child(
                                 div()
                                     .id("manage-members")
@@ -348,6 +348,10 @@ impl PickerDelegate for ChannelModalDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some((selected_user, role)) = self.user_at_index(self.selected_index) {
+            if Some(selected_user.id) == self.user_store.read(cx).current_user().map(|user| user.id)
+            {
+                return;
+            }
             match self.mode {
                 Mode::ManageMembers => {
                     self.show_context_menu(selected_user, role.unwrap_or(ChannelRole::Member), cx)
@@ -383,6 +387,7 @@ impl PickerDelegate for ChannelModalDelegate {
     ) -> Option<Self::ListItem> {
         let (user, role) = self.user_at_index(ix)?;
         let request_status = self.member_status(user.id, cx);
+        let is_me = self.user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
 
         Some(
             ListItem::new(ix)
@@ -391,7 +396,7 @@ impl PickerDelegate for ChannelModalDelegate {
                 .selected(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
                 .child(Label::new(user.github_login.clone()))
-                .end_slot(h_stack().gap_2().map(|slot| {
+                .end_slot(h_flex().gap_2().map(|slot| {
                     match self.mode {
                         Mode::ManageMembers => slot
                             .children(
@@ -406,7 +411,10 @@ impl PickerDelegate for ChannelModalDelegate {
                                 Some(ChannelRole::Guest) => Some(Label::new("Guest")),
                                 _ => None,
                             })
-                            .child(IconButton::new("ellipsis", Icon::Ellipsis))
+                            .when(!is_me, |el| {
+                                el.child(IconButton::new("ellipsis", IconName::Ellipsis))
+                            })
+                            .when(is_me, |el| el.child(Label::new("You").color(Color::Muted)))
                             .children(
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
                                     Some(

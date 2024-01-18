@@ -4,7 +4,7 @@ use gpui::{
     FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Render, Styled,
     Subscription, ViewContext,
 };
-use ui::{prelude::*, Button, Icon, Label};
+use ui::{prelude::*, Button, IconName, Label};
 use workspace::ModalView;
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
@@ -57,7 +57,7 @@ impl CopilotCodeVerification {
             .read_from_clipboard()
             .map(|item| item.text() == &data.user_code)
             .unwrap_or(false);
-        h_stack()
+        h_flex()
             .w_full()
             .p_1()
             .border()
@@ -69,7 +69,7 @@ impl CopilotCodeVerification {
                 let user_code = data.user_code.clone();
                 move |_, cx| {
                     cx.write_to_clipboard(ClipboardItem::new(user_code.clone()));
-                    cx.notify();
+                    cx.refresh();
                 }
             })
             .child(div().flex_1().child(Label::new(data.user_code.clone())))
@@ -90,13 +90,13 @@ impl CopilotCodeVerification {
         } else {
             "Connect to Github"
         };
-        v_stack()
+        v_flex()
             .flex_1()
             .gap_2()
             .items_center()
             .child(Headline::new("Use Github Copilot in Zed.").size(HeadlineSize::Large))
             .child(
-                Label::new("Using Copilot requres an active subscription on Github.")
+                Label::new("Using Copilot requires an active subscription on Github.")
                     .color(Color::Muted),
             )
             .child(Self::render_device_code(data, cx))
@@ -118,7 +118,7 @@ impl CopilotCodeVerification {
             )
     }
     fn render_enabled_modal(cx: &mut ViewContext<Self>) -> impl Element {
-        v_stack()
+        v_flex()
             .gap_2()
             .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
             .child(Label::new(
@@ -132,14 +132,14 @@ impl CopilotCodeVerification {
     }
 
     fn render_unauthorized_modal() -> impl Element {
-        v_stack()
+        v_flex()
             .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
 
             .child(Label::new(
                 "You can enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.",
             ).color(Color::Warning))
             .child(
-                Button::new("copilot-subscribe-button", "Subscibe on Github")
+                Button::new("copilot-subscribe-button", "Subscribe on Github")
                     .full_width()
                     .on_click(|_, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
@@ -163,7 +163,7 @@ impl Render for CopilotCodeVerification {
             _ => div().into_any_element(),
         };
 
-        v_stack()
+        v_flex()
             .id("copilot code verification")
             .elevation_3(cx)
             .w_96()
@@ -175,7 +175,7 @@ impl Render for CopilotCodeVerification {
                     .w_32()
                     .h_16()
                     .flex_none()
-                    .path(Icon::ZedXCopilot.path())
+                    .path(IconName::ZedXCopilot.path())
                     .text_color(cx.theme().colors().icon),
             )
             .child(prompt)

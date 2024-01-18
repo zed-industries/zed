@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use editor::scroll::autoscroll::Autoscroll;
+use editor::scroll::Autoscroll;
 use editor::Editor;
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use schemars::JsonSchema;

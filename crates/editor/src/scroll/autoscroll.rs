@@ -5,7 +5,7 @@ use language::Point;
 
 use crate::{display_map::ToDisplayPoint, Editor, EditorMode, LineWithInvisibles};
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
     Next,
     Strategy(AutoscrollStrategy),
@@ -25,7 +25,7 @@ impl Autoscroll {
     }
 }
 
-#[derive(PartialEq, Eq, Default)]
+#[derive(PartialEq, Eq, Default, Clone, Copy)]
 pub enum AutoscrollStrategy {
     Fit,
     Newest,
@@ -175,7 +175,7 @@ impl Editor {
         true
     }
 
-    pub fn autoscroll_horizontally(
+    pub(crate) fn autoscroll_horizontally(
         &mut self,
         start_row: u32,
         viewport_width: Pixels,

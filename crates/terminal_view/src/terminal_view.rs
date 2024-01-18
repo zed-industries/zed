@@ -2,7 +2,7 @@ mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 
-use editor::{scroll::autoscroll::Autoscroll, Editor};
+use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, Pixels,
@@ -20,7 +20,7 @@ use terminal::{
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ShowCharacterPalette, Terminal,
 };
 use terminal_element::TerminalElement;
-use ui::{h_stack, prelude::*, ContextMenu, Icon, IconElement, Label};
+use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent},
@@ -73,6 +73,7 @@ pub fn init(cx: &mut AppContext) {
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct TerminalView {
     terminal: Model<Terminal>,
+    workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
@@ -135,6 +136,7 @@ impl TerminalView {
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let workspace_handle = workspace.clone();
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, move |this, _, event, cx| match event {
             Event::Wakeup => {
@@ -279,6 +281,7 @@ impl TerminalView {
 
         Self {
             terminal,
+            workspace: workspace_handle,
             has_new_content: true,
             has_bell: false,
             focus_handle: cx.focus_handle(),
@@ -354,7 +357,7 @@ impl TerminalView {
         }
     }
 
-    fn select_all(&mut self, _: &editor::SelectAll, cx: &mut ViewContext<Self>) {
+    fn select_all(&mut self, _: &editor::actions::SelectAll, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.select_all());
         cx.notify();
     }
@@ -597,6 +600,9 @@ fn possible_open_targets(
 
 pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
     let query = query.as_str();
+    if query == "." {
+        return None;
+    }
     let searcher = RegexSearch::new(&query);
     searcher.ok()
 }
@@ -651,23 +657,26 @@ impl Render for TerminalView {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, cx| {
-                    this.deploy_context_menu(event.position, cx);
-                    cx.notify();
+                    if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
+                        this.deploy_context_menu(event.position, cx);
+                        cx.notify();
+                    }
                 }),
             )
             .child(
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div().size_full().child(TerminalElement::new(
                     terminal_handle,
+                    self.workspace.clone(),
                     self.focus_handle.clone(),
                     focused,
                     self.should_show_cursor(focused, cx),
                     self.can_navigate_to_selected_word,
                 )),
             )
-            .children(self.context_menu.as_ref().map(|(menu, positon, _)| {
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 overlay()
-                    .position(*positon)
+                    .position(*position)
                     .anchor(gpui::AnchorCorner::TopLeft)
                     .child(menu.clone())
             }))
@@ -688,15 +697,19 @@ impl Item for TerminalView {
         cx: &WindowContext,
     ) -> AnyElement {
         let title = self.terminal().read(cx).title(true);
-        h_stack()
+        h_flex()
             .gap_2()
-            .child(IconElement::new(Icon::Terminal))
+            .child(Icon::new(IconName::Terminal))
             .child(Label::new(title).color(if selected {
                 Color::Default
             } else {
                 Color::Muted
             }))
             .into_any()
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        None
     }
 
     fn clone_on_split(
