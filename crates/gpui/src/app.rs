@@ -121,7 +121,11 @@ impl App {
 
     /// Assign
     pub fn with_assets(self, asset_source: impl AssetSource) -> Self {
-        self.0.borrow_mut().asset_source = Arc::new(asset_source);
+        let mut context_lock = self.0.borrow_mut();
+        let asset_source = Arc::new(asset_source);
+        context_lock.asset_source = asset_source.clone();
+        context_lock.svg_renderer = SvgRenderer::new(asset_source);
+        drop(context_lock);
         self
     }
 
