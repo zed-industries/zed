@@ -275,11 +275,8 @@ pub struct SearchResult {
 
 impl SemanticIndex {
     pub fn global(cx: &mut AppContext) -> Option<Model<SemanticIndex>> {
-        if cx.has_global::<Model<Self>>() {
-            Some(cx.global::<Model<SemanticIndex>>().clone())
-        } else {
-            None
-        }
+        cx.try_global::<Model<Self>>()
+            .map(|semantic_index| semantic_index.clone())
     }
 
     pub fn authenticate(&mut self, cx: &mut AppContext) -> bool {

@@ -145,17 +145,16 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
         let auto_updater = auto_updater.read(cx);
         let server_url = &auto_updater.server_url;
         let current_version = auto_updater.current_version;
-        if cx.has_global::<ReleaseChannel>() {
-            match cx.global::<ReleaseChannel>() {
-                ReleaseChannel::Dev => {}
-                ReleaseChannel::Nightly => {}
-                ReleaseChannel::Preview => {
-                    cx.open_url(&format!("{server_url}/releases/preview/{current_version}"))
-                }
-                ReleaseChannel::Stable => {
-                    cx.open_url(&format!("{server_url}/releases/stable/{current_version}"))
-                }
-            }
+
+        if let Some(release_channel) = cx.try_global::<ReleaseChannel>() {
+            let channel = match release_channel {
+                ReleaseChannel::Preview => "preview",
+                ReleaseChannel::Stable => "stable",
+                _ => return,
+            };
+            cx.open_url(&format!(
+                "{server_url}/releases/{channel}/{current_version}"
+            ))
         }
     }
 }
@@ -257,11 +256,13 @@ impl AutoUpdater {
             "{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg"
         );
         cx.update(|cx| {
-            if cx.has_global::<ReleaseChannel>() {
-                if let Some(param) = cx.global::<ReleaseChannel>().release_query_param() {
-                    url_string += "&";
-                    url_string += param;
-                }
+            if let Some(param) = cx
+                .try_global::<ReleaseChannel>()
+                .map(|release_channel| release_channel.release_query_param())
+                .flatten()
+            {
+                url_string += "&";
+                url_string += param;
             }
         })?;
 
@@ -313,8 +314,8 @@ impl AutoUpdater {
         let (installation_id, release_channel, telemetry) = cx.update(|cx| {
             let installation_id = cx.global::<Arc<Client>>().telemetry().installation_id();
             let release_channel = cx
-                .has_global::<ReleaseChannel>()
-                .then(|| cx.global::<ReleaseChannel>().display_name());
+                .try_global::<ReleaseChannel>()
+                .map(|release_channel| release_channel.display_name());
             let telemetry = TelemetrySettings::get_global(cx).metrics;
 
             (installation_id, release_channel, telemetry)

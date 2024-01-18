@@ -42,7 +42,7 @@ impl FileAssociations {
     }
 
     pub fn get_icon(path: &Path, cx: &AppContext) -> Option<Arc<str>> {
-        let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+        let this = cx.try_global::<Self>()?;
 
         // FIXME: Associate a type with the languages and have the file's language
         //        override these associations
@@ -58,7 +58,7 @@ impl FileAssociations {
     }
 
     pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
-        let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+        let this = cx.try_global::<Self>()?;
 
         let key = if expanded {
             EXPANDED_DIRECTORY_TYPE
@@ -72,7 +72,7 @@ impl FileAssociations {
     }
 
     pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
-        let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
+        let this = cx.try_global::<Self>()?;
 
         let key = if expanded {
             EXPANDED_CHEVRON_TYPE
