@@ -114,10 +114,14 @@ lazy_static! {
     ));
 }
 
+/// Types that represent a position in a buffer, and can be converted into
+/// an LSP position, to send to a language server.
 pub trait ToLspPosition {
+    /// Converts the value into an LSP position.
     fn to_lsp_position(self) -> lsp::Position;
 }
 
+/// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
 

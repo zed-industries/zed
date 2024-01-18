@@ -145,7 +145,7 @@ pub enum IndentKind {
     /// An ASCII space character.
     #[default]
     Space,
-    /// An ASCII tab chracter.
+    /// An ASCII tab character.
     Tab,
 }
 
