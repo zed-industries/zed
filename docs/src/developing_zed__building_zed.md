@@ -14,7 +14,7 @@
 - Ensure that the Xcode command line tools are using your newly installed copy of Xcode:
 
     ```
-    sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer.
+    sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
     ```
 
 * Install the Rust wasm toolchain:

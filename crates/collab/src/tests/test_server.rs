@@ -213,6 +213,7 @@ impl TestServer {
                                 server_conn,
                                 client_name,
                                 user,
+                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
