@@ -599,7 +599,10 @@ impl EditorElement {
             return;
         };
         let range = DisplayPoint::new(point.row(), point.column().saturating_sub(1))
-            ..DisplayPoint::new(point.row(), point.column() + 1);
+            ..DisplayPoint::new(
+                point.row(),
+                (point.column() + 1).min(snapshot.line_len(point.row())),
+            );
 
         let range = snapshot
             .buffer_snapshot
