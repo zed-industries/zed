@@ -62,6 +62,8 @@ pub struct NeovimBackedTestContext {
 
 impl NeovimBackedTestContext {
     pub async fn new(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
+        #[cfg(feature = "neovim")]
+        cx.executor().allow_parking();
         // rust stores the name of the test on the current thread.
         // We use this to automatically name a file that will store
         // the neovim connection's requests/responses so that we can
