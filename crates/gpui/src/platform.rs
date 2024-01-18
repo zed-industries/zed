@@ -282,8 +282,6 @@ pub(crate) trait PlatformAtlas: Send + Sync {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
     ) -> Result<AtlasTile>;
-
-    fn clear(&self);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
