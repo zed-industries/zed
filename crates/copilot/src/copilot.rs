@@ -308,11 +308,7 @@ impl EventEmitter<Event> for Copilot {}
 
 impl Copilot {
     pub fn global(cx: &AppContext) -> Option<Model<Self>> {
-        if cx.has_global::<Model<Self>>() {
-            Some(cx.global::<Model<Self>>().clone())
-        } else {
-            None
-        }
+        cx.try_global::<Model<Self>>().map(|model| model.clone())
     }
 
     fn start(
