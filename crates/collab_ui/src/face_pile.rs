@@ -1,14 +1,14 @@
-use gpui::{div, AnyElement, IntoElement, ParentElement, RenderOnce, Styled, WindowContext};
+use gpui::{div, AnyElement, ParentElement, RenderOnce, Styled, WindowContext};
 use smallvec::SmallVec;
 use ui::FluentBuilder;
 
-#[derive(Default, IntoElement)]
+#[derive(Default, gpui::IntoElement)]
 pub struct FacePile {
     pub faces: SmallVec<[AnyElement; 2]>,
 }
 
 impl RenderOnce for FacePile {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _: &mut WindowContext) -> impl gpui::IntoElement {
         let player_count = self.faces.len();
         let player_list = self.faces.into_iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;
