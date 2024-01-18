@@ -43,23 +43,30 @@ use std::{
 };
 use util::{post_inc, ResultExt};
 
-const ACTIVE_DRAG_Z_INDEX: u16 = 1;
+const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Debug, Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
-pub struct StackingOrder(SmallVec<[StackingContext; 64]>);
-
-/// A single entry in a primitive's z-index stacking order
-#[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
-pub struct StackingContext {
-    z_index: u16,
-    id: u16,
+#[derive(Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
+pub struct StackingOrder {
+    #[deref]
+    #[deref_mut]
+    context_stack: SmallVec<[u8; 64]>,
+    id: u32,
 }
 
-impl std::fmt::Debug for StackingContext {
+impl std::fmt::Debug for StackingOrder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{{}.{}}} ", self.z_index, self.id)
+        let mut stacks = self.context_stack.iter().peekable();
+        write!(f, "[({}): ", self.id)?;
+        while let Some(z_index) = stacks.next() {
+            write!(f, "{z_index}")?;
+            if stacks.peek().is_some() {
+                write!(f, "->")?;
+            }
+        }
+        write!(f, "]")?;
+        Ok(())
     }
 }
 
@@ -308,8 +315,8 @@ pub(crate) struct Frame {
     pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
-    next_stacking_order_id: u16,
-    next_root_z_index: u16,
+    pub(crate) next_stacking_order_id: u32,
+    next_root_z_index: u8,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     element_offset_stack: Vec<Point<Pixels>>,
     requested_input_handler: Option<RequestedInputHandler>,
@@ -1104,11 +1111,7 @@ impl<'a> WindowContext<'a> {
             if level >= opaque_level {
                 break;
             }
-            if opaque_level
-                .first()
-                .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
-                .unwrap_or(false)
-            {
+            if opaque_level.starts_with(&[ACTIVE_DRAG_Z_INDEX]) {
                 continue;
             }
 
@@ -2455,40 +2458,36 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
                 size: self.window().viewport_size,
             },
         };
-
-        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
-        let new_context = StackingContext {
-            z_index: new_root_z_index,
-            id: new_stacking_order_id,
-        };
-
+        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
         let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
-
-        self.window_mut().next_frame.z_index_stack.push(new_context);
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window_mut()
+            .next_frame
+            .z_index_stack
+            .push(new_root_z_index);
         self.window_mut().next_frame.content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().next_frame.content_mask_stack.pop();
         self.window_mut().next_frame.z_index_stack = old_stacking_order;
-
         result
     }
 
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
-    fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
+    fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
-        let new_context = StackingContext {
-            z_index,
-            id: new_stacking_order_id,
-        };
-
-        self.window_mut().next_frame.z_index_stack.push(new_context);
+        let old_stacking_order_id = mem::replace(
+            &mut self.window_mut().next_frame.z_index_stack.id,
+            new_stacking_order_id,
+        );
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window_mut().next_frame.z_index_stack.push(z_index);
         let result = f(self);
+        self.window_mut().next_frame.z_index_stack.id = old_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.pop();
-
         result
     }
 
