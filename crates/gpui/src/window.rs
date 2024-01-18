@@ -39,30 +39,23 @@ use util::{measure, ResultExt};
 mod element_cx;
 pub use element_cx::*;
 
-const ACTIVE_DRAG_Z_INDEX: u8 = 1;
+const ACTIVE_DRAG_Z_INDEX: u16 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
-pub struct StackingOrder {
-    #[deref]
-    #[deref_mut]
-    context_stack: SmallVec<[u8; 64]>,
-    pub(crate) id: u32,
+#[derive(Debug, Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
+pub struct StackingOrder(SmallVec<[StackingContext; 64]>);
+
+/// A single entry in a primitive's z-index stacking order
+#[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
+pub struct StackingContext {
+    pub(crate) z_index: u16,
+    pub(crate) id: u16,
 }
 
-impl std::fmt::Debug for StackingOrder {
+impl std::fmt::Debug for StackingContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut stacks = self.context_stack.iter().peekable();
-        write!(f, "[({}): ", self.id)?;
-        while let Some(z_index) = stacks.next() {
-            write!(f, "{z_index}")?;
-            if stacks.peek().is_some() {
-                write!(f, "->")?;
-            }
-        }
-        write!(f, "]")?;
-        Ok(())
+        write!(f, "{{{}.{}}} ", self.z_index, self.id)
     }
 }
 
@@ -831,7 +824,11 @@ impl<'a> WindowContext<'a> {
             if level >= opaque_level {
                 break;
             }
-            if opaque_level.starts_with(&[ACTIVE_DRAG_Z_INDEX]) {
+            if opaque_level
+                .first()
+                .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
+                .unwrap_or(false)
+            {
                 continue;
             }
 
