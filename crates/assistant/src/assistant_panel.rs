@@ -920,6 +920,39 @@ impl AssistantPanel {
         self.editors.get(self.active_editor_index?)
     }
 
+    fn render_api_key_editor(
+        &self,
+        editor: &View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: if editor.read(cx).read_only(cx) {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().colors().text
+            },
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3).into(),
+            background_color: None,
+            underline: None,
+            white_space: WhiteSpace::Normal,
+        };
+        EditorElement::new(
+            &editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
     fn render_hamburger_button(cx: &mut ViewContext<Self>) -> impl IntoElement {
         IconButton::new("hamburger_button", IconName::Menu)
             .on_click(cx.listener(|this, _event, cx| {
@@ -1091,28 +1124,42 @@ fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> View<Editor> {
 impl Render for AssistantPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         if let Some(api_key_editor) = self.api_key_editor.clone() {
+            const INSTRUCTIONS: [&'static str; 5] = [
+                "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
+                " - You can create an API key at: platform.openai.com/api-keys",
+                " - Having a subscription for another service like GitHub Copilot won't work.",
+                " ",
+                "Paste your OpenAI API key and press Enter to use the assistant:"
+            ];
+
             v_flex()
+                .p_4()
+                .size_full()
                 .on_action(cx.listener(AssistantPanel::save_credentials))
                 .track_focus(&self.focus_handle)
-                .child(Label::new(
-                    "To use the assistant panel or inline assistant, you need to add your OpenAI api key.",
-                ))
-                .child(Label::new(
-                    " - Having a subscription for another service like GitHub Copilot won't work."
-                ))
-                .child(Label::new(
-                    " - You can create a api key at: platform.openai.com/api-keys"
-                ))
-                .child(Label::new(
-                    " "
-                ))
-                .child(Label::new(
-                    "Paste your OpenAI API key and press Enter to use the assistant"
-                ))
-                .child(api_key_editor)
-                .child(Label::new(
-                    "Click on the Z button in the status bar to close this panel."
-                ))
+                .children(
+                    INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .my_2()
+                        .px_2()
+                        .py_1()
+                        .bg(cx.theme().colors().editor_background)
+                        .rounded_md()
+                        .child(self.render_api_key_editor(&api_key_editor, cx)),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Label::new("Click on").size(LabelSize::Small))
+                        .child(Icon::new(IconName::Ai).size(IconSize::XSmall))
+                        .child(
+                            Label::new("in the status bar to close this panel.")
+                                .size(LabelSize::Small),
+                        ),
+                )
         } else {
             let header = TabBar::new("assistant_header")
                 .start_child(
