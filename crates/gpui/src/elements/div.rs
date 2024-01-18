@@ -416,6 +416,18 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn debug_selector(mut self, f: impl FnOnce() -> String) -> Self {
+        self.interactivity().debug_selector = Some(f());
+        self
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    #[inline]
+    fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
+        self
+    }
+
     fn capture_any_mouse_down(
         mut self,
         listener: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
@@ -911,6 +923,9 @@ pub struct Interactivity {
 
     #[cfg(debug_assertions)]
     pub location: Option<core::panic::Location<'static>>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub debug_selector: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -979,6 +994,14 @@ impl Interactivity {
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
         let z_index = style.z_index.unwrap_or(0);
+
+        #[cfg(any(feature = "test-support", test))]
+        if let Some(debug_selector) = &self.debug_selector {
+            cx.window
+                .next_frame
+                .debug_bounds
+                .insert(debug_selector.clone(), bounds);
+        }
 
         let paint_hover_group_handler = |cx: &mut WindowContext| {
             let hover_group_bounds = self
