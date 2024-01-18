@@ -141,7 +141,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let refinement_refine_assigments: Vec<TokenStream2> = fields
+    let refinement_refine_assignments: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
             let name = &field.ident;
@@ -161,7 +161,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let refinement_refined_assigments: Vec<TokenStream2> = fields
+    let refinement_refined_assignments: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
             let name = &field.ident;
@@ -181,7 +181,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let from_refinement_assigments: Vec<TokenStream2> = fields
+    let from_refinement_assignments: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
             let name = &field.ident;
@@ -272,11 +272,11 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             type Refinement = #refinement_ident #ty_generics;
 
             fn refine(&mut self, refinement: &Self::Refinement) {
-                #( #refinement_refine_assigments )*
+                #( #refinement_refine_assignments )*
             }
 
             fn refined(mut self, refinement: Self::Refinement) -> Self {
-                #( #refinement_refined_assigments )*
+                #( #refinement_refined_assignments )*
                 self
             }
         }
@@ -286,7 +286,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         {
             fn from(value: #refinement_ident #ty_generics) -> Self {
                 Self {
-                    #( #from_refinement_assigments )*
+                    #( #from_refinement_assignments )*
                 }
             }
         }

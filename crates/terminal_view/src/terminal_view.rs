@@ -674,9 +674,9 @@ impl Render for TerminalView {
                     self.can_navigate_to_selected_word,
                 )),
             )
-            .children(self.context_menu.as_ref().map(|(menu, positon, _)| {
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 overlay()
-                    .position(*positon)
+                    .position(*position)
                     .anchor(gpui::AnchorCorner::TopLeft)
                     .child(menu.clone())
             }))

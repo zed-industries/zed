@@ -342,7 +342,7 @@ impl PickerDelegate for BranchListDelegate {
                                             }
                                             let status = repo.change_branch(&current_pick);
                                             if status.is_err() {
-                                                this.delegate.display_error_toast(format!("Failed to chec branch '{current_pick}', check for conflicts or unstashed files"), cx);
+                                                this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
                                                 status?;
                                             }
                                             this.cancel(&Default::default(), cx);

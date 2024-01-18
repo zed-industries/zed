@@ -44,7 +44,7 @@ impl FileAssociations {
     pub fn get_icon(path: &Path, cx: &AppContext) -> Option<Arc<str>> {
         let this = cx.has_global::<Self>().then(|| cx.global::<Self>())?;
 
-        // FIXME: Associate a type with the languages and have the file's langauge
+        // FIXME: Associate a type with the languages and have the file's language
         //        override these associations
         maybe!({
             let suffix = path.icon_suffix()?;

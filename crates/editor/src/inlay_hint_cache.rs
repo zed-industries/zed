@@ -960,14 +960,14 @@ async fn fetch_and_update_hints(
     log::trace!("Fetched hints: {new_hints:?}");
 
     let background_task_buffer_snapshot = buffer_snapshot.clone();
-    let backround_fetch_range = fetch_range.clone();
+    let background_fetch_range = fetch_range.clone();
     let new_update = cx
         .background_executor()
         .spawn(async move {
             calculate_hint_updates(
                 query.excerpt_id,
                 invalidate,
-                backround_fetch_range,
+                background_fetch_range,
                 new_hints,
                 &background_task_buffer_snapshot,
                 cached_excerpt_hints,
@@ -1484,7 +1484,7 @@ pub mod tests {
             assert_eq!(
                 editor.inlay_hint_cache().version,
                 edits_made,
-                "Cache version should udpate once after the work task is done"
+                "Cache version should update once after the work task is done"
             );
         });
     }
@@ -1634,7 +1634,7 @@ pub mod tests {
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
-                "Markdown editor should have a separate verison, repeating Rust editor rules"
+                "Markdown editor should have a separate version, repeating Rust editor rules"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             assert_eq!(editor.inlay_hint_cache().version, 1);
@@ -2647,7 +2647,7 @@ pub mod tests {
                     "When scroll is at the edge of a multibuffer, its visible excerpts only should be queried for inlay hints"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(), "Every visible excerpt hints should bump the verison");
+                assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(), "Every visible excerpt hints should bump the version");
             });
 
         _ = editor.update(cx, |editor, cx| {
@@ -2763,7 +2763,7 @@ pub mod tests {
                 expected_hints,
                 cached_hint_labels(editor),
                 "After multibuffer edit, editor gets scolled back to the last selection; \
-    all hints should be invalidated and requeried for all of its visible excerpts"
+    all hints should be invalidated and required for all of its visible excerpts"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
 

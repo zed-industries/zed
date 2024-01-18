@@ -275,7 +275,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
         let version_before_format = format_diff.base_version.clone();
         buffer.apply_diff(format_diff, cx);
 
-        // The outcome depends on the order of concurrent taks.
+        // The outcome depends on the order of concurrent tasks.
         //
         // If the edit occurred while searching for trailing whitespace ranges,
         // then the trailing whitespace region touched by the edit is left intact.

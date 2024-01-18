@@ -1485,7 +1485,7 @@ impl Pane {
             .child(
                 div()
                     .min_w_6()
-                    // HACK: This empty child is currently necessary to force the drop traget to appear
+                    // HACK: This empty child is currently necessary to force the drop target to appear
                     // despite us setting a min width above.
                     .child("")
                     .h_full()

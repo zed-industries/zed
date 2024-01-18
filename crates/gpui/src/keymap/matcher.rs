@@ -444,7 +444,7 @@ mod tests {
             KeyMatch::Some(vec![Box::new(Dollar)])
         );
 
-        // handle Brazillian quote (quote key then space key)
+        // handle Brazilian quote (quote key then space key)
         assert_eq!(
             matcher.match_keystroke(
                 &Keystroke::parse("space->\"").unwrap(),
@@ -453,7 +453,7 @@ mod tests {
             KeyMatch::Some(vec![Box::new(Quote)])
         );
 
-        // handle ctrl+` on a brazillian keyboard
+        // handle ctrl+` on a brazilian keyboard
         assert_eq!(
             matcher.match_keystroke(&Keystroke::parse("ctrl-->`").unwrap(), &[context_a.clone()]),
             KeyMatch::Some(vec![Box::new(Backtick)])

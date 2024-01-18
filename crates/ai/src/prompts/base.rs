@@ -81,8 +81,8 @@ impl PromptChain {
 
     pub fn generate(&self, truncate: bool) -> anyhow::Result<(String, usize)> {
         // Argsort based on Prompt Priority
-        let seperator = "\n";
-        let seperator_tokens = self.args.model.count_tokens(seperator)?;
+        let separator = "\n";
+        let separator_tokens = self.args.model.count_tokens(separator)?;
         let mut sorted_indices = (0..self.templates.len()).collect::<Vec<_>>();
         sorted_indices.sort_by_key(|&i| Reverse(&self.templates[i].0));
 
@@ -104,7 +104,7 @@ impl PromptChain {
                     prompts[idx] = template_prompt;
 
                     if let Some(remaining_tokens) = tokens_outstanding {
-                        let new_tokens = prompt_token_count + seperator_tokens;
+                        let new_tokens = prompt_token_count + separator_tokens;
                         tokens_outstanding = if remaining_tokens > new_tokens {
                             Some(remaining_tokens - new_tokens)
                         } else {
@@ -117,9 +117,9 @@ impl PromptChain {
 
         prompts.retain(|x| x != "");
 
-        let full_prompt = prompts.join(seperator);
+        let full_prompt = prompts.join(separator);
         let total_token_count = self.args.model.count_tokens(&full_prompt)?;
-        anyhow::Ok((prompts.join(seperator), total_token_count))
+        anyhow::Ok((prompts.join(separator), total_token_count))
     }
 }
 

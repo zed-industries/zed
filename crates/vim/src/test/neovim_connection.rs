@@ -359,7 +359,7 @@ impl NeovimConnection {
         // to add one to the end in visual mode.
         match mode {
             Some(Mode::VisualBlock) if selection_row != cursor_row => {
-                // in zed we fake a block selecrtion by using multiple cursors (one per line)
+                // in zed we fake a block selection by using multiple cursors (one per line)
                 // this code emulates that.
                 // to deal with casees where the selection is not perfectly rectangular we extract
                 // the content of the selection via the "a register to get the shape correctly.

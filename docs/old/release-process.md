@@ -90,7 +90,7 @@ This means that when releasing a new version of Zed that has changes to the RPC 
 1. If needing a migration:
    - First check that the migration is valid. The database serves both preview and stable simultaneously, so new columns need to have defaults and old tables or columns can't be dropped.
    - Then use `script/deploy-migration` <release channel> <version number> (production, staging, preview, nightly). ex: `script/deploy-migration preview 0.19.0`
-    - If there is an 'Error: container is waiting to start', you can review logs manually with: `kubectl --namespace <enviroment> logs <pod name>` to make sure the mgiration ran successfully.
+    - If there is an 'Error: container is waiting to start', you can review logs manually with: `kubectl --namespace <environment> logs <pod name>` to make sure the mgiration ran successfully.
 1. Once that CI job completes, you will be able to run the following command to deploy that docker image. The script takes two arguments: an environment (`production`, `preview`, or `staging`), and a version number (e.g. `0.10.1`):
 
 ```

@@ -5578,7 +5578,7 @@ impl Project {
         // 3. We run a scan over all the candidate buffers on multiple background threads.
         //    We cannot assume that there will even be a match - while at least one match
         //    is guaranteed for files obtained from FS, the buffers we got from memory (unsaved files/unnamed buffers) might not have a match at all.
-        //    There is also an auxilliary background thread responsible for result gathering.
+        //    There is also an auxiliary background thread responsible for result gathering.
         //    This is where the sorted list of buffers comes into play to maintain sorted order; Whenever this background thread receives a notification (buffer has/doesn't have matches),
         //    it keeps it around. It reports matches in sorted order, though it accepts them in unsorted order as well.
         //    As soon as the match info on next position in sorted order becomes available, it reports it (if it's a match) or skips to the next
@@ -8550,7 +8550,7 @@ fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
             break;
         } else {
             if i > 0 {
-                // Acount for separator prior to this part
+                // Account for separator prior to this part
                 literal_end += path::MAIN_SEPARATOR.len_utf8();
             }
             literal_end += part.len();
