@@ -5,15 +5,15 @@ USAGE
   zed-local  [options]  [zed args]
 
 SUMMARY
-  Runs 1-4 instances of Zed using a locally-running collaboration server.
+  Runs 1-6 instances of Zed using a locally-running collaboration server.
   Each instance of Zed will be signed in as a different user specified in
   either \`.admins.json\` or \`.admins.default.json\`.
 
 OPTIONS
-  --help        Print this help message
-  --release     Build Zed in release mode
-  -2, -3, -4    Spawn 2, 3, or 4 Zed instances, with their windows tiled.
-  --top         Arrange the Zed windows so they take up the top half of the screen.
+  --help           Print this help message
+  --release        Build Zed in release mode
+  -2, -3, -4, ...  Spawn multiple Zed instances, with their windows tiled.
+  --top            Arrange the Zed windows so they take up the top half of the screen.
 `.trim();
 
 const { spawn, execFileSync } = require("child_process");
@@ -25,7 +25,9 @@ try {
   const customUsers = require("../crates/collab/.admins.json");
   assert(customUsers.length > 0);
   assert(customUsers.every((user) => typeof user === "string"));
-  users.splice(0, 0, ...customUsers);
+  users = customUsers.concat(
+    defaultUsers.filter((user) => !customUsers.includes(user)),
+  );
 } catch (_) {}
 
 const RESOLUTION_REGEX = /(\d+) x (\d+)/;
@@ -69,35 +71,42 @@ const mainDisplayResolution =
 if (!mainDisplayResolution) {
   throw new Error("Could not parse screen resolution");
 }
+const titleBarHeight = 24;
 const screenWidth = parseInt(mainDisplayResolution[1]);
-let screenHeight = parseInt(mainDisplayResolution[2]);
+let screenHeight = parseInt(mainDisplayResolution[2]) - titleBarHeight;
 
 if (isTop) {
   screenHeight = Math.floor(screenHeight / 2);
 }
 
 // Determine the window size for each instance
-let instanceWidth = screenWidth;
-let instanceHeight = screenHeight;
-if (instanceCount > 1) {
-  instanceWidth = Math.floor(screenWidth / 2);
-  if (instanceCount > 2) {
-    instanceHeight = Math.floor(screenHeight / 2);
-  }
+let rows;
+let columns;
+switch (instanceCount) {
+  case 1:
+    [rows, columns] = [1, 1];
+    break;
+  case 2:
+    [rows, columns] = [1, 2];
+    break;
+  case 3:
+  case 4:
+    [rows, columns] = [2, 2];
+    break;
+  case 5:
+  case 6:
+    [rows, columns] = [2, 3];
+    break;
 }
+
+const instanceWidth = Math.floor(screenWidth / columns);
+const instanceHeight = Math.floor(screenHeight / rows);
 
 // If a user is specified, make sure it's first in the list
 const user = process.env.ZED_IMPERSONATE;
 if (user) {
   users = [user].concat(users.filter((u) => u !== user));
 }
-
-const positions = [
-  "0,0",
-  `${instanceWidth},0`,
-  `0,${instanceHeight}`,
-  `${instanceWidth},${instanceHeight}`,
-];
 
 let buildArgs = ["build"];
 let zedBinary = "target/debug/Zed";
@@ -106,19 +115,33 @@ if (isReleaseMode) {
   zedBinary = "target/release/Zed";
 }
 
-execFileSync("cargo", buildArgs, { stdio: "inherit" });
+try {
+  execFileSync("cargo", buildArgs, { stdio: "inherit" });
+} catch (e) {
+  process.exit(0);
+}
+
 setTimeout(() => {
   for (let i = 0; i < instanceCount; i++) {
+    const row = Math.floor(i / columns);
+    const column = i % columns;
+    const position = [
+      column * instanceWidth,
+      row * instanceHeight + titleBarHeight,
+    ].join(",");
+    const size = [instanceWidth, instanceHeight].join(",");
+
     spawn(zedBinary, i == 0 ? args : [], {
       stdio: "inherit",
       env: {
         ZED_IMPERSONATE: users[i],
-        ZED_WINDOW_POSITION: positions[i],
+        ZED_WINDOW_POSITION: position,
         ZED_STATELESS: "1",
         ZED_ALWAYS_ACTIVE: "1",
-        ZED_SERVER_URL: "http://localhost:8080",
+        ZED_SERVER_URL: "http://localhost:3000",
+        ZED_RPC_URL: "http://localhost:8080/rpc",
         ZED_ADMIN_API_TOKEN: "secret",
-        ZED_WINDOW_SIZE: `${instanceWidth},${instanceHeight}`,
+        ZED_WINDOW_SIZE: size,
         PATH: process.env.PATH,
         RUST_LOG: process.env.RUST_LOG || "info",
       },
