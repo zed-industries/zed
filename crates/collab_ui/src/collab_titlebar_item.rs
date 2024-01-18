@@ -486,7 +486,7 @@ impl CollabTitlebarItem {
                 Avatar::new(user.avatar_uri.clone())
                     .grayscale(!is_present)
                     .border_color(if is_speaking {
-                        cx.theme().status().info_border
+                        cx.theme().status().info
                     } else {
                         // We draw the border in a transparent color rather to avoid
                         // the layout shift that would come with adding/removing the border.
