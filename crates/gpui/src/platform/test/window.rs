@@ -325,10 +325,4 @@ impl PlatformAtlas for TestAtlas {
 
         Ok(state.tiles[key].clone())
     }
-
-    fn clear(&self) {
-        let mut state = self.0.lock();
-        state.tiles = HashMap::default();
-        state.next_id = 0;
-    }
 }
