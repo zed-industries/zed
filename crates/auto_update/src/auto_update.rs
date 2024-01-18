@@ -93,7 +93,9 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(|_, action: &Check, cx| check(action, cx));
 
-        workspace.register_action(|_, action, cx| view_release_notes(action, cx));
+        workspace.register_action(|_, action, cx| {
+            view_release_notes(action, cx);
+        });
 
         // @nate - code to trigger update notification on launch
         // todo!("remove this when Nate is done")
@@ -140,23 +142,23 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
     }
 }
 
-pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
-    if let Some(auto_updater) = AutoUpdater::get(cx) {
+pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<()> {
+    let auto_updater = AutoUpdater::get(cx)?;
+    let release_channel = cx.try_global::<ReleaseChannel>()?;
+
+    if matches!(
+        release_channel,
+        ReleaseChannel::Stable | ReleaseChannel::Preview
+    ) {
         let auto_updater = auto_updater.read(cx);
         let server_url = &auto_updater.server_url;
+        let release_channel = release_channel.dev_name();
         let current_version = auto_updater.current_version;
-
-        if let Some(release_channel) = cx.try_global::<ReleaseChannel>() {
-            let channel = match release_channel {
-                ReleaseChannel::Preview => "preview",
-                ReleaseChannel::Stable => "stable",
-                _ => return,
-            };
-            cx.open_url(&format!(
-                "{server_url}/releases/{channel}/{current_version}"
-            ))
-        }
+        let url = format!("{server_url}/releases/{release_channel}/{current_version}");
+        cx.open_url(&url);
     }
+
+    None
 }
 
 pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
