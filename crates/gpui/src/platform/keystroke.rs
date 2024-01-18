@@ -19,7 +19,7 @@ impl Keystroke {
     // the ime_key or the key. On some non-US keyboards keys we use in our
     // bindings are behind option (for example `$` is typed `alt-ç` on a Czech keyboard),
     // and on some keyboards the IME handler converts a sequence of keys into a
-    // specific character (for example `"` is typed as `" space` on a brazillian keyboard).
+    // specific character (for example `"` is typed as `" space` on a brazilian keyboard).
     pub fn match_candidates(&self) -> SmallVec<[Keystroke; 2]> {
         let mut possibilities = SmallVec::new();
         match self.ime_key.as_ref() {

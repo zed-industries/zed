@@ -1,7 +1,7 @@
 mod connection_pool;
 
 use crate::{
-    auth,
+    auth::{self, Impersonator},
     db::{
         self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreateChannelResult,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
@@ -65,7 +65,7 @@ use std::{
 use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
-use tracing::{info_span, instrument, Instrument};
+use tracing::{field, info_span, instrument, Instrument};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -561,13 +561,17 @@ impl Server {
         connection: Connection,
         address: String,
         user: User,
+        impersonator: Option<User>,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         let user_id = user.id;
         let login = user.github_login;
-        let span = info_span!("handle connection", %user_id, %login, %address);
+        let span = info_span!("handle connection", %user_id, %login, %address, impersonator = field::Empty);
+        if let Some(impersonator) = impersonator {
+            span.record("impersonator", &impersonator.github_login);
+        }
         let mut teardown = self.teardown.subscribe();
         async move {
             let (connection_id, handle_io, mut incoming_rx) = this
@@ -839,6 +843,7 @@ pub async fn handle_websocket_request(
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(user): Extension<User>,
+    Extension(impersonator): Extension<Impersonator>,
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {
     if protocol_version != rpc::PROTOCOL_VERSION {
@@ -858,7 +863,14 @@ pub async fn handle_websocket_request(
         let connection = Connection::new(Box::pin(socket));
         async move {
             server
-                .handle_connection(connection, socket_address, user, None, Executor::Production)
+                .handle_connection(
+                    connection,
+                    socket_address,
+                    user,
+                    impersonator.0,
+                    None,
+                    Executor::Production,
+                )
                 .await
                 .log_err();
         }
@@ -932,11 +944,13 @@ async fn connection_lost(
     Ok(())
 }
 
+/// Acknowledges a ping from a client, used to keep the connection alive.
 async fn ping(_: proto::Ping, response: Response<proto::Ping>, _session: Session) -> Result<()> {
     response.send(proto::Ack {})?;
     Ok(())
 }
 
+/// Create a new room for calling (outside of channels)
 async fn create_room(
     _request: proto::CreateRoom,
     response: Response<proto::CreateRoom>,
@@ -984,6 +998,7 @@ async fn create_room(
     Ok(())
 }
 
+/// Join a room from an invitation. Equivalent to joining a channel if there is one.
 async fn join_room(
     request: proto::JoinRoom,
     response: Response<proto::JoinRoom>,
@@ -1058,6 +1073,7 @@ async fn join_room(
     Ok(())
 }
 
+/// Rejoin room is used to reconnect to a room after connection errors.
 async fn rejoin_room(
     request: proto::RejoinRoom,
     response: Response<proto::RejoinRoom>,
@@ -1249,6 +1265,7 @@ async fn rejoin_room(
     Ok(())
 }
 
+/// leave room disonnects from the room.
 async fn leave_room(
     _: proto::LeaveRoom,
     response: Response<proto::LeaveRoom>,
@@ -1259,6 +1276,7 @@ async fn leave_room(
     Ok(())
 }
 
+/// Update the permissions of someone else in the room.
 async fn set_room_participant_role(
     request: proto::SetRoomParticipantRole,
     response: Response<proto::SetRoomParticipantRole>,
@@ -1303,6 +1321,7 @@ async fn set_room_participant_role(
     Ok(())
 }
 
+/// Call someone else into the current room
 async fn call(
     request: proto::Call,
     response: Response<proto::Call>,
@@ -1371,6 +1390,7 @@ async fn call(
     Err(anyhow!("failed to ring user"))?
 }
 
+/// Cancel an outgoing call.
 async fn cancel_call(
     request: proto::CancelCall,
     response: Response<proto::CancelCall>,
@@ -1408,6 +1428,7 @@ async fn cancel_call(
     Ok(())
 }
 
+/// Decline an incoming call.
 async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<()> {
     let room_id = RoomId::from_proto(message.room_id);
     {
@@ -1439,6 +1460,7 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
     Ok(())
 }
 
+/// Update other participants in the room with your current location.
 async fn update_participant_location(
     request: proto::UpdateParticipantLocation,
     response: Response<proto::UpdateParticipantLocation>,
@@ -1459,6 +1481,7 @@ async fn update_participant_location(
     Ok(())
 }
 
+/// Share a project into the room.
 async fn share_project(
     request: proto::ShareProject,
     response: Response<proto::ShareProject>,
@@ -1481,6 +1504,7 @@ async fn share_project(
     Ok(())
 }
 
+/// Unshare a project from the room.
 async fn unshare_project(message: proto::UnshareProject, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(message.project_id);
 
@@ -1500,6 +1524,7 @@ async fn unshare_project(message: proto::UnshareProject, session: Session) -> Re
     Ok(())
 }
 
+/// Join someone elses shared project.
 async fn join_project(
     request: proto::JoinProject,
     response: Response<proto::JoinProject>,
@@ -1625,6 +1650,7 @@ async fn join_project(
     Ok(())
 }
 
+/// Leave someone elses shared project.
 async fn leave_project(request: proto::LeaveProject, session: Session) -> Result<()> {
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
@@ -1647,6 +1673,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     Ok(())
 }
 
+/// Update other participants with changes to the project
 async fn update_project(
     request: proto::UpdateProject,
     response: Response<proto::UpdateProject>,
@@ -1673,6 +1700,7 @@ async fn update_project(
     Ok(())
 }
 
+/// Update other participants with changes to the worktree
 async fn update_worktree(
     request: proto::UpdateWorktree,
     response: Response<proto::UpdateWorktree>,
@@ -1697,6 +1725,7 @@ async fn update_worktree(
     Ok(())
 }
 
+/// Update other participants with changes to the diagnostics
 async fn update_diagnostic_summary(
     message: proto::UpdateDiagnosticSummary,
     session: Session,
@@ -1720,6 +1749,7 @@ async fn update_diagnostic_summary(
     Ok(())
 }
 
+/// Update other participants with changes to the worktree settings
 async fn update_worktree_settings(
     message: proto::UpdateWorktreeSettings,
     session: Session,
@@ -1743,6 +1773,7 @@ async fn update_worktree_settings(
     Ok(())
 }
 
+/// Notify other participants that a  language server has started.
 async fn start_language_server(
     request: proto::StartLanguageServer,
     session: Session,
@@ -1765,6 +1796,7 @@ async fn start_language_server(
     Ok(())
 }
 
+/// Notify other participants that a language server has changed.
 async fn update_language_server(
     request: proto::UpdateLanguageServer,
     session: Session,
@@ -1787,6 +1819,8 @@ async fn update_language_server(
     Ok(())
 }
 
+/// forward a project request to the host. These requests should be read only
+/// as guests are allowed to send them.
 async fn forward_read_only_project_request<T>(
     request: T,
     response: Response<T>,
@@ -1809,6 +1843,8 @@ where
     Ok(())
 }
 
+/// forward a project request to the host. These requests are disallowed
+/// for guests.
 async fn forward_mutating_project_request<T>(
     request: T,
     response: Response<T>,
@@ -1831,6 +1867,7 @@ where
     Ok(())
 }
 
+/// Notify other participants that a new buffer has been created
 async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
     session: Session,
@@ -1850,6 +1887,8 @@ async fn create_buffer_for_peer(
     Ok(())
 }
 
+/// Notify other participants that a buffer has been updated. This is
+/// allowed for guests as long as the update is limited to selections.
 async fn update_buffer(
     request: proto::UpdateBuffer,
     response: Response<proto::UpdateBuffer>,
@@ -1909,6 +1948,7 @@ async fn update_buffer(
     Ok(())
 }
 
+/// Notify other participants that a project has been updated.
 async fn broadcast_project_message_from_host<T: EntityMessage<Entity = ShareProject>>(
     request: T,
     session: Session,
@@ -1932,6 +1972,7 @@ async fn broadcast_project_message_from_host<T: EntityMessage<Entity = ShareProj
     Ok(())
 }
 
+/// Start following another user in a call.
 async fn follow(
     request: proto::Follow,
     response: Response<proto::Follow>,
@@ -1969,6 +2010,7 @@ async fn follow(
     Ok(())
 }
 
+/// Stop following another user in a call.
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
     let project_id = request.project_id.map(ProjectId::from_proto);
@@ -2000,6 +2042,7 @@ async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     Ok(())
 }
 
+/// Notify everyone following you of your current location.
 async fn update_followers(request: proto::UpdateFollowers, session: Session) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
     let database = session.db.lock().await;
@@ -2036,6 +2079,7 @@ async fn update_followers(request: proto::UpdateFollowers, session: Session) -> 
     Ok(())
 }
 
+/// Get public data about users.
 async fn get_users(
     request: proto::GetUsers,
     response: Response<proto::GetUsers>,
@@ -2062,6 +2106,7 @@ async fn get_users(
     Ok(())
 }
 
+/// Search for users (to invite) buy Github login
 async fn fuzzy_search_users(
     request: proto::FuzzySearchUsers,
     response: Response<proto::FuzzySearchUsers>,
@@ -2092,6 +2137,7 @@ async fn fuzzy_search_users(
     Ok(())
 }
 
+/// Send a contact request to another user.
 async fn request_contact(
     request: proto::RequestContact,
     response: Response<proto::RequestContact>,
@@ -2138,6 +2184,7 @@ async fn request_contact(
     Ok(())
 }
 
+/// Accept or decline a contact request
 async fn respond_to_contact_request(
     request: proto::RespondToContactRequest,
     response: Response<proto::RespondToContactRequest>,
@@ -2195,6 +2242,7 @@ async fn respond_to_contact_request(
     Ok(())
 }
 
+/// Remove a contact.
 async fn remove_contact(
     request: proto::RemoveContact,
     response: Response<proto::RemoveContact>,
@@ -2245,6 +2293,7 @@ async fn remove_contact(
     Ok(())
 }
 
+/// Create a new channel.
 async fn create_channel(
     request: proto::CreateChannel,
     response: Response<proto::CreateChannel>,
@@ -2279,6 +2328,7 @@ async fn create_channel(
     Ok(())
 }
 
+/// Delete a channel
 async fn delete_channel(
     request: proto::DeleteChannel,
     response: Response<proto::DeleteChannel>,
@@ -2308,6 +2358,7 @@ async fn delete_channel(
     Ok(())
 }
 
+/// Invite someone to join a channel.
 async fn invite_channel_member(
     request: proto::InviteChannelMember,
     response: Response<proto::InviteChannelMember>,
@@ -2344,6 +2395,7 @@ async fn invite_channel_member(
     Ok(())
 }
 
+/// remove someone from a channel
 async fn remove_channel_member(
     request: proto::RemoveChannelMember,
     response: Response<proto::RemoveChannelMember>,
@@ -2385,6 +2437,7 @@ async fn remove_channel_member(
     Ok(())
 }
 
+/// Toggle the channel between public and private
 async fn set_channel_visibility(
     request: proto::SetChannelVisibility,
     response: Response<proto::SetChannelVisibility>,
@@ -2423,6 +2476,7 @@ async fn set_channel_visibility(
     Ok(())
 }
 
+/// Alter the role for a user in the channel
 async fn set_channel_member_role(
     request: proto::SetChannelMemberRole,
     response: Response<proto::SetChannelMemberRole>,
@@ -2470,6 +2524,7 @@ async fn set_channel_member_role(
     Ok(())
 }
 
+/// Change the name of a channel
 async fn rename_channel(
     request: proto::RenameChannel,
     response: Response<proto::RenameChannel>,
@@ -2503,6 +2558,7 @@ async fn rename_channel(
     Ok(())
 }
 
+/// Move a channel to a new parent.
 async fn move_channel(
     request: proto::MoveChannel,
     response: Response<proto::MoveChannel>,
@@ -2555,6 +2611,7 @@ async fn notify_channel_moved(result: Option<MoveChannelResult>, session: Sessio
     Ok(())
 }
 
+/// Get the list of channel members
 async fn get_channel_members(
     request: proto::GetChannelMembers,
     response: Response<proto::GetChannelMembers>,
@@ -2569,6 +2626,7 @@ async fn get_channel_members(
     Ok(())
 }
 
+/// Accept or decline a channel invitation.
 async fn respond_to_channel_invite(
     request: proto::RespondToChannelInvite,
     response: Response<proto::RespondToChannelInvite>,
@@ -2609,6 +2667,7 @@ async fn respond_to_channel_invite(
     Ok(())
 }
 
+/// Join the channels' room
 async fn join_channel(
     request: proto::JoinChannel,
     response: Response<proto::JoinChannel>,
@@ -2713,6 +2772,7 @@ async fn join_channel_internal(
     Ok(())
 }
 
+/// Start editing the channel notes
 async fn join_channel_buffer(
     request: proto::JoinChannelBuffer,
     response: Response<proto::JoinChannelBuffer>,
@@ -2744,6 +2804,7 @@ async fn join_channel_buffer(
     Ok(())
 }
 
+/// Edit the channel notes
 async fn update_channel_buffer(
     request: proto::UpdateChannelBuffer,
     session: Session,
@@ -2790,6 +2851,7 @@ async fn update_channel_buffer(
     Ok(())
 }
 
+/// Rejoin the channel notes after a connection blip
 async fn rejoin_channel_buffers(
     request: proto::RejoinChannelBuffers,
     response: Response<proto::RejoinChannelBuffers>,
@@ -2824,6 +2886,7 @@ async fn rejoin_channel_buffers(
     Ok(())
 }
 
+/// Stop editing the channel notes
 async fn leave_channel_buffer(
     request: proto::LeaveChannelBuffer,
     response: Response<proto::LeaveChannelBuffer>,
@@ -2885,6 +2948,7 @@ fn send_notifications(
     }
 }
 
+/// Send a message to the channel
 async fn send_channel_message(
     request: proto::SendChannelMessage,
     response: Response<proto::SendChannelMessage>,
@@ -2973,6 +3037,7 @@ async fn send_channel_message(
     Ok(())
 }
 
+/// Delete a channel message
 async fn remove_channel_message(
     request: proto::RemoveChannelMessage,
     response: Response<proto::RemoveChannelMessage>,
@@ -2992,6 +3057,7 @@ async fn remove_channel_message(
     Ok(())
 }
 
+/// Mark a channel message as read
 async fn acknowledge_channel_message(
     request: proto::AckChannelMessage,
     session: Session,
@@ -3011,6 +3077,7 @@ async fn acknowledge_channel_message(
     Ok(())
 }
 
+/// Mark a buffer version as synced
 async fn acknowledge_buffer_version(
     request: proto::AckBufferOperation,
     session: Session,
@@ -3029,6 +3096,7 @@ async fn acknowledge_buffer_version(
     Ok(())
 }
 
+/// Start receiving chat updates for a channel
 async fn join_channel_chat(
     request: proto::JoinChannelChat,
     response: Response<proto::JoinChannelChat>,
@@ -3049,6 +3117,7 @@ async fn join_channel_chat(
     Ok(())
 }
 
+/// Stop receiving chat updates for a channel
 async fn leave_channel_chat(request: proto::LeaveChannelChat, session: Session) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
     session
@@ -3059,6 +3128,7 @@ async fn leave_channel_chat(request: proto::LeaveChannelChat, session: Session) 
     Ok(())
 }
 
+/// Retrieve the chat history for a channel
 async fn get_channel_messages(
     request: proto::GetChannelMessages,
     response: Response<proto::GetChannelMessages>,
@@ -3082,6 +3152,7 @@ async fn get_channel_messages(
     Ok(())
 }
 
+/// Retrieve specific chat messages
 async fn get_channel_messages_by_id(
     request: proto::GetChannelMessagesById,
     response: Response<proto::GetChannelMessagesById>,
@@ -3104,6 +3175,7 @@ async fn get_channel_messages_by_id(
     Ok(())
 }
 
+/// Retrieve the current users notifications
 async fn get_notifications(
     request: proto::GetNotifications,
     response: Response<proto::GetNotifications>,
@@ -3127,6 +3199,7 @@ async fn get_notifications(
     Ok(())
 }
 
+/// Mark notifications as read
 async fn mark_notification_as_read(
     request: proto::MarkNotificationRead,
     response: Response<proto::MarkNotificationRead>,
@@ -3148,6 +3221,7 @@ async fn mark_notification_as_read(
     Ok(())
 }
 
+/// Get the current users information
 async fn get_private_user_info(
     _request: proto::GetPrivateUserInfo,
     response: Response<proto::GetPrivateUserInfo>,

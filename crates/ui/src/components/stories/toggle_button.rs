@@ -9,7 +9,7 @@ impl Render for ToggleButtonStory {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         StoryContainer::new(
             "Toggle Button",
-            "crates/ui2/src/components/stories/toggle_button.rs",
+            "crates/ui/src/components/stories/toggle_button.rs",
         )
         .child(
             StorySection::new().child(

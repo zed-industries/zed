@@ -1,8 +1,14 @@
 use crate::{
-    div, point, Element, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
+    point, seal::Sealed, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, ViewContext,
 };
 use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Deref, path::PathBuf};
+use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
+
+pub trait InputEvent: Sealed + 'static {
+    fn to_platform_input(self) -> PlatformInput;
+}
+pub trait KeyEvent: InputEvent {}
+pub trait MouseEvent: InputEvent {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -10,15 +16,39 @@ pub struct KeyDownEvent {
     pub is_held: bool,
 }
 
+impl Sealed for KeyDownEvent {}
+impl InputEvent for KeyDownEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::KeyDown(self)
+    }
+}
+impl KeyEvent for KeyDownEvent {}
+
 #[derive(Clone, Debug)]
 pub struct KeyUpEvent {
     pub keystroke: Keystroke,
 }
 
+impl Sealed for KeyUpEvent {}
+impl InputEvent for KeyUpEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::KeyUp(self)
+    }
+}
+impl KeyEvent for KeyUpEvent {}
+
 #[derive(Clone, Debug, Default)]
 pub struct ModifiersChangedEvent {
     pub modifiers: Modifiers,
 }
+
+impl Sealed for ModifiersChangedEvent {}
+impl InputEvent for ModifiersChangedEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::ModifiersChanged(self)
+    }
+}
+impl KeyEvent for ModifiersChangedEvent {}
 
 impl Deref for ModifiersChangedEvent {
     type Target = Modifiers;
@@ -30,9 +60,10 @@ impl Deref for ModifiersChangedEvent {
 
 /// The phase of a touch motion event.
 /// Based on the winit enum of the same name.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub enum TouchPhase {
     Started,
+    #[default]
     Moved,
     Ended,
 }
@@ -45,6 +76,14 @@ pub struct MouseDownEvent {
     pub click_count: usize,
 }
 
+impl Sealed for MouseDownEvent {}
+impl InputEvent for MouseDownEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseDown(self)
+    }
+}
+impl MouseEvent for MouseDownEvent {}
+
 #[derive(Clone, Debug, Default)]
 pub struct MouseUpEvent {
     pub button: MouseButton,
@@ -53,36 +92,18 @@ pub struct MouseUpEvent {
     pub click_count: usize,
 }
 
+impl Sealed for MouseUpEvent {}
+impl InputEvent for MouseUpEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseUp(self)
+    }
+}
+impl MouseEvent for MouseUpEvent {}
+
 #[derive(Clone, Debug, Default)]
 pub struct ClickEvent {
     pub down: MouseDownEvent,
     pub up: MouseUpEvent,
-}
-
-pub struct Drag<S, R, V, E>
-where
-    R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    V: 'static,
-    E: IntoElement,
-{
-    pub state: S,
-    pub render_drag_handle: R,
-    view_element_types: PhantomData<(V, E)>,
-}
-
-impl<S, R, V, E> Drag<S, R, V, E>
-where
-    R: Fn(&mut V, &mut ViewContext<V>) -> E,
-    V: 'static,
-    E: Element,
-{
-    pub fn new(state: S, render_drag_handle: R) -> Self {
-        Drag {
-            state,
-            render_drag_handle,
-            view_element_types: Default::default(),
-        }
-    }
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -130,19 +151,35 @@ pub struct MouseMoveEvent {
     pub modifiers: Modifiers,
 }
 
+impl Sealed for MouseMoveEvent {}
+impl InputEvent for MouseMoveEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseMove(self)
+    }
+}
+impl MouseEvent for MouseMoveEvent {}
+
 impl MouseMoveEvent {
     pub fn dragging(&self) -> bool {
         self.pressed_button == Some(MouseButton::Left)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
     pub position: Point<Pixels>,
     pub delta: ScrollDelta,
     pub modifiers: Modifiers,
     pub touch_phase: TouchPhase,
 }
+
+impl Sealed for ScrollWheelEvent {}
+impl InputEvent for ScrollWheelEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::ScrollWheel(self)
+    }
+}
+impl MouseEvent for ScrollWheelEvent {}
 
 impl Deref for ScrollWheelEvent {
     type Target = Modifiers;
@@ -201,6 +238,14 @@ pub struct MouseExitEvent {
     pub modifiers: Modifiers,
 }
 
+impl Sealed for MouseExitEvent {}
+impl InputEvent for MouseExitEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseExited(self)
+    }
+}
+impl MouseEvent for MouseExitEvent {}
+
 impl Deref for MouseExitEvent {
     type Target = Modifiers;
 
@@ -220,7 +265,7 @@ impl ExternalPaths {
 
 impl Render for ExternalPaths {
     fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        div() // Intentionally left empty because the platform will render icons for the dragged files
+        () // Intentionally left empty because the platform will render icons for the dragged files
     }
 }
 
@@ -239,8 +284,16 @@ pub enum FileDropEvent {
     Exited,
 }
 
+impl Sealed for FileDropEvent {}
+impl InputEvent for FileDropEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::FileDrop(self)
+    }
+}
+impl MouseEvent for FileDropEvent {}
+
 #[derive(Clone, Debug)]
-pub enum InputEvent {
+pub enum PlatformInput {
     KeyDown(KeyDownEvent),
     KeyUp(KeyUpEvent),
     ModifiersChanged(ModifiersChangedEvent),
@@ -252,19 +305,19 @@ pub enum InputEvent {
     FileDrop(FileDropEvent),
 }
 
-impl InputEvent {
+impl PlatformInput {
     pub fn position(&self) -> Option<Point<Pixels>> {
         match self {
-            InputEvent::KeyDown { .. } => None,
-            InputEvent::KeyUp { .. } => None,
-            InputEvent::ModifiersChanged { .. } => None,
-            InputEvent::MouseDown(event) => Some(event.position),
-            InputEvent::MouseUp(event) => Some(event.position),
-            InputEvent::MouseMove(event) => Some(event.position),
-            InputEvent::MouseExited(event) => Some(event.position),
-            InputEvent::ScrollWheel(event) => Some(event.position),
-            InputEvent::FileDrop(FileDropEvent::Exited) => None,
-            InputEvent::FileDrop(
+            PlatformInput::KeyDown { .. } => None,
+            PlatformInput::KeyUp { .. } => None,
+            PlatformInput::ModifiersChanged { .. } => None,
+            PlatformInput::MouseDown(event) => Some(event.position),
+            PlatformInput::MouseUp(event) => Some(event.position),
+            PlatformInput::MouseMove(event) => Some(event.position),
+            PlatformInput::MouseExited(event) => Some(event.position),
+            PlatformInput::ScrollWheel(event) => Some(event.position),
+            PlatformInput::FileDrop(FileDropEvent::Exited) => None,
+            PlatformInput::FileDrop(
                 FileDropEvent::Entered { position, .. }
                 | FileDropEvent::Pending { position, .. }
                 | FileDropEvent::Submit { position, .. },
@@ -274,29 +327,29 @@ impl InputEvent {
 
     pub fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
-            InputEvent::KeyDown { .. } => None,
-            InputEvent::KeyUp { .. } => None,
-            InputEvent::ModifiersChanged { .. } => None,
-            InputEvent::MouseDown(event) => Some(event),
-            InputEvent::MouseUp(event) => Some(event),
-            InputEvent::MouseMove(event) => Some(event),
-            InputEvent::MouseExited(event) => Some(event),
-            InputEvent::ScrollWheel(event) => Some(event),
-            InputEvent::FileDrop(event) => Some(event),
+            PlatformInput::KeyDown { .. } => None,
+            PlatformInput::KeyUp { .. } => None,
+            PlatformInput::ModifiersChanged { .. } => None,
+            PlatformInput::MouseDown(event) => Some(event),
+            PlatformInput::MouseUp(event) => Some(event),
+            PlatformInput::MouseMove(event) => Some(event),
+            PlatformInput::MouseExited(event) => Some(event),
+            PlatformInput::ScrollWheel(event) => Some(event),
+            PlatformInput::FileDrop(event) => Some(event),
         }
     }
 
     pub fn keyboard_event(&self) -> Option<&dyn Any> {
         match self {
-            InputEvent::KeyDown(event) => Some(event),
-            InputEvent::KeyUp(event) => Some(event),
-            InputEvent::ModifiersChanged(event) => Some(event),
-            InputEvent::MouseDown(_) => None,
-            InputEvent::MouseUp(_) => None,
-            InputEvent::MouseMove(_) => None,
-            InputEvent::MouseExited(_) => None,
-            InputEvent::ScrollWheel(_) => None,
-            InputEvent::FileDrop(_) => None,
+            PlatformInput::KeyDown(event) => Some(event),
+            PlatformInput::KeyUp(event) => Some(event),
+            PlatformInput::ModifiersChanged(event) => Some(event),
+            PlatformInput::MouseDown(_) => None,
+            PlatformInput::MouseUp(_) => None,
+            PlatformInput::MouseMove(_) => None,
+            PlatformInput::MouseExited(_) => None,
+            PlatformInput::ScrollWheel(_) => None,
+            PlatformInput::FileDrop(_) => None,
         }
     }
 }

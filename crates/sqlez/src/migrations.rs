@@ -191,7 +191,7 @@ mod test {
     fn migrations_dont_rerun() {
         let connection = Connection::open_memory(Some("migrations_dont_rerun"));
 
-        // Create migration which clears a tabl
+        // Create migration which clears a table
 
         // Manually create the table for that migration with a row
         connection

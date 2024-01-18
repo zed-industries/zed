@@ -1,0 +1,4 @@
+excluded_rules = [
+    "prefer-big-int",
+    "prefer-bigint-over-int",
+]

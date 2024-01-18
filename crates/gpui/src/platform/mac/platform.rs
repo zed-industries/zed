@@ -1,8 +1,8 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, InputEvent, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker,
-    MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
+    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
     PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
 };
 use anyhow::anyhow;
@@ -153,7 +153,7 @@ pub struct MacPlatformState {
     resign_active: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(InputEvent) -> bool>>,
+    event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -637,7 +637,7 @@ impl Platform for MacPlatform {
         self.0.lock().reopen = Some(callback);
     }
 
-    fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {
+    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
         self.0.lock().event = Some(callback);
     }
 
@@ -976,7 +976,7 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
 
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
-        if let Some(event) = InputEvent::from_native(native_event, None) {
+        if let Some(event) = PlatformInput::from_native(native_event, None) {
             let platform = get_mac_platform(this);
             let mut lock = platform.0.lock();
             if let Some(mut callback) = lock.event.take() {

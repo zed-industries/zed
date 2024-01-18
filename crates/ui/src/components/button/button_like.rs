@@ -111,7 +111,7 @@ pub enum ButtonStyle {
     #[default]
     Subtle,
 
-    /// Used for buttons that only change forground color on hover and active states.
+    /// Used for buttons that only change foreground color on hover and active states.
     ///
     /// TODO: Better docs for this.
     Transparent,
@@ -293,7 +293,7 @@ impl ButtonSize {
 /// This is also used to build the prebuilt buttons.
 #[derive(IntoElement)]
 pub struct ButtonLike {
-    base: Div,
+    pub base: Div,
     id: ElementId,
     pub(super) style: ButtonStyle,
     pub(super) disabled: bool,

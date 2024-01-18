@@ -2,9 +2,11 @@ use super::*;
 use sea_orm::sea_query::Query;
 
 impl Database {
+    /// Creates a new access token for the given user.
     pub async fn create_access_token(
         &self,
         user_id: UserId,
+        impersonated_user_id: Option<UserId>,
         access_token_hash: &str,
         max_access_token_count: usize,
     ) -> Result<AccessTokenId> {
@@ -13,6 +15,7 @@ impl Database {
 
             let token = access_token::ActiveModel {
                 user_id: ActiveValue::set(user_id),
+                impersonated_user_id: ActiveValue::set(impersonated_user_id),
                 hash: ActiveValue::set(access_token_hash.into()),
                 ..Default::default()
             }
@@ -39,6 +42,7 @@ impl Database {
         .await
     }
 
+    /// Retrieves the access token with the given ID.
     pub async fn get_access_token(
         &self,
         access_token_id: AccessTokenId,

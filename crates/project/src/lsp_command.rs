@@ -2253,7 +2253,7 @@ impl LspCommand for InlayHints {
             language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
         // `typescript-language-server` adds padding to the left for type hints, turning
         // `const foo: boolean` into `const foo : boolean` which looks odd.
-        // `rust-analyzer` does not have the padding for this case, and we have to accomodate both.
+        // `rust-analyzer` does not have the padding for this case, and we have to accommodate both.
         //
         // We could trim the whole string, but being pessimistic on par with the situation above,
         // there might be a hint with multiple whitespaces at the end(s) which we need to display properly.

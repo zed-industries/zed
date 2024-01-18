@@ -2,6 +2,7 @@ use super::*;
 use rpc::Notification;
 
 impl Database {
+    /// Initializes the different kinds of notifications by upserting records for them.
     pub async fn initialize_notification_kinds(&mut self) -> Result<()> {
         notification_kind::Entity::insert_many(Notification::all_variant_names().iter().map(
             |kind| notification_kind::ActiveModel {
@@ -28,6 +29,7 @@ impl Database {
         Ok(())
     }
 
+    /// Returns the notifications for the given recipient.
     pub async fn get_notifications(
         &self,
         recipient_id: UserId,
@@ -140,6 +142,7 @@ impl Database {
             .await
     }
 
+    /// Marks the given notification as read.
     pub async fn mark_notification_as_read(
         &self,
         recipient_id: UserId,
@@ -150,6 +153,7 @@ impl Database {
             .await
     }
 
+    /// Marks the notification with the given ID as read.
     pub async fn mark_notification_as_read_by_id(
         &self,
         recipient_id: UserId,

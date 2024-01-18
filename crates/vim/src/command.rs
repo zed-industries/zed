@@ -1,5 +1,5 @@
 use command_palette::CommandInterceptResult;
-use editor::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
+use editor::actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
 use gpui::{impl_actions, Action, AppContext, ViewContext};
 use serde_derive::Deserialize;
 use workspace::{SaveIntent, Workspace};
@@ -204,25 +204,31 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
 
         // quickfix / loclist (merged together for now)
         "cl" | "cli" | "clis" | "clist" => ("clist", diagnostics::Deploy.boxed_clone()),
-        "cc" => ("cc", editor::Hover.boxed_clone()),
-        "ll" => ("ll", editor::Hover.boxed_clone()),
-        "cn" | "cne" | "cnex" | "cnext" => ("cnext", editor::GoToDiagnostic.boxed_clone()),
-        "lne" | "lnex" | "lnext" => ("cnext", editor::GoToDiagnostic.boxed_clone()),
+        "cc" => ("cc", editor::actions::Hover.boxed_clone()),
+        "ll" => ("ll", editor::actions::Hover.boxed_clone()),
+        "cn" | "cne" | "cnex" | "cnext" => ("cnext", editor::actions::GoToDiagnostic.boxed_clone()),
+        "lne" | "lnex" | "lnext" => ("cnext", editor::actions::GoToDiagnostic.boxed_clone()),
 
-        "cpr" | "cpre" | "cprev" | "cprevi" | "cprevio" | "cpreviou" | "cprevious" => {
-            ("cprevious", editor::GoToPrevDiagnostic.boxed_clone())
+        "cpr" | "cpre" | "cprev" | "cprevi" | "cprevio" | "cpreviou" | "cprevious" => (
+            "cprevious",
+            editor::actions::GoToPrevDiagnostic.boxed_clone(),
+        ),
+        "cN" | "cNe" | "cNex" | "cNext" => {
+            ("cNext", editor::actions::GoToPrevDiagnostic.boxed_clone())
         }
-        "cN" | "cNe" | "cNex" | "cNext" => ("cNext", editor::GoToPrevDiagnostic.boxed_clone()),
-        "lp" | "lpr" | "lpre" | "lprev" | "lprevi" | "lprevio" | "lpreviou" | "lprevious" => {
-            ("lprevious", editor::GoToPrevDiagnostic.boxed_clone())
+        "lp" | "lpr" | "lpre" | "lprev" | "lprevi" | "lprevio" | "lpreviou" | "lprevious" => (
+            "lprevious",
+            editor::actions::GoToPrevDiagnostic.boxed_clone(),
+        ),
+        "lN" | "lNe" | "lNex" | "lNext" => {
+            ("lNext", editor::actions::GoToPrevDiagnostic.boxed_clone())
         }
-        "lN" | "lNe" | "lNex" | "lNext" => ("lNext", editor::GoToPrevDiagnostic.boxed_clone()),
 
         // modify the buffer (should accept [range])
         "j" | "jo" | "joi" | "join" => ("join", JoinLines.boxed_clone()),
         "d" | "de" | "del" | "dele" | "delet" | "delete" | "dl" | "dell" | "delel" | "deletl"
         | "deletel" | "dp" | "dep" | "delp" | "delep" | "deletp" | "deletep" => {
-            ("delete", editor::DeleteLine.boxed_clone())
+            ("delete", editor::actions::DeleteLine.boxed_clone())
         }
         "sor" | "sor " | "sort" | "sort " => ("sort", SortLinesCaseSensitive.boxed_clone()),
         "sor i" | "sort i" => ("sort i", SortLinesCaseInsensitive.boxed_clone()),

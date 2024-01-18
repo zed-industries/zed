@@ -67,7 +67,7 @@ fn main() {
     }
 
     log::info!("========== starting zed ==========");
-    let app = App::production(Arc::new(Assets));
+    let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -102,13 +102,15 @@ fn main() {
     let open_listener = listener.clone();
     app.on_open_urls(move |urls, _| open_listener.open_urls(&urls));
     app.on_reopen(move |cx| {
-        if cx.has_global::<Weak<AppState>>() {
-            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-                workspace::open_new(&app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
-                })
-                .detach();
-            }
+        if let Some(app_state) = cx
+            .try_global::<Weak<AppState>>()
+            .map(|app_state| app_state.upgrade())
+            .flatten()
+        {
+            workspace::open_new(&app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
         }
     });
 

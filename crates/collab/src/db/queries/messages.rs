@@ -4,6 +4,7 @@ use sea_orm::TryInsertResult;
 use time::OffsetDateTime;
 
 impl Database {
+    /// Inserts a record representing a user joining the chat for a given channel.
     pub async fn join_channel_chat(
         &self,
         channel_id: ChannelId,
@@ -28,6 +29,7 @@ impl Database {
         .await
     }
 
+    /// Removes `channel_chat_participant` records associated with the given connection ID.
     pub async fn channel_chat_connection_lost(
         &self,
         connection_id: ConnectionId,
@@ -47,6 +49,8 @@ impl Database {
         Ok(())
     }
 
+    /// Removes `channel_chat_participant` records associated with the given user ID so they
+    /// will no longer get chat notifications.
     pub async fn leave_channel_chat(
         &self,
         channel_id: ChannelId,
@@ -72,6 +76,9 @@ impl Database {
         .await
     }
 
+    /// Retrieves the messages in the specified channel.
+    ///
+    /// Use `before_message_id` to paginate through the channel's messages.
     pub async fn get_channel_messages(
         &self,
         channel_id: ChannelId,
@@ -103,6 +110,7 @@ impl Database {
         .await
     }
 
+    /// Returns the channel messages with the given IDs.
     pub async fn get_channel_messages_by_id(
         &self,
         user_id: UserId,
@@ -190,6 +198,7 @@ impl Database {
         Ok(messages)
     }
 
+    /// Creates a new channel message.
     pub async fn create_channel_message(
         &self,
         channel_id: ChannelId,
@@ -376,6 +385,7 @@ impl Database {
         Ok(())
     }
 
+    /// Returns the unseen messages for the given user in the specified channels.
     pub async fn unseen_channel_messages(
         &self,
         user_id: UserId,
@@ -449,6 +459,7 @@ impl Database {
         Ok(changes)
     }
 
+    /// Removes the channel message with the given ID.
     pub async fn remove_channel_message(
         &self,
         channel_id: ChannelId,

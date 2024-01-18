@@ -111,7 +111,7 @@ impl ChannelModal {
         .detach();
     }
 
-    fn set_channel_visiblity(&mut self, selection: &Selection, cx: &mut ViewContext<Self>) {
+    fn set_channel_visibility(&mut self, selection: &Selection, cx: &mut ViewContext<Self>) {
         self.channel_store.update(cx, |channel_store, cx| {
             channel_store
                 .set_channel_visibility(
@@ -189,7 +189,7 @@ impl Render for ChannelModal {
                                                 ui::Selection::Unselected
                                             },
                                         )
-                                        .on_click(cx.listener(Self::set_channel_visiblity)),
+                                        .on_click(cx.listener(Self::set_channel_visibility)),
                                     )
                                     .child(Label::new("Public").size(LabelSize::Small)),
                             )

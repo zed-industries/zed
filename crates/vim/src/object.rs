@@ -1,13 +1,12 @@
 use std::ops::Range;
 
 use editor::{
-    char_kind,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
-    Bias, CharKind, DisplayPoint,
+    Bias, DisplayPoint,
 };
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
-use language::Selection;
+use language::{char_kind, CharKind, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
 

@@ -339,6 +339,7 @@ fn show_hover(
 
                 this.hover_state.info_popover = hover_popover;
                 cx.notify();
+                cx.refresh();
             })?;
 
             Ok::<_, anyhow::Error>(())

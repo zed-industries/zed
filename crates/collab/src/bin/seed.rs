@@ -1,7 +1,11 @@
-use collab::{db, executor::Executor};
+use collab::{
+    db::{self, NewUserParams},
+    env::load_dotenv,
+    executor::Executor,
+};
 use db::{ConnectOptions, Database};
 use serde::{de::DeserializeOwned, Deserialize};
-use std::fmt::Write;
+use std::{fmt::Write, fs};
 
 #[derive(Debug, Deserialize)]
 struct GitHubUser {
@@ -12,90 +16,75 @@ struct GitHubUser {
 
 #[tokio::main]
 async fn main() {
+    load_dotenv().expect("failed to load .env.toml file");
+
+    let mut admin_logins =
+        load_admins("./.admins.default.json").expect("failed to load default admins file");
+    if let Ok(other_admins) = load_admins("./.admins.json") {
+        admin_logins.extend(other_admins);
+    }
+
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL env var");
     let db = Database::new(ConnectOptions::new(database_url), Executor::Production)
         .await
         .expect("failed to connect to postgres database");
-    let github_token = std::env::var("GITHUB_TOKEN").expect("missing GITHUB_TOKEN env var");
     let client = reqwest::Client::new();
 
-    let mut current_user =
-        fetch_github::<GitHubUser>(&client, &github_token, "https://api.github.com/user").await;
-    current_user
-        .email
-        .get_or_insert_with(|| "placeholder@example.com".to_string());
-    let staff_users = fetch_github::<Vec<GitHubUser>>(
-        &client,
-        &github_token,
-        "https://api.github.com/orgs/zed-industries/teams/staff/members",
-    )
-    .await;
+    // Create admin users for all of the users in `.admins.toml` or `.admins.default.toml`.
+    for admin_login in admin_logins {
+        let user = fetch_github::<GitHubUser>(
+            &client,
+            &format!("https://api.github.com/users/{admin_login}"),
+        )
+        .await;
+        db.create_user(
+            &user.email.unwrap_or(format!("{admin_login}@example.com")),
+            true,
+            NewUserParams {
+                github_login: user.login,
+                github_user_id: user.id,
+            },
+        )
+        .await
+        .expect("failed to create admin user");
+    }
 
-    let mut zed_users = Vec::new();
-    zed_users.push((current_user, true));
-    zed_users.extend(staff_users.into_iter().map(|user| (user, true)));
-
-    let user_count = db
+    // Fetch 100 other random users from GitHub and insert them into the database.
+    let mut user_count = db
         .get_all_users(0, 200)
         .await
         .expect("failed to load users from db")
         .len();
-    if user_count < 100 {
-        let mut last_user_id = None;
-        for _ in 0..10 {
-            let mut uri = "https://api.github.com/users?per_page=100".to_string();
-            if let Some(last_user_id) = last_user_id {
-                write!(&mut uri, "&since={}", last_user_id).unwrap();
-            }
-            let users = fetch_github::<Vec<GitHubUser>>(&client, &github_token, &uri).await;
-            if let Some(last_user) = users.last() {
-                last_user_id = Some(last_user.id);
-                zed_users.extend(users.into_iter().map(|user| (user, false)));
-            } else {
-                break;
-            }
+    let mut last_user_id = None;
+    while user_count < 100 {
+        let mut uri = "https://api.github.com/users?per_page=100".to_string();
+        if let Some(last_user_id) = last_user_id {
+            write!(&mut uri, "&since={}", last_user_id).unwrap();
         }
-    }
+        let users = fetch_github::<Vec<GitHubUser>>(&client, &uri).await;
 
-    for (github_user, admin) in zed_users {
-        if db
-            .get_user_by_github_login(&github_user.login)
+        for github_user in users {
+            last_user_id = Some(github_user.id);
+            user_count += 1;
+            db.get_or_create_user_by_github_account(
+                &github_user.login,
+                Some(github_user.id),
+                github_user.email.as_deref(),
+            )
             .await
-            .expect("failed to fetch user")
-            .is_none()
-        {
-            if admin {
-                db.create_user(
-                    &format!("{}@zed.dev", github_user.login),
-                    admin,
-                    db::NewUserParams {
-                        github_login: github_user.login,
-                        github_user_id: github_user.id,
-                    },
-                )
-                .await
-                .expect("failed to insert user");
-            } else {
-                db.get_or_create_user_by_github_account(
-                    &github_user.login,
-                    Some(github_user.id),
-                    github_user.email.as_deref(),
-                )
-                .await
-                .expect("failed to insert user");
-            }
+            .expect("failed to insert user");
         }
     }
 }
 
-async fn fetch_github<T: DeserializeOwned>(
-    client: &reqwest::Client,
-    access_token: &str,
-    url: &str,
-) -> T {
+fn load_admins(path: &str) -> anyhow::Result<Vec<String>> {
+    let file_content = fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&file_content)?)
+}
+
+async fn fetch_github<T: DeserializeOwned>(client: &reqwest::Client, url: &str) -> T {
     let response = client
         .get(url)
-        .bearer_auth(&access_token)
         .header("user-agent", "zed")
         .send()
         .await

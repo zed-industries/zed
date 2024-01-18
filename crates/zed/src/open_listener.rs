@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
-use editor::scroll::autoscroll::Autoscroll;
+use editor::scroll::Autoscroll;
 use editor::Editor;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};

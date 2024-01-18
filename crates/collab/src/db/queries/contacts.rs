@@ -1,6 +1,7 @@
 use super::*;
 
 impl Database {
+    /// Retrieves the contacts for the user with the given ID.
     pub async fn get_contacts(&self, user_id: UserId) -> Result<Vec<Contact>> {
         #[derive(Debug, FromQueryResult)]
         struct ContactWithUserBusyStatuses {
@@ -86,6 +87,7 @@ impl Database {
         .await
     }
 
+    /// Returns whether the given user is a busy (on a call).
     pub async fn is_user_busy(&self, user_id: UserId) -> Result<bool> {
         self.transaction(|tx| async move {
             let participant = room_participant::Entity::find()
@@ -97,6 +99,9 @@ impl Database {
         .await
     }
 
+    /// Returns whether the user with `user_id_1` has the user with `user_id_2` as a contact.
+    ///
+    /// In order for this to return `true`, `user_id_2` must have an accepted invite from `user_id_1`.
     pub async fn has_contact(&self, user_id_1: UserId, user_id_2: UserId) -> Result<bool> {
         self.transaction(|tx| async move {
             let (id_a, id_b) = if user_id_1 < user_id_2 {
@@ -119,6 +124,7 @@ impl Database {
         .await
     }
 
+    /// Invite the user with `receiver_id` to be a contact of the user with `sender_id`.
     pub async fn send_contact_request(
         &self,
         sender_id: UserId,
@@ -231,6 +237,7 @@ impl Database {
         .await
     }
 
+    /// Dismisses a contact notification for the given user.
     pub async fn dismiss_contact_notification(
         &self,
         user_id: UserId,
@@ -272,6 +279,7 @@ impl Database {
         .await
     }
 
+    /// Accept or decline a contact request
     pub async fn respond_to_contact_request(
         &self,
         responder_id: UserId,

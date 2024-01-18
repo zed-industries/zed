@@ -1,5 +1,5 @@
 use collections::HashMap;
-use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
+use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,

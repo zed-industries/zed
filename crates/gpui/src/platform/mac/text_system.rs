@@ -85,9 +85,22 @@ impl PlatformTextSystem for MacTextSystem {
         };
         let mut names = BTreeSet::new();
         for descriptor in descriptors.into_iter() {
-            names.insert(descriptor.display_name());
+            names.insert(descriptor.font_name());
+            names.insert(descriptor.family_name());
+            names.insert(descriptor.style_name());
+        }
+        if let Ok(fonts_in_memory) = self.0.read().memory_source.all_families() {
+            names.extend(fonts_in_memory);
         }
         names.into_iter().collect()
+    }
+
+    fn all_font_families(&self) -> Vec<String> {
+        self.0
+            .read()
+            .system_source
+            .all_families()
+            .expect("core text should never return an error")
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {

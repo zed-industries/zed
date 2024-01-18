@@ -1,4 +1,4 @@
-use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
+use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
     actions, canvas, div, rems, uniform_list, AnyElement, AppContext, AvailableSpace, Div,
     EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,

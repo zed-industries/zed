@@ -51,6 +51,7 @@ impl ContextMenu {
             let _on_blur_subscription = cx.on_blur(&focus_handle, |this: &mut ContextMenu, cx| {
                 this.cancel(&menu::Cancel, cx)
             });
+            cx.refresh();
             f(
                 Self {
                     items: Default::default(),
@@ -302,6 +303,7 @@ impl Render for ContextMenu {
                                         .w_full()
                                         .justify_between()
                                         .child(label_element)
+                                        .debug_selector(|| format!("MENU_ITEM-{}", label))
                                         .children(action.as_ref().and_then(|action| {
                                             KeyBinding::for_action(&**action, cx)
                                                 .map(|binding| div().ml_1().child(binding))

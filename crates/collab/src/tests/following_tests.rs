@@ -249,7 +249,7 @@ async fn test_basic_following(
     executor.run_until_parked();
     cx_c.cx.update(|_| {});
 
-    weak_workspace_c.assert_dropped();
+    weak_workspace_c.assert_released();
 
     // Clients A and B see that client B is following A, and client C is not present in the followers.
     executor.run_until_parked();
@@ -1229,7 +1229,9 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     });
 
     // When client B moves, it automatically stops following client A.
-    editor_b2.update(cx_b, |editor, cx| editor.move_right(&editor::MoveRight, cx));
+    editor_b2.update(cx_b, |editor, cx| {
+        editor.move_right(&editor::actions::MoveRight, cx)
+    });
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
         None
@@ -1735,6 +1737,11 @@ async fn test_following_into_excluded_file(
         vec![18..17]
     );
 
+    editor_for_excluded_a.update(cx_a, |editor, cx| {
+        editor.select_right(&Default::default(), cx);
+    });
+    executor.run_until_parked();
+
     // Changes from B to the excluded file are replicated in A's editor
     editor_for_excluded_b.update(cx_b, |editor, cx| {
         editor.handle_input("\nCo-Authored-By: B <b@b.b>", cx);
@@ -1743,7 +1750,7 @@ async fn test_following_into_excluded_file(
     editor_for_excluded_a.update(cx_a, |editor, cx| {
         assert_eq!(
             editor.text(cx),
-            "new commit messag\nCo-Authored-By: B <b@b.b>"
+            "new commit message\nCo-Authored-By: B <b@b.b>"
         );
     });
 }

@@ -2314,7 +2314,7 @@ impl CollabPanel {
                             .child(
                                 IconButton::new("channel_chat", IconName::MessageBubbles)
                                     .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Compact)
+                                    .shape(ui::IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(if has_messages_notification {
                                         Color::Default
@@ -2332,7 +2332,7 @@ impl CollabPanel {
                             .child(
                                 IconButton::new("channel_notes", IconName::File)
                                     .style(ButtonStyle::Filled)
-                                    .size(ButtonSize::Compact)
+                                    .shape(ui::IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
                                     .icon_color(if has_notes_notification {
                                         Color::Default

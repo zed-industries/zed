@@ -72,7 +72,7 @@ pub enum Event {
         ids: Vec<ExcerptId>,
     },
     Edited {
-        sigleton_buffer_edited: bool,
+        singleton_buffer_edited: bool,
     },
     TransactionUndone {
         transaction_id: TransactionId,
@@ -1112,7 +1112,7 @@ impl MultiBuffer {
             new: edit_start..edit_end,
         }]);
         cx.emit(Event::Edited {
-            sigleton_buffer_edited: false,
+            singleton_buffer_edited: false,
         });
         cx.emit(Event::ExcerptsAdded {
             buffer,
@@ -1138,7 +1138,7 @@ impl MultiBuffer {
             new: 0..0,
         }]);
         cx.emit(Event::Edited {
-            sigleton_buffer_edited: false,
+            singleton_buffer_edited: false,
         });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
@@ -1348,7 +1348,7 @@ impl MultiBuffer {
 
         self.subscriptions.publish_mut(edits);
         cx.emit(Event::Edited {
-            sigleton_buffer_edited: false,
+            singleton_buffer_edited: false,
         });
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
@@ -1411,7 +1411,7 @@ impl MultiBuffer {
     ) {
         cx.emit(match event {
             language::Event::Edited => Event::Edited {
-                sigleton_buffer_edited: true,
+                singleton_buffer_edited: true,
             },
             language::Event::DirtyChanged => Event::DirtyChanged,
             language::Event::Saved => Event::Saved,
@@ -4280,13 +4280,13 @@ mod tests {
             events.read().as_slice(),
             &[
                 Event::Edited {
-                    sigleton_buffer_edited: false
+                    singleton_buffer_edited: false
                 },
                 Event::Edited {
-                    sigleton_buffer_edited: false
+                    singleton_buffer_edited: false
                 },
                 Event::Edited {
-                    sigleton_buffer_edited: false
+                    singleton_buffer_edited: false
                 }
             ]
         );

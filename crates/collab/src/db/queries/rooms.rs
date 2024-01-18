@@ -1,6 +1,7 @@
 use super::*;
 
 impl Database {
+    /// Clears all room participants in rooms attached to a stale server.
     pub async fn clear_stale_room_participants(
         &self,
         room_id: RoomId,
@@ -78,6 +79,7 @@ impl Database {
         .await
     }
 
+    /// Returns the incoming calls for user with the given ID.
     pub async fn incoming_call_for_user(
         &self,
         user_id: UserId,
@@ -102,6 +104,7 @@ impl Database {
         .await
     }
 
+    /// Creates a new room.
     pub async fn create_room(
         &self,
         user_id: UserId,
@@ -394,6 +397,7 @@ impl Database {
         Ok(participant_index)
     }
 
+    /// Returns the channel ID for the given room, if it has one.
     pub async fn channel_id_for_room(&self, room_id: RoomId) -> Result<Option<ChannelId>> {
         self.transaction(|tx| async move {
             let room: Option<room::Model> = room::Entity::find()
@@ -944,6 +948,7 @@ impl Database {
         .await
     }
 
+    /// Updates the location of a participant in the given room.
     pub async fn update_room_participant_location(
         &self,
         room_id: RoomId,
@@ -1004,6 +1009,7 @@ impl Database {
         .await
     }
 
+    /// Sets the role of a participant in the given room.
     pub async fn set_room_participant_role(
         &self,
         admin_id: UserId,
