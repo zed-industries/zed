@@ -60,8 +60,7 @@ fn main() {
     });
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
 
-    let asset_source = Arc::new(Assets);
-    gpui::App::production(asset_source).run(move |cx| {
+    gpui::App::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
         let mut store = SettingsStore::default();

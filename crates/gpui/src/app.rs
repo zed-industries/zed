@@ -111,12 +111,18 @@ pub struct App(Rc<AppCell>);
 /// configured, you'll start the app with `App::run`.
 impl App {
     /// Builds an app with the given asset source.
-    pub fn production(asset_source: Arc<dyn AssetSource>) -> Self {
+    pub fn new() -> Self {
         Self(AppContext::new(
             current_platform(),
-            asset_source,
+            Arc::new(()),
             http::client(),
         ))
+    }
+
+    /// Assign
+    pub fn with_assets(self, asset_source: impl AssetSource) -> Self {
+        self.0.borrow_mut().asset_source = Arc::new(asset_source);
+        self
     }
 
     /// Start the application. The provided callback will be called once the
@@ -1167,7 +1173,7 @@ impl Context for AppContext {
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `ModelContext` and must return an object representing the entity. A `Model` will be returned
+    /// a `ModelContext` and must return an object representing the entity. A `Model` handle will be returned,
     /// which can be used to access the entity in a context.
     fn new_model<T: 'static>(
         &mut self,
