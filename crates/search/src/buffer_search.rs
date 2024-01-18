@@ -638,6 +638,12 @@ impl BufferSearchBar {
         registrar.register_handler(|this, _: &editor::actions::Cancel, cx| {
             this.dismiss(&Dismiss, cx);
         });
+
+        // register deploy buffer search for both search bar states, since we want to focus into the search bar
+        // when the deploy action is triggered in the buffer.
+        registrar.register_handler(|this, deploy, cx| {
+            this.deploy(deploy, cx);
+        });
         registrar.register_handler_for_dismissed_search(|this, deploy, cx| {
             this.deploy(deploy, cx);
         })
