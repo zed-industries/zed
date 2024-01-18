@@ -710,12 +710,10 @@ async fn upload_previous_crashes(
     }
     let last_uploaded = KEY_VALUE_STORE
         .read_kvp(LAST_CRASH_UPLOADED)?
-        .unwrap_or("zed-2024-01-17-000000.ips".to_string()); // don't upload old crash reports from before we had this.
+        .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let mut crash_report_url =
-        client::Client::get_collab_server_url(http.clone(), Some(release_channel)).await?;
-    crash_report_url.set_path("/crash");
+    let crash_report_url = format!("{}/api/crash", &*client::ZED_SERVER_URL);
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;
@@ -741,7 +739,7 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let request = Request::post(&crash_report_url.to_string())
+            let request = Request::post(&crash_report_url)
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
                 .header("Content-Type", "text/plain")
                 .header(

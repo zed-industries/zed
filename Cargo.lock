@@ -1474,7 +1474,6 @@ dependencies = [
  "env_logger",
  "envy",
  "file_finder",
- "form-data-builder",
  "fs",
  "futures 0.3.28",
  "git",
@@ -2690,16 +2689,6 @@ name = "foreign-types-shared"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
-
-[[package]]
-name = "form-data-builder"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30ff8fb4527b05539a9f573ba2831a1127038a7b45eea385a338a63dc5ab6829"
-dependencies = [
- "base64 0.13.1",
- "rand 0.8.5",
-]
 
 [[package]]
 name = "form_urlencoded"

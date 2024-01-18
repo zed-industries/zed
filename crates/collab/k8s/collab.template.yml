@@ -90,11 +90,6 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
-            - name: CLIENT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: api
-                  key: client_token
             - name: LIVE_KIT_SERVER
               valueFrom:
                 secretKeyRef:
@@ -110,16 +105,6 @@ spec:
                 secretKeyRef:
                   name: livekit
                   key: secret
-            - name: SLACK_PANIC_CHANNEL
-              valueFrom:
-                secretKeyRef:
-                  name: slack
-                  key: api_key
-            - name: SLACK_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: slack
-                  key: panic_channel
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

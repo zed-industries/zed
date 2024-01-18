@@ -969,16 +969,6 @@ impl Client {
         Url::parse(&collab_url).context("invalid rpc url")
     }
 
-    // todo: this should probably be cached (And/or done better)
-    pub async fn get_collab_server_url(
-        http: Arc<dyn HttpClient>,
-        release_channel: Option<ReleaseChannel>,
-    ) -> Result<Url> {
-        let mut url = Self::get_rpc_url(http, release_channel).await?;
-        url.set_path("");
-        Ok(url)
-    }
-
     fn establish_websocket_connection(
         self: &Arc<Self>,
         credentials: &Credentials,
