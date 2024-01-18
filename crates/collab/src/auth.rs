@@ -176,7 +176,7 @@ pub struct VerifyAccessTokenResult {
     pub impersonator_id: Option<UserId>,
 }
 
-/// verify access token returns true if the given token is valid for the given user.
+/// Checks that the given access token is valid for the given user.
 pub async fn verify_access_token(
     token: &str,
     user_id: UserId,
