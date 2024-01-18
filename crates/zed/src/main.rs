@@ -615,13 +615,12 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
 
 fn upload_panics_and_crashes(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
-    let release_channel = cx.global::<ReleaseChannel>().clone();
     cx.background_executor()
         .spawn(async move {
             upload_previous_panics(http.clone(), telemetry_settings)
                 .await
                 .log_err();
-            upload_previous_crashes(http, telemetry_settings, release_channel)
+            upload_previous_crashes(http, telemetry_settings)
                 .await
                 .log_err()
         })
@@ -703,7 +702,6 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 async fn upload_previous_crashes(
     http: Arc<dyn HttpClient>,
     telemetry_settings: client::TelemetrySettings,
-    release_channel: ReleaseChannel,
 ) -> Result<()> {
     if !telemetry_settings.diagnostics {
         return Ok(());
