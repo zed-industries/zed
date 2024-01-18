@@ -4334,7 +4334,7 @@ impl Element for DisconnectedOverlay {
     }
 
     fn paint(&mut self, bounds: Bounds<Pixels>, overlay: &mut Self::State, cx: &mut WindowContext) {
-        cx.with_z_index(u16::MAX, |cx| {
+        cx.with_z_index(u8::MAX, |cx| {
             cx.add_opaque_layer(bounds);
             overlay.paint(cx);
         })
