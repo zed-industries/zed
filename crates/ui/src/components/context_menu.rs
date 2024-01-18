@@ -42,6 +42,8 @@ impl FocusableView for ContextMenu {
 
 impl EventEmitter<DismissEvent> for ContextMenu {}
 
+impl FluentBuilder for ContextMenu {}
+
 impl ContextMenu {
     pub fn build(
         cx: &mut WindowContext,
@@ -66,34 +68,6 @@ impl ContextMenu {
                 cx,
             )
         })
-    }
-
-    pub fn if_some<T>(self, condition: Option<T>, f: impl FnOnce(Self, T) -> Self) -> Self {
-        if let Some(t) = condition {
-            f(self, t)
-        } else {
-            self
-        }
-    }
-
-    pub fn then_if_else(self, condition: bool, then: impl FnOnce(Self) -> Self, otherwise: impl FnOnce(Self) -> Self) -> Self {
-        if condition {
-            then(self)
-        } else {
-            otherwise(self)
-        }
-    }
-
-    pub fn then_if(self, condition: bool, f: impl FnOnce(Self) -> Self) -> Self {
-        if condition {
-            f(self)
-        } else {
-            self
-        }
-    }
-
-    pub fn map(self, f: impl FnOnce(Self) -> Self) -> Self {
-        f(self)
     }
 
     pub fn context(mut self, focus: FocusHandle) -> Self {

@@ -1,6 +1,6 @@
 use crate::{
-    ArenaBox, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, Size,
-    ViewContext, WindowContext, ELEMENT_ARENA,
+    util::FluentBuilder, ArenaBox, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId,
+    Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -77,39 +77,9 @@ pub trait IntoElement: Sized {
             })
         }
     }
-
-    /// Convert self to another type by calling the given closure. Useful in rendering code.
-    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
-    where
-        Self: Sized,
-        U: IntoElement,
-    {
-        f(self)
-    }
-
-    /// Conditionally chain onto self with the given closure. Useful in rendering code.
-    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| if condition { then(this) } else { this })
-    }
-
-    /// Conditionally chain onto self with the given closure if the given option is Some.
-    /// The contents of the option are provided to the closure.
-    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
-    where
-        Self: Sized,
-    {
-        self.map(|this| {
-            if let Some(value) = option {
-                then(this, value)
-            } else {
-                this
-            }
-        })
-    }
 }
+
+impl<T: IntoElement> FluentBuilder for T {}
 
 pub trait Render: 'static + Sized {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement;

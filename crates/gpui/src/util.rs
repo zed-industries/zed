@@ -9,6 +9,58 @@ use smol::future::FutureExt;
 
 pub use util::*;
 
+/// A helper trait for building complex objects with imperative conditionals in a fluent style.
+pub trait FluentBuilder {
+    /// Imperatively modify self with the given closure.
+    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
+    where
+        Self: Sized,
+    {
+        f(self)
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { this })
+    }
+
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(value) = option {
+                then(this, value)
+            } else {
+                this
+            }
+        })
+    }
+
+    /// Conditionally modify self with one closure or another
+    fn when_else(
+        self,
+        condition: bool,
+        then: impl FnOnce(Self) -> Self,
+        otherwise: impl FnOnce(Self) -> Self,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if condition {
+                then(this)
+            } else {
+                otherwise(this)
+            }
+        })
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub async fn timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
 where

@@ -382,21 +382,21 @@ impl ProjectPanel {
             let is_read_only = project.is_read_only();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
-                menu.context(self.focus_handle.clone()).then_if_else(
+                menu.context(self.focus_handle.clone()).when_else(
                     is_read_only,
                     |menu| {
                         menu.action("Copy Relative Path", Box::new(CopyRelativePath))
-                            .then_if(is_dir, |menu| {
+                            .when(is_dir, |menu| {
                                 menu.action("Search Inside", Box::new(NewSearchInDirectory))
                             })
                     },
                     |menu| {
-                        menu.then_if(is_local, |menu| {
+                        menu.when(is_local, |menu| {
                             menu.action(
                                 "Add Folder to Project",
                                 Box::new(workspace::AddFolderToProject),
                             )
-                            .then_if(is_root, |menu| {
+                            .when(is_root, |menu| {
                                 menu.entry(
                                     "Remove from Project",
                                     None,
@@ -413,8 +413,8 @@ impl ProjectPanel {
                         .separator()
                         .action("Cut", Box::new(Cut))
                         .action("Copy", Box::new(Copy))
-                        .if_some(self.clipboard_entry, |menu, entry| {
-                            menu.then_if(entry.worktree_id() == worktree_id, |menu| {
+                        .when_some(self.clipboard_entry, |menu, entry| {
+                            menu.when(entry.worktree_id() == worktree_id, |menu| {
                                 menu.action("Paste", Box::new(Paste))
                             })
                         })
@@ -423,15 +423,13 @@ impl ProjectPanel {
                         .action("Copy Relative Path", Box::new(CopyRelativePath))
                         .separator()
                         .action("Reveal in Finder", Box::new(RevealInFinder))
-                        .then_if(is_dir, |menu| {
-                            menu
-                                .action("Open in Terminal", Box::new(OpenInTerminal))
+                        .when(is_dir, |menu| {
+                            menu.action("Open in Terminal", Box::new(OpenInTerminal))
                                 .action("Search Inside", Box::new(NewSearchInDirectory))
                         })
-                        .separator().action("Rename", Box::new(Rename))
-                        .then_if(!is_root, |menu| {
-                            menu.action("Delete", Box::new(Delete))
-                        })
+                        .separator()
+                        .action("Rename", Box::new(Rename))
+                        .when(!is_root, |menu| menu.action("Delete", Box::new(Delete)))
                     },
                 )
             });

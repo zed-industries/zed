@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    overlay, point, px, rems, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
-    Element, ElementId, InteractiveBounds, IntoElement, LayoutId, ManagedView, MouseDownEvent,
-    ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    overlay, point, prelude::FluentBuilder, px, rems, AnchorCorner, AnyElement, Bounds,
+    DismissEvent, DispatchPhase, Element, ElementId, InteractiveBounds, IntoElement, LayoutId,
+    ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
 use crate::{Clickable, Selectable};
