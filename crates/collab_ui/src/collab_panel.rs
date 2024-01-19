@@ -2222,7 +2222,7 @@ impl CollabPanel {
                     .chain(if extra_count > 0 {
                         Some(
                             div()
-                                .ml_1()
+                                .ml_2()
                                 .child(Label::new(format!("+{extra_count}")))
                                 .into_any_element(),
                         )
