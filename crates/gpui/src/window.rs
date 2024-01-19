@@ -874,10 +874,18 @@ impl<'a> WindowContext<'a> {
             .layout_engine
             .as_mut()
             .unwrap()
-            .layout_bounds(layout_id)
-            .map(Into::into);
+            .layout_bounds(layout_id);
         bounds.origin += self.element_offset();
         bounds
+    }
+
+    /// todo!()
+    pub fn layout_scroll_size(&self, layout_id: LayoutId) -> Size<Pixels> {
+        self.window
+            .layout_engine
+            .as_ref()
+            .unwrap()
+            .layout_scroll_size(layout_id)
     }
 
     fn window_bounds_changed(&mut self) {

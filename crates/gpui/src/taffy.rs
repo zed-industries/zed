@@ -1,5 +1,5 @@
 use crate::{
-    AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
+    size, AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
     WindowContext,
 };
 use collections::{FxHashMap, FxHashSet};
@@ -226,6 +226,11 @@ impl TaffyLayoutEngine {
         self.absolute_layout_bounds.insert(id, bounds);
 
         bounds
+    }
+
+    pub fn layout_scroll_size(&self, id: LayoutId) -> Size<Pixels> {
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        size(layout.scroll_width().into(), layout.scroll_height().into())
     }
 }
 

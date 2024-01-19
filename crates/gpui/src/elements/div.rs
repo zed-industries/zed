@@ -802,6 +802,7 @@ impl Element for Div {
         (
             layout_id,
             DivState {
+                layout_id,
                 interactive_state,
                 child_layout_ids,
             },
@@ -839,12 +840,7 @@ impl Element for Div {
             }
             (child_max - child_min).into()
         } else {
-            for child_layout_id in &element_state.child_layout_ids {
-                let child_bounds = cx.layout_bounds(*child_layout_id);
-                child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.lower_right());
-            }
-            (child_max - child_min).into()
+            cx.layout_scroll_size(element_state.layout_id)
         };
 
         self.interactivity.paint(
@@ -876,6 +872,7 @@ impl IntoElement for Div {
 }
 
 pub struct DivState {
+    layout_id: LayoutId,
     child_layout_ids: SmallVec<[LayoutId; 2]>,
     interactive_state: InteractiveElementState,
 }
