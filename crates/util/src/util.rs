@@ -299,7 +299,7 @@ pub struct Deferred<F: FnOnce()>(Option<F>);
 
 impl<F: FnOnce()> Deferred<F> {
     /// Drop without running the deferred function.
-    pub fn cancel(mut self) {
+    pub fn abort(mut self) {
         self.0.take();
     }
 }
