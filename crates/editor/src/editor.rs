@@ -3907,7 +3907,7 @@ impl Editor {
         self.show_cursor_names = true;
         cx.notify();
         cx.spawn(|this, mut cx| async move {
-            cx.background_executor().timer(Duration::from_secs(2)).await;
+            cx.background_executor().timer(Duration::from_secs(3)).await;
             this.update(&mut cx, |this, cx| {
                 this.show_cursor_names = false;
                 cx.notify()
