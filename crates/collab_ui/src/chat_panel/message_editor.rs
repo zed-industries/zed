@@ -13,7 +13,7 @@ use lazy_static::lazy_static;
 use project::search::SearchQuery;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, UiTextSize};
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -216,7 +216,7 @@ impl Render for MessageEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features,
-            font_size: rems(0.875).into(),
+            font_size: UiTextSize::Small.rems().into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: relative(1.3).into(),
