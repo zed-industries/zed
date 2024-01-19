@@ -44,7 +44,7 @@ impl Avatar {
 
     /// Sets the shape of the avatar image.
     ///
-    /// This method allows the shape of the avatar to be specified using a [`Shape`].
+    /// This method allows the shape of the avatar to be specified using an [`AvatarShape`].
     /// It modifies the corner radius of the image to match the specified shape.
     ///
     /// # Examples
