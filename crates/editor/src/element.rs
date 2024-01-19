@@ -327,7 +327,7 @@ impl EditorElement {
         register_action(view, cx, Editor::context_menu_prev);
         register_action(view, cx, Editor::context_menu_next);
         register_action(view, cx, Editor::context_menu_last);
-        register_action(view, cx, Editor::show_cursors);
+        register_action(view, cx, Editor::display_cursor_names);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext) {
@@ -2001,7 +2001,7 @@ impl EditorElement {
                     if Some(selection.peer_id) == editor.leader_peer_id {
                         continue;
                     }
-                    let is_shown = editor.display_cursors || editor.hovered_cursor.as_ref().is_some_and(|c| c.replica_id == selection.replica_id && c.selection_id == selection.selection.id);
+                    let is_shown = editor.show_cursor_names || editor.hovered_cursor.as_ref().is_some_and(|c| c.replica_id == selection.replica_id && c.selection_id == selection.selection.id);
 
                     remote_selections
                         .entry(selection.replica_id)

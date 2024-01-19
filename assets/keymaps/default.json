@@ -350,7 +350,7 @@
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "alt-cmd-r": "editor::RevealInFinder",
-      "ctrl-cmd-c": "editor::ShowCursors"
+      "ctrl-cmd-c": "editor::DisplayCursorNames"
     }
   },
   {
