@@ -169,8 +169,14 @@ pub struct ThemeColors {
     // ===
     // Terminal
     // ===
-    /// Terminal Background Color
+    /// Terminal background color.
     pub terminal_background: Hsla,
+    /// Terminal foreground color.
+    pub terminal_foreground: Hsla,
+    /// Bright terminal foreground color.
+    pub terminal_bright_foreground: Hsla,
+    /// Dim terminal foreground color.
+    pub terminal_dim_foreground: Hsla,
 
     /// Black ANSI terminal color.
     pub terminal_ansi_black: Hsla,

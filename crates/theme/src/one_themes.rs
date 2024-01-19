@@ -101,6 +101,9 @@ pub(crate) fn one_dark() -> Theme {
 
                 terminal_background: bg,
                 // todo!("Use one colors for terminal")
+                terminal_foreground: crate::white().dark().step_12(),
+                terminal_bright_foreground: crate::white().dark().step_11(),
+                terminal_dim_foreground: crate::white().dark().step_10(),
                 terminal_ansi_black: crate::black().dark().step_12(),
                 terminal_ansi_red: crate::red().dark().step_11(),
                 terminal_ansi_green: crate::green().dark().step_11(),

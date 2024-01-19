@@ -244,6 +244,12 @@ impl<'a> Debug for ThemeColorsRefinementPrinter<'a> {
                 self.0.editor_document_highlight_write_background,
             ),
             ("terminal_background", self.0.terminal_background),
+            ("terminal_foreground", self.0.terminal_foreground),
+            (
+                "terminal_bright_foreground",
+                self.0.terminal_bright_foreground,
+            ),
+            ("terminal_dim_foreground", self.0.terminal_dim_foreground),
             ("terminal_ansi_black", self.0.terminal_ansi_black),
             (
                 "terminal_ansi_bright_black",
