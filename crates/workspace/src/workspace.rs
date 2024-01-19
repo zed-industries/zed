@@ -669,18 +669,6 @@ impl Workspace {
 
         cx.defer(|this, cx| {
             this.update_window_title(cx);
-            // todo! @nate - these are useful for testing notifications
-            // this.show_error(
-            //     &anyhow::anyhow!("what happens if this message is very very very very very long"),
-            //     cx,
-            // );
-
-            // this.show_notification(1, cx, |cx| {
-            //     cx.new_view(|_cx| {
-            //         simple_message_notification::MessageNotification::new(format!("Error:"))
-            //             .with_click_message("click here because!")
-            //     })
-            // });
         });
         Workspace {
             weak_self: weak_handle.clone(),
