@@ -20,7 +20,7 @@ use gpui::{
     Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString, Styled,
     Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace,
 };
-use menu::{Cancel, Confirm, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use rpc::proto::{self, PeerId};
 use serde_derive::{Deserialize, Serialize};
@@ -1124,7 +1124,7 @@ impl CollabPanel {
                     )
                     .entry(
                         "Rename",
-                        None,
+                        Some(Box::new(SecondaryConfirm)),
                         cx.handler_for(&this, move |this, cx| this.rename_channel(channel_id, cx)),
                     )
                     .entry(
@@ -1492,7 +1492,7 @@ impl CollabPanel {
         }
     }
 
-    fn rename_selected_channel(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+    fn rename_selected_channel(&mut self, _: &SecondaryConfirm, cx: &mut ViewContext<Self>) {
         if let Some(channel) = self.selected_channel() {
             self.rename_channel(channel.id, cx);
         }
