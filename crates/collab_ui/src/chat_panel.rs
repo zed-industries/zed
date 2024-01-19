@@ -559,6 +559,7 @@ impl Render for ChatPanel {
                 } else {
                     this.child(
                         div()
+                            .full()
                             .p_4()
                             .child(
                                 Label::new("Select a channel to chat in.")
