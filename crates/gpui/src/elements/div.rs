@@ -1,10 +1,10 @@
 use crate::{
-    point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement,
-    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    outline, point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext,
+    BorrowAppContext, BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId,
+    FocusHandle, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task,
+    View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -851,6 +851,7 @@ impl Element for Div {
             cx.layout_content_size(element_state.layout_id)
         };
 
+        let element_id = self.element_id();
         self.interactivity.paint(
             bounds,
             content_size,
@@ -858,6 +859,10 @@ impl Element for Div {
             Some(element_state.layout_id),
             cx,
             |_style, scroll_offset, cx| {
+                if element_id == Some(ElementId::Name("info_popover".into())) {
+                    dbg!(scroll_offset);
+                };
+
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
                         child.paint(cx);
@@ -1521,15 +1526,19 @@ impl Interactivity {
                             if self.element_id == Some(ElementId::Name("info_popover".into())) {
                                 dbg!(this_id);
                                 dbg!(scroll_max);
-                                scroll_max.height += dbg!(self
-                                    .base_style
-                                    .padding
-                                    .bottom
-                                    .map(|padding| {
-                                        dbg!(padding)
-                                            .to_pixels(content_size.height.into(), cx.rem_size())
-                                    })
-                                    .unwrap_or(px(0.)))
+
+                                //will this fix things?
+                                // scroll_max = scroll_size + offset_position of child????
+
+                                // scroll_max.height += dbg!(self
+                                //     .base_style
+                                //     .padding
+                                //     .bottom
+                                //     .map(|padding| {
+                                //         dbg!(padding)
+                                //             .to_pixels(content_size.height.into(), cx.rem_size())
+                                //     })
+                                //     .unwrap_or(px(0.)))
                             }
 
                             // Clamp scroll offset in case scroll max is smaller now (e.g., if children

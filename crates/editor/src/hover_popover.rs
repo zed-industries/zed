@@ -476,6 +476,7 @@ impl InfoPopover {
     ) -> AnyElement {
         div()
             .id("info_popover")
+            // .debug_below()
             .elevation_2(cx)
             .p_2()
             .overflow_y_scroll()
