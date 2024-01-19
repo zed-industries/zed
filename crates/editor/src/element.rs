@@ -327,6 +327,7 @@ impl EditorElement {
         register_action(view, cx, Editor::context_menu_prev);
         register_action(view, cx, Editor::context_menu_next);
         register_action(view, cx, Editor::context_menu_last);
+        register_action(view, cx, Editor::show_cursors);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext) {

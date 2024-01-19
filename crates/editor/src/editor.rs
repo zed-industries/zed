@@ -3899,6 +3899,24 @@ impl Editor {
         self.update_visible_copilot_suggestion(cx);
     }
 
+    pub fn show_cursors(&mut self, _: &ShowCursors, cx: &mut ViewContext<Self>) {
+        self.display_cursors(cx);
+    }
+
+    fn display_cursors(&mut self, cx: &mut ViewContext<Self>) {
+        self.recently_focused = true;
+        cx.notify();
+        cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            this.update(&mut cx, |this, cx| {
+                this.recently_focused = false;
+                cx.notify()
+            })
+            .ok()
+        })
+        .detach();
+    }
+
     fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
         if self.has_active_copilot_suggestion(cx) {
             self.cycle_copilot_suggestions(Direction::Next, cx);
@@ -9003,17 +9021,7 @@ impl Editor {
             cx.focus(&rename_editor_focus_handle);
         } else {
             self.blink_manager.update(cx, BlinkManager::enable);
-            self.recently_focused = true;
-            cx.notify();
-            cx.spawn(|this, mut cx| async move {
-                cx.background_executor().timer(Duration::from_secs(2)).await;
-                this.update(&mut cx, |this, cx| {
-                    this.recently_focused = false;
-                    cx.notify()
-                })
-                .ok()
-            })
-            .detach();
+            self.display_cursors(cx);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_peer_id.is_none() {

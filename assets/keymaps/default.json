@@ -349,7 +349,8 @@
       "alt-cmd-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
-      "alt-cmd-r": "editor::RevealInFinder"
+      "alt-cmd-r": "editor::RevealInFinder",
+      "ctrl-cmd-c": "editor::ShowCursors"
     }
   },
   {
