@@ -2214,15 +2214,15 @@ impl CollabPanel {
 
         let face_pile = if !participants.is_empty() {
             let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
-            let result = FacePile {
-                faces: participants
+            let result = FacePile::new(
+                participants
                     .iter()
                     .map(|user| Avatar::new(user.avatar_uri.clone()).into_any_element())
                     .take(FACEPILE_LIMIT)
                     .chain(if extra_count > 0 {
                         Some(
                             div()
-                                .ml_1()
+                                .ml_2()
                                 .child(Label::new(format!("+{extra_count}")))
                                 .into_any_element(),
                         )
@@ -2230,7 +2230,7 @@ impl CollabPanel {
                         None
                     })
                     .collect::<SmallVec<_>>(),
-            };
+            );
 
             Some(result)
         } else {
@@ -2295,7 +2295,7 @@ impl CollabPanel {
                         h_flex()
                             .id(channel_id as usize)
                             .child(Label::new(channel.name.clone()))
-                            .children(face_pile.map(|face_pile| face_pile.render().p_1())),
+                            .children(face_pile.map(|face_pile| face_pile.p_1())),
                     ),
             )
             .child(

@@ -495,7 +495,7 @@ impl CollabTitlebarItem {
                     div.rounded_md().bg(color)
                 })
                 .child(
-                    FacePile::default()
+                    FacePile::empty()
                         .child(
                             Avatar::new(user.avatar_uri.clone())
                                 .grayscale(!is_present)
@@ -547,8 +547,7 @@ impl CollabTitlebarItem {
                             )
                         } else {
                             None
-                        })
-                        .render(),
+                        }),
                 ),
         )
     }
