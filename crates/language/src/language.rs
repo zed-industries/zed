@@ -379,10 +379,11 @@ pub trait LspAdapter: 'static + Send + Sync {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeLabel {
+    /// The text to display.
     pub text: String,
-    /// Determines the syntax highlighting for the label
+    /// Syntax highlighting runs.
     pub runs: Vec<(Range<usize>, HighlightId)>,
-    /// Which part of the label participates
+    /// The portion of the text that should be used in fuzzy filtering.
     pub filter_range: Range<usize>,
 }
 

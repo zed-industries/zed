@@ -1177,9 +1177,9 @@ impl EditorElement {
                 list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
             }
 
-            // if list_origin.y + list_height > text_bounds.lower_right().y {
-            //     list_origin.y -= layout.position_map.line_height + list_height;
-            // }
+            if list_origin.y + list_height > text_bounds.lower_right().y {
+                list_origin.y -= layout.position_map.line_height + list_height;
+            }
 
             cx.break_content_mask(|cx| context_menu.draw(list_origin, available_space, cx));
         }
@@ -2128,7 +2128,13 @@ impl EditorElement {
             if let Some(newest_selection_head) = newest_selection_head {
                 if (start_row..end_row).contains(&newest_selection_head.row()) {
                     if editor.context_menu_visible() {
-                        let max_height = (12. * line_height).min((bounds.size.height - line_height) / 2.);
+                        let max_height = cmp::min(
+                            12. * line_height,
+                            cmp::max(
+                                3. * line_height,
+                                (bounds.size.height - line_height) / 2.,
+                            )
+                        );
                         context_menu =
                             editor.render_context_menu(newest_selection_head, &self.style, max_height, cx);
                     }

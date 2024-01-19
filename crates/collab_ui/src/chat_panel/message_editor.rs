@@ -240,8 +240,8 @@ impl MessageEditor {
                         text: format!("@{}", mat.string),
                         runs: Vec::new(),
                     },
-                    server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     documentation: None,
+                    server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
                 })
                 .collect())
@@ -326,7 +326,6 @@ impl Render for MessageEditor {
 
         div()
             .w_full()
-            .h(px(500.))
             .px_2()
             .py_1()
             .bg(cx.theme().colors().editor_background)
@@ -360,7 +359,7 @@ mod tests {
             MessageEditor::new(
                 language_registry,
                 ChannelStore::global(cx),
-                cx.new_view(|cx| Editor::auto_height(25, cx)),
+                cx.new_view(|cx| Editor::auto_height(4, cx)),
                 cx,
             )
         });
