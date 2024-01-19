@@ -68,7 +68,7 @@ where
     /// Run the task to completion in the background and log any
     /// errors that occur.
     #[track_caller]
-    pub fn detach_and_log_err(self, cx: &mut AppContext) {
+    pub fn detach_and_log_err(self, cx: &AppContext) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err(*location))

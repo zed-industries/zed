@@ -450,8 +450,21 @@ impl Database {
     )> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_member(&channel, user, &*tx)
-                .await?;
+
+            let mut requires_write_permission = false;
+            for op in operations.iter() {
+                match op.variant {
+                    None | Some(proto::operation::Variant::UpdateSelections(_)) => {}
+                    Some(_) => requires_write_permission = true,
+                }
+            }
+            if requires_write_permission {
+                self.check_user_is_channel_member(&channel, user, &*tx)
+                    .await?;
+            } else {
+                self.check_user_is_channel_participant(&channel, user, &*tx)
+                    .await?;
+            }
 
             let buffer = buffer::Entity::find()
                 .filter(buffer::Column::ChannelId.eq(channel_id))

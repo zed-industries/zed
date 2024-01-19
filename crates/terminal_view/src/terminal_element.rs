@@ -550,6 +550,7 @@ impl TerminalElement {
                         theme.players().local().cursor,
                         shape,
                         text,
+                        None,
                     )
                 },
             )

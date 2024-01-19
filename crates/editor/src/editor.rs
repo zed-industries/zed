@@ -367,6 +367,8 @@ pub struct Editor {
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
+    recently_focused: bool,
+    hovered_cursor: Option<HoveredCursor>,
     pub show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
@@ -418,6 +420,7 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
+#[derive(Debug)]
 pub struct RemoteSelection {
     pub replica_id: ReplicaId,
     pub selection: Selection<Anchor>,
@@ -425,6 +428,7 @@ pub struct RemoteSelection {
     pub peer_id: PeerId,
     pub line_mode: bool,
     pub participant_index: Option<ParticipantIndex>,
+    pub user_name: Option<SharedString>,
 }
 
 #[derive(Clone, Debug)]
@@ -439,6 +443,11 @@ enum SelectionHistoryMode {
     Normal,
     Undoing,
     Redoing,
+}
+
+struct HoveredCursor {
+    replica_id: u16,
+    selection_id: usize,
 }
 
 impl Default for SelectionHistoryMode {
@@ -1604,6 +1613,8 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             gutter_width: Default::default(),
             style: None,
+            recently_focused: false,
+            hovered_cursor: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
             _subscriptions: vec![
@@ -8992,6 +9003,17 @@ impl Editor {
             cx.focus(&rename_editor_focus_handle);
         } else {
             self.blink_manager.update(cx, BlinkManager::enable);
+            self.recently_focused = true;
+            cx.notify();
+            cx.spawn(|this, mut cx| async move {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                this.update(&mut cx, |this, cx| {
+                    this.recently_focused = false;
+                    cx.notify()
+                })
+                .ok()
+            })
+            .detach();
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_peer_id.is_none() {
@@ -9043,6 +9065,7 @@ pub trait CollaborationHub {
         &self,
         cx: &'a AppContext,
     ) -> &'a HashMap<u64, ParticipantIndex>;
+    fn user_names(&self, cx: &AppContext) -> HashMap<u64, SharedString>;
 }
 
 impl CollaborationHub for Model<Project> {
@@ -9055,6 +9078,14 @@ impl CollaborationHub for Model<Project> {
         cx: &'a AppContext,
     ) -> &'a HashMap<u64, ParticipantIndex> {
         self.read(cx).user_store().read(cx).participant_indices()
+    }
+
+    fn user_names(&self, cx: &AppContext) -> HashMap<u64, SharedString> {
+        let this = self.read(cx);
+        let user_ids = this.collaborators().values().map(|c| c.user_id);
+        this.user_store().read_with(cx, |user_store, cx| {
+            user_store.participant_names(user_ids, cx)
+        })
     }
 }
 
@@ -9107,6 +9138,7 @@ impl EditorSnapshot {
         collaboration_hub: &dyn CollaborationHub,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = RemoteSelection> {
+        let participant_names = collaboration_hub.user_names(cx);
         let participant_indices = collaboration_hub.user_participant_indices(cx);
         let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
         let collaborators_by_replica_id = collaborators_by_peer_id
@@ -9118,6 +9150,7 @@ impl EditorSnapshot {
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
                 let collaborator = collaborators_by_replica_id.get(&replica_id)?;
                 let participant_index = participant_indices.get(&collaborator.user_id).copied();
+                let user_name = participant_names.get(&collaborator.user_id).cloned();
                 Some(RemoteSelection {
                     replica_id,
                     selection,
@@ -9125,6 +9158,7 @@ impl EditorSnapshot {
                     line_mode,
                     participant_index,
                     peer_id: collaborator.peer_id,
+                    user_name,
                 })
             })
     }

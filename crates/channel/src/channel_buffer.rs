@@ -1,6 +1,6 @@
 use crate::{Channel, ChannelId, ChannelStore};
 use anyhow::Result;
-use client::{Client, Collaborator, UserStore};
+use client::{Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
 use language::proto::serialize_version;
@@ -181,6 +181,16 @@ impl ChannelBuffer {
     ) {
         match event {
             language::Event::Operation(operation) => {
+                if *ZED_ALWAYS_ACTIVE {
+                    match operation {
+                        language::Operation::UpdateSelections { selections, .. } => {
+                            if selections.is_empty() {
+                                return;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 let operation = language::proto::serialize_operation(operation);
                 self.client
                     .send(proto::UpdateChannelBuffer {
