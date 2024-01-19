@@ -6,6 +6,7 @@ name = "collab"
 version = "0.38.0"
 publish = false
 license = "AGPL"
+license-file = "../../LICENSE-AGPL"
 
 [[bin]]
 name = "collab"
