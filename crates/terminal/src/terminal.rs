@@ -599,6 +599,10 @@ impl Terminal {
         }
     }
 
+    pub fn selection_started(&self) -> bool {
+        self.selection_phase == SelectionPhase::Selecting
+    }
+
     /// Updates the cached process info, returns whether the Zed-relevant info has changed
     fn update_process_info(&mut self) -> bool {
         let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
