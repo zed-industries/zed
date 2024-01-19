@@ -23,6 +23,7 @@ async-trait = { workspace = true, "optional" = true }
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
 tokio = { version = "1.15", "optional" = true }
 serde_json.workspace = true
+regex.workspace = true
 
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
