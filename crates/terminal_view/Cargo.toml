@@ -3,6 +3,7 @@ name = "terminal_view"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "AGPL"
 
 [lib]
 path = "src/terminal_view.rs"

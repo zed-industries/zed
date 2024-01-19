@@ -3,6 +3,7 @@ name = "command_palette"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "AGPL"
 
 [lib]
 path = "src/command_palette.rs"

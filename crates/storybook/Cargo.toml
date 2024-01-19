@@ -3,6 +3,7 @@ name = "storybook"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "AGPL"
 
 [[bin]]
 name = "storybook"

@@ -5,6 +5,7 @@ edition = "2021"
 name = "collab"
 version = "0.38.0"
 publish = false
+license = "AGPL"
 
 [[bin]]
 name = "collab"
