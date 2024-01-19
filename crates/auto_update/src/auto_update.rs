@@ -96,12 +96,6 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
         workspace.register_action(|_, action, cx| {
             view_release_notes(action, cx);
         });
-
-        // @nate - code to trigger update notification on launch
-        // todo!("remove this when Nate is done")
-        // workspace.show_notification(0, _cx, |cx| {
-        //     cx.build_view(|_| UpdateNotification::new(SemanticVersion::from_str("1.1.1").unwrap()))
-        // });
     })
     .detach();
 
