@@ -52,9 +52,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, red, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter,
-    Hsla, Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
+    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
+    Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -1413,8 +1413,6 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         256 => colors.text,
         257 => colors.background,
         258 => theme.players().local().cursor,
-
-        // todo!(more colors)
         259 => colors.terminal_ansi_dim_black,
         260 => colors.terminal_ansi_dim_red,
         261 => colors.terminal_ansi_dim_green,
@@ -1423,7 +1421,7 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         264 => colors.terminal_ansi_dim_magenta,
         265 => colors.terminal_ansi_dim_cyan,
         266 => colors.terminal_ansi_dim_white,
-        267 => red(),                      //style.bright_foreground,
+        267 => colors.terminal_bright_foreground,
         268 => colors.terminal_ansi_black, // 'Dim Background', non-standard color
 
         _ => black(),
