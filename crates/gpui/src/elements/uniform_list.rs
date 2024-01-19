@@ -182,6 +182,7 @@ impl Element for UniformList {
             bounds,
             content_size,
             &mut element_state.interactive,
+            None,
             cx,
             |style, mut scroll_offset, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());

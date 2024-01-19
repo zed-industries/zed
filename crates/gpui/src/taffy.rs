@@ -228,6 +228,11 @@ impl TaffyLayoutEngine {
         bounds
     }
 
+    pub fn layout_content_size(&self, id: LayoutId) -> Size<Pixels> {
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        layout.content_size.into()
+    }
+
     pub fn layout_scroll_size(&self, id: LayoutId) -> Size<Pixels> {
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         size(layout.scroll_width().into(), layout.scroll_height().into())

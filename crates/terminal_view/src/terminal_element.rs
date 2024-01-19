@@ -755,7 +755,7 @@ impl Element for TerminalElement {
         self.register_mouse_listeners(origin, layout.mode, bounds, cx);
 
         self.interactivity
-            .paint(bounds, bounds.size, state, cx, |_, _, cx| {
+            .paint(bounds, bounds.size, state, None, cx, |_, _, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
 
                 cx.on_key_event({

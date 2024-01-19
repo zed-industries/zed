@@ -840,13 +840,22 @@ impl Element for Div {
             }
             (child_max - child_min).into()
         } else {
-            cx.layout_scroll_size(element_state.layout_id)
+            if self.element_id() == Some(ElementId::Name("info_popover".into())) {
+                eprintln!("********************************************");
+                dbg!(&self.interactivity().base_style.padding);
+                dbg!(bounds);
+                dbg!(cx.layout_content_size(element_state.layout_id));
+                dbg!(cx.layout_scroll_size(element_state.layout_id));
+            }
+
+            cx.layout_content_size(element_state.layout_id)
         };
 
         self.interactivity.paint(
             bounds,
             content_size,
             &mut element_state.interactive_state,
+            Some(element_state.layout_id),
             cx,
             |_style, scroll_offset, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
@@ -986,6 +995,7 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
+        this_id: Option<LayoutId>,
         cx: &mut WindowContext,
         f: impl FnOnce(&Style, Point<Pixels>, &mut WindowContext),
     ) {
@@ -1502,7 +1512,26 @@ impl Interactivity {
                                 .get_or_insert_with(Rc::default)
                                 .clone();
                             let line_height = cx.line_height();
-                            let scroll_max = (content_size - bounds.size).max(&Size::default());
+
+                            let mut scroll_max = this_id
+                                .map(|id| cx.layout_scroll_size(id))
+                                .unwrap_or(content_size - bounds.size)
+                                .max(&Size::default());
+
+                            if self.element_id == Some(ElementId::Name("info_popover".into())) {
+                                dbg!(this_id);
+                                dbg!(scroll_max);
+                                scroll_max.height += dbg!(self
+                                    .base_style
+                                    .padding
+                                    .bottom
+                                    .map(|padding| {
+                                        dbg!(padding)
+                                            .to_pixels(content_size.height.into(), cx.rem_size())
+                                    })
+                                    .unwrap_or(px(0.)))
+                            }
+
                             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
                             // were removed or the bounds became larger).
                             {

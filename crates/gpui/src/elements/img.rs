@@ -91,6 +91,7 @@ impl Element for Img {
             bounds,
             bounds.size,
             element_state,
+            None,
             cx,
             |style, _scroll_offset, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());

@@ -880,6 +880,15 @@ impl<'a> WindowContext<'a> {
     }
 
     /// todo!()
+    pub fn layout_content_size(&self, layout_id: LayoutId) -> Size<Pixels> {
+        self.window
+            .layout_engine
+            .as_ref()
+            .unwrap()
+            .layout_content_size(layout_id)
+    }
+
+    /// todo!()
     pub fn layout_scroll_size(&self, layout_id: LayoutId) -> Size<Pixels> {
         self.window
             .layout_engine
