@@ -1999,7 +1999,7 @@ impl EditorElement {
                     if Some(selection.peer_id) == editor.leader_peer_id {
                         continue;
                     }
-                    let is_shown = editor.recently_focused || editor.hovered_cursor.as_ref().is_some_and(|c| c.replica_id == selection.replica_id && c.selection_id == selection.selection.id);
+                    let is_shown = editor.display_cursors || editor.hovered_cursor.as_ref().is_some_and(|c| c.replica_id == selection.replica_id && c.selection_id == selection.selection.id);
 
                     remote_selections
                         .entry(selection.replica_id)
