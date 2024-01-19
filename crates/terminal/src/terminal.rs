@@ -599,7 +599,7 @@ impl Terminal {
         }
     }
 
-    /// Update the cached process info, returns whether the Zed-relevant info has changed
+    /// Updates the cached process info, returns whether the Zed-relevant info has changed
     fn update_process_info(&mut self) -> bool {
         let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
         if pid < 0 {

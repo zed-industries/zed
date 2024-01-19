@@ -46,7 +46,7 @@ pub enum Task<T> {
 }
 
 impl<T> Task<T> {
-    /// Create a new task that will resolve with the value
+    /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
         Task::Ready(Some(val))
     }

@@ -90,17 +90,17 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: current_project_directory
     pub working_directory: Option<WorkingDirectory>,
-    /// Set the terminal's font size.
+    /// Sets the terminal's font size.
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font size.
     pub font_size: Option<f32>,
-    /// Set the terminal's font family.
+    /// Sets the terminal's font family.
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font family.
     pub font_family: Option<String>,
-    /// Set the terminal's line height.
+    /// Sets the terminal's line height.
     ///
     /// Default: comfortable
     pub line_height: Option<TerminalLineHeight>,
@@ -110,18 +110,18 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: {}
     pub env: Option<HashMap<String, String>>,
-    /// Set the cursor blinking behavior in the terminal.
+    /// Sets the cursor blinking behavior in the terminal.
     ///
     /// Default: terminal_controlled
     pub blinking: Option<TerminalBlink>,
-    /// Set whether Alternate Scroll mode (code: ?1007) is active by default.
+    /// Sets whether Alternate Scroll mode (code: ?1007) is active by default.
     /// Alternate Scroll mode converts mouse scroll events into up / down key
     /// presses when in the alternate screen (e.g. when running applications
     /// like vim or  less). The terminal can still set and unset this mode.
     ///
     /// Default: off
     pub alternate_scroll: Option<AlternateScroll>,
-    /// Set whether the option key behaves as the meta key.
+    /// Sets whether the option key behaves as the meta key.
     ///
     /// Default: false
     pub option_as_meta: Option<bool>,
@@ -139,7 +139,7 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
-    /// Activate the python virtual environment, if one is found, in the
+    /// Activates the python virtual environment, if one is found, in the
     /// terminal's working directory (as resolved by the working_directory
     /// setting). Set this to "off" to disable this behavior.
     ///

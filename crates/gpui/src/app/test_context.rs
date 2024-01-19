@@ -578,7 +578,7 @@ impl<'a> VisualTestContext {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
 
-    /// Create a new VisualTestContext. You would typically shadow the passed in
+    /// Creates a new VisualTestContext. You would typically shadow the passed in
     /// TestAppContext with this, as this is typically more useful.
     /// `let cx = VisualTestContext::from_window(window, cx);`
     pub fn from_window(window: AnyWindowHandle, cx: &TestAppContext) -> Self {

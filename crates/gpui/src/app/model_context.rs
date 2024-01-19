@@ -189,7 +189,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         }
     }
 
-    /// Update the given global
+    /// Updates the given global
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: 'static,

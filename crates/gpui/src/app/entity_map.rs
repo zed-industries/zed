@@ -104,7 +104,7 @@ impl EntityMap {
         }
     }
 
-    /// Return an entity after moving it to the stack.
+    /// Returns an entity after moving it to the stack.
     pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
         self.entities
             .insert(lease.model.entity_id, lease.entity.take().unwrap());
@@ -391,7 +391,7 @@ impl<T: 'static> Model<T> {
         cx.read_model(self, f)
     }
 
-    /// Update the entity referenced by this model with the given function.
+    /// Updates the entity referenced by this model with the given function.
     ///
     /// The update function receives a context appropriate for its environment.
     /// When updating in an `AppContext`, it receives a `ModelContext`.
@@ -571,7 +571,7 @@ impl<T: 'static> WeakModel<T> {
         Model::upgrade_from(self)
     }
 
-    /// Update the entity referenced by this model with the given function if
+    /// Updates the entity referenced by this model with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
     pub fn update<C, R>(
