@@ -1172,23 +1172,25 @@ impl Render for AssistantPanel {
                         .px_2()
                         .child(Label::new(editor.read(cx).title(cx)).into_element())
                 }))
-                .end_child(if self.focus_handle.contains_focused(cx) {
-                    h_flex()
-                        .gap_2()
-                        .child(h_flex().gap_1().children(self.render_editor_tools(cx)))
-                        .child(
-                            ui::Divider::vertical()
-                                .inset()
-                                .color(ui::DividerColor::Border),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Self::render_plus_button(cx))
-                                .child(self.render_zoom_button(cx)),
-                        )
-                } else {
-                    div()
+                .when(self.focus_handle.contains_focused(cx), |this| {
+                    this.end_child(
+                        h_flex()
+                            .gap_2()
+                            .when(self.active_editor().is_some(), |this| {
+                                this.child(h_flex().gap_1().children(self.render_editor_tools(cx)))
+                                    .child(
+                                        ui::Divider::vertical()
+                                            .inset()
+                                            .color(ui::DividerColor::Border),
+                                    )
+                            })
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(Self::render_plus_button(cx))
+                                    .child(self.render_zoom_button(cx)),
+                            ),
+                    )
                 });
 
             let contents = if self.active_editor().is_some() {
