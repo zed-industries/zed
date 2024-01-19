@@ -104,7 +104,7 @@ impl Render for ListItemStory {
             .child(
                 ListItem::new("with_overflowing_content_in_end_slot")
                     .child("An excerpt")
-                    .end_slot(Label::new(OVERFLOWING_TEXT)),
+                    .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
             )
             .child(Story::label(
                 "`inset` with overflowing content in the `end_slot`",
@@ -113,7 +113,16 @@ impl Render for ListItemStory {
                 ListItem::new("inset_with_overflowing_content_in_end_slot")
                     .inset(true)
                     .child("An excerpt")
-                    .end_slot(Label::new(OVERFLOWING_TEXT)),
+                    .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
+            )
+            .child(Story::label(
+                "`inset` with overflowing content in `children` and `end_slot`",
+            ))
+            .child(
+                ListItem::new("inset_with_overflowing_content_in_children_and_end_slot")
+                    .inset(true)
+                    .child(Label::new(OVERFLOWING_TEXT))
+                    .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
             )
     }
 }

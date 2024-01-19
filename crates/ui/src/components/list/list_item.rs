@@ -222,8 +222,11 @@ impl RenderOnce for ListItem {
                     }))
                     .child(
                         h_flex()
-                            .flex_auto()
+                            .flex_grow()
+                            .flex_shrink_0()
+                            .flex_basis(relative(0.25))
                             .gap_1()
+                            .overflow_hidden()
                             .children(self.start_slot)
                             .children(self.children),
                     )
