@@ -367,7 +367,7 @@ pub struct Editor {
     project: Option<Model<Project>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
-    display_cursors: bool,
+    show_cursor_names: bool,
     hovered_cursor: Option<HoveredCursor>,
     pub show_local_selections: bool,
     mode: EditorMode,
@@ -1613,7 +1613,7 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             gutter_width: Default::default(),
             style: None,
-            display_cursors: false,
+            show_cursor_names: false,
             hovered_cursor: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
@@ -3899,17 +3899,17 @@ impl Editor {
         self.update_visible_copilot_suggestion(cx);
     }
 
-    pub fn show_cursors(&mut self, _: &ShowCursors, cx: &mut ViewContext<Self>) {
-        self.display_cursors(cx);
+    pub fn display_cursor_names(&mut self, _: &DisplayCursorNames, cx: &mut ViewContext<Self>) {
+        self.show_cursor_names(cx);
     }
 
-    fn display_cursors(&mut self, cx: &mut ViewContext<Self>) {
-        self.display_cursors = true;
+    fn show_cursor_names(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_cursor_names = true;
         cx.notify();
         cx.spawn(|this, mut cx| async move {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             this.update(&mut cx, |this, cx| {
-                this.display_cursors = false;
+                this.show_cursor_names = false;
                 cx.notify()
             })
             .ok()
@@ -9021,7 +9021,7 @@ impl Editor {
             cx.focus(&rename_editor_focus_handle);
         } else {
             self.blink_manager.update(cx, BlinkManager::enable);
-            self.display_cursors(cx);
+            self.show_cursor_names(cx);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_peer_id.is_none() {
