@@ -808,8 +808,16 @@ impl<'a> WindowContext<'a> {
                 break;
             }
 
-            if bounds.contains(point) && !opaque_level.starts_with(level) {
-                return false;
+            if bounds.contains(point) {
+                let starts_with = opaque_level
+                    .iter()
+                    .zip(level.iter())
+                    .all(|(a, b)| a.z_index == b.z_index)
+                    && opaque_level.len() >= level.len();
+
+                if !starts_with {
+                    return false;
+                }
             }
         }
         true
