@@ -91,7 +91,6 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
 
                     if query.is_empty() {
                         search_bar.set_replacement(None, cx);
-                        search_bar.set_search_options(SearchOptions::CASE_SENSITIVE, cx);
                         search_bar.activate_search_mode(SearchMode::Regex, cx);
                     }
                     vim.workspace_state.search = SearchState {
@@ -149,15 +148,19 @@ pub fn move_to_internal(
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {
-                    let mut options = SearchOptions::CASE_SENSITIVE;
-                    options.set(SearchOptions::WHOLE_WORD, whole_word);
-                    if search_bar.show(cx) {
-                        search_bar
-                            .query_suggestion(cx)
-                            .map(|query| search_bar.search(&query, Some(options), cx))
-                    } else {
-                        None
+                    let options = SearchOptions::CASE_SENSITIVE;
+                    if !search_bar.show(cx) {
+                        return None;
                     }
+                    let Some(query) = search_bar.query_suggestion(cx) else {
+                        return None;
+                    };
+                    let mut query = regex::escape(&query);
+                    if whole_word {
+                        query = format!(r"\b{}\b", query);
+                    }
+                    search_bar.activate_search_mode(SearchMode::Regex, cx);
+                    Some(search_bar.search(&query, Some(options), cx))
                 });
 
                 if let Some(search) = search {
@@ -350,7 +353,10 @@ mod test {
     use editor::DisplayPoint;
     use search::BufferSearchBar;
 
-    use crate::{state::Mode, test::VimTestContext};
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
@@ -473,5 +479,14 @@ mod test {
         cx.assert_editor_state("one «oneˇ» one one");
         cx.simulate_keystrokes(["shift-enter"]);
         cx.assert_editor_state("«oneˇ» one one one");
+    }
+
+    #[gpui::test]
+    async fn test_visual_star_hash(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
+        cx.simulate_shared_keystrokes(["v", "3", "l", "*"]).await;
+        cx.assert_shared_state("a.c. abcd ˇa.c. abcd").await;
     }
 }

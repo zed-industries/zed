@@ -9079,6 +9079,7 @@ dependencies = [
  "nvim-rs",
  "parking_lot 0.11.2",
  "project",
+ "regex",
  "search",
  "serde",
  "serde_derive",
