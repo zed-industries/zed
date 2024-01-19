@@ -66,18 +66,24 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the behavior of content that overflows the container to be hidden.
+    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
     fn overflow_hidden(mut self) -> Self {
         self.style().overflow.x = Some(Overflow::Hidden);
         self.style().overflow.y = Some(Overflow::Hidden);
         self
     }
 
-    fn overflow_hidden_x(mut self) -> Self {
+    /// Sets the behavior of content that overflows the container on the X axis to be hidden.
+    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+    fn overflow_x_hidden(mut self) -> Self {
         self.style().overflow.x = Some(Overflow::Hidden);
         self
     }
 
-    fn overflow_hidden_y(mut self) -> Self {
+    /// Sets the behavior of content that overflows the container on the Y axis to be hidden.
+    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+    fn overflow_y_hidden(mut self) -> Self {
         self.style().overflow.y = Some(Overflow::Hidden);
         self
     }

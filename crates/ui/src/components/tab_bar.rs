@@ -117,7 +117,7 @@ impl RenderOnce for TabBar {
                     .relative()
                     .flex_1()
                     .h_full()
-                    .overflow_hidden_x()
+                    .overflow_x_hidden()
                     .child(
                         div()
                             .absolute()

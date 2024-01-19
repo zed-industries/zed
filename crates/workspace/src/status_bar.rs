@@ -51,7 +51,7 @@ impl StatusBar {
     fn render_left_tools(&self, _: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .gap_2()
-            .overflow_hidden_x()
+            .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
