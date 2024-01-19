@@ -222,10 +222,7 @@ impl RenderOnce for ListItem {
                     }))
                     .child(
                         h_flex()
-                            // HACK: We need to set *any* width value here in order for this container to size correctly.
-                            // Without this the `h_flex` will overflow the parent `inner_list_item`.
-                            .w_px()
-                            .flex_1()
+                            .flex_auto()
                             .gap_1()
                             .children(self.start_slot)
                             .children(self.children),
@@ -233,6 +230,8 @@ impl RenderOnce for ListItem {
                     .when_some(self.end_slot, |this, end_slot| {
                         this.justify_between().child(
                             h_flex()
+                                .flex_shrink()
+                                .overflow_hidden()
                                 .when(self.end_hover_slot.is_some(), |this| {
                                     this.visible()
                                         .group_hover("list_item", |this| this.invisible())
