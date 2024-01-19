@@ -713,6 +713,9 @@ impl Render for NotificationToast {
 
         h_flex()
             .id("notification_panel_toast")
+            .elevation_3(cx)
+            .p_2()
+            .gap_2()
             .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
             .child(Label::new(self.text.clone()))
             .child(
