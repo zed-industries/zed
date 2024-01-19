@@ -1218,9 +1218,11 @@ impl EditorElement {
                         popover_origin.x = popover_origin.x + x_out_of_bounds;
                     }
 
-                    cx.break_content_mask(|cx| {
-                        hover_popover.draw(popover_origin, available_space, cx)
-                    });
+                    if cx.was_top_layer(&popover_origin, cx.stacking_order()) {
+                        cx.break_content_mask(|cx| {
+                            hover_popover.draw(popover_origin, available_space, cx)
+                        });
+                    }
 
                     current_y = popover_origin.y - HOVER_POPOVER_GAP;
                 }
