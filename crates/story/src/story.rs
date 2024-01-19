@@ -104,7 +104,7 @@ impl RenderOnce for StoryContainer {
                     .h_px()
                     .flex_1()
                     .id("story_body")
-                    .overflow_hidden_x()
+                    .overflow_x_hidden()
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
