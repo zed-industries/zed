@@ -307,10 +307,31 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the initial size of flex items for this element.
+    /// [Docs](https://tailwindcss.com/docs/flex-basis)
+    fn flex_basis(mut self, basis: impl Into<Length>) -> Self {
+        self.style().flex_basis = Some(basis.into());
+        self
+    }
+
     /// Sets the element to allow a flex item to grow to fill any available space.
     /// [Docs](https://tailwindcss.com/docs/flex-grow)
     fn flex_grow(mut self) -> Self {
         self.style().flex_grow = Some(1.);
+        self
+    }
+
+    /// Sets the element to allow a flex item to shrink if needed.
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink)
+    fn flex_shrink(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
+        self
+    }
+
+    /// Sets the element to prevent a flex item from shrinking.
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink#dont-shrink)
+    fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
         self
     }
 
