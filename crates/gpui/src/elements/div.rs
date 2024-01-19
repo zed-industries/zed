@@ -1,5 +1,5 @@
 use crate::{
-    outline, point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext,
+    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext,
     BorrowAppContext, BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId,
     FocusHandle, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
@@ -815,11 +815,7 @@ impl Element for Div {
         element_state: &mut Self::State,
         cx: &mut WindowContext,
     ) {
-        let mut child_min = point(Pixels::MAX, Pixels::MAX);
-        let mut child_max = Point::default();
-        let content_size = if element_state.child_layout_ids.is_empty() {
-            bounds.size
-        } else if let Some(scroll_handle) = self.interactivity.scroll_handle.as_ref() {
+        if let Some(scroll_handle) = self.interactivity.scroll_handle.as_ref() {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(element_state.child_layout_ids.len());
             state.bounds = bounds;
@@ -827,8 +823,6 @@ impl Element for Div {
 
             for (ix, child_layout_id) in element_state.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
-                child_min = child_min.min(&child_bounds.origin);
-                child_max = child_max.max(&child_bounds.lower_right());
                 state.child_bounds.push(child_bounds);
 
                 if let Some(requested) = requested.as_ref() {
@@ -838,31 +832,16 @@ impl Element for Div {
                     }
                 }
             }
-            (child_max - child_min).into()
-        } else {
-            if self.element_id() == Some(ElementId::Name("info_popover".into())) {
-                eprintln!("********************************************");
-                dbg!(&self.interactivity().base_style.padding);
-                dbg!(bounds);
-                dbg!(cx.layout_content_size(element_state.layout_id));
-                dbg!(cx.layout_scroll_size(element_state.layout_id));
-            }
+        }
 
-            cx.layout_content_size(element_state.layout_id)
-        };
+        let content_size = cx.layout_content_size(element_state.layout_id);
 
-        let element_id = self.element_id();
         self.interactivity.paint(
             bounds,
             content_size,
             &mut element_state.interactive_state,
-            Some(element_state.layout_id),
             cx,
             |_style, scroll_offset, cx| {
-                if element_id == Some(ElementId::Name("info_popover".into())) {
-                    dbg!(scroll_offset);
-                };
-
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
                         child.paint(cx);
@@ -1000,7 +979,6 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
-        this_id: Option<LayoutId>,
         cx: &mut WindowContext,
         f: impl FnOnce(&Style, Point<Pixels>, &mut WindowContext),
     ) {
@@ -1518,28 +1496,31 @@ impl Interactivity {
                                 .clone();
                             let line_height = cx.line_height();
 
-                            let mut scroll_max = this_id
-                                .map(|id| cx.layout_scroll_size(id))
-                                .unwrap_or(content_size - bounds.size)
-                                .max(&Size::default());
-
-                            if self.element_id == Some(ElementId::Name("info_popover".into())) {
-                                dbg!(this_id);
-                                dbg!(scroll_max);
-
-                                //will this fix things?
-                                // scroll_max = scroll_size + offset_position of child????
-
-                                // scroll_max.height += dbg!(self
-                                //     .base_style
-                                //     .padding
-                                //     .bottom
-                                //     .map(|padding| {
-                                //         dbg!(padding)
-                                //             .to_pixels(content_size.height.into(), cx.rem_size())
-                                //     })
-                                //     .unwrap_or(px(0.)))
-                            }
+                            // TODO: Change this to be cx.layout_scroll_size() + bottom and right padding
+                            // once we can access the layout ID easily from all elements
+                            let scroll_max = (content_size - bounds.size
+                                // Add the bottom padding to the scroll max, so that
+                                // the bottom padding is visible but not clipping
+                                // the scrollable area
+                                + size(
+                                    self.base_style
+                                        .padding
+                                        .right
+                                        .map(|padding| {
+                                            padding
+                                                .to_pixels(bounds.size.width.into(), cx.rem_size())
+                                        })
+                                        .unwrap_or(px(0.)),
+                                    self.base_style
+                                        .padding
+                                        .bottom
+                                        .map(|padding| {
+                                            padding
+                                                .to_pixels(bounds.size.height.into(), cx.rem_size())
+                                        })
+                                        .unwrap_or(px(0.)),
+                                ))
+                            .max(&Size::default());
 
                             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
                             // were removed or the bounds became larger).

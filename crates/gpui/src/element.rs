@@ -1,6 +1,6 @@
 use crate::{
-    outline, util::FluentBuilder, ArenaBox, AvailableSpace, BorrowWindow, Bounds, ElementId,
-    LayoutId, Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
+    util::FluentBuilder, ArenaBox, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId,
+    Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -236,7 +236,6 @@ impl<E: Element> DrawableElement<E> {
     }
 
     fn paint(mut self, cx: &mut WindowContext) -> Option<E::State> {
-        let element_id = self.element_id();
         match self.phase {
             ElementDrawPhase::LayoutRequested {
                 layout_id,
@@ -248,12 +247,6 @@ impl<E: Element> DrawableElement<E> {
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
-
-                if element_id == Some(ElementId::Name("info_popover".into()))
-                    || element_id == Some(ElementId::Name("content".into()))
-                {
-                    cx.paint_quad(outline(dbg!(bounds), crate::red()))
-                }
 
                 if let Some(mut frame_state) = frame_state {
                     self.element
@@ -270,6 +263,7 @@ impl<E: Element> DrawableElement<E> {
                         .expect("if we don't have frame state, we should have element state");
                     cx.with_element_state(element_id, |element_state, cx| {
                         let mut element_state = element_state.unwrap();
+
                         self.element
                             .take()
                             .unwrap()

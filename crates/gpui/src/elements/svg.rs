@@ -1,8 +1,9 @@
+use util::ResultExt;
+
 use crate::{
     Bounds, Element, ElementId, InteractiveElement, InteractiveElementState, Interactivity,
     IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
 };
-use util::ResultExt;
 
 pub struct Svg {
     interactivity: Interactivity,
@@ -44,18 +45,12 @@ impl Element for Svg {
     ) where
         Self: Sized,
     {
-        self.interactivity.paint(
-            bounds,
-            bounds.size,
-            element_state,
-            None,
-            cx,
-            |style, _, cx| {
+        self.interactivity
+            .paint(bounds, bounds.size, element_state, cx, |style, _, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     cx.paint_svg(bounds, path.clone(), color).log_err();
                 }
-            },
-        )
+            })
     }
 }
 
