@@ -380,7 +380,9 @@ pub trait LspAdapter: 'static + Send + Sync {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeLabel {
     pub text: String,
+    /// Determines the syntax highlighting for the label
     pub runs: Vec<(Range<usize>, HighlightId)>,
+    /// Which part of the label participates
     pub filter_range: Range<usize>,
 }
 

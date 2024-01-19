@@ -364,6 +364,7 @@ pub struct Editor {
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     project: Option<Model<Project>>,
+    completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
     show_cursor_names: bool,
@@ -730,17 +731,15 @@ impl CompletionsMenu {
             return None;
         }
 
-        let Some(project) = editor.project.clone() else {
+        let Some(provider) = editor.completion_provider.as_ref() else {
             return None;
         };
 
-        let resolve_task = project.update(cx, |project, cx| {
-            project.resolve_completions(
-                self.matches.iter().map(|m| m.candidate_id).collect(),
-                self.completions.clone(),
-                cx,
-            )
-        });
+        let resolve_task = provider.resolve_completions(
+            self.matches.iter().map(|m| m.candidate_id).collect(),
+            self.completions.clone(),
+            cx,
+        );
 
         return Some(cx.spawn(move |this, mut cx| async move {
             if let Some(true) = resolve_task.await.log_err() {
@@ -1381,6 +1380,7 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override,
+            completion_provider: project.clone().map(|project| Box::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -1611,6 +1611,10 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_completion_provider(&mut self, hub: Box<dyn CompletionProvider>) {
+        self.completion_provider = Some(hub);
     }
 
     pub fn placeholder_text(&self) -> Option<&str> {
@@ -3059,9 +3063,7 @@ impl Editor {
             return;
         }
 
-        let project = if let Some(project) = self.project.clone() {
-            project
-        } else {
+        let Some(provider) = self.completion_provider.as_ref() else {
             return;
         };
 
@@ -3077,9 +3079,7 @@ impl Editor {
         };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
-        let completions = project.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position, cx)
-        });
+        let completions = provider.completions(&buffer, buffer_position, cx);
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
@@ -8900,6 +8900,45 @@ impl CollaborationHub for Model<Project> {
         let user_ids = this.collaborators().values().map(|c| c.user_id);
         this.user_store().read_with(cx, |user_store, cx| {
             user_store.participant_names(user_ids, cx)
+        })
+    }
+}
+
+pub trait CompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: text::Anchor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Vec<Completion>>>;
+    fn resolve_completions(
+        &self,
+        completion_indices: Vec<usize>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<bool>>;
+}
+
+impl CompletionProvider for Model<Project> {
+    fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: text::Anchor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Vec<Completion>>> {
+        self.update(cx, |project, cx| {
+            project.completions(&buffer, buffer_position, cx)
+        })
+    }
+
+    fn resolve_completions(
+        &self,
+        completion_indices: Vec<usize>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<bool>> {
+        self.update(cx, |project, cx| {
+            project.resolve_completions(completion_indices, completions, cx)
         })
     }
 }
