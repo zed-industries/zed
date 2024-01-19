@@ -516,25 +516,6 @@ impl MacWindow {
                     NSArray::arrayWithObject(nil, NSFilenamesPboardType)
             ];
 
-            let screen = native_window.screen();
-            match options.bounds {
-                WindowBounds::Fullscreen => {
-                    native_window.toggleFullScreen_(nil);
-                }
-                WindowBounds::Maximized => {
-                    native_window.setFrame_display_(screen.visibleFrame(), YES);
-                }
-                WindowBounds::Fixed(bounds) => {
-                    let display_bounds = display.bounds();
-                    let frame = if bounds.intersects(&display_bounds) {
-                        display_bounds_to_native(bounds)
-                    } else {
-                        display_bounds_to_native(display_bounds)
-                    };
-                    native_window.setFrame_display_(mem::transmute::<CGRect, NSRect>(frame), YES);
-                }
-            }
-
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
 
@@ -654,6 +635,27 @@ impl MacWindow {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if options.show {
                 native_window.orderFront_(nil);
+            }
+
+            let screen = native_window.screen();
+            match options.bounds {
+                WindowBounds::Fullscreen => {
+                    // We need to toggle full screen asynchronously as doing so may
+                    // call back into the platform handlers.
+                    window.toggle_full_screen()
+                }
+                WindowBounds::Maximized => {
+                    native_window.setFrame_display_(screen.visibleFrame(), YES);
+                }
+                WindowBounds::Fixed(bounds) => {
+                    let display_bounds = display.bounds();
+                    let frame = if bounds.intersects(&display_bounds) {
+                        display_bounds_to_native(bounds)
+                    } else {
+                        display_bounds_to_native(display_bounds)
+                    };
+                    native_window.setFrame_display_(mem::transmute::<CGRect, NSRect>(frame), YES);
+                }
             }
 
             window.0.lock().move_traffic_light();
