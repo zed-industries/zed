@@ -328,6 +328,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the element to prevent a flex item from shrinking.
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink#dont-shrink)
+    fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
+        self
+    }
+
     /// Sets the element to align flex items to the start of the container's cross axis.
     /// [Docs](https://tailwindcss.com/docs/align-items#start)
     fn items_start(mut self) -> Self {
