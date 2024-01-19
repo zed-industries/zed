@@ -169,40 +169,63 @@ pub struct ThemeColors {
     // ===
     // Terminal
     // ===
-    /// Terminal Background Color
+    /// Terminal background color.
     pub terminal_background: Hsla,
-    /// Bright Black Color for ANSI Terminal
-    pub terminal_ansi_bright_black: Hsla,
-    /// Bright Red Color for ANSI Terminal
-    pub terminal_ansi_bright_red: Hsla,
-    /// Bright Green Color for ANSI Terminal
-    pub terminal_ansi_bright_green: Hsla,
-    /// Bright Yellow Color for ANSI Terminal
-    pub terminal_ansi_bright_yellow: Hsla,
-    /// Bright Blue Color for ANSI Terminal
-    pub terminal_ansi_bright_blue: Hsla,
-    /// Bright Magenta Color for ANSI Terminal
-    pub terminal_ansi_bright_magenta: Hsla,
-    /// Bright Cyan Color for ANSI Terminal
-    pub terminal_ansi_bright_cyan: Hsla,
-    /// Bright White Color for ANSI Terminal
-    pub terminal_ansi_bright_white: Hsla,
-    /// Black Color for ANSI Terminal
+    /// Terminal foreground color.
+    pub terminal_foreground: Hsla,
+    /// Bright terminal foreground color.
+    pub terminal_bright_foreground: Hsla,
+    /// Dim terminal foreground color.
+    pub terminal_dim_foreground: Hsla,
+
+    /// Black ANSI terminal color.
     pub terminal_ansi_black: Hsla,
-    /// Red Color for ANSI Terminal
+    /// Bright black ANSI terminal color.
+    pub terminal_ansi_bright_black: Hsla,
+    /// Dim black ANSI terminal color.
+    pub terminal_ansi_dim_black: Hsla,
+    /// Red ANSI terminal color.
     pub terminal_ansi_red: Hsla,
-    /// Green Color for ANSI Terminal
+    /// Bright red ANSI terminal color.
+    pub terminal_ansi_bright_red: Hsla,
+    /// Dim red ANSI terminal color.
+    pub terminal_ansi_dim_red: Hsla,
+    /// Green ANSI terminal color.
     pub terminal_ansi_green: Hsla,
-    /// Yellow Color for ANSI Terminal
+    /// Bright green ANSI terminal color.
+    pub terminal_ansi_bright_green: Hsla,
+    /// Dim green ANSI terminal color.
+    pub terminal_ansi_dim_green: Hsla,
+    /// Yellow ANSI terminal color.
     pub terminal_ansi_yellow: Hsla,
-    /// Blue Color for ANSI Terminal
+    /// Bright yellow ANSI terminal color.
+    pub terminal_ansi_bright_yellow: Hsla,
+    /// Dim yellow ANSI terminal color.
+    pub terminal_ansi_dim_yellow: Hsla,
+    /// Blue ANSI terminal color.
     pub terminal_ansi_blue: Hsla,
-    /// Magenta Color for ANSI Terminal
+    /// Bright blue ANSI terminal color.
+    pub terminal_ansi_bright_blue: Hsla,
+    /// Dim blue ANSI terminal color.
+    pub terminal_ansi_dim_blue: Hsla,
+    /// Magenta ANSI terminal color.
     pub terminal_ansi_magenta: Hsla,
-    /// Cyan Color for ANSI Terminal
+    /// Bright magenta ANSI terminal color.
+    pub terminal_ansi_bright_magenta: Hsla,
+    /// Dim magenta ANSI terminal color.
+    pub terminal_ansi_dim_magenta: Hsla,
+    /// Cyan ANSI terminal color.
     pub terminal_ansi_cyan: Hsla,
-    /// White Color for ANSI Terminal
+    /// Bright cyan ANSI terminal color.
+    pub terminal_ansi_bright_cyan: Hsla,
+    /// Dim cyan ANSI terminal color.
+    pub terminal_ansi_dim_cyan: Hsla,
+    /// White ANSI terminal color.
     pub terminal_ansi_white: Hsla,
+    /// Bright white ANSI terminal color.
+    pub terminal_ansi_bright_white: Hsla,
+    /// Dim white ANSI terminal color.
+    pub terminal_ansi_dim_white: Hsla,
 
     // ===
     // UI/Rich Text

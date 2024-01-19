@@ -1,12 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
-    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveBounds, InteractiveElement,
-    InteractiveElementState, Interactivity, IntoElement, LayoutId, Model, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, PlatformInputHandler, Point,
-    ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle,
-    WeakView, WhiteSpace, WindowContext,
+    div, fill, point, px, relative, AnyElement, AsyncWindowContext, AvailableSpace, BorrowWindow,
+    Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight,
+    HighlightStyle, Hsla, InteractiveBounds, InteractiveElement, InteractiveElementState,
+    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
+    MouseMoveEvent, Pixels, PlatformInputHandler, Point, ShapedLine, StatefulInteractiveElement,
+    Styled, TextRun, TextStyle, TextSystem, UnderlineStyle, WeakView, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -29,7 +28,7 @@ use workspace::Workspace;
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
 
-///The information generated during layout that is necessary for painting
+/// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
@@ -43,7 +42,7 @@ pub struct LayoutState {
     gutter: Pixels,
 }
 
-///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
+/// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
 struct DisplayCursor {
     line: i32,
     col: usize,
@@ -139,8 +138,8 @@ impl LayoutRect {
     }
 }
 
-///The GPUI element that paints the terminal.
-///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
+/// The GPUI element that paints the terminal.
+/// We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
     workspace: WeakView<Workspace>,
@@ -278,8 +277,8 @@ impl TerminalElement {
         (cells, rects)
     }
 
-    // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
-    // the same position for sequential indexes. Use em_width instead
+    /// Computes the cursor position and expected block width, may return a zero width if x_for_index returns
+    /// the same position for sequential indexes. Use em_width instead
     fn shape_cursor(
         cursor_point: DisplayCursor,
         size: TerminalSize,
@@ -306,7 +305,7 @@ impl TerminalElement {
         }
     }
 
-    /// Convert the Alacritty cell styles to GPUI text styles and background color
+    /// Converts the Alacritty cell styles to GPUI text styles and background color.
     fn cell_style(
         indexed: &IndexedCell,
         fg: terminal::alacritty_terminal::ansi::Color,
@@ -506,8 +505,8 @@ impl TerminalElement {
             cx,
         );
 
-        //Layout cursor. Rectangle is used for IME, so we should lay it out even
-        //if we don't end up showing it.
+        // Layout cursor. Rectangle is used for IME, so we should lay it out even
+        // if we don't end up showing it.
         let cursor = if let AlacCursorShape::Hidden = cursor.shape {
             None
         } else {
@@ -556,7 +555,6 @@ impl TerminalElement {
             )
         };
 
-        //Done!
         LayoutState {
             cells,
             cursor,
@@ -991,11 +989,11 @@ fn to_highlighted_range_lines(
     Some((start_y, highlighted_range_lines))
 }
 
-///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
+/// Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent.
 fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) -> Hsla {
     let colors = theme.colors();
     match fg {
-        //Named and theme defined colors
+        // Named and theme defined colors
         terminal::alacritty_terminal::ansi::Color::Named(n) => match n {
             NamedColor::Black => colors.terminal_ansi_black,
             NamedColor::Red => colors.terminal_ansi_red,
@@ -1016,24 +1014,22 @@ fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) 
             NamedColor::Foreground => colors.text,
             NamedColor::Background => colors.background,
             NamedColor::Cursor => theme.players().local().cursor,
-
-            // todo!(more colors)
-            NamedColor::DimBlack => red(),
-            NamedColor::DimRed => red(),
-            NamedColor::DimGreen => red(),
-            NamedColor::DimYellow => red(),
-            NamedColor::DimBlue => red(),
-            NamedColor::DimMagenta => red(),
-            NamedColor::DimCyan => red(),
-            NamedColor::DimWhite => red(),
-            NamedColor::BrightForeground => red(),
-            NamedColor::DimForeground => red(),
+            NamedColor::DimBlack => colors.terminal_ansi_dim_black,
+            NamedColor::DimRed => colors.terminal_ansi_dim_red,
+            NamedColor::DimGreen => colors.terminal_ansi_dim_green,
+            NamedColor::DimYellow => colors.terminal_ansi_dim_yellow,
+            NamedColor::DimBlue => colors.terminal_ansi_dim_blue,
+            NamedColor::DimMagenta => colors.terminal_ansi_dim_magenta,
+            NamedColor::DimCyan => colors.terminal_ansi_dim_cyan,
+            NamedColor::DimWhite => colors.terminal_ansi_dim_white,
+            NamedColor::BrightForeground => colors.terminal_bright_foreground,
+            NamedColor::DimForeground => colors.terminal_dim_foreground,
         },
-        //'True' colors
+        // 'True' colors
         terminal::alacritty_terminal::ansi::Color::Spec(rgb) => {
             terminal::rgba_color(rgb.r, rgb.g, rgb.b)
         }
-        //8 bit, indexed colors
+        // 8 bit, indexed colors
         terminal::alacritty_terminal::ansi::Color::Indexed(i) => {
             terminal::get_color_at_index(*i as usize, theme)
         }
