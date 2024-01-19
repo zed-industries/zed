@@ -1866,7 +1866,7 @@ impl Snapshot {
         })
     }
 
-    /// Update the `git_status` of the given entries such that files'
+    /// Updates the `git_status` of the given entries such that files'
     /// statuses bubble up to their ancestor directories.
     pub fn propagate_git_statuses(&self, result: &mut [Entry]) {
         let mut cursor = self

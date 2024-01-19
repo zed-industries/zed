@@ -66,7 +66,7 @@ impl Database {
         .await
     }
 
-    /// Create a notification. If `avoid_duplicates` is set to true, then avoid
+    /// Creates a notification. If `avoid_duplicates` is set to true, then avoid
     /// creating a new notification if the given recipient already has an
     /// unread notification with the given kind and entity id.
     pub async fn create_notification(

@@ -214,5 +214,6 @@ gpui::actions!(
         Undo,
         UndoSelection,
         UnfoldLines,
+        DisplayCursorNames
     ]
 );

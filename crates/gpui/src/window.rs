@@ -721,7 +721,7 @@ impl<'a> WindowContext<'a> {
         subscription
     }
 
-    /// Create an `AsyncWindowContext`, which has a static lifetime and can be held across
+    /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
     /// await points in async code.
     pub fn to_async(&self) -> AsyncWindowContext {
         AsyncWindowContext::new(self.app.to_async(), self.window.handle)
@@ -794,7 +794,7 @@ impl<'a> WindowContext<'a> {
             .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
     }
 
-    /// Update the global of the given type. The given closure is given simultaneous mutable
+    /// Updates the global of the given type. The given closure is given simultaneous mutable
     /// access both to the global and the context.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
@@ -913,7 +913,7 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
-    /// Update the window's title at the platform level.
+    /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);
     }
@@ -1063,14 +1063,14 @@ impl<'a> WindowContext<'a> {
         self.window.modifiers
     }
 
-    /// Update the cursor style at the platform level.
+    /// Updates the cursor style at the platform level.
     pub fn set_cursor_style(&mut self, style: CursorStyle) {
         let view_id = self.parent_view_id();
         self.window.next_frame.cursor_styles.insert(view_id, style);
         self.window.next_frame.requested_cursor_style = Some(style);
     }
 
-    /// Set a tooltip to be rendered for the upcoming frame
+    /// Sets a tooltip to be rendered for the upcoming frame
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) {
         let view_id = self.parent_view_id();
         self.window.next_frame.tooltip_request = Some(TooltipRequest { view_id, tooltip });
@@ -2080,8 +2080,8 @@ impl<'a> WindowContext<'a> {
         })
     }
 
-    /// Update or initialize state for an element with the given id that lives across multiple
-    /// frames. If an element with this id existed in the rendered frame, its state will be passed
+    /// Updates or initializes state for an element with the given id that lives across multiple
+    /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
     /// when drawing the next frame.
     pub(crate) fn with_element_state<S, R>(
@@ -2182,7 +2182,7 @@ impl<'a> WindowContext<'a> {
             .expect("a view should always be on the stack while drawing")
     }
 
-    /// Set an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
+    /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
     /// platform to receive textual input with proper integration with concerns such
     /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
     /// rendered.
@@ -2322,7 +2322,7 @@ impl VisualContext for WindowContext<'_> {
         view
     }
 
-    /// Update the given view. Prefer calling `View::update` instead, which calls this method.
+    /// Updates the given view. Prefer calling [`View::update`] instead, which calls this method.
     fn update_view<T: 'static, R>(
         &mut self,
         view: &View<T>,
@@ -2491,7 +2491,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         result
     }
 
-    /// Update the global element offset relative to the current offset. This is used to implement
+    /// Updates the global element offset relative to the current offset. This is used to implement
     /// scrolling.
     fn with_element_offset<R>(
         &mut self,
@@ -2506,7 +2506,7 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
         self.with_absolute_element_offset(abs_offset, f)
     }
 
-    /// Update the global element offset based on the given offset. This is used to implement
+    /// Updates the global element offset based on the given offset. This is used to implement
     /// drag handles and other manual painting of elements.
     fn with_absolute_element_offset<R>(
         &mut self,
@@ -2629,7 +2629,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         &mut self.window_cx
     }
 
-    /// Set a given callback to be run on the next frame.
+    /// Sets a given callback to be run on the next frame.
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
     where
         V: 'static,
@@ -2957,7 +2957,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         self.window_cx.spawn(|cx| f(view, cx))
     }
 
-    /// Update the global state of the given type.
+    /// Updates the global state of the given type.
     pub fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: 'static,
@@ -3189,7 +3189,7 @@ pub struct WindowHandle<V> {
 }
 
 impl<V: 'static + Render> WindowHandle<V> {
-    /// Create a new handle from a window ID.
+    /// Creates a new handle from a window ID.
     /// This does not check if the root type of the window is `V`.
     pub fn new(id: WindowId) -> Self {
         WindowHandle {
@@ -3215,7 +3215,7 @@ impl<V: 'static + Render> WindowHandle<V> {
         }))
     }
 
-    /// Update the root view of this window.
+    /// Updates the root view of this window.
     ///
     /// This will fail if the window has been closed or if the root view's type does not match
     pub fn update<C, R>(
@@ -3337,7 +3337,7 @@ impl AnyWindowHandle {
         }
     }
 
-    /// Update the state of the root view of this window.
+    /// Updates the state of the root view of this window.
     ///
     /// This will fail if the window has been closed.
     pub fn update<C, R>(
@@ -3477,7 +3477,7 @@ pub struct PaintQuad {
 }
 
 impl PaintQuad {
-    /// Set the corner radii of the quad.
+    /// Sets the corner radii of the quad.
     pub fn corner_radii(self, corner_radii: impl Into<Corners<Pixels>>) -> Self {
         PaintQuad {
             corner_radii: corner_radii.into(),
@@ -3485,7 +3485,7 @@ impl PaintQuad {
         }
     }
 
-    /// Set the border widths of the quad.
+    /// Sets the border widths of the quad.
     pub fn border_widths(self, border_widths: impl Into<Edges<Pixels>>) -> Self {
         PaintQuad {
             border_widths: border_widths.into(),
@@ -3493,7 +3493,7 @@ impl PaintQuad {
         }
     }
 
-    /// Set the border color of the quad.
+    /// Sets the border color of the quad.
     pub fn border_color(self, border_color: impl Into<Hsla>) -> Self {
         PaintQuad {
             border_color: border_color.into(),
@@ -3501,7 +3501,7 @@ impl PaintQuad {
         }
     }
 
-    /// Set the background color of the quad.
+    /// Sets the background color of the quad.
     pub fn background(self, background: impl Into<Hsla>) -> Self {
         PaintQuad {
             background: background.into(),
@@ -3510,7 +3510,7 @@ impl PaintQuad {
     }
 }
 
-/// Create a quad with the given parameters.
+/// Creates a quad with the given parameters.
 pub fn quad(
     bounds: Bounds<Pixels>,
     corner_radii: impl Into<Corners<Pixels>>,
@@ -3527,7 +3527,7 @@ pub fn quad(
     }
 }
 
-/// Create a filled quad with the given bounds and background color.
+/// Creates a filled quad with the given bounds and background color.
 pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Hsla>) -> PaintQuad {
     PaintQuad {
         bounds: bounds.into(),
@@ -3538,7 +3538,7 @@ pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Hsla>) -> P
     }
 }
 
-/// Create a rectangle outline with the given bounds, border color, and a 1px border width
+/// Creates a rectangle outline with the given bounds, border color, and a 1px border width
 pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>) -> PaintQuad {
     PaintQuad {
         bounds: bounds.into(),

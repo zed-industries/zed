@@ -69,7 +69,7 @@ impl Default for Metering {
 }
 
 /// This struct is used to build a new [`Plugin`], using the builder pattern.
-/// Create a new default plugin with `PluginBuilder::new_with_default_ctx`,
+/// Creates a new default plugin with `PluginBuilder::new_with_default_ctx`,
 /// and add host-side exported functions using `host_function` and `host_function_async`.
 /// Finalize the plugin by calling [`init`].
 pub struct PluginBuilder {
@@ -90,7 +90,7 @@ fn create_default_engine() -> Result<Engine, Error> {
 }
 
 impl PluginBuilder {
-    /// Create a new [`PluginBuilder`] with the given WASI context.
+    /// Creates a new [`PluginBuilder`] with the given WASI context.
     /// Using the default context is a safe bet, see [`new_with_default_context`].
     /// This plugin will yield after a configurable amount of fuel is consumed.
     pub fn new(wasi_ctx: WasiCtx, metering: Metering) -> Result<Self, Error> {
@@ -105,7 +105,7 @@ impl PluginBuilder {
         })
     }
 
-    /// Create a new `PluginBuilder` with the default `WasiCtx` (see [`default_ctx`]).
+    /// Creates a new `PluginBuilder` with the default `WasiCtx` (see [`default_ctx`]).
     /// This plugin will yield after a configurable amount of fuel is consumed.
     pub fn new_default() -> Result<Self, Error> {
         let default_ctx = WasiCtxBuilder::new()

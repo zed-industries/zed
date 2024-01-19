@@ -37,7 +37,7 @@ pub struct Label {
 }
 
 impl Label {
-    /// Create a new [`Label`] with the given text.
+    /// Creates a new [`Label`] with the given text.
     ///
     /// # Examples
     ///

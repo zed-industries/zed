@@ -19,5 +19,6 @@ export ZED_IMAGE_ID=${image_id}
 
 target_zed_kube_cluster
 envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
+kubectl -n "$environment" rollout status deployment/collab --watch
 
 echo "deployed collab v${version} to ${environment}"
