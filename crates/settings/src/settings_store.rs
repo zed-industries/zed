@@ -246,7 +246,7 @@ impl SettingsStore {
         this
     }
 
-    /// Update the value of a setting in the user's global configuration.
+    /// Updates the value of a setting in the user's global configuration.
     ///
     /// This is only for tests. Normally, settings are only loaded from
     /// JSON files.
@@ -261,7 +261,7 @@ impl SettingsStore {
         self.set_user_settings(&new_text, cx).unwrap();
     }
 
-    /// Update the value of a setting in a JSON file, returning the new text
+    /// Updates the value of a setting in a JSON file, returning the new text
     /// for that JSON file.
     pub fn new_text_for_update<T: Settings>(
         &self,
@@ -276,7 +276,7 @@ impl SettingsStore {
         new_text
     }
 
-    /// Update the value of a setting in a JSON file, returning a list
+    /// Updates the value of a setting in a JSON file, returning a list
     /// of edits to apply to the JSON file.
     pub fn edits_for_update<T: Settings>(
         &self,
@@ -344,7 +344,7 @@ impl SettingsStore {
         DEFAULT_JSON_TAB_SIZE
     }
 
-    /// Set the default settings via a JSON string.
+    /// Sets the default settings via a JSON string.
     ///
     /// The string should contain a JSON object with a default value for every setting.
     pub fn set_default_settings(
@@ -362,7 +362,7 @@ impl SettingsStore {
         }
     }
 
-    /// Set the user settings via a JSON string.
+    /// Sets the user settings via a JSON string.
     pub fn set_user_settings(
         &mut self,
         user_settings_content: &str,

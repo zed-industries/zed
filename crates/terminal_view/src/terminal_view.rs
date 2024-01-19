@@ -832,7 +832,7 @@ impl SearchableItem for TerminalView {
         self.terminal().update(cx, |term, _| term.matches = matches)
     }
 
-    /// Return the selection content to pre-load into this search
+    /// Returns the selection content to pre-load into this search
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
         self.terminal()
             .read(cx)

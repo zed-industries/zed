@@ -195,9 +195,10 @@ impl Object {
     }
 }
 
-/// Return a range that surrounds the word relative_to is in
-/// If relative_to is at the start of a word, return the word.
-/// If relative_to is between words, return the space between
+/// Returns a range that surrounds the word `relative_to` is in.
+///
+/// If `relative_to` is at the start of a word, return the word.
+/// If `relative_to` is between words, return the space between.
 fn in_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -225,11 +226,12 @@ fn in_word(
     Some(start..end)
 }
 
-/// Return a range that surrounds the word and following whitespace
+/// Returns a range that surrounds the word and following whitespace
 /// relative_to is in.
-/// If relative_to is at the start of a word, return the word and following whitespace.
-/// If relative_to is between words, return the whitespace back and the following word
-
+///
+/// If `relative_to` is at the start of a word, return the word and following whitespace.
+/// If `relative_to` is between words, return the whitespace back and the following word.
+///
 /// if in word
 ///   delete that word
 ///   if there is whitespace following the word, delete that as well

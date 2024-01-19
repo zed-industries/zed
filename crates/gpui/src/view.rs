@@ -64,7 +64,7 @@ impl<V: 'static> View<V> {
         Entity::downgrade(self)
     }
 
-    /// Update the view's state with the given function, which is passed a mutable reference and a context.
+    /// Updates the view's state with the given function, which is passed a mutable reference and a context.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -156,7 +156,7 @@ impl<V: 'static> WeakView<V> {
         Entity::upgrade_from(self)
     }
 
-    /// Update this view's state if it hasn't been released.
+    /// Updates this view's state if it hasn't been released.
     /// Returns an error if this view has been released.
     pub fn update<C, R>(
         &self,

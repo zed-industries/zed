@@ -153,7 +153,7 @@ impl Database {
         .await
     }
 
-    /// Set "connected_once" on the user for analytics.
+    /// Sets "connected_once" on the user for analytics.
     pub async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()> {
         self.transaction(|tx| async move {
             user::Entity::update_many()
@@ -252,7 +252,7 @@ impl Database {
         .await
     }
 
-    /// Return the active flags for the user.
+    /// Returns the active flags for the user.
     pub async fn get_user_flags(&self, user: UserId) -> Result<Vec<String>> {
         self.transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]

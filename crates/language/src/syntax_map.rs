@@ -1296,7 +1296,7 @@ fn get_injections(
     }
 }
 
-/// Update the given list of included `ranges`, removing any ranges that intersect
+/// Updates the given list of included `ranges`, removing any ranges that intersect
 /// `removed_ranges`, and inserting the given `new_ranges`.
 ///
 /// Returns a new vector of ranges, and the range of the vector that was changed,
