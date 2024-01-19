@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{div, IntoElement, ParentElement, Render, Subscription, View, ViewContext, WeakView};
 use std::sync::Arc;
-use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
+use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::LanguageSelector;

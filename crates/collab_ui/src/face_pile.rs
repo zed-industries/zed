@@ -1,5 +1,6 @@
-use gpui::{div, AnyElement, Div, IntoElement, ParentElement, Styled};
+use gpui::{div, AnyElement, Div, ParentElement, Styled};
 use smallvec::SmallVec;
+use ui::FluentBuilder;
 
 #[derive(Default)]
 pub struct FacePile {

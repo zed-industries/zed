@@ -27,6 +27,7 @@ enum ContextMenuItem {
 pub struct ContextMenu {
     items: Vec<ContextMenuItem>,
     focus_handle: FocusHandle,
+    action_context: Option<FocusHandle>,
     selected_index: Option<usize>,
     delayed: bool,
     clicked: bool,
@@ -40,6 +41,8 @@ impl FocusableView for ContextMenu {
 }
 
 impl EventEmitter<DismissEvent> for ContextMenu {}
+
+impl FluentBuilder for ContextMenu {}
 
 impl ContextMenu {
     pub fn build(
@@ -56,6 +59,7 @@ impl ContextMenu {
                 Self {
                     items: Default::default(),
                     focus_handle,
+                    action_context: None,
                     selected_index: None,
                     delayed: false,
                     clicked: false,
@@ -64,6 +68,11 @@ impl ContextMenu {
                 cx,
             )
         })
+    }
+
+    pub fn context(mut self, focus: FocusHandle) -> Self {
+        self.action_context = Some(focus);
+        self
     }
 
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
@@ -305,7 +314,14 @@ impl Render for ContextMenu {
                                         .child(label_element)
                                         .debug_selector(|| format!("MENU_ITEM-{}", label))
                                         .children(action.as_ref().and_then(|action| {
-                                            KeyBinding::for_action(&**action, cx)
+                                            self.action_context
+                                                .as_ref()
+                                                .map(|focus| {
+                                                    KeyBinding::for_action_in(&**action, focus, cx)
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    KeyBinding::for_action(&**action, cx)
+                                                })
                                                 .map(|binding| div().ml_1().child(binding))
                                         })),
                                 )
