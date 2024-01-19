@@ -203,7 +203,7 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
         ),
 
         // quickfix / loclist (merged together for now)
-        "cl" | "cli" | "clis" | "clist" => ("clist", diagnostics::Deploy.boxed_clone()),
+        "cl" | "cli" | "clis" | "clist" => ("clist", diagnostics::Open.boxed_clone()),
         "cc" => ("cc", editor::actions::Hover.boxed_clone()),
         "ll" => ("ll", editor::actions::Hover.boxed_clone()),
         "cn" | "cne" | "cnex" | "cnext" => ("cnext", editor::actions::GoToDiagnostic.boxed_clone()),

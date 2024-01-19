@@ -118,7 +118,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::separator(),
                 MenuItem::action("Project Panel", project_panel::ToggleFocus),
                 MenuItem::action("Command Palette", command_palette::Toggle),
-                MenuItem::action("Diagnostics", diagnostics::Deploy),
+                MenuItem::action("Diagnostics", diagnostics::Open),
                 MenuItem::separator(),
             ],
         },

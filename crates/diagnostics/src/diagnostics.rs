@@ -43,7 +43,7 @@ use workspace::{
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
 };
 
-actions!(diagnostics, [Deploy, ToggleWarnings]);
+actions!(diagnostics, [Open, ToggleWarnings]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
@@ -194,7 +194,7 @@ impl ProjectDiagnosticsEditor {
         this
     }
 
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+    fn deploy(workspace: &mut Workspace, _: &Open, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, cx);
         } else {

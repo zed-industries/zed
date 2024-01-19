@@ -9,7 +9,7 @@ use lsp::LanguageServerId;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
-use crate::{Deploy, ProjectDiagnosticsEditor};
+use crate::{Open, ProjectDiagnosticsEditor};
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
@@ -97,7 +97,7 @@ impl Render for DiagnosticIndicator {
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
-                    .tooltip(|cx| Tooltip::for_action("Project Diagnostics", &Deploy, cx))
+                    .tooltip(|cx| Tooltip::for_action("Project Diagnostics", &Open, cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {

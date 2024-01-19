@@ -408,7 +408,7 @@
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
       "cmd-shift-p": "command_palette::Toggle",
-      "cmd-shift-m": "diagnostics::Deploy",
+      "cmd-shift-m": "diagnostics::Open",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
