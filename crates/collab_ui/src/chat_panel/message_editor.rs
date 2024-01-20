@@ -40,6 +40,7 @@ impl MessageEditor {
     ) -> Self {
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_use_autoclose(false);
         });
 
         let buffer = editor
