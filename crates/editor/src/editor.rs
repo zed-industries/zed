@@ -3285,15 +3285,13 @@ impl Editor {
             this.refresh_copilot_suggestions(true, cx);
         });
 
-        let project = self.project.clone()?;
-        let apply_edits = project.update(cx, |project, cx| {
-            project.apply_additional_edits_for_completion(
-                buffer_handle,
-                completion.clone(),
-                true,
-                cx,
-            )
-        });
+        let provider = self.completion_provider.as_ref()?;
+        let apply_edits = provider.apply_additional_edits_for_completion(
+            buffer_handle,
+            completion.clone(),
+            true,
+            cx,
+        );
         Some(cx.foreground_executor().spawn(async move {
             apply_edits.await?;
             Ok(())
@@ -8912,12 +8910,21 @@ pub trait CompletionProvider {
         buffer_position: text::Anchor,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<Completion>>>;
+
     fn resolve_completions(
         &self,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>>;
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer: Model<Buffer>,
+        completion: Completion,
+        push_to_history: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Option<language::Transaction>>>;
 }
 
 impl CompletionProvider for Model<Project> {
@@ -8940,6 +8947,18 @@ impl CompletionProvider for Model<Project> {
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
             project.resolve_completions(completion_indices, completions, cx)
+        })
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer: Model<Buffer>,
+        completion: Completion,
+        push_to_history: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Option<language::Transaction>>> {
+        self.update(cx, |project, cx| {
+            project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
         })
     }
 }
