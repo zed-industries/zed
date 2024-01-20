@@ -595,7 +595,7 @@ impl Render for ChatPanel {
                             el.child(
                                 div()
                                     .rounded_md()
-                                    .h_7()
+                                    .h_6()
                                     .w_full()
                                     .bg(cx.theme().colors().editor_background),
                             )
