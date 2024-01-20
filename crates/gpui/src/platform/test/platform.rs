@@ -15,7 +15,7 @@ use std::{
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
-pub struct TestPlatform {
+pub(crate) struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
@@ -178,20 +178,9 @@ impl Platform for TestPlatform {
     fn set_display_link_output_callback(
         &self,
         _display_id: DisplayId,
-        mut callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp) + Send>,
+        mut callback: Box<dyn FnMut() + Send>,
     ) {
-        let timestamp = crate::VideoTimestamp {
-            version: 0,
-            video_time_scale: 0,
-            video_time: 0,
-            host_time: 0,
-            rate_scalar: 0.0,
-            video_refresh_period: 0,
-            smpte_time: crate::SmtpeTime::default(),
-            flags: 0,
-            reserved: 0,
-        };
-        callback(&timestamp, &timestamp)
+        callback()
     }
 
     fn start_display_link(&self, _display_id: DisplayId) {}

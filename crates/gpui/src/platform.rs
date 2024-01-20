@@ -38,7 +38,7 @@ pub use keystroke::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use test::*;
+pub(crate) use test::*;
 use time::UtcOffset;
 
 #[cfg(target_os = "macos")]
