@@ -352,7 +352,7 @@ impl TestAppContext {
     }
 
     /// Returns the `TestWindow` backing the given handle.
-    pub fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
+    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app
             .borrow_mut()
             .windows

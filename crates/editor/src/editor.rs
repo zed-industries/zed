@@ -57,9 +57,10 @@ use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
     DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton,
-    ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels,
+    Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
+    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView,
+    WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -3378,7 +3379,7 @@ impl Editor {
         let replica_id = this.update(&mut cx, |this, cx| this.replica_id(cx))?;
 
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
-        cx.update(|_, cx| {
+        cx.update(|cx| {
             entries.sort_unstable_by_key(|(buffer, _)| {
                 buffer.read(cx).file().map(|f| f.path().clone())
             });
@@ -9166,7 +9167,7 @@ impl Render for Editor {
     }
 }
 
-impl InputHandler for Editor {
+impl ViewInputHandler for Editor {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,

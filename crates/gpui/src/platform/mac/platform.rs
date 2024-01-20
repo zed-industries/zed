@@ -3,7 +3,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
     MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp, WindowOptions,
+    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -139,9 +139,9 @@ unsafe fn build_classes() {
     }
 }
 
-pub struct MacPlatform(Mutex<MacPlatformState>);
+pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
 
-pub struct MacPlatformState {
+pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
@@ -169,7 +169,7 @@ impl Default for MacPlatform {
 }
 
 impl MacPlatform {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let dispatcher = Arc::new(MacDispatcher::new());
         Self(Mutex::new(MacPlatformState {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -475,10 +475,6 @@ impl Platform for MacPlatform {
         }
     }
 
-    // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn platform::Window> {
-    //     Box::new(StatusItem::add(self.fonts()))
-    // }
-
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
@@ -504,7 +500,7 @@ impl Platform for MacPlatform {
     fn set_display_link_output_callback(
         &self,
         display_id: DisplayId,
-        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>,
+        callback: Box<dyn FnMut() + Send>,
     ) {
         self.0
             .lock()

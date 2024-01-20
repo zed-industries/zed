@@ -1420,7 +1420,7 @@ impl Interactivity {
 
                                         move |mut cx| async move {
                                             cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                            cx.update(|_, cx| {
+                                            cx.update(|cx| {
                                                 active_tooltip.borrow_mut().replace(
                                                     ActiveTooltip {
                                                         tooltip: Some(AnyTooltip {

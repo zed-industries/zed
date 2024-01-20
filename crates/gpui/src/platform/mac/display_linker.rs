@@ -7,8 +7,6 @@ use std::{
 use crate::DisplayId;
 use collections::HashMap;
 use parking_lot::Mutex;
-pub use sys::CVSMPTETime as SmtpeTime;
-pub use sys::CVTimeStamp as VideoTimestamp;
 
 pub(crate) struct MacDisplayLinker {
     links: HashMap<DisplayId, MacDisplayLink>,
@@ -27,13 +25,13 @@ impl MacDisplayLinker {
     }
 }
 
-type OutputCallback = Mutex<Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>>;
+type OutputCallback = Mutex<Box<dyn FnMut() + Send>>;
 
 impl MacDisplayLinker {
     pub fn set_output_callback(
         &mut self,
         display_id: DisplayId,
-        output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>,
+        output_callback: Box<dyn FnMut() + Send>,
     ) {
         if let Some(mut system_link) = unsafe { sys::DisplayLink::on_display(display_id.0) } {
             let callback = Arc::new(Mutex::new(output_callback));
@@ -81,11 +79,11 @@ unsafe extern "C" fn trampoline(
     _flags_out: *mut i64,
     user_data: *mut c_void,
 ) -> i32 {
-    if let Some((current_time, output_time)) = current_time.as_ref().zip(output_time.as_ref()) {
+    if let Some((_current_time, _output_time)) = current_time.as_ref().zip(output_time.as_ref()) {
         let output_callback: Weak<OutputCallback> =
             Weak::from_raw(user_data as *mut OutputCallback);
         if let Some(output_callback) = output_callback.upgrade() {
-            (output_callback.lock())(current_time, output_time)
+            (output_callback.lock())()
         }
         mem::forget(output_callback);
     }
@@ -126,7 +124,7 @@ mod sys {
 
     #[repr(C)]
     #[derive(Clone, Copy)]
-    pub struct CVTimeStamp {
+    pub(crate) struct CVTimeStamp {
         pub version: u32,
         pub video_time_scale: i32,
         pub video_time: i64,
@@ -154,7 +152,7 @@ mod sys {
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
-    pub struct CVSMPTETime {
+    pub(crate) struct CVSMPTETime {
         pub subframes: i16,
         pub subframe_divisor: i16,
         pub counter: u32,

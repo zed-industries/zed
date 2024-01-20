@@ -1233,7 +1233,7 @@ impl Workspace {
             }
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
-                    cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
+                    cx.update(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
                     if let Some(ix) =
                         pane.update(&mut cx, |pane, _| pane.index_for_item(item.as_ref()))?
@@ -1307,7 +1307,7 @@ impl Workspace {
             } else {
                 None
             };
-            cx.update(|_, cx| open_paths(&paths, &app_state, window_to_replace, cx))?
+            cx.update(|cx| open_paths(&paths, &app_state, window_to_replace, cx))?
                 .await?;
             Ok(())
         })
@@ -1912,7 +1912,7 @@ impl Workspace {
         let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
         cx.spawn(|_, mut cx| async move {
             let (project_entry_id, project_item) = project_item.await?;
-            let build_item = cx.update(|_, cx| {
+            let build_item = cx.update(|cx| {
                 cx.default_global::<ProjectItemBuilders>()
                     .get(&project_item.entity_type())
                     .ok_or_else(|| anyhow!("no item builder for project item"))
@@ -2709,7 +2709,7 @@ impl Workspace {
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
-        let item_builders = cx.update(|_, cx| {
+        let item_builders = cx.update(|cx| {
             cx.default_global::<FollowableItemBuilders>()
                 .values()
                 .map(|b| b.0)
@@ -2728,7 +2728,7 @@ impl Workspace {
                     Err(anyhow!("missing view variant"))?;
                 }
                 for build_item in &item_builders {
-                    let task = cx.update(|_, cx| {
+                    let task = cx.update(|cx| {
                         build_item(pane.clone(), this.clone(), id, &mut variant, cx)
                     })?;
                     if let Some(task) = task {
@@ -3141,7 +3141,7 @@ impl Workspace {
                 center_group = Some((group, active_pane))
             }
 
-            let mut items_by_project_path = cx.update(|_, cx| {
+            let mut items_by_project_path = cx.update(|cx| {
                 center_items
                     .unwrap_or_default()
                     .into_iter()
@@ -3407,7 +3407,7 @@ fn open_items(
             let restored_project_paths = restored_items
                 .iter()
                 .filter_map(|item| {
-                    cx.update(|_, cx| item.as_ref()?.project_path(cx))
+                    cx.update(|cx| item.as_ref()?.project_path(cx))
                         .ok()
                         .flatten()
                 })
