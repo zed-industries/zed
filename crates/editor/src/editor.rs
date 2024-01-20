@@ -3188,6 +3188,7 @@ impl Editor {
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.read();
         let completion = completions.get(mat.candidate_id)?;
+        cx.stop_propagation();
 
         let snippet;
         let text;
