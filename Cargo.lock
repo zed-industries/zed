@@ -1548,6 +1548,7 @@ dependencies = [
  "log",
  "menu",
  "notifications",
+ "parking_lot 0.11.2",
  "picker",
  "postage",
  "pretty_assertions",
