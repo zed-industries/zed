@@ -250,7 +250,7 @@ pub fn render_markdown_mut(
                 _ => {}
             },
             Event::HardBreak => text.push('\n'),
-            Event::SoftBreak => text.push(' '),
+            Event::SoftBreak => text.push('\n'),
             _ => {}
         }
     }
