@@ -654,7 +654,7 @@ pub enum CursorStyle {
     /// corresponds to the CSS cursor value `row-resize`
     ResizeUpDown,
 
-    /// A cursor indicating that something will dissappear if moved here
+    /// A cursor indicating that something will disappear if moved here
     /// Does not correspond to a CSS cursor value
     DisappearingItem,
 
