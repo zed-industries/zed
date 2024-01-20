@@ -621,9 +621,17 @@ impl TerminalElement {
                 }
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() {
+                    let visibly_contains = interactive_bounds.visibly_contains(&e.position, cx);
                     terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_drag(e, origin, bounds);
-                        cx.notify();
+                        if !terminal.selection_started() {
+                            if visibly_contains {
+                                terminal.mouse_drag(e, origin, bounds);
+                                cx.notify();
+                            }
+                        } else {
+                            terminal.mouse_drag(e, origin, bounds);
+                            cx.notify();
+                        }
                     })
                 }
 

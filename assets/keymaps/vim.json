@@ -104,8 +104,6 @@
       "shift-v": "vim::ToggleVisualLine",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
-      "*": "vim::MoveToNext",
-      "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
       "ctrl-f": "vim::PageDown",
       "pagedown": "vim::PageDown",
@@ -329,6 +327,8 @@
           "backwards": true
         }
       ],
+      "*": "vim::MoveToNext",
+      "#": "vim::MoveToPrev",
       ";": "vim::RepeatFind",
       ",": [
         "vim::RepeatFind",
@@ -421,6 +421,18 @@
       "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
+      "*": [
+        "vim::MoveToNext",
+        {
+          "partialWord": true
+        }
+      ],
+      "#": [
+        "vim::MoveToPrev",
+        {
+          "partialWord": true
+        }
+      ],
       "ctrl-a": "vim::Increment",
       "ctrl-x": "vim::Decrement",
       "g ctrl-a": [

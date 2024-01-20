@@ -1,6 +1,6 @@
-use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
+use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
+    global_bounds_to_ns_rect, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
     FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
@@ -411,10 +411,8 @@ impl MacWindowState {
     }
 
     fn frame(&self) -> Bounds<GlobalPixels> {
-        unsafe {
-            let frame = NSWindow::frame(self.native_window);
-            display_bounds_from_native(mem::transmute::<NSRect, CGRect>(frame))
-        }
+        let frame = unsafe { NSWindow::frame(self.native_window) };
+        global_bounds_from_ns_rect(frame)
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -650,11 +648,11 @@ impl MacWindow {
                 WindowBounds::Fixed(bounds) => {
                     let display_bounds = display.bounds();
                     let frame = if bounds.intersects(&display_bounds) {
-                        display_bounds_to_native(bounds)
+                        global_bounds_to_ns_rect(bounds)
                     } else {
-                        display_bounds_to_native(display_bounds)
+                        global_bounds_to_ns_rect(display_bounds)
                     };
-                    native_window.setFrame_display_(mem::transmute::<CGRect, NSRect>(frame), YES);
+                    native_window.setFrame_display_(frame, YES);
                 }
             }
 

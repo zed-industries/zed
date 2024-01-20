@@ -112,18 +112,22 @@ impl Render for Toolbar {
             .child(
                 h_flex()
                     .justify_between()
+                    .gap_2()
                     .when(has_left_items, |this| {
                         this.child(
                             h_flex()
-                                .flex_1()
+                                .flex_auto()
                                 .justify_start()
+                                .overflow_x_hidden()
                                 .children(self.left_items().map(|item| item.to_any())),
                         )
                     })
                     .when(has_right_items, |this| {
                         this.child(
                             h_flex()
-                                .flex_1()
+                                // We're using `flex_none` here to prevent some flickering that can occur when the
+                                // size of the left items container changes.
+                                .flex_none()
                                 .justify_end()
                                 .children(self.right_items().map(|item| item.to_any())),
                         )
