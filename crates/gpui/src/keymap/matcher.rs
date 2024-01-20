@@ -1,5 +1,6 @@
-use crate::{Action, KeyContext, Keymap, KeymapVersion, Keystroke};
+use crate::{Action, KeyBinding, KeyContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::Mutex;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
 pub struct KeystrokeMatcher {
@@ -39,7 +40,7 @@ impl KeystrokeMatcher {
         &mut self,
         keystroke: &Keystroke,
         context_stack: &[KeyContext],
-    ) -> KeyMatch {
+    ) -> SmallVec<[KeyBinding; 1]> {
         let keymap = self.keymap.lock();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
         if keymap.version() != self.keymap_version {
@@ -48,7 +49,7 @@ impl KeystrokeMatcher {
         }
 
         let mut pending_key = None;
-        let mut found_actions = Vec::new();
+        let mut found = SmallVec::new();
 
         for binding in keymap.bindings().rev() {
             if !keymap.binding_enabled(binding, context_stack) {
@@ -58,8 +59,8 @@ impl KeystrokeMatcher {
             for candidate in keystroke.match_candidates() {
                 self.pending_keystrokes.push(candidate.clone());
                 match binding.match_keystrokes(&self.pending_keystrokes) {
-                    KeyMatch::Some(mut actions) => {
-                        found_actions.append(&mut actions);
+                    KeyMatch::Matched => {
+                        found.push(binding.clone());
                     }
                     KeyMatch::Pending => {
                         pending_key.get_or_insert(candidate);
@@ -70,16 +71,15 @@ impl KeystrokeMatcher {
             }
         }
 
-        if !found_actions.is_empty() {
+        if !found.is_empty() {
             self.pending_keystrokes.clear();
-            return KeyMatch::Some(found_actions);
         } else if let Some(pending_key) = pending_key {
             self.pending_keystrokes.push(pending_key);
-            KeyMatch::Pending
         } else {
             self.pending_keystrokes.clear();
-            KeyMatch::None
-        }
+        };
+
+        found
     }
 }
 
@@ -87,43 +87,7 @@ impl KeystrokeMatcher {
 pub enum KeyMatch {
     None,
     Pending,
-    Some(Vec<Box<dyn Action>>),
-}
-
-impl KeyMatch {
-    pub fn is_some(&self) -> bool {
-        matches!(self, KeyMatch::Some(_))
-    }
-
-    pub fn matches(self) -> Option<Vec<Box<dyn Action>>> {
-        match self {
-            KeyMatch::Some(matches) => Some(matches),
-            _ => None,
-        }
-    }
-}
-
-impl PartialEq for KeyMatch {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (KeyMatch::None, KeyMatch::None) => true,
-            (KeyMatch::Pending, KeyMatch::Pending) => true,
-            (KeyMatch::Some(a), KeyMatch::Some(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-
-                for (a, b) in a.iter().zip(b.iter()) {
-                    if !a.partial_eq(b.as_ref()) {
-                        return false;
-                    }
-                }
-
-                true
-            }
-            _ => false,
-        }
-    }
+    Matched,
 }
 
 #[cfg(test)]

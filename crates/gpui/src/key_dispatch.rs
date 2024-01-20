@@ -275,27 +275,31 @@ impl DispatchTree {
     pub fn dispatch_key(
         &mut self,
         keystroke: &Keystroke,
-        context: &[KeyContext],
-    ) -> Vec<Box<dyn Action>> {
-        if !self.keystroke_matchers.contains_key(context) {
-            let keystroke_contexts = context.iter().cloned().collect();
-            self.keystroke_matchers.insert(
-                keystroke_contexts,
-                KeystrokeMatcher::new(self.keymap.clone()),
-            );
-        }
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let mut actions = SmallVec::new();
 
-        let keystroke_matcher = self.keystroke_matchers.get_mut(context).unwrap();
-        if let KeyMatch::Some(actions) = keystroke_matcher.match_keystroke(keystroke, context) {
-            // Clear all pending keystrokes when an action has been found.
-            for keystroke_matcher in self.keystroke_matchers.values_mut() {
-                keystroke_matcher.clear_pending();
+        let mut context_stack: SmallVec<[KeyContext; 4]> = SmallVec::new();
+        for node_id in dispatch_path {
+            let node = self.node(*node_id);
+
+            if let Some(context) = node.context.clone() {
+                context_stack.push(context);
             }
-
-            actions
-        } else {
-            vec![]
         }
+
+        while !context_stack.is_empty() {
+            let keystroke_matcher = self
+                .keystroke_matchers
+                .entry(context_stack.clone())
+                .or_insert_with(|| KeystrokeMatcher::new(self.keymap.clone()));
+
+            let mut matches = keystroke_matcher.match_keystroke(keystroke, &context_stack);
+            actions.append(&mut matches);
+            context_stack.pop();
+        }
+
+        actions
     }
 
     pub fn has_pending_keystrokes(&self) -> bool {

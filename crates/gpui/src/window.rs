@@ -1784,44 +1784,24 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        let mut actions: Vec<Box<dyn Action>> = Vec::new();
+        if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+            let bindings = self
+                .window
+                .rendered_frame
+                .dispatch_tree
+                .dispatch_key(&key_down_event.keystroke, &dispatch_path);
 
-        let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
-        for node_id in &dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-
-            if let Some(context) = node.context.clone() {
-                context_stack.push(context);
+            if !bindings.is_empty() {
+                self.clear_pending_keystrokes();
             }
-        }
 
-        for node_id in dispatch_path.iter().rev() {
-            // Match keystrokes
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            if node.context.is_some() {
-                if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                    let mut new_actions = self
-                        .window
-                        .rendered_frame
-                        .dispatch_tree
-                        .dispatch_key(&key_down_event.keystroke, &context_stack);
-                    actions.append(&mut new_actions);
+            self.propagate_event = true;
+            for binding in bindings {
+                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+                if !self.propagate_event {
+                    self.dispatch_keystroke_observers(event, Some(binding.action));
+                    return;
                 }
-
-                context_stack.pop();
-            }
-        }
-
-        if !actions.is_empty() {
-            self.clear_pending_keystrokes();
-        }
-
-        self.propagate_event = true;
-        for action in actions {
-            self.dispatch_action_on_node(node_id, action.boxed_clone());
-            if !self.propagate_event {
-                self.dispatch_keystroke_observers(event, Some(action));
-                return;
             }
         }
 
