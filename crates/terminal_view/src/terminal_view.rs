@@ -772,7 +772,7 @@ impl Item for TerminalView {
                 .log_err()
                 .flatten()
                 .or_else(|| {
-                    cx.update(|_, cx| {
+                    cx.update(|cx| {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
                         workspace
                             .upgrade()

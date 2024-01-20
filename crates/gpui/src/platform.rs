@@ -6,10 +6,10 @@ mod mac;
 mod test;
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene, SharedString,
-    Size, TaskLabel,
+    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
+    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
+    Scene, SharedString, Size, TaskLabel, WindowContext,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -149,8 +149,8 @@ pub(crate) trait PlatformWindow {
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
-    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>>;
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
+    fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
@@ -325,19 +325,103 @@ impl From<TileId> for etagere::AllocId {
     }
 }
 
-pub trait PlatformInputHandler: 'static {
-    fn selected_text_range(&mut self) -> Option<Range<usize>>;
-    fn marked_text_range(&mut self) -> Option<Range<usize>>;
-    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String>;
-    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str);
+pub(crate) struct PlatformInputHandler {
+    cx: AsyncWindowContext,
+    handler: Box<dyn InputHandler>,
+}
+
+impl PlatformInputHandler {
+    pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
+        Self { cx, handler }
+    }
+
+    fn selected_text_range(&mut self) -> Option<Range<usize>> {
+        self.cx
+            .update(|cx| self.handler.selected_text_range(cx))
+            .ok()
+            .flatten()
+    }
+
+    fn marked_text_range(&mut self) -> Option<Range<usize>> {
+        self.cx
+            .update(|cx| self.handler.marked_text_range(cx))
+            .ok()
+            .flatten()
+    }
+
+    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
+        self.cx
+            .update(|cx| self.handler.text_for_range(range_utf16, cx))
+            .ok()
+            .flatten()
+    }
+
+    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+        self.cx
+            .update(|cx| {
+                self.handler
+                    .replace_text_in_range(replacement_range, text, cx)
+            })
+            .ok();
+    }
+
     fn replace_and_mark_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
+    ) {
+        self.cx
+            .update(|cx| {
+                self.handler.replace_and_mark_text_in_range(
+                    range_utf16,
+                    new_text,
+                    new_selected_range,
+                    cx,
+                )
+            })
+            .ok();
+    }
+
+    fn unmark_text(&mut self) {
+        self.cx.update(|cx| self.handler.unmark_text(cx)).ok();
+    }
+
+    fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
+        self.cx
+            .update(|cx| self.handler.bounds_for_range(range_utf16, cx))
+            .ok()
+            .flatten()
+    }
+}
+
+pub trait InputHandler: 'static {
+    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn marked_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        cx: &mut WindowContext,
+    ) -> Option<String>;
+    fn replace_text_in_range(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        cx: &mut WindowContext,
     );
-    fn unmark_text(&mut self);
-    fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>>;
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        cx: &mut WindowContext,
+    );
+    fn unmark_text(&mut self, cx: &mut WindowContext);
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        cx: &mut WindowContext,
+    ) -> Option<Bounds<Pixels>>;
 }
 
 #[derive(Debug)]

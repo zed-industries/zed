@@ -5,13 +5,13 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
     DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
     Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, KeystrokeEvent, LayoutId,
-    Model, ModelContext, Modifiers, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene, Shadow,
-    SharedString, Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine, Task,
-    Underline, UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions,
+    ImageData, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    KeystrokeEvent, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel,
+    Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    Shadow, SharedString, Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine,
+    Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions,
     SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -298,7 +298,7 @@ pub(crate) struct ElementStateBox {
 
 struct RequestedInputHandler {
     view_id: EntityId,
-    handler: Option<Box<dyn PlatformInputHandler>>,
+    handler: Option<PlatformInputHandler>,
 }
 
 struct TooltipRequest {
@@ -2188,16 +2188,15 @@ impl<'a> WindowContext<'a> {
     /// rendered.
     ///
     /// [element_input_handler]: crate::ElementInputHandler
-    pub fn handle_input(
-        &mut self,
-        focus_handle: &FocusHandle,
-        input_handler: impl PlatformInputHandler,
-    ) {
+    pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
         if focus_handle.is_focused(self) {
             let view_id = self.parent_view_id();
             self.window.next_frame.requested_input_handler = Some(RequestedInputHandler {
                 view_id,
-                handler: Some(Box::new(input_handler)),
+                handler: Some(PlatformInputHandler::new(
+                    self.to_async(),
+                    Box::new(input_handler),
+                )),
             })
         }
     }
@@ -2209,7 +2208,7 @@ impl<'a> WindowContext<'a> {
         self.window
             .platform_window
             .on_should_close(Box::new(move || {
-                this.update(|_, cx| {
+                this.update(|cx| {
                     // Ensure that the window is removed from the app if it's been closed
                     // by always pre-empting the system close event.
                     if f(cx) {

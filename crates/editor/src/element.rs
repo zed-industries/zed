@@ -2951,9 +2951,10 @@ impl Element for EditorElement {
                         self.register_key_listeners(cx);
 
                         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                            let input_handler =
-                                ElementInputHandler::new(bounds, self.editor.clone(), cx);
-                            cx.handle_input(&focus_handle, input_handler);
+                            cx.handle_input(
+                                &focus_handle,
+                                ElementInputHandler::new(bounds, self.editor.clone()),
+                            );
 
                             self.paint_background(gutter_bounds, text_bounds, &layout, cx);
                             if layout.gutter_size.width > Pixels::ZERO {
