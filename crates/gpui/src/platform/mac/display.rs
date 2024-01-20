@@ -11,7 +11,7 @@ use objc::{msg_send, sel, sel_impl};
 use uuid::Uuid;
 
 #[derive(Debug)]
-pub struct MacDisplay(pub(crate) CGDirectDisplayID);
+pub(crate) struct MacDisplay(pub(crate) CGDirectDisplayID);
 
 unsafe impl Send for MacDisplay {}
 
@@ -19,11 +19,6 @@ impl MacDisplay {
     /// Get the screen with the given [`DisplayId`].
     pub fn find_by_id(id: DisplayId) -> Option<Self> {
         Self::all().find(|screen| screen.id() == id)
-    }
-
-    /// Get the screen with the given persistent [`Uuid`].
-    pub fn find_by_uuid(uuid: Uuid) -> Option<Self> {
-        Self::all().find(|screen| screen.uuid().ok() == Some(uuid))
     }
 
     /// Get the primary screen - the one with the menu bar, and whose bottom left

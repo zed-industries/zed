@@ -737,7 +737,7 @@ impl<'a> WindowContext<'a> {
             let (tx, mut rx) = mpsc::unbounded::<()>();
             self.platform.set_display_link_output_callback(
                 display_id,
-                Box::new(move |_current_time, _output_time| _ = tx.unbounded_send(())),
+                Box::new(move || _ = tx.unbounded_send(())),
             );
 
             let consumer_task = self.app.spawn(|cx| async move {

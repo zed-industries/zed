@@ -1,11 +1,11 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
-    DefiniteLength, Display, Fill, FlexDirection, FontWeight, Hsla, JustifyContent, Length,
-    Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
+    DefiniteLength, Fill, FlexDirection, FontWeight, Hsla, JustifyContent, Length, Position,
+    SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::{smallvec, SmallVec};
-use taffy::style::Overflow;
+use taffy::style::{Display, Overflow};
 
 pub trait Styled: Sized {
     fn style(&mut self) -> &mut StyleRefinement;

@@ -220,7 +220,7 @@ unsafe fn build_classes() {
     };
 }
 
-pub fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
+pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
         // MacOS screen coordinates are relative to bottom left
@@ -446,7 +446,7 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-pub struct MacWindow(Arc<Mutex<MacWindowState>>);
+pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
     pub fn open(

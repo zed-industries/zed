@@ -41,7 +41,7 @@ use super::open_type;
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
 
-pub struct MacTextSystem(RwLock<MacTextSystemState>);
+pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 
 struct MacTextSystemState {
     memory_source: MemSource,
@@ -54,7 +54,7 @@ struct MacTextSystemState {
 }
 
 impl MacTextSystem {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),

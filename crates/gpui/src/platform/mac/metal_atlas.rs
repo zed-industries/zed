@@ -10,10 +10,10 @@ use metal::Device;
 use parking_lot::Mutex;
 use std::borrow::Cow;
 
-pub struct MetalAtlas(Mutex<MetalAtlasState>);
+pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
 
 impl MetalAtlas {
-    pub fn new(device: Device) -> Self {
+    pub(crate) fn new(device: Device) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
             device: AssertSend(device),
             monochrome_textures: Default::default(),
