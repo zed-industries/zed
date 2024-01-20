@@ -277,6 +277,24 @@ impl NeovimBackedTestContext {
         self.neovim.mode().await.unwrap()
     }
 
+    pub async fn assert_shared_mode(&mut self, mode: Mode) {
+        let neovim = self.neovim_mode().await;
+        let editor = self.cx.mode();
+
+        if neovim != mode || editor != mode {
+            panic!(
+                indoc! {"Test failed (zed does not match nvim behaviour)
+                    # desired mode:
+                    {:?}
+                    # neovim mode:
+                    {:?}
+                    # zed mode:
+                    {:?}"},
+                mode, neovim, editor,
+            )
+        }
+    }
+
     pub async fn assert_state_matches(&mut self) {
         self.is_dirty = false;
         let neovim = self.neovim_state().await;
