@@ -24,7 +24,7 @@ use taffy::style::Overflow;
 use util::ResultExt;
 
 const DRAG_THRESHOLD: f64 = 2.;
-const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 
 pub struct GroupStyle {
     pub group: SharedString,
@@ -1718,8 +1718,8 @@ pub struct InteractiveElementState {
 }
 
 pub struct ActiveTooltip {
-    tooltip: Option<AnyTooltip>,
-    _task: Option<Task<()>>,
+    pub(crate) tooltip: Option<AnyTooltip>,
+    pub(crate) _task: Option<Task<()>>,
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.

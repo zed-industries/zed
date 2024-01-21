@@ -69,29 +69,74 @@ impl Tooltip {
 
 impl Render for Tooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        overlay().child(
-            // padding to avoid mouse cursor
-            div().pl_2().pt_2p5().child(
-                v_flex()
-                    .elevation_2(cx)
-                    .font(ui_font)
-                    .text_ui()
-                    .text_color(cx.theme().colors().text)
-                    .py_1()
-                    .px_2()
-                    .child(
-                        h_flex()
-                            .gap_4()
-                            .child(self.title.clone())
-                            .when_some(self.key_binding.clone(), |this, key_binding| {
-                                this.justify_between().child(key_binding)
-                            }),
-                    )
-                    .when_some(self.meta.clone(), |this, meta| {
-                        this.child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))
+        tooltip_container(cx, |el, _| {
+            el.child(
+                h_flex()
+                    .gap_4()
+                    .child(self.title.clone())
+                    .when_some(self.key_binding.clone(), |this, key_binding| {
+                        this.justify_between().child(key_binding)
                     }),
-            ),
-        )
+            )
+            .when_some(self.meta.clone(), |this, meta| {
+                this.child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))
+            })
+        })
+    }
+}
+
+fn tooltip_container<V>(
+    cx: &mut ViewContext<V>,
+    f: impl FnOnce(Div, &mut ViewContext<V>) -> Div,
+) -> impl IntoElement {
+    let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+    overlay().child(
+        // padding to avoid mouse cursor
+        div().pl_2().pt_2p5().child(
+            v_flex()
+                .elevation_2(cx)
+                .font(ui_font)
+                .text_ui()
+                .text_color(cx.theme().colors().text)
+                .py_1()
+                .px_2()
+                .map(|el| f(el, cx)),
+        ),
+    )
+}
+
+pub struct LinkPreview {
+    link: SharedString,
+}
+
+impl LinkPreview {
+    pub fn new(url: &str, cx: &mut WindowContext) -> AnyView {
+        let mut wrapped_url = String::new();
+        for (i, ch) in url.chars().enumerate() {
+            if i == 500 {
+                wrapped_url.push('…');
+                break;
+            }
+            if i % 100 == 0 && i != 0 {
+                wrapped_url.push('\n');
+            }
+            wrapped_url.push(ch);
+        }
+        cx.new_view(|_cx| LinkPreview {
+            link: wrapped_url.into(),
+        })
+        .into()
+    }
+}
+
+impl Render for LinkPreview {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
+            el.child(
+                Label::new(self.link.clone())
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+        })
     }
 }

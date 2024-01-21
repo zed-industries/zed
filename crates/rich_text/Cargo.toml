@@ -21,6 +21,7 @@ sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
 language = { path = "../language" }
 util = { path = "../util" }
+ui = { path = "../ui" }
 anyhow.workspace = true
 futures.workspace = true
 lazy_static.workspace = true

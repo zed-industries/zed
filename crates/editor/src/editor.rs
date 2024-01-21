@@ -409,6 +409,7 @@ pub struct Editor {
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
+    use_autoclose: bool,
 }
 
 pub struct EditorSnapshot {
@@ -1411,6 +1412,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             read_only: false,
+            use_autoclose: true,
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
@@ -1690,6 +1692,10 @@ impl Editor {
 
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn set_use_autoclose(&mut self, autoclose: bool) {
+        self.use_autoclose = autoclose;
     }
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
@@ -2290,7 +2296,12 @@ impl Editor {
                                         ),
                                         &bracket_pair.start[..prefix_len],
                                     ));
-                            if following_text_allows_autoclose && preceding_text_matches_prefix {
+                            let autoclose = self.use_autoclose
+                                && snapshot.settings_at(selection.start, cx).use_autoclose;
+                            if autoclose
+                                && following_text_allows_autoclose
+                                && preceding_text_matches_prefix
+                            {
                                 let anchor = snapshot.anchor_before(selection.end);
                                 new_selections.push((selection.map(|_| anchor), text.len()));
                                 new_autoclose_regions.push((

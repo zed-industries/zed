@@ -6,6 +6,7 @@ use gpui::{
 use language::{HighlightId, Language, LanguageRegistry};
 use std::{ops::Range, sync::Arc};
 use theme::ActiveTheme;
+use ui::LinkPreview;
 use util::RangeExt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +84,18 @@ impl RichText {
         .on_click(self.link_ranges.clone(), {
             let link_urls = self.link_urls.clone();
             move |ix, cx| cx.open_url(&link_urls[ix])
+        })
+        .tooltip({
+            let link_ranges = self.link_ranges.clone();
+            let link_urls = self.link_urls.clone();
+            move |idx, cx| {
+                for (ix, range) in link_ranges.iter().enumerate() {
+                    if range.contains(&idx) {
+                        return Some(LinkPreview::new(&link_urls[ix], cx));
+                    }
+                }
+                None
+            }
         })
         .into_any_element()
     }
@@ -237,7 +250,7 @@ pub fn render_markdown_mut(
                 _ => {}
             },
             Event::HardBreak => text.push('\n'),
-            Event::SoftBreak => text.push(' '),
+            Event::SoftBreak => text.push('\n'),
             _ => {}
         }
     }
