@@ -325,8 +325,6 @@ impl ChatPanel {
             Self::render_markdown_with_mentions(&self.languages, self.client.id(), &message)
         });
 
-        let now = OffsetDateTime::now_utc();
-
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
         let message_id_to_remove = if let (ChannelMessageId::Saved(id), true) =
             (message.id, belongs_to_user || is_admin)
@@ -362,8 +360,8 @@ impl ChatPanel {
                         )
                         .child(
                             Label::new(format_timestamp(
+                                OffsetDateTime::now_utc(),
                                 message.timestamp,
-                                now,
                                 self.local_timezone,
                             ))
                             .size(LabelSize::Small)
@@ -669,28 +667,44 @@ impl Panel for ChatPanel {
 impl EventEmitter<PanelEvent> for ChatPanel {}
 
 fn format_timestamp(
-    mut timestamp: OffsetDateTime,
-    mut now: OffsetDateTime,
-    local_timezone: UtcOffset,
+    reference: OffsetDateTime,
+    timestamp: OffsetDateTime,
+    timezone: UtcOffset,
 ) -> String {
-    timestamp = timestamp.to_offset(local_timezone);
-    now = now.to_offset(local_timezone);
+    let timestamp_local = timestamp.to_offset(timezone);
+    let timestamp_local_hour = timestamp_local.hour();
 
-    let today = now.date();
-    let date = timestamp.date();
-    let mut hour = timestamp.hour();
-    let mut part = "am";
-    if hour > 12 {
-        hour -= 12;
-        part = "pm";
-    }
-    if date == today {
-        format!("{:02}:{:02}{}", hour, timestamp.minute(), part)
-    } else if date.next_day() == Some(today) {
-        format!("yesterday at {:02}:{:02}{}", hour, timestamp.minute(), part)
+    let hour_12 = match timestamp_local_hour {
+        0 => 12,                              // Midnight
+        13..=23 => timestamp_local_hour - 12, // PM hours
+        _ => timestamp_local_hour,            // AM hours
+    };
+    let meridiem = if timestamp_local_hour >= 12 {
+        "pm"
     } else {
-        format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
+        "am"
+    };
+    let timestamp_local_minute = timestamp_local.minute();
+    let formatted_time = format!("{:02}:{:02} {}", hour_12, timestamp_local_minute, meridiem);
+
+    let reference_local = reference.to_offset(timezone);
+    let reference_local_date = reference_local.date();
+    let timestamp_local_date = timestamp_local.date();
+
+    if timestamp_local_date == reference_local_date {
+        return formatted_time;
     }
+
+    if reference_local_date.previous_day() == Some(timestamp_local_date) {
+        return format!("yesterday at {}", formatted_time);
+    }
+
+    format!(
+        "{:02}/{:02}/{}",
+        timestamp_local_date.month() as u32,
+        timestamp_local_date.day(),
+        timestamp_local_date.year()
+    )
 }
 
 #[cfg(test)]
@@ -699,6 +713,7 @@ mod tests {
     use gpui::HighlightStyle;
     use pretty_assertions::assert_eq;
     use rich_text::Highlight;
+    use time::{Date, OffsetDateTime, Time, UtcOffset};
     use util::test::marked_text_ranges;
 
     #[gpui::test]
@@ -746,5 +761,100 @@ mod tests {
                 (ranges[3].clone(), Highlight::SelfMention)
             ]
         );
+    }
+
+    #[test]
+    fn test_format_today() {
+        let reference = create_offset_datetime(1990, 4, 12, 16, 45, 0);
+        let timestamp = create_offset_datetime(1990, 4, 12, 15, 30, 0);
+
+        assert_eq!(
+            format_timestamp(reference, timestamp, test_timezone()),
+            "03:30 pm"
+        );
+    }
+
+    #[test]
+    fn test_format_yesterday() {
+        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
+        let timestamp = create_offset_datetime(1990, 4, 11, 9, 0, 0);
+
+        assert_eq!(
+            format_timestamp(reference, timestamp, test_timezone()),
+            "yesterday at 09:00 am"
+        );
+    }
+
+    #[test]
+    fn test_format_yesterday_less_than_24_hours_ago() {
+        let reference = create_offset_datetime(1990, 4, 12, 19, 59, 0);
+        let timestamp = create_offset_datetime(1990, 4, 11, 20, 0, 0);
+
+        assert_eq!(
+            format_timestamp(reference, timestamp, test_timezone()),
+            "yesterday at 08:00 pm"
+        );
+    }
+
+    #[test]
+    fn test_format_yesterday_more_than_24_hours_ago() {
+        let reference = create_offset_datetime(1990, 4, 12, 19, 59, 0);
+        let timestamp = create_offset_datetime(1990, 4, 11, 18, 0, 0);
+
+        assert_eq!(
+            format_timestamp(reference, timestamp, test_timezone()),
+            "yesterday at 06:00 pm"
+        );
+    }
+
+    #[test]
+    fn test_format_yesterday_over_midnight() {
+        let reference = create_offset_datetime(1990, 4, 12, 0, 5, 0);
+        let timestamp = create_offset_datetime(1990, 4, 11, 23, 55, 0);
+
+        assert_eq!(
+            format_timestamp(reference, timestamp, test_timezone()),
+            "yesterday at 11:55 pm"
+        );
+    }
+
+    #[test]
+    fn test_format_yesterday_over_month() {
+        let reference = create_offset_datetime(1990, 4, 2, 9, 0, 0);
+        let timestamp = create_offset_datetime(1990, 4, 1, 20, 0, 0);
+
+        assert_eq!(
+            format_timestamp(reference, timestamp, test_timezone()),
+            "yesterday at 08:00 pm"
+        );
+    }
+
+    #[test]
+    fn test_format_before_yesterday() {
+        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
+        let timestamp = create_offset_datetime(1990, 4, 10, 20, 20, 0);
+
+        assert_eq!(
+            format_timestamp(reference, timestamp, test_timezone()),
+            "04/10/1990"
+        );
+    }
+
+    fn test_timezone() -> UtcOffset {
+        UtcOffset::from_hms(0, 0, 0).expect("Valid timezone offset")
+    }
+
+    fn create_offset_datetime(
+        year: i32,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+    ) -> OffsetDateTime {
+        let date =
+            Date::from_calendar_date(year, time::Month::try_from(month).unwrap(), day).unwrap();
+        let time = Time::from_hms(hour, minute, second).unwrap();
+        date.with_time(time).assume_utc() // Assume UTC for simplicity
     }
 }
