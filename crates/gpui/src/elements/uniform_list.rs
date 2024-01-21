@@ -181,7 +181,7 @@ impl Element for UniformList {
         let shared_scroll_offset = element_state
             .interactive
             .scroll_offset
-            .get_or_insert_with(|| Rc::default())
+            .get_or_insert_with(Rc::default)
             .clone();
 
         let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;

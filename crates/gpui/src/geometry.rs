@@ -2020,13 +2020,13 @@ impl Eq for Pixels {}
 
 impl PartialOrd for Pixels {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Pixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.partial_cmp(other).unwrap()
+        self.0.total_cmp(&other.0)
     }
 }
 

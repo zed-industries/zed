@@ -2560,7 +2560,7 @@ impl Display for ElementId {
             ElementId::View(entity_id) => write!(f, "view-{}", entity_id)?,
             ElementId::Integer(ix) => write!(f, "{}", ix)?,
             ElementId::Name(name) => write!(f, "{}", name)?,
-            ElementId::FocusHandle(__) => write!(f, "FocusHandle")?,
+            ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
         }
 

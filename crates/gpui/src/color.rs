@@ -203,20 +203,16 @@ impl PartialEq for Hsla {
 
 impl PartialOrd for Hsla {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        // SAFETY: The total ordering relies on this always being Some()
-        Some(
-            self.h
-                .total_cmp(&other.h)
-                .then(self.s.total_cmp(&other.s))
-                .then(self.l.total_cmp(&other.l).then(self.a.total_cmp(&other.a))),
-        )
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Hsla {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // SAFETY: The partial comparison is a total comparison
-        unsafe { self.partial_cmp(other).unwrap_unchecked() }
+        self.h
+            .total_cmp(&other.h)
+            .then(self.s.total_cmp(&other.s))
+            .then(self.l.total_cmp(&other.l).then(self.a.total_cmp(&other.a)))
     }
 }
 

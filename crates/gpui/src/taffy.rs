@@ -12,22 +12,16 @@ use taffy::{
     Taffy,
 };
 
+type NodeMeasureFn =
+    Box<dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>>;
+
 pub struct TaffyLayoutEngine {
     taffy: Taffy,
     styles: FxHashMap<LayoutId, Style>,
     children_to_parents: FxHashMap<LayoutId, LayoutId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
-    nodes_to_measure: FxHashMap<
-        LayoutId,
-        Box<
-            dyn FnMut(
-                Size<Option<Pixels>>,
-                Size<AvailableSpace>,
-                &mut WindowContext,
-            ) -> Size<Pixels>,
-        >,
-    >,
+    nodes_to_measure: FxHashMap<LayoutId, NodeMeasureFn>,
 }
 
 static EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";

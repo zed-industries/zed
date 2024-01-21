@@ -267,8 +267,8 @@ impl KeyBindingContextPredicate {
             '(' => {
                 source = skip_whitespace(&source[1..]);
                 let (predicate, rest) = Self::parse_expr(source, 0)?;
-                if rest.starts_with(')') {
-                    source = skip_whitespace(&rest[1..]);
+                if let Some(stripped) = rest.strip_prefix(')') {
+                    source = skip_whitespace(stripped);
                     Ok((predicate, source))
                 } else {
                     Err(anyhow!("expected a ')'"))

@@ -1,11 +1,10 @@
 use crate::{KeyBinding, KeyContext, Keymap, KeymapVersion, Keystroke};
-use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc};
 
 pub(crate) struct KeystrokeMatcher {
     pending_keystrokes: Vec<Keystroke>,
-    keymap: Arc<Mutex<Keymap>>,
+    keymap: Rc<RefCell<Keymap>>,
     keymap_version: KeymapVersion,
 }
 
@@ -15,8 +14,8 @@ pub struct KeymatchResult {
 }
 
 impl KeystrokeMatcher {
-    pub fn new(keymap: Arc<Mutex<Keymap>>) -> Self {
-        let keymap_version = keymap.lock().version();
+    pub fn new(keymap: Rc<RefCell<Keymap>>) -> Self {
+        let keymap_version = keymap.borrow().version();
         Self {
             pending_keystrokes: Vec::new(),
             keymap_version,
@@ -42,7 +41,8 @@ impl KeystrokeMatcher {
         keystroke: &Keystroke,
         context_stack: &[KeyContext],
     ) -> KeymatchResult {
-        let keymap = self.keymap.lock();
+        let keymap = self.keymap.borrow();
+
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
         if keymap.version() != self.keymap_version {
             self.keymap_version = keymap.version();

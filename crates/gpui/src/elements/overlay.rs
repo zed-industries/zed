@@ -222,7 +222,7 @@ impl OverlayPositionMode {
     ) -> (Point<Pixels>, Bounds<Pixels>) {
         match self {
             OverlayPositionMode::Window => {
-                let anchor_position = anchor_position.unwrap_or_else(|| bounds.origin);
+                let anchor_position = anchor_position.unwrap_or(bounds.origin);
                 let bounds = anchor_corner.get_bounds(anchor_position, size);
                 (anchor_position, bounds)
             }

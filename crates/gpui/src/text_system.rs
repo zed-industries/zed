@@ -71,7 +71,7 @@ impl TextSystem {
             .all_font_names()
             .into_iter()
             .collect();
-        names.extend(self.platform_text_system.all_font_families().into_iter());
+        names.extend(self.platform_text_system.all_font_families());
         names.extend(
             self.fallback_font_stack
                 .iter()

@@ -1008,10 +1008,9 @@ pub(crate) type ActionListener = Box<dyn Fn(&dyn Any, DispatchPhase, &mut Window
 #[track_caller]
 pub fn div() -> Div {
     #[cfg(debug_assertions)]
-    let interactivity = {
-        let mut interactivity = Interactivity::default();
-        interactivity.location = Some(*core::panic::Location::caller());
-        interactivity
+    let interactivity = Interactivity {
+        location: Some(*core::panic::Location::caller()),
+        ..Default::default()
     };
 
     #[cfg(not(debug_assertions))]

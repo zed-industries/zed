@@ -133,9 +133,7 @@ pub trait Render: 'static + Sized {
 }
 
 impl Render for () {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        ()
-    }
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {}
 }
 
 /// You can derive [`IntoElement`] on any type that implements this trait.

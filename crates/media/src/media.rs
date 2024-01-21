@@ -108,6 +108,9 @@ pub mod core_video {
     impl_CFTypeDescription!(CVMetalTextureCache);
 
     impl CVMetalTextureCache {
+        /// # Safety
+        ///
+        /// metal_device must be valid according to CVMetalTextureCacheCreate
         pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> {
             let mut this = ptr::null();
             let result = CVMetalTextureCacheCreate(
@@ -124,6 +127,9 @@ pub mod core_video {
             }
         }
 
+        /// # Safety
+        ///
+        /// The arguments to this function must be valid according to CVMetalTextureCacheCreateTextureFromImage
         pub unsafe fn create_texture_from_image(
             &self,
             source: CVImageBufferRef,
@@ -434,6 +440,12 @@ pub mod video_toolbox {
     impl_CFTypeDescription!(VTCompressionSession);
 
     impl VTCompressionSession {
+        /// Create a new compression session.
+        ///
+        /// # Safety
+        ///
+        /// The callback must be a valid function pointer. and the callback_data must be valid
+        /// in whatever terms that callback expects.
         pub unsafe fn new(
             width: usize,
             height: usize,
@@ -465,6 +477,9 @@ pub mod video_toolbox {
             }
         }
 
+        /// # Safety
+        ///
+        /// The arguments to this function must be valid according to VTCompressionSessionEncodeFrame
         pub unsafe fn encode_frame(
             &self,
             buffer: CVImageBufferRef,
