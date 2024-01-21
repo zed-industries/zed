@@ -155,7 +155,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
                     if modal.focus_handle(cx).contains_focused(cx) {
                         if previous_focus_handle.is_some() {
-                            cx.focus(&previous_focus_handle.as_ref().unwrap())
+                            cx.focus(previous_focus_handle.as_ref().unwrap())
                         }
                     }
                     *menu2.borrow_mut() = None;

@@ -165,7 +165,7 @@ impl BufferDiff {
         let mut tree = SumTree::new();
 
         let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(&diff_base, &buffer_text);
+        let patch = Self::diff(diff_base, &buffer_text);
 
         if let Some(patch) = patch {
             let mut divergence = 0;

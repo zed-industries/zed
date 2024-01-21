@@ -1432,7 +1432,7 @@ impl Room {
                 let display = displays
                     .first()
                     .ok_or_else(|| anyhow!("no display found"))?;
-                let track = LocalVideoTrack::screen_share_for_display(&display);
+                let track = LocalVideoTrack::screen_share_for_display(display);
                 this.upgrade()
                     .ok_or_else(|| anyhow!("room was dropped"))?
                     .update(&mut cx, |this, _| {

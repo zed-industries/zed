@@ -1210,7 +1210,7 @@ impl Terminal {
     pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Point<Pixels>) {
         let mouse_mode = self.mouse_mode(e.shift);
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(&e, mouse_mode) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
             if mouse_mode {
                 let point = grid_point(
                     e.position - origin,
@@ -1219,7 +1219,7 @@ impl Terminal {
                 );
 
                 if let Some(scrolls) =
-                    scroll_report(point, scroll_lines as i32, &e, self.last_content.mode)
+                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
                 {
                     for scroll in scrolls {
                         self.pty_tx.notify(scroll);
@@ -1299,7 +1299,7 @@ impl Terminal {
                     "{}{}",
                     fpi.name,
                     if fpi.argv.len() >= 1 {
-                        format!(" {}", (&fpi.argv[1..]).join(" "))
+                        format!(" {}", (fpi.argv[1..]).join(" "))
                     } else {
                         "".to_string()
                     }

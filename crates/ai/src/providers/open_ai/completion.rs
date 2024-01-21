@@ -134,7 +134,7 @@ pub async fn stream_completion(
                     line: Result<String, io::Error>,
                 ) -> Result<Option<OpenAIResponseStreamEvent>> {
                     if let Some(data) = line?.strip_prefix("data: ") {
-                        let event = serde_json::from_str(&data)?;
+                        let event = serde_json::from_str(data)?;
                         Ok(Some(event))
                     } else {
                         Ok(None)

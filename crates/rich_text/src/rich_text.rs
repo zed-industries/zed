@@ -65,7 +65,7 @@ impl RichText {
                             },
                             Highlight::Id(id) => HighlightStyle {
                                 background_color: Some(code_background),
-                                ..id.style(&theme.syntax()).unwrap_or_default()
+                                ..id.style(theme.syntax()).unwrap_or_default()
                             },
                             Highlight::Highlight(highlight) => *highlight,
                             Highlight::Mention => HighlightStyle {
@@ -120,7 +120,7 @@ pub fn render_markdown_mut(
     let mut list_stack = Vec::new();
 
     let options = Options::all();
-    for (event, source_range) in Parser::new_ext(&block, options).into_offset_iter() {
+    for (event, source_range) in Parser::new_ext(block, options).into_offset_iter() {
         let prev_len = text.len();
         match event {
             Event::Text(t) => {
