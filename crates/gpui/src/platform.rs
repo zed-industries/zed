@@ -359,7 +359,7 @@ impl PlatformInputHandler {
         self.cx
             .update(|cx| {
                 self.handler
-                    .replace_text_in_range(replacement_range, text, cx)
+                    .replace_text_in_range(replacement_range, text, cx);
             })
             .ok();
     }
@@ -391,6 +391,13 @@ impl PlatformInputHandler {
             .update(|cx| self.handler.bounds_for_range(range_utf16, cx))
             .ok()
             .flatten()
+    }
+
+    pub(crate) fn flush_pending_input(&mut self, input: &str, cx: &mut WindowContext) {
+        let Some(range) = self.handler.selected_text_range(cx) else {
+            return;
+        };
+        self.handler.replace_text_in_range(Some(range), &input, cx);
     }
 }
 

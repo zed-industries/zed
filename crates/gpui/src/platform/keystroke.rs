@@ -30,24 +30,26 @@ impl Keystroke {
     pub(crate) fn match_candidates(&self) -> SmallVec<[Keystroke; 2]> {
         let mut possibilities = SmallVec::new();
         match self.ime_key.as_ref() {
-            None => possibilities.push(self.clone()),
             Some(ime_key) => {
-                possibilities.push(Keystroke {
-                    modifiers: Modifiers {
-                        control: self.modifiers.control,
-                        alt: false,
-                        shift: false,
-                        command: false,
-                        function: false,
-                    },
-                    key: ime_key.to_string(),
-                    ime_key: None,
-                });
+                if ime_key != &self.key {
+                    possibilities.push(Keystroke {
+                        modifiers: Modifiers {
+                            control: self.modifiers.control,
+                            alt: false,
+                            shift: false,
+                            command: false,
+                            function: false,
+                        },
+                        key: ime_key.to_string(),
+                        ime_key: None,
+                    });
+                }
                 possibilities.push(Keystroke {
                     ime_key: None,
                     ..self.clone()
                 });
             }
+            None => possibilities.push(self.clone()),
         }
         possibilities
     }

@@ -1,4 +1,4 @@
-use crate::{Action, KeyBinding, KeyContext, Keymap, KeymapVersion, Keystroke};
+use crate::{Action, KeyContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -7,6 +7,11 @@ pub struct KeystrokeMatcher {
     pending_keystrokes: Vec<Keystroke>,
     keymap: Arc<Mutex<Keymap>>,
     keymap_version: KeymapVersion,
+}
+
+pub struct KeymatchResult {
+    pub actions: SmallVec<[Box<dyn Action>; 1]>,
+    pub pending: bool,
 }
 
 impl KeystrokeMatcher {
@@ -40,7 +45,7 @@ impl KeystrokeMatcher {
         &mut self,
         keystroke: &Keystroke,
         context_stack: &[KeyContext],
-    ) -> SmallVec<[KeyBinding; 1]> {
+    ) -> KeymatchResult {
         let keymap = self.keymap.lock();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
         if keymap.version() != self.keymap_version {
@@ -49,7 +54,7 @@ impl KeystrokeMatcher {
         }
 
         let mut pending_key = None;
-        let mut found = SmallVec::new();
+        let mut actions = SmallVec::new();
 
         for binding in keymap.bindings().rev() {
             if !keymap.binding_enabled(binding, context_stack) {
@@ -60,7 +65,7 @@ impl KeystrokeMatcher {
                 self.pending_keystrokes.push(candidate.clone());
                 match binding.match_keystrokes(&self.pending_keystrokes) {
                     KeyMatch::Matched => {
-                        found.push(binding.clone());
+                        actions.push(binding.action.boxed_clone());
                     }
                     KeyMatch::Pending => {
                         pending_key.get_or_insert(candidate);
@@ -71,15 +76,15 @@ impl KeystrokeMatcher {
             }
         }
 
-        if !found.is_empty() {
-            self.pending_keystrokes.clear();
-        } else if let Some(pending_key) = pending_key {
+        let pending = if let Some(pending_key) = pending_key {
             self.pending_keystrokes.push(pending_key);
+            true
         } else {
             self.pending_keystrokes.clear();
+            false
         };
 
-        found
+        KeymatchResult { actions, pending }
     }
 }
 

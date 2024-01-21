@@ -1542,9 +1542,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 replacement_range,
                 text: text.to_string(),
             });
-            if text.to_string().to_ascii_lowercase() != pending_key_down.0.keystroke.key {
-                pending_key_down.0.keystroke.ime_key = Some(text.to_string());
-            }
+            pending_key_down.0.keystroke.ime_key = Some(text.to_string());
             window_state.lock().pending_key_down = Some(pending_key_down);
         }
     }

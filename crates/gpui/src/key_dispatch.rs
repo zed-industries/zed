@@ -1,6 +1,6 @@
 use crate::{
-    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, KeyMatch,
-    Keymap, Keystroke, KeystrokeMatcher, WindowContext,
+    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
+    KeymatchResult, Keystroke, KeystrokeMatcher, WindowContext,
 };
 use collections::FxHashMap;
 use parking_lot::Mutex;
@@ -276,8 +276,9 @@ impl DispatchTree {
         &mut self,
         keystroke: &Keystroke,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
-    ) -> SmallVec<[KeyBinding; 1]> {
+    ) -> KeymatchResult {
         let mut actions = SmallVec::new();
+        let mut pending = false;
 
         let mut context_stack: SmallVec<[KeyContext; 4]> = SmallVec::new();
         for node_id in dispatch_path {
@@ -294,12 +295,13 @@ impl DispatchTree {
                 .entry(context_stack.clone())
                 .or_insert_with(|| KeystrokeMatcher::new(self.keymap.clone()));
 
-            let mut matches = keystroke_matcher.match_keystroke(keystroke, &context_stack);
-            actions.append(&mut matches);
+            let mut result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
+            pending = result.pending || pending;
+            actions.append(&mut result.actions);
             context_stack.pop();
         }
 
-        actions
+        KeymatchResult { actions, pending }
     }
 
     pub fn has_pending_keystrokes(&self) -> bool {
