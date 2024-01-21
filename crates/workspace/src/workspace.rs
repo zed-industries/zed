@@ -728,7 +728,7 @@ impl Workspace {
 
         cx.spawn(|mut cx| async move {
             let serialized_workspace: Option<SerializedWorkspace> =
-                persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+                persistence::DB.workspace_for_roots(abs_paths.as_slice());
 
             let paths_to_open = Arc::new(abs_paths);
 
@@ -3034,7 +3034,7 @@ impl Workspace {
                     flexes: Some(flexes.lock().clone()),
                 },
                 Member::Pane(pane_handle) => {
-                    SerializedPaneGroup::Pane(serialize_pane_handle(&pane_handle, cx))
+                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, cx))
                 }
             }
         }
@@ -4228,7 +4228,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
 
     // If multiple windows have unsaved changes, and need a save prompt,
     // prompt in the active window before switching to a different window.
-    workspace_windows.sort_by_key(|window| window.is_active(&cx) == Some(false));
+    workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
 
     let mut prompt = None;
     if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {

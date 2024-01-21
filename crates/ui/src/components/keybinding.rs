@@ -16,7 +16,7 @@ impl RenderOnce for KeyBinding {
             .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                let key_icon = Self::icon_for_key(&keystroke);
+                let key_icon = Self::icon_for_key(keystroke);
 
                 h_flex()
                     .flex_none()

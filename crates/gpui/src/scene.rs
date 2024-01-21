@@ -153,49 +153,49 @@ impl Scene {
         for shadow in prev_scene.shadows.drain(..) {
             if views.contains(&shadow.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&shadow.layer_id];
-                self.insert(&order, shadow);
+                self.insert(order, shadow);
             }
         }
 
         for quad in prev_scene.quads.drain(..) {
             if views.contains(&quad.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&quad.layer_id];
-                self.insert(&order, quad);
+                self.insert(order, quad);
             }
         }
 
         for path in prev_scene.paths.drain(..) {
             if views.contains(&path.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&path.layer_id];
-                self.insert(&order, path);
+                self.insert(order, path);
             }
         }
 
         for underline in prev_scene.underlines.drain(..) {
             if views.contains(&underline.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&underline.layer_id];
-                self.insert(&order, underline);
+                self.insert(order, underline);
             }
         }
 
         for sprite in prev_scene.monochrome_sprites.drain(..) {
             if views.contains(&sprite.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(&order, sprite);
+                self.insert(order, sprite);
             }
         }
 
         for sprite in prev_scene.polychrome_sprites.drain(..) {
             if views.contains(&sprite.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(&order, sprite);
+                self.insert(order, sprite);
             }
         }
 
         for surface in prev_scene.surfaces.drain(..) {
             if views.contains(&surface.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&surface.layer_id];
-                self.insert(&order, surface);
+                self.insert(order, surface);
             }
         }
     }

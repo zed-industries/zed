@@ -194,7 +194,7 @@ impl DiagnosticSet {
                 .range
                 .start
                 .cmp(&group_b.entries[group_b.primary_ix].range.start, buffer)
-                .then_with(|| id_a.cmp(&id_b))
+                .then_with(|| id_a.cmp(id_b))
         });
     }
 

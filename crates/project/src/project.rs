@@ -2947,7 +2947,7 @@ impl Project {
             };
             task.await;
 
-            this.update(&mut cx, |this, mut cx| {
+            this.update(&mut cx, |this, cx| {
                 let worktrees = this.worktrees.clone();
                 for worktree in worktrees {
                     let worktree = match worktree.upgrade() {
@@ -2962,7 +2962,7 @@ impl Project {
                         root_path,
                         adapter.clone(),
                         language.clone(),
-                        &mut cx,
+                        cx,
                     );
                 }
             })
@@ -3544,8 +3544,8 @@ impl Project {
             if errored {
                 log::warn!("test binary check failed");
                 let task = this
-                    .update(&mut cx, move |this, mut cx| {
-                        this.reinstall_language_server(language, adapter, server_id, &mut cx)
+                    .update(&mut cx, move |this, cx| {
+                        this.reinstall_language_server(language, adapter, server_id, cx)
                     })
                     .ok()
                     .flatten();
@@ -3768,8 +3768,7 @@ impl Project {
                                     }
                                 };
                                 if let Some(relative_glob_pattern) = relative_glob_pattern {
-                                    let literal_prefix =
-                                        glob_literal_prefix(&relative_glob_pattern);
+                                    let literal_prefix = glob_literal_prefix(relative_glob_pattern);
                                     tree.as_local_mut()
                                         .unwrap()
                                         .add_path_prefix_to_scan(Path::new(literal_prefix).into());
@@ -4231,9 +4230,9 @@ impl Project {
                                 format_operation = Some(FormatOperation::Lsp(
                                     Self::format_via_lsp(
                                         &project,
-                                        &buffer,
+                                        buffer,
                                         buffer_abs_path,
-                                        &language_server,
+                                        language_server,
                                         tab_size,
                                         &mut cx,
                                     )
@@ -4252,8 +4251,8 @@ impl Project {
                                 format_operation = Self::format_via_external_command(
                                     buffer,
                                     buffer_abs_path,
-                                    &command,
-                                    &arguments,
+                                    command,
+                                    arguments,
                                     &mut cx,
                                 )
                                 .await
@@ -4276,9 +4275,9 @@ impl Project {
                                 format_operation = Some(FormatOperation::Lsp(
                                     Self::format_via_lsp(
                                         &project,
-                                        &buffer,
+                                        buffer,
                                         buffer_abs_path,
-                                        &language_server,
+                                        language_server,
                                         tab_size,
                                         &mut cx,
                                     )
@@ -5847,7 +5846,7 @@ impl Project {
                                             snapshot.file().map(|file| file.path().as_ref()),
                                         ) {
                                             query
-                                                .search(&snapshot, None)
+                                                .search(snapshot, None)
                                                 .await
                                                 .iter()
                                                 .map(|range| {
@@ -6690,7 +6689,7 @@ impl Project {
                                 snapshot.repository_and_work_directory_for_path(&path)?;
                             let repo = snapshot.get_local_repo(&repo)?;
                             let relative_path = path.strip_prefix(&work_directory).ok()?;
-                            let base_text = repo.repo_ptr.lock().load_index_text(&relative_path);
+                            let base_text = repo.repo_ptr.lock().load_index_text(relative_path);
                             Some((buffer, base_text))
                         })
                         .collect::<Vec<_>>()
@@ -6823,7 +6822,7 @@ impl Project {
         for (_, _, path_summary) in
             self.diagnostic_summaries(include_ignored, cx)
                 .filter(|(path, _, _)| {
-                    let worktree = self.entry_for_path(&path, cx).map(|entry| entry.is_ignored);
+                    let worktree = self.entry_for_path(path, cx).map(|entry| entry.is_ignored);
                     include_ignored || worktree == Some(false)
                 })
         {
@@ -6849,7 +6848,7 @@ impl Project {
                     })
             })
             .filter(move |(path, _, _)| {
-                let worktree = self.entry_for_path(&path, cx).map(|entry| entry.is_ignored);
+                let worktree = self.entry_for_path(path, cx).map(|entry| entry.is_ignored);
                 include_ignored || worktree == Some(false)
             })
     }

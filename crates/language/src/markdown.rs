@@ -155,7 +155,7 @@ pub async fn parse_markdown_block(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    for event in Parser::new_ext(&markdown, Options::all()) {
+    for event in Parser::new_ext(markdown, Options::all()) {
         let prev_len = text.len();
         match event {
             Event::Text(t) => {

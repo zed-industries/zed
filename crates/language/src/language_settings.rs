@@ -428,7 +428,7 @@ impl settings::Settings for AllLanguageSettings {
         let mut languages = HashMap::default();
         for (language_name, settings) in &default_value.languages {
             let mut language_settings = defaults.clone();
-            merge_settings(&mut language_settings, &settings);
+            merge_settings(&mut language_settings, settings);
             languages.insert(language_name.clone(), language_settings);
         }
 
@@ -468,7 +468,7 @@ impl settings::Settings for AllLanguageSettings {
                     languages
                         .entry(language_name.clone())
                         .or_insert_with(|| defaults.clone()),
-                    &user_language_settings,
+                    user_language_settings,
                 );
             }
         }

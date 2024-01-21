@@ -283,7 +283,7 @@ impl SyntaxSnapshot {
                     depth,
                     position: edit_range.start,
                 };
-                if target.cmp(&cursor.start(), text).is_gt() {
+                if target.cmp(cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&target, Bias::Left, text);
                     layers.append(slice, text);
                 }
@@ -368,7 +368,7 @@ impl SyntaxSnapshot {
             cursor.next(text);
         }
 
-        layers.append(cursor.suffix(&text), &text);
+        layers.append(cursor.suffix(text), text);
         drop(cursor);
         self.layers = layers;
     }
@@ -433,7 +433,7 @@ impl SyntaxSnapshot {
 
         let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
-        cursor.next(&text);
+        cursor.next(text);
         let mut layers = SumTree::new();
 
         let mut changed_regions = ChangeRegionSet::default();
@@ -471,17 +471,17 @@ impl SyntaxSnapshot {
             };
 
             let mut done = cursor.item().is_none();
-            while !done && position.cmp(&cursor.end(text), &text).is_gt() {
+            while !done && position.cmp(&cursor.end(text), text).is_gt() {
                 done = true;
 
                 let bounded_position = SyntaxLayerPositionBeforeChange {
                     position: position.clone(),
                     change: changed_regions.start_position(),
                 };
-                if bounded_position.cmp(&cursor.start(), &text).is_gt() {
+                if bounded_position.cmp(cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&bounded_position, Bias::Left, text);
                     if !slice.is_empty() {
-                        layers.append(slice, &text);
+                        layers.append(slice, text);
                         if changed_regions.prune(cursor.end(text), text) {
                             done = false;
                         }
@@ -491,7 +491,7 @@ impl SyntaxSnapshot {
                 while position.cmp(&cursor.end(text), text).is_gt() {
                     let Some(layer) = cursor.item() else { break };
 
-                    if changed_regions.intersects(&layer, text) {
+                    if changed_regions.intersects(layer, text) {
                         if let SyntaxLayerContent::Parsed { language, .. } = &layer.content {
                             log::trace!(
                                 "discard layer. language:{}, range:{:?}. changed_regions:{:?}",
@@ -529,7 +529,7 @@ impl SyntaxSnapshot {
                 if layer.range.to_offset(text) == (step_start_byte..step_end_byte)
                     && layer.content.language_id() == step.language.id()
                 {
-                    cursor.next(&text);
+                    cursor.next(text);
                 } else {
                     old_layer = None;
                 }
@@ -561,7 +561,7 @@ impl SyntaxSnapshot {
                         log::trace!(
                             "existing layer. language:{}, start:{:?}, ranges:{:?}",
                             language.name(),
-                            LogPoint(layer_start.to_point(&text)),
+                            LogPoint(layer_start.to_point(text)),
                             LogIncludedRanges(&old_tree.included_ranges())
                         );
 
@@ -584,7 +584,7 @@ impl SyntaxSnapshot {
                             insert_newlines_between_ranges(
                                 changed_indices,
                                 &mut included_ranges,
-                                &text,
+                                text,
                                 step_start_byte,
                                 step_start_point,
                             );
@@ -701,7 +701,7 @@ impl SyntaxSnapshot {
                     range: step.range,
                     content,
                 },
-                &text,
+                text,
             );
         }
 
@@ -860,7 +860,7 @@ impl<'a> SyntaxMapCaptures<'a> {
                 Some(grammar) => grammar,
                 None => continue,
             };
-            let query = match query(&grammar) {
+            let query = match query(grammar) {
                 Some(query) => query,
                 None => continue,
             };
@@ -978,7 +978,7 @@ impl<'a> SyntaxMapMatches<'a> {
                 Some(grammar) => grammar,
                 None => continue,
             };
-            let query = match query(&grammar) {
+            let query = match query(grammar) {
                 Some(query) => query,
                 None => continue,
             };
@@ -1087,7 +1087,7 @@ impl<'a> SyntaxMapMatchesLayer<'a> {
     fn advance(&mut self) {
         if let Some(mat) = self.matches.next() {
             self.next_captures.clear();
-            self.next_captures.extend_from_slice(&mat.captures);
+            self.next_captures.extend_from_slice(mat.captures);
             self.next_pattern_index = mat.pattern_index;
             self.has_next = true;
         } else {
@@ -1517,7 +1517,7 @@ impl Eq for ParseStep {}
 
 impl PartialOrd for ParseStep {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
