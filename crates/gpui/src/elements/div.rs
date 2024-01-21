@@ -1167,36 +1167,36 @@ impl DivState {
 pub struct Interactivity {
     /// The element ID of the element
     pub element_id: Option<ElementId>,
-    key_context: Option<KeyContext>,
-    focusable: bool,
-    tracked_focus_handle: Option<FocusHandle>,
-    scroll_handle: Option<ScrollHandle>,
-    group: Option<SharedString>,
+    pub(crate) key_context: Option<KeyContext>,
+    pub(crate) focusable: bool,
+    pub(crate) tracked_focus_handle: Option<FocusHandle>,
+    pub(crate) scroll_handle: Option<ScrollHandle>,
+    pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
     pub base_style: Box<StyleRefinement>,
-    focus_style: Option<Box<StyleRefinement>>,
-    in_focus_style: Option<Box<StyleRefinement>>,
-    hover_style: Option<Box<StyleRefinement>>,
-    group_hover_style: Option<GroupStyle>,
-    active_style: Option<Box<StyleRefinement>>,
-    group_active_style: Option<GroupStyle>,
-    drag_over_styles: Vec<(TypeId, StyleRefinement)>,
-    group_drag_over_styles: Vec<(TypeId, GroupStyle)>,
-    mouse_down_listeners: Vec<MouseDownListener>,
-    mouse_up_listeners: Vec<MouseUpListener>,
-    mouse_move_listeners: Vec<MouseMoveListener>,
-    scroll_wheel_listeners: Vec<ScrollWheelListener>,
-    key_down_listeners: Vec<KeyDownListener>,
-    key_up_listeners: Vec<KeyUpListener>,
-    action_listeners: Vec<(TypeId, ActionListener)>,
-    drop_listeners: Vec<(TypeId, DropListener)>,
-    can_drop_predicate: Option<CanDropPredicate>,
-    click_listeners: Vec<ClickListener>,
-    drag_listener: Option<(Box<dyn Any>, DragListener)>,
-    hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
-    tooltip_builder: Option<TooltipBuilder>,
-    block_mouse: bool,
+    pub(crate) focus_style: Option<Box<StyleRefinement>>,
+    pub(crate) in_focus_style: Option<Box<StyleRefinement>>,
+    pub(crate) hover_style: Option<Box<StyleRefinement>>,
+    pub(crate) group_hover_style: Option<GroupStyle>,
+    pub(crate) active_style: Option<Box<StyleRefinement>>,
+    pub(crate) group_active_style: Option<GroupStyle>,
+    pub(crate) drag_over_styles: Vec<(TypeId, StyleRefinement)>,
+    pub(crate) group_drag_over_styles: Vec<(TypeId, GroupStyle)>,
+    pub(crate) mouse_down_listeners: Vec<MouseDownListener>,
+    pub(crate) mouse_up_listeners: Vec<MouseUpListener>,
+    pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
+    pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    pub(crate) key_down_listeners: Vec<KeyDownListener>,
+    pub(crate) key_up_listeners: Vec<KeyUpListener>,
+    pub(crate) action_listeners: Vec<(TypeId, ActionListener)>,
+    pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
+    pub(crate) can_drop_predicate: Option<CanDropPredicate>,
+    pub(crate) click_listeners: Vec<ClickListener>,
+    pub(crate) drag_listener: Option<(Box<dyn Any>, DragListener)>,
+    pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut WindowContext)>>,
+    pub(crate) tooltip_builder: Option<TooltipBuilder>,
+    pub(crate) block_mouse: bool,
 
     #[cfg(debug_assertions)]
     pub(crate) location: Option<core::panic::Location<'static>>,
@@ -2061,7 +2061,8 @@ impl GroupBounds {
 
 /// A wrapper around an element that can be focused.
 pub struct Focusable<E> {
-    pub(crate) element: E,
+    /// The element that is focusable
+    pub element: E,
 }
 
 impl<E: InteractiveElement> FocusableElement for Focusable<E> {}

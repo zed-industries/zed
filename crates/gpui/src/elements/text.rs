@@ -489,7 +489,7 @@ impl Element for InteractiveText {
 
                         move |mut cx| async move {
                             cx.background_executor().timer(TOOLTIP_DELAY).await;
-                            cx.update(|_, cx| {
+                            cx.update(|cx| {
                                 let new_tooltip =
                                     tooltip_builder(position, cx).map(|tooltip| ActiveTooltip {
                                         tooltip: Some(AnyTooltip {
