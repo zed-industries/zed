@@ -72,6 +72,9 @@
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
+  // Whether to automatically type closing characters for you. For example,
+  // when you type (, Zed will automatically add a closing ) at the correct position.
+  "use_autoclose": true,
   // Controls whether copilot provides suggestion immediately
   // or waits for a `copilot::Toggle`
   "show_copilot_suggestions": true,

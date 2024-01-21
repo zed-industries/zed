@@ -18,7 +18,7 @@ use project::search::SearchQuery;
 use settings::Settings;
 use std::{sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, UiTextSize};
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -83,6 +83,7 @@ impl MessageEditor {
         let this = cx.view().downgrade();
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_use_autoclose(false);
             editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
         });
 
@@ -325,7 +326,7 @@ impl Render for MessageEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features,
-            font_size: rems(0.875).into(),
+            font_size: UiTextSize::Small.rems().into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: relative(1.3).into(),

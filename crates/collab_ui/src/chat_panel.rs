@@ -349,15 +349,13 @@ impl ChatPanel {
             .when(!is_continuation_from_previous, |this| {
                 this.pt_3().child(
                     h_flex()
-                        .child(
-                            div().absolute().child(
-                                Avatar::new(message.sender.avatar_uri.clone())
-                                    .size(cx.rem_size() * 1.5),
-                            ),
-                        )
+                        .text_ui_sm()
+                        .child(div().absolute().child(
+                            Avatar::new(message.sender.avatar_uri.clone()).size(cx.rem_size()),
+                        ))
                         .child(
                             div()
-                                .pl(cx.rem_size() * 1.5 + px(6.0))
+                                .pl(cx.rem_size() + px(6.0))
                                 .pr(px(8.0))
                                 .font_weight(FontWeight::BOLD)
                                 .child(Label::new(message.sender.github_login.clone())),
@@ -597,7 +595,7 @@ impl Render for ChatPanel {
                             el.child(
                                 div()
                                     .rounded_md()
-                                    .h_7()
+                                    .h_6()
                                     .w_full()
                                     .bg(cx.theme().colors().editor_background),
                             )

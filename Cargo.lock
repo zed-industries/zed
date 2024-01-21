@@ -6145,6 +6145,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "theme",
+ "ui",
  "util",
 ]
 
