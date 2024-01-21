@@ -29,9 +29,9 @@
 //! With great power, comes great responsibility.
 //!
 //! However, most of the time, you won't need to implement your own elements. GPUI provides a number of
-//! elements that should cover most common use cases out of the box and it's recommended that you use those.
+//! elements that should cover most common use cases out of the box and it's recommended that you use those
 //! to construct `components`, using the `RenderOnce` trait and the `#[derive(IntoElement)]` macro. Only implement
-//! components when you need to take manual control of the layout and painting process, such as when using
+//! elements when you need to take manual control of the layout and painting process, such as when using
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
