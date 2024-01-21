@@ -9,11 +9,15 @@ use futures::FutureExt;
 use media::core_video::CVImageBuffer;
 use util::ResultExt;
 
+/// A source of image content.
 #[derive(Clone, Debug)]
 pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
     Uri(SharedUrl),
+    /// Cached image data
     Data(Arc<ImageData>),
+    // TODO: move surface definitions into mac platform module
+    /// A CoreVideo image buffer
     Surface(CVImageBuffer),
 }
 
@@ -47,12 +51,14 @@ impl From<CVImageBuffer> for ImageSource {
     }
 }
 
+/// An image element.
 pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     grayscale: bool,
 }
 
+/// Create a new image element.
 pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
         interactivity: Interactivity::default(),
@@ -62,6 +68,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
 }
 
 impl Img {
+    /// Set the image to be displayed in grayscale.
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
         self

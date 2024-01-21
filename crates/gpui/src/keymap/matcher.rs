@@ -2,7 +2,7 @@ use crate::{Action, KeyContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-pub struct KeystrokeMatcher {
+pub(crate) struct KeystrokeMatcher {
     pending_keystrokes: Vec<Keystroke>,
     keymap: Arc<Mutex<Keymap>>,
     keymap_version: KeymapVersion,
@@ -35,7 +35,7 @@ impl KeystrokeMatcher {
     /// - KeyMatch::Complete(matches) =>
     ///         One or more bindings have received the necessary key presses.
     ///         Bindings added later will take precedence over earlier bindings.
-    pub fn match_keystroke(
+    pub(crate) fn match_keystroke(
         &mut self,
         keystroke: &Keystroke,
         context_stack: &[KeyContext],
@@ -85,24 +85,15 @@ impl KeystrokeMatcher {
     }
 }
 
+/// The result of matching a keystroke against a given keybinding.
+/// - KeyMatch::None => No match is valid for this key given any pending keystrokes.
+/// - KeyMatch::Pending => There exist bindings that is still waiting for more keys.
+/// - KeyMatch::Some(matches) => One or more bindings have received the necessary key presses.
 #[derive(Debug)]
 pub enum KeyMatch {
     None,
     Pending,
     Some(Vec<Box<dyn Action>>),
-}
-
-impl KeyMatch {
-    pub fn is_some(&self) -> bool {
-        matches!(self, KeyMatch::Some(_))
-    }
-
-    pub fn matches(self) -> Option<Vec<Box<dyn Action>>> {
-        match self {
-            KeyMatch::Some(matches) => Some(matches),
-            _ => None,
-        }
-    }
 }
 
 impl PartialEq for KeyMatch {
