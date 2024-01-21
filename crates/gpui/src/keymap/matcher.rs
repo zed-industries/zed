@@ -96,6 +96,21 @@ pub enum KeyMatch {
     Some(Vec<Box<dyn Action>>),
 }
 
+impl KeyMatch {
+    /// Returns true if the match is complete.
+    pub fn is_some(&self) -> bool {
+        matches!(self, KeyMatch::Some(_))
+    }
+
+    /// Get the matches if the match is complete.
+    pub fn matches(self) -> Option<Vec<Box<dyn Action>>> {
+        match self {
+            KeyMatch::Some(matches) => Some(matches),
+            _ => None,
+        }
+    }
+}
+
 impl PartialEq for KeyMatch {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
