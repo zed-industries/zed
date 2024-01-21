@@ -34,7 +34,7 @@ use std::{
     panic::{self, RefUnwindSafe},
 };
 
-/// Run the given test function with the confifured paremeters.
+/// Run the given test function with the configured parameters.
 /// This is intended for use with the `gpui::test` macro
 /// and generally should not be used directly.
 pub fn run_test(

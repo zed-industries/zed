@@ -29,7 +29,7 @@ impl KeyContext {
     /// The key context format is very simple:
     /// - either a single identifier, such as `StatusBar`
     /// - or a key value pair, such as `mode = visible`
-    /// - seperated by whitespace, such as `StatusBar mode = visible`
+    /// - separated by whitespace, such as `StatusBar mode = visible`
     pub fn parse(source: &str) -> Result<Self> {
         let mut context = Self::default();
         let source = skip_whitespace(source);

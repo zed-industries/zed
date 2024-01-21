@@ -1,6 +1,6 @@
 //! # Welcome to GPUI!
 //!
-//! GPUI is a hybrid immedate and retained mode, GPU accelerated, UI framework
+//! GPUI is a hybrid immediate and retained mode, GPU accelerated, UI framework
 //! for Rust, designed to support a wide variety of applications. GPUI is currently
 //! being actively developed and improved for the [Zed code editor](https://zed.dev/), and new versions
 //! will have breaking changes. You'll probably need to use the latest stable version
@@ -8,25 +8,23 @@
 //!
 //! # Getting started with GPUI
 //!
-//! TODO: Write a code sample showing how to create a window and render a simple
+//! TODO!(docs): Write a code sample showing how to create a window and render a simple
 //! div
 //!
 //! # Drawing interesting things
 //!
-//! TODO: Expand demo to show how to draw a more interesting scene, with
+//! TODO!(docs): Expand demo to show how to draw a more interesting scene, with
 //! a counter to store state and a button to increment it.
 //!
 //! # Interacting with your application state
 //!
-//! TODO: Expand demo to show GPUI entity interactions, like subscriptions and entities
+//! TODO!(docs): Expand demo to show GPUI entity interactions, like subscriptions and entities
 //! maybe make a network request to show async stuff?
 //!
 //! # Conclusion
 //!
-//! TODO: Wrap up with a conclusion and links to other places? Zed / GPUI website?
+//! TODO!(docs): Wrap up with a conclusion and links to other places? Zed / GPUI website?
 //! Discord for chatting about it? Other tutorials or references?
-
-#![deny(missing_docs)]
 
 #[macro_use]
 mod action;
