@@ -904,8 +904,8 @@ mod element {
     }
 
     impl ParentElement for PaneAxisElement {
-        fn children_mut(&mut self) -> &mut smallvec::SmallVec<[AnyElement; 2]> {
-            &mut self.children
+        fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+            self.children.extend(elements)
         }
     }
 

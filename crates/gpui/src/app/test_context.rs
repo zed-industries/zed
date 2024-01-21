@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,

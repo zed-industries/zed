@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 mod app_menu;
 mod keystroke;
 #[cfg(target_os = "macos")]
