@@ -848,7 +848,7 @@ impl Workspace {
         self.window_edited
     }
 
-    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut ViewContext<Self>) {
+    pub fn add_panel<T: Panel>(&mut self, panel: View<T>, cx: &mut WindowContext) {
         let dock = match panel.position(cx) {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -1488,14 +1488,14 @@ impl Workspace {
         item.to_any().downcast::<I>().ok()
     }
 
-    fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
+    fn active_project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
     pub fn save_active_item(
         &mut self,
         save_intent: SaveIntent,
-        cx: &mut ViewContext<Self>,
+        cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
         let pane = self.active_pane();
@@ -1503,7 +1503,7 @@ impl Workspace {
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             if let Some(item) = item {
                 Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
                     .await
@@ -1764,7 +1764,7 @@ impl Workspace {
         }
     }
 
-    pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+    pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut WindowContext) {
         if let Some(text) = item.telemetry_event_text(cx) {
             self.client()
                 .telemetry()
@@ -1846,7 +1846,7 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         pane: Option<WeakView<Pane>>,
         focus_item: bool,
-        cx: &mut ViewContext<Self>,
+        cx: &mut WindowContext,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
@@ -1858,7 +1858,7 @@ impl Workspace {
         });
 
         let task = self.load_path(path.into(), cx);
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn(move |mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             pane.update(&mut cx, |pane, cx| {
                 pane.open_item(project_entry_id, focus_item, cx, build_item)
@@ -1901,7 +1901,7 @@ impl Workspace {
     fn load_path(
         &mut self,
         path: ProjectPath,
-        cx: &mut ViewContext<Self>,
+        cx: &mut WindowContext,
     ) -> Task<
         Result<(
             Option<ProjectEntryId>,
@@ -1910,7 +1910,7 @@ impl Workspace {
     > {
         let project = self.project().clone();
         let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let (project_entry_id, project_item) = project_item.await?;
             let build_item = cx.update(|cx| {
                 cx.default_global::<ProjectItemBuilders>()
@@ -1980,7 +1980,7 @@ impl Workspace {
         }
     }
 
-    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
+    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut WindowContext) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             pane.read(cx)
                 .index_for_item(item)
@@ -2003,7 +2003,7 @@ impl Workspace {
         }
     }
 
-    pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_next_pane(&mut self, cx: &mut WindowContext) {
         let panes = self.center.panes();
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let next_ix = (ix + 1) % panes.len();
@@ -2012,7 +2012,7 @@ impl Workspace {
         }
     }
 
-    pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_previous_pane(&mut self, cx: &mut WindowContext) {
         let panes = self.center.panes();
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
@@ -2024,7 +2024,7 @@ impl Workspace {
     pub fn activate_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
+        cx: &mut WindowContext,
     ) {
         if let Some(pane) = self.find_pane_in_direction(direction, cx) {
             cx.focus_view(pane);
@@ -2048,7 +2048,7 @@ impl Workspace {
     fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &mut ViewContext<Self>,
+        cx: &AppContext,
     ) -> Option<&View<Pane>> {
         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
             return None;
@@ -2483,14 +2483,14 @@ impl Workspace {
             .any(|state| state.leader_id == peer_id)
     }
 
-    fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn active_item_path_changed(&mut self, cx: &mut WindowContext) {
         let active_entry = self.active_project_path(cx);
         self.project
             .update(cx, |project, cx| project.set_active_path(active_entry, cx));
         self.update_window_title(cx);
     }
 
-    fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_window_title(&mut self, cx: &mut WindowContext) {
         let project = self.project().read(cx);
         let mut title = String::new();
 
@@ -2534,7 +2534,7 @@ impl Workspace {
         cx.set_window_title(&title);
     }
 
-    fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_window_edited(&mut self, cx: &mut WindowContext) {
         let is_edited = !self.project.read(cx).is_disconnected()
             && self
                 .items(cx)
@@ -2759,7 +2759,7 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_active_view_for_followers(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_active_view_for_followers(&mut self, cx: &mut WindowContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
 
@@ -2876,7 +2876,7 @@ impl Workspace {
         &self,
         peer_id: PeerId,
         pane: &View<Pane>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut WindowContext,
     ) -> Option<View<SharedScreen>> {
         let call = self.active_call()?;
         let room = call.read(cx).room()?.read(cx);
@@ -2993,7 +2993,7 @@ impl Workspace {
         }));
     }
 
-    fn serialize_workspace(&self, cx: &mut ViewContext<Self>) {
+    fn serialize_workspace(&self, cx: &mut WindowContext) {
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
             let (items, active) = {
                 let pane = pane_handle.read(cx);
@@ -3039,10 +3039,7 @@ impl Workspace {
             }
         }
 
-        fn build_serialized_docks(
-            this: &Workspace,
-            cx: &mut ViewContext<Workspace>,
-        ) -> DockStructure {
+        fn build_serialized_docks(this: &Workspace, cx: &mut WindowContext) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock
@@ -3109,7 +3106,7 @@ impl Workspace {
                     docks,
                 };
 
-                cx.spawn(|_, _| persistence::DB.save_workspace(serialized_workspace))
+                cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace))
                     .detach();
             }
         }
@@ -3350,14 +3347,11 @@ impl Workspace {
         self.modal_layer.read(cx).has_active_modal()
     }
 
-    pub fn active_modal<V: ManagedView + 'static>(
-        &mut self,
-        cx: &ViewContext<Self>,
-    ) -> Option<View<V>> {
+    pub fn active_modal<V: ManagedView + 'static>(&mut self, cx: &AppContext) -> Option<View<V>> {
         self.modal_layer.read(cx).active_modal()
     }
 
-    pub fn toggle_modal<V: ModalView, B>(&mut self, cx: &mut ViewContext<Self>, build: B)
+    pub fn toggle_modal<V: ModalView, B>(&mut self, cx: &mut WindowContext, build: B)
     where
         B: FnOnce(&mut ViewContext<V>) -> V,
     {
