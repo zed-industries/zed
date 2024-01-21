@@ -18,7 +18,7 @@ use project::Fs;
 use rich_text::RichText;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     popover_menu, prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label,
@@ -304,8 +304,11 @@ impl ChatPanel {
                 let last_message = active_chat.message(ix.saturating_sub(1));
                 let this_message = active_chat.message(ix).clone();
 
-                let is_continuation_from_previous = last_message.id != this_message.id
-                    && last_message.sender.id == this_message.sender.id;
+                let duration_since_last_message = this_message.timestamp - last_message.timestamp;
+                let is_continuation_from_previous = last_message.sender.id
+                    == this_message.sender.id
+                    && last_message.id != this_message.id
+                    && duration_since_last_message < Duration::from_secs(5 * 60);
 
                 if let ChannelMessageId::Saved(id) = this_message.id {
                     if this_message
