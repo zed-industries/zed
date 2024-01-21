@@ -40,14 +40,25 @@ use std::any::{Any, TypeId};
 /// register_action!(Paste);
 /// ```
 pub trait Action: 'static {
+    /// Clone the action into a new box
     fn boxed_clone(&self) -> Box<dyn Action>;
+
+    /// Cast the action to the any type
     fn as_any(&self) -> &dyn Any;
+
+    /// Do a partial equality check on this action and the other
     fn partial_eq(&self, action: &dyn Action) -> bool;
+
+    /// Get the name of this action, for displaying in UI
     fn name(&self) -> &str;
 
+    /// Get the name of this action for debugging
     fn debug_name() -> &'static str
     where
         Self: Sized;
+
+    /// Build this action from a JSON value. This is used to construct actions from the keymap.
+    /// A value of `{}` will be passed for actions that don't have any parameters.
     fn build(value: serde_json::Value) -> Result<Box<dyn Action>>
     where
         Self: Sized;
@@ -62,6 +73,7 @@ impl std::fmt::Debug for dyn Action {
 }
 
 impl dyn Action {
+    /// Get the type id of this action
     pub fn type_id(&self) -> TypeId {
         self.as_any().type_id()
     }
@@ -170,6 +182,7 @@ impl ActionRegistry {
 macro_rules! actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
         $(
+            /// The `$name` action see [`gpui::actions!`]
             #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, gpui::private::serde_derive::Deserialize)]
             #[serde(crate = "gpui::private::serde")]
             pub struct $name;

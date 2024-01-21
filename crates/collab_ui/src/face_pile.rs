@@ -37,8 +37,8 @@ impl RenderOnce for FacePile {
 }
 
 impl ParentElement for FacePile {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.faces
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.faces.extend(elements);
     }
 }
 

@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyTooltip, AnyView, AppContext, Arena,
     AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,

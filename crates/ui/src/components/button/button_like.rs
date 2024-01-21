@@ -407,8 +407,8 @@ impl VisibleOnHover for ButtonLike {
 }
 
 impl ParentElement for ButtonLike {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 

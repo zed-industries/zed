@@ -771,8 +771,8 @@ impl InteractiveElement for Div {
 }
 
 impl ParentElement for Div {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 
@@ -1824,8 +1824,8 @@ impl<E> ParentElement for Focusable<E>
 where
     E: ParentElement,
 {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        self.element.children_mut()
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.element.extend(elements)
     }
 }
 
@@ -1898,8 +1898,8 @@ impl<E> ParentElement for Stateful<E>
 where
     E: ParentElement,
 {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        self.element.children_mut()
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.element.extend(elements)
     }
 }
 
