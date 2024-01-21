@@ -1,3 +1,7 @@
+//! The GPUI geometry module is a collection of types and traits that
+//! can be used to describe common units, concepts, and the relationships
+//! between them.
+
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
@@ -8,13 +12,17 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
+/// An axis along which a measurement can be made.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Axis {
+    /// The y axis, or up and down
     Vertical,
+    /// The x axis, or left and right
     Horizontal,
 }
 
 impl Axis {
+    /// Swap this axis to the opposite axis.
     pub fn invert(&self) -> Self {
         match self {
             Axis::Vertical => Axis::Horizontal,

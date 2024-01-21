@@ -26,7 +26,7 @@
 //! TODO!(docs): Wrap up with a conclusion and links to other places? Zed / GPUI website?
 //! Discord for chatting about it? Other tutorials or references?
 
-// #![deny(missing_docs)]
+#![deny(missing_docs)]
 #![allow(clippy::type_complexity)]
 
 #[macro_use]
