@@ -99,6 +99,15 @@ impl FakeHttpClient {
                 .unwrap())
         })
     }
+
+    pub fn with_200_response() -> Arc<dyn HttpClient> {
+        Self::create(|_| async move {
+            Ok(Response::builder()
+                .status(200)
+                .body(Default::default())
+                .unwrap())
+        })
+    }
 }
 
 #[cfg(feature = "test-support")]
