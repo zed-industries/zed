@@ -2,6 +2,8 @@ use refineable::Refineable as _;
 
 use crate::{Bounds, Element, IntoElement, Pixels, Style, StyleRefinement, Styled, WindowContext};
 
+/// Construct a canvas element with the given paint callback.
+/// Useful for adding short term custom drawing to a view.
 pub fn canvas(callback: impl 'static + FnOnce(&Bounds<Pixels>, &mut WindowContext)) -> Canvas {
     Canvas {
         paint_callback: Some(Box::new(callback)),
@@ -9,6 +11,8 @@ pub fn canvas(callback: impl 'static + FnOnce(&Bounds<Pixels>, &mut WindowContex
     }
 }
 
+/// A canvas element, meant for accessing the low level paint API without defining a whole
+/// custom element
 pub struct Canvas {
     paint_callback: Option<Box<dyn FnOnce(&Bounds<Pixels>, &mut WindowContext)>>,
     style: StyleRefinement,
