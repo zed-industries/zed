@@ -73,9 +73,7 @@ impl KeystrokeMatcher {
         if !found_actions.is_empty() {
             self.pending_keystrokes.clear();
             return KeyMatch::Some(found_actions);
-        }
-
-        if let Some(pending_key) = pending_key {
+        } else if let Some(pending_key) = pending_key {
             self.pending_keystrokes.push(pending_key);
             KeyMatch::Pending
         } else {

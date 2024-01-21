@@ -3,7 +3,12 @@ use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
 use serde_derive::Deserialize;
 use workspace::{searchable::Direction, Workspace};
 
-use crate::{motion::Motion, normal::move_cursor, state::SearchState, Vim};
+use crate::{
+    motion::Motion,
+    normal::move_cursor,
+    state::{Mode, SearchState},
+    Vim,
+};
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -145,6 +150,7 @@ pub fn move_to_internal(
     Vim::update(cx, |vim, cx| {
         let pane = workspace.active_pane().clone();
         let count = vim.take_count(cx).unwrap_or(1);
+
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {
@@ -176,6 +182,11 @@ pub fn move_to_internal(
                 }
             }
         });
+
+        if vim.state().mode.is_visual() {
+            vim.switch_mode(Mode::Normal, false, cx)
+        }
+
         vim.clear_operator(cx);
     });
 }
@@ -465,6 +476,13 @@ mod test {
         cx.simulate_keystrokes(["/", "b"]);
         cx.simulate_keystrokes(["enter"]);
         cx.assert_state("aa\nˇbb\ndd\ncc\nbb\n", Mode::Normal);
+
+        // check that searching switches to normal mode if in visual mode
+        cx.set_state("ˇone two one", Mode::Normal);
+        cx.simulate_keystrokes(["v", "l", "l"]);
+        cx.assert_editor_state("«oneˇ» two one");
+        cx.simulate_keystrokes(["*"]);
+        cx.assert_state("one two ˇone", Mode::Normal);
     }
 
     #[gpui::test]
@@ -488,5 +506,6 @@ mod test {
         cx.set_shared_state("ˇa.c. abcd a.c. abcd").await;
         cx.simulate_shared_keystrokes(["v", "3", "l", "*"]).await;
         cx.assert_shared_state("a.c. abcd ˇa.c. abcd").await;
+        cx.assert_shared_mode(Mode::Normal).await;
     }
 }
