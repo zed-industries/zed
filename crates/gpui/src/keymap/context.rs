@@ -3,6 +3,10 @@ use anyhow::{anyhow, Result};
 use smallvec::SmallVec;
 use std::fmt;
 
+/// A datastructure for resolving whether an action should be dispatched
+/// at this point in the element tree. Contains a set of identifiers
+/// and/or key value pairs representing the current context for the
+/// keymap.
 #[derive(Clone, Default, Eq, PartialEq, Hash)]
 pub struct KeyContext(SmallVec<[ContextEntry; 1]>);
 
@@ -21,6 +25,11 @@ impl<'a> TryFrom<&'a str> for KeyContext {
 }
 
 impl KeyContext {
+    /// Parse a key context from a string.
+    /// The key context format is very simple:
+    /// - either a single identifier, such as `StatusBar`
+    /// - or a key value pair, such as `mode = visible`
+    /// - separated by whitespace, such as `StatusBar mode = visible`
     pub fn parse(source: &str) -> Result<Self> {
         let mut context = Self::default();
         let source = skip_whitespace(source);
@@ -53,14 +62,17 @@ impl KeyContext {
         Self::parse_expr(source, context)
     }
 
+    /// Check if this context is empty.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// Clear this context.
     pub fn clear(&mut self) {
         self.0.clear();
     }
 
+    /// Extend this context with another context.
     pub fn extend(&mut self, other: &Self) {
         for entry in &other.0 {
             if !self.contains(&entry.key) {
@@ -69,6 +81,7 @@ impl KeyContext {
         }
     }
 
+    /// Add an identifier to this context, if it's not already in this context.
     pub fn add<I: Into<SharedString>>(&mut self, identifier: I) {
         let key = identifier.into();
 
@@ -77,6 +90,7 @@ impl KeyContext {
         }
     }
 
+    /// Set a key value pair in this context, if it's not already set.
     pub fn set<S1: Into<SharedString>, S2: Into<SharedString>>(&mut self, key: S1, value: S2) {
         let key = key.into();
         if !self.contains(&key) {
@@ -87,10 +101,12 @@ impl KeyContext {
         }
     }
 
+    /// Check if this context contains a given identifier or key.
     pub fn contains(&self, key: &str) -> bool {
         self.0.iter().any(|entry| entry.key.as_ref() == key)
     }
 
+    /// Get the associated value for a given identifier or key.
     pub fn get(&self, key: &str) -> Option<&SharedString> {
         self.0
             .iter()
@@ -117,20 +133,31 @@ impl fmt::Debug for KeyContext {
     }
 }
 
+/// A datastructure for resolving whether an action should be dispatched
+/// Representing a small language for describing which contexts correspond
+/// to which actions.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum KeyBindingContextPredicate {
+    /// A predicate that will match a given identifier.
     Identifier(SharedString),
+    /// A predicate that will match a given key-value pair.
     Equal(SharedString, SharedString),
+    /// A predicate that will match a given key-value pair not being present.
     NotEqual(SharedString, SharedString),
+    /// A predicate that will match a given predicate appearing below another predicate.
+    /// in the element tree
     Child(
         Box<KeyBindingContextPredicate>,
         Box<KeyBindingContextPredicate>,
     ),
+    /// Predicate that will invert another predicate.
     Not(Box<KeyBindingContextPredicate>),
+    /// A predicate that will match if both of its children match.
     And(
         Box<KeyBindingContextPredicate>,
         Box<KeyBindingContextPredicate>,
     ),
+    /// A predicate that will match if either of its children match.
     Or(
         Box<KeyBindingContextPredicate>,
         Box<KeyBindingContextPredicate>,
@@ -138,6 +165,34 @@ pub enum KeyBindingContextPredicate {
 }
 
 impl KeyBindingContextPredicate {
+    /// Parse a string in the same format as the keymap's context field.
+    ///
+    /// A basic equivalence check against a set of identifiers can performed by
+    /// simply writing a string:
+    ///
+    /// `StatusBar` -> A predicate that will match a context with the identifier `StatusBar`
+    ///
+    /// You can also specify a key-value pair:
+    ///
+    /// `mode == visible` -> A predicate that will match a context with the key `mode`
+    ///                      with the value `visible`
+    ///
+    /// And a logical operations combining these two checks:
+    ///
+    /// `StatusBar && mode == visible` -> A predicate that will match a context with the
+    ///                                   identifier `StatusBar` and the key `mode`
+    ///                                   with the value `visible`
+    ///
+    ///
+    /// There is also a special child `>` operator that will match a predicate that is
+    /// below another predicate:
+    ///
+    /// `StatusBar > mode == visible` -> A predicate that will match a context identifier `StatusBar`
+    ///                                  and a child context that has the key `mode` with the
+    ///                                  value `visible`
+    ///
+    /// This syntax supports `!=`, `||` and `&&` as logical operators.
+    /// You can also preface an operation or check with a `!` to negate it.
     pub fn parse(source: &str) -> Result<Self> {
         let source = skip_whitespace(source);
         let (predicate, rest) = Self::parse_expr(source, 0)?;
@@ -148,6 +203,7 @@ impl KeyBindingContextPredicate {
         }
     }
 
+    /// Eval a predicate against a set of contexts, arranged from lowest to highest.
     pub fn eval(&self, contexts: &[KeyContext]) -> bool {
         let Some(context) = contexts.last() else {
             return false;

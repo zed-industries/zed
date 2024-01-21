@@ -6,9 +6,12 @@ use std::{
     collections::HashMap,
 };
 
+/// An opaque identifier of which version of the keymap is currently active.
+/// The keymap's version is changed whenever bindings are added or removed.
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub struct KeymapVersion(usize);
 
+/// A collection of key bindings for the user's application.
 #[derive(Default)]
 pub struct Keymap {
     bindings: Vec<KeyBinding>,
@@ -19,16 +22,19 @@ pub struct Keymap {
 }
 
 impl Keymap {
+    /// Create a new keymap with the given bindings.
     pub fn new(bindings: Vec<KeyBinding>) -> Self {
         let mut this = Self::default();
         this.add_bindings(bindings);
         this
     }
 
+    /// Get the current version of the keymap.
     pub fn version(&self) -> KeymapVersion {
         self.version
     }
 
+    /// Add more bindings to the keymap.
     pub fn add_bindings<T: IntoIterator<Item = KeyBinding>>(&mut self, bindings: T) {
         let no_action_id = (NoAction {}).type_id();
 
@@ -51,6 +57,7 @@ impl Keymap {
         self.version.0 += 1;
     }
 
+    /// Reset this keymap to its initial state.
     pub fn clear(&mut self) {
         self.bindings.clear();
         self.binding_indices_by_action_id.clear();
@@ -77,6 +84,7 @@ impl Keymap {
             .filter(move |binding| binding.action().partial_eq(action))
     }
 
+    /// Check if the given binding is enabled, given a certain key context.
     pub fn binding_enabled(&self, binding: &KeyBinding, context: &[KeyContext]) -> bool {
         // If binding has a context predicate, it must match the current context,
         if let Some(predicate) = &binding.context_predicate {

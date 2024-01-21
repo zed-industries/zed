@@ -24,6 +24,7 @@ pub struct ShapedLine {
 }
 
 impl ShapedLine {
+    /// The length of the line in utf-8 bytes.
     pub fn len(&self) -> usize {
         self.layout.len
     }

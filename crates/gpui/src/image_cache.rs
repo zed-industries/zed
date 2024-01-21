@@ -11,12 +11,12 @@ use thiserror::Error;
 use util::http::{self, HttpClient};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub struct RenderImageParams {
+pub(crate) struct RenderImageParams {
     pub(crate) image_id: ImageId,
 }
 
 #[derive(Debug, Error, Clone)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("http error: {0}")]
     Client(#[from] http::Error),
     #[error("IO error: {0}")]
@@ -42,7 +42,7 @@ impl From<ImageError> for Error {
     }
 }
 
-pub struct ImageCache {
+pub(crate) struct ImageCache {
     client: Arc<dyn HttpClient>,
     images: Arc<Mutex<HashMap<SharedUrl, FetchImageFuture>>>,
 }

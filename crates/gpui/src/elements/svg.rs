@@ -4,11 +4,13 @@ use crate::{
 };
 use util::ResultExt;
 
+/// An SVG element.
 pub struct Svg {
     interactivity: Interactivity,
     path: Option<SharedString>,
 }
 
+/// Create a new SVG element.
 pub fn svg() -> Svg {
     Svg {
         interactivity: Interactivity::default(),
@@ -17,6 +19,7 @@ pub fn svg() -> Svg {
 }
 
 impl Svg {
+    /// Set the path to the SVG file for this element.
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
         self

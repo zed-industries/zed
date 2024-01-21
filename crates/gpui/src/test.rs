@@ -34,6 +34,9 @@ use std::{
     panic::{self, RefUnwindSafe},
 };
 
+/// Run the given test function with the configured parameters.
+/// This is intended for use with the `gpui::test` macro
+/// and generally should not be used directly.
 pub fn run_test(
     mut num_iterations: u64,
     max_retries: usize,
@@ -78,6 +81,7 @@ pub fn run_test(
     }
 }
 
+/// A test struct for converting an observation callback into a stream.
 pub struct Observation<T> {
     rx: channel::Receiver<T>,
     _subscription: Subscription,

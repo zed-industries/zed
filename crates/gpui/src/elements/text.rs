@@ -87,6 +87,7 @@ pub struct StyledText {
 }
 
 impl StyledText {
+    /// Construct a new styled text element from the given string.
     pub fn new(text: impl Into<SharedString>) -> Self {
         StyledText {
             text: text.into(),
@@ -94,6 +95,8 @@ impl StyledText {
         }
     }
 
+    /// Set the styling attributes for the given text, as well as
+    /// as any ranges of text that have had their style customized.
     pub fn with_highlights(
         mut self,
         default_style: &TextStyle,
@@ -151,6 +154,7 @@ impl IntoElement for StyledText {
     }
 }
 
+#[doc(hidden)]
 #[derive(Default, Clone)]
 pub struct TextState(Arc<Mutex<Option<TextStateInner>>>);
 
@@ -290,6 +294,7 @@ impl TextState {
     }
 }
 
+/// A text element that can be interacted with.
 pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
@@ -305,6 +310,7 @@ struct InteractiveTextClickEvent {
     mouse_up_index: usize,
 }
 
+#[doc(hidden)]
 pub struct InteractiveTextState {
     text_state: TextState,
     mouse_down_index: Rc<Cell<Option<usize>>>,
@@ -314,6 +320,7 @@ pub struct InteractiveTextState {
 
 /// InteractiveTest is a wrapper around StyledText that adds mouse interactions.
 impl InteractiveText {
+    /// Creates a new InteractiveText from the given text.
     pub fn new(id: impl Into<ElementId>, text: StyledText) -> Self {
         Self {
             element_id: id.into(),
