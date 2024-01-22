@@ -40,7 +40,7 @@ impl fmt::Debug for Rgba {
 
 impl Rgba {
     /// Create a new [`Rgba`] color by blending this and another color together
-    /// TODO: find the source for this algorithm
+    /// TODO!(docs): find the source for this algorithm
     pub fn blend(&self, other: Rgba) -> Self {
         if other.a >= 1.0 {
             other

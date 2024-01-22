@@ -8,13 +8,13 @@
 //! # Element Basics
 //!
 //! Elements are constructed by calling [`Render::render()`] on the root view of the window, which
-//! which recursively constructs the element tree from the current state of the application.
+//! which recursively constructs the element tree from the current state of the application,.
 //! These elements are then laid out by Taffy, and painted to the screen according to their own
 //! implementation of [`Element::paint()`]. Before the start of the next frame, the entire element
 //! tree and any callbacks they have registered with GPUI are dropped and the process repeats.
 //!
 //! But some state is too simple and voluminous to store in every view that needs it, e.g.
-//! whether a hover has been started or not. For this, GPUI provides the [`Element::State`], type.
+//! whether a hover has been started or not. For this, GPUI provides the [`Element::State`], associated type.
 //! If an element returns an [`ElementId`] from [`IntoElement::element_id()`], and that element id
 //! appears in the same place relative to other views and ElementIds in the frame, then the previous
 //! frame's state will be passed to the element's layout and paint methods.
@@ -30,7 +30,7 @@
 //!
 //! However, most of the time, you won't need to implement your own elements. GPUI provides a number of
 //! elements that should cover most common use cases out of the box and it's recommended that you use those
-//! to construct `components`, using the `RenderOnce` trait and the `#[derive(IntoElement)]` macro. Only implement
+//! to construct `components`, using the [`RenderOnce`] trait and the `#[derive(IntoElement)]` macro. Only implement
 //! elements when you need to take manual control of the layout and painting process, such as when using
 //! your own custom layout algorithm or rendering a code editor.
 

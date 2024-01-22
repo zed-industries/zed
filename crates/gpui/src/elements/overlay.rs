@@ -6,10 +6,13 @@ use crate::{
     Point, Size, Style, WindowContext,
 };
 
+/// The state that the overlay element uses to track its children.
 pub struct OverlayState {
     child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
+/// An overlay element that can be used to display UI that
+/// floats on top of other UI elements.
 pub struct Overlay {
     children: SmallVec<[AnyElement; 2]>,
     anchor_corner: AnchorCorner,
@@ -191,15 +194,21 @@ enum Axis {
     Vertical,
 }
 
+/// Which algorithm to use when fitting the overlay to be inside the window.
 #[derive(Copy, Clone, PartialEq)]
 pub enum OverlayFitMode {
+    /// Snap the overlay to the window edge
     SnapToWindow,
+    /// Switch which corner anchor this overlay is attached to
     SwitchAnchor,
 }
 
+/// Which algorithm to use when positioning the overlay.
 #[derive(Copy, Clone, PartialEq)]
 pub enum OverlayPositionMode {
+    /// Position the overlay relative to the window
     Window,
+    /// Position the overlay relative to its parent
     Local,
 }
 
@@ -226,11 +235,16 @@ impl OverlayPositionMode {
     }
 }
 
+/// Which corner of the overlay should be considered the anchor.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AnchorCorner {
+    /// The top left corner
     TopLeft,
+    /// The top right corner
     TopRight,
+    /// The bottom left corner
     BottomLeft,
+    /// The bottom right corner
     BottomRight,
 }
 
@@ -255,6 +269,7 @@ impl AnchorCorner {
         Bounds { origin, size }
     }
 
+    /// Get the point corresponding to this anchor corner in `bounds`.
     pub fn corner(&self, bounds: Bounds<Pixels>) -> Point<Pixels> {
         match self {
             Self::TopLeft => bounds.origin,

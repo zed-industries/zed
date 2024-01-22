@@ -18,7 +18,7 @@
 //! # Capturing and bubbling
 //!
 //! Note that while event dispatch in GPUI uses similar names and concepts to the web
-//! even API, the details are very different. See the documentation in [TODO
+//! even API, the details are very different. See the documentation in [TODO!(docs)
 //! DOCUMENT EVENT DISPATCH SOMEWHERE IN WINDOW CONTEXT] for more details
 //!
 

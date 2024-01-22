@@ -229,6 +229,7 @@ impl TaffyLayoutEngine {
     }
 }
 
+/// A unique identifier for a layout node, generated when requesting a layout from Taffy
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct LayoutId(NodeId);
@@ -440,6 +441,7 @@ where
     }
 }
 
+/// The space available for an element to be laid out in
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub enum AvailableSpace {
     /// The amount of space available is the specified number of pixels

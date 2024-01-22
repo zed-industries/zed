@@ -13,7 +13,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct DispatchNodeId(usize);
+pub(crate) struct DispatchNodeId(usize);
 
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,

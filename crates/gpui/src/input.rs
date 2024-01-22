@@ -3,20 +3,33 @@ use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
 ///
-/// Once your view `V` implements this trait, you can use it to construct an [`ElementInputHandler<V>`].
+/// Once your view implements this trait, you can use it to construct an [`ElementInputHandler<V>`].
 /// This input handler can then be assigned during paint by calling [`WindowContext::handle_input`].
+///
+/// See [`InputHandler`] for details on how to implement each method.
 pub trait ViewInputHandler: 'static + Sized {
+    /// See [`InputHandler::text_for_range`] for details
     fn text_for_range(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>)
         -> Option<String>;
+
+    /// See [`InputHandler::selected_text_range`] for details
     fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
+
+    /// See [`InputHandler::marked_text_range`] for details
     fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>>;
+
+    /// See [`InputHandler::unmark_text`] for details
     fn unmark_text(&mut self, cx: &mut ViewContext<Self>);
+
+    /// See [`InputHandler::replace_text_in_range`] for details
     fn replace_text_in_range(
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
         cx: &mut ViewContext<Self>,
     );
+
+    /// See [`InputHandler::replace_and_mark_text_in_range`] for details
     fn replace_and_mark_text_in_range(
         &mut self,
         range: Option<Range<usize>>,
@@ -24,6 +37,8 @@ pub trait ViewInputHandler: 'static + Sized {
         new_selected_range: Option<Range<usize>>,
         cx: &mut ViewContext<Self>,
     );
+
+    /// See [`InputHandler::bounds_for_range`] for details
     fn bounds_for_range(
         &mut self,
         range_utf16: Range<usize>,
