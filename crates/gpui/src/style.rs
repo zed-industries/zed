@@ -308,18 +308,6 @@ impl Style {
         }
     }
 
-    pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
-    where
-        C: BorrowAppContext,
-        F: FnOnce(&mut C) -> R,
-    {
-        if self.text.is_some() {
-            cx.with_text_style(Some(self.text.clone()), f)
-        } else {
-            f(cx)
-        }
-    }
-
     /// Paints the background of an element styled with this style.
     pub fn paint(
         &self,

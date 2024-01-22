@@ -1,16 +1,15 @@
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyTooltip, AnyView, AppContext, Arena,
-    AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, Flatten, GlobalElementId, Hsla, KeyBinding, KeyContext,
-    KeyDownEvent, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, Render, ScaledPixels, Scene, SharedString, Size,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView,
-    WindowBounds, WindowOptions,
+    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
+    AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
+    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
+    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, Model,
+    ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext,
+    WeakView, WindowBounds, WindowOptions,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::{FxHashMap, FxHashSet};
+use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use futures::{
     channel::{mpsc, oneshot},
@@ -97,7 +96,7 @@ impl DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
+
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 struct FocusEvent {
@@ -286,131 +285,11 @@ pub struct Window {
     pub(crate) focus_invalidated: bool,
 }
 
-struct RequestedInputHandler {
-    view_id: EntityId,
-    handler: Option<PlatformInputHandler>,
-}
-
-struct TooltipRequest {
-    view_id: EntityId,
-    tooltip: AnyTooltip,
-}
-
 pub(crate) struct ElementStateBox {
     pub(crate) inner: Box<dyn Any>,
     pub(crate) parent_view_id: EntityId,
     #[cfg(debug_assertions)]
     pub(crate) type_name: &'static str,
-}
-
-pub(crate) struct Frame {
-    focus: Option<FocusId>,
-    window_active: bool,
-    pub(crate) element_states: FxHashMap<GlobalElementId, ElementStateBox>,
-    mouse_listeners: FxHashMap<TypeId, Vec<(StackingOrder, EntityId, AnyMouseListener)>>,
-    pub(crate) dispatch_tree: DispatchTree,
-    pub(crate) scene: Scene,
-    pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
-    pub(crate) z_index_stack: StackingOrder,
-    pub(crate) next_stacking_order_id: u32,
-    pub(crate) next_root_z_index: u8,
-    pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
-    pub(crate) element_offset_stack: Vec<Point<Pixels>>,
-    requested_input_handler: Option<RequestedInputHandler>,
-    tooltip_request: Option<TooltipRequest>,
-    cursor_styles: FxHashMap<EntityId, CursorStyle>,
-    requested_cursor_style: Option<CursorStyle>,
-    pub(crate) view_stack: Vec<EntityId>,
-    pub(crate) reused_views: FxHashSet<EntityId>,
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) debug_bounds: collections::FxHashMap<String, Bounds<Pixels>>,
-}
-
-impl Frame {
-    fn new(dispatch_tree: DispatchTree) -> Self {
-        Frame {
-            focus: None,
-            window_active: false,
-            element_states: FxHashMap::default(),
-            mouse_listeners: FxHashMap::default(),
-            dispatch_tree,
-            scene: Scene::default(),
-            depth_map: Vec::new(),
-            z_index_stack: StackingOrder::default(),
-            next_stacking_order_id: 0,
-            next_root_z_index: 0,
-            content_mask_stack: Vec::new(),
-            element_offset_stack: Vec::new(),
-            requested_input_handler: None,
-            tooltip_request: None,
-            cursor_styles: FxHashMap::default(),
-            requested_cursor_style: None,
-            view_stack: Vec::new(),
-            reused_views: FxHashSet::default(),
-
-            #[cfg(any(test, feature = "test-support"))]
-            debug_bounds: FxHashMap::default(),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.element_states.clear();
-        self.mouse_listeners.values_mut().for_each(Vec::clear);
-        self.dispatch_tree.clear();
-        self.depth_map.clear();
-        self.next_stacking_order_id = 0;
-        self.next_root_z_index = 0;
-        self.reused_views.clear();
-        self.scene.clear();
-        self.requested_input_handler.take();
-        self.tooltip_request.take();
-        self.cursor_styles.clear();
-        self.requested_cursor_style.take();
-        debug_assert_eq!(self.view_stack.len(), 0);
-    }
-
-    fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
-        self.focus
-            .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
-            .unwrap_or_default()
-    }
-
-    fn finish(&mut self, prev_frame: &mut Self) {
-        // Reuse mouse listeners that didn't change since the last frame.
-        for (type_id, listeners) in &mut prev_frame.mouse_listeners {
-            let next_listeners = self.mouse_listeners.entry(*type_id).or_default();
-            for (order, view_id, listener) in listeners.drain(..) {
-                if self.reused_views.contains(&view_id) {
-                    next_listeners.push((order, view_id, listener));
-                }
-            }
-        }
-
-        // Reuse entries in the depth map that didn't change since the last frame.
-        for (order, view_id, bounds) in prev_frame.depth_map.drain(..) {
-            if self.reused_views.contains(&view_id) {
-                match self
-                    .depth_map
-                    .binary_search_by(|(level, _, _)| order.cmp(level))
-                {
-                    Ok(i) | Err(i) => self.depth_map.insert(i, (order, view_id, bounds)),
-                }
-            }
-        }
-
-        // Retain element states for views that didn't change since the last frame.
-        for (element_id, state) in prev_frame.element_states.drain() {
-            if self.reused_views.contains(&state.parent_view_id) {
-                self.element_states.entry(element_id).or_insert(state);
-            }
-        }
-
-        // Reuse geometry that didn't change since the last frame.
-        self.scene
-            .reuse_views(&self.reused_views, &mut prev_frame.scene);
-        self.scene.finish();
-    }
 }
 
 impl Window {
@@ -925,19 +804,6 @@ impl<'a> WindowContext<'a> {
         self.window.modifiers
     }
 
-    /// Updates the cursor style at the platform level.
-    pub fn set_cursor_style(&mut self, style: CursorStyle) {
-        let view_id = self.parent_view_id();
-        self.window.next_frame.cursor_styles.insert(view_id, style);
-        self.window.next_frame.requested_cursor_style = Some(style);
-    }
-
-    /// Sets a tooltip to be rendered for the upcoming frame
-    pub fn set_tooltip(&mut self, tooltip: AnyTooltip) {
-        let view_id = self.parent_view_id();
-        self.window.next_frame.tooltip_request = Some(TooltipRequest { view_id, tooltip });
-    }
-
     /// Returns true if there is no opaque layer containing the given point
     /// on top of the given level. Layers whose level is an extension of the
     /// level are not considered to be on top of the level.
@@ -977,48 +843,6 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to get the current stacking order.
     pub fn stacking_order(&self) -> &StackingOrder {
         &self.window.next_frame.z_index_stack
-    }
-
-    pub(crate) fn reuse_view(&mut self) {
-        let view_id = self.parent_view_id();
-        let grafted_view_ids = self
-            .window
-            .next_frame
-            .dispatch_tree
-            .reuse_view(view_id, &mut self.window.rendered_frame.dispatch_tree);
-        for view_id in grafted_view_ids {
-            assert!(self.window.next_frame.reused_views.insert(view_id));
-
-            // Reuse the previous input handler requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .requested_input_handler
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.requested_input_handler =
-                    self.window.rendered_frame.requested_input_handler.take();
-            }
-
-            // Reuse the tooltip previously requested during painting of the reused view.
-            if self
-                .window
-                .rendered_frame
-                .tooltip_request
-                .as_ref()
-                .map_or(false, |requested| requested.view_id == view_id)
-            {
-                self.window.next_frame.tooltip_request =
-                    self.window.rendered_frame.tooltip_request.take();
-            }
-
-            // Reuse the cursor styles previously requested during painting of the reused view.
-            if let Some(style) = self.window.rendered_frame.cursor_styles.remove(&view_id) {
-                self.window.next_frame.cursor_styles.insert(view_id, style);
-                self.window.next_frame.requested_cursor_style = Some(style);
-            }
-        }
     }
 
     /// Draw pixels to the display for this window based on the contents of its scene.

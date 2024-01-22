@@ -365,7 +365,7 @@ impl TerminalElement {
         result
     }
 
-    fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut WindowContext) -> LayoutState {
+    fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut ElementContext) -> LayoutState {
         let settings = ThemeSettings::get_global(cx).clone();
 
         let buffer_font_size = settings.buffer_font_size(cx);

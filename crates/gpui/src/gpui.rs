@@ -220,11 +220,6 @@ pub trait EventEmitter<E: Any>: 'static {}
 /// A helper trait for auto-implementing certain methods on contexts that
 /// can be used interchangeably.
 pub trait BorrowAppContext {
-    /// Run a closure with a text style pushed onto the context.
-    fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R;
-
     /// Set a global value on the context.
     fn set_global<T: 'static>(&mut self, global: T);
 }
@@ -233,20 +228,6 @@ impl<C> BorrowAppContext for C
 where
     C: BorrowMut<AppContext>,
 {
-    fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        if let Some(style) = style {
-            self.borrow_mut().push_text_style(style);
-            let result = f(self);
-            self.borrow_mut().pop_text_style();
-            result
-        } else {
-            f(self)
-        }
-    }
-
     fn set_global<G: 'static>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
     }

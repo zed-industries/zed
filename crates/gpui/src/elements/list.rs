@@ -7,8 +7,8 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    point, px, AnyElement, AvailableSpace, BorrowAppContext, Bounds, ContentMask, DispatchPhase,
-    Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    point, px, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
+    IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
     WindowContext,
 };
 use collections::VecDeque;
