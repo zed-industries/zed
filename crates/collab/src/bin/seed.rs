@@ -68,7 +68,7 @@ async fn main() {
             user_count += 1;
             db.get_or_create_user_by_github_account(
                 &github_user.login,
-                Some(github_user.id),
+                github_user.id,
                 github_user.email.as_deref(),
             )
             .await
