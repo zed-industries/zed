@@ -1834,32 +1834,16 @@ impl EditorElement {
                 .unwrap()
                 .width;
 
-            let gutter_padding;
-            let gutter_width;
-            let gutter_margin;
-            if snapshot.show_gutter {
-                let descent = cx.text_system().descent(font_id, font_size);
+            let gutter_dimensions = snapshot.gutter_dimensions(font_id, font_size, em_width, self.max_line_number_width(&snapshot, cx), cx);
 
-                let gutter_padding_factor = 3.5;
-                // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
-                let min_width_for_number_on_gutter = em_width * 4.0;
-                gutter_padding = (em_width * gutter_padding_factor).round();
-                gutter_width = self.max_line_number_width(&snapshot, cx).max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
-                gutter_margin = -descent;
-            } else {
-                gutter_padding = Pixels::ZERO;
-                gutter_width = Pixels::ZERO;
-                gutter_margin = Pixels::ZERO;
-            };
+            editor.gutter_width = gutter_dimensions.width;
 
-            editor.gutter_width = gutter_width;
-
-            let text_width = bounds.size.width - gutter_width;
+            let text_width = bounds.size.width - gutter_dimensions.width;
             let overscroll = size(em_width, px(0.));
             let _snapshot = {
                 editor.set_visible_line_count((bounds.size.height / line_height).into(), cx);
 
-                let editor_width = text_width - gutter_margin - overscroll.width - em_width;
+                let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
                 let wrap_width = match editor.soft_wrap_mode(cx) {
                     SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
                     SoftWrap::EditorWidth => editor_width,
@@ -1879,7 +1863,7 @@ impl EditorElement {
                 .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
                 .collect::<SmallVec<[_; 2]>>();
 
-            let gutter_size = size(gutter_width, bounds.size.height);
+            let gutter_size = size(gutter_dimensions.width, bounds.size.height);
             let text_size = size(text_width, bounds.size.height);
 
             let autoscroll_horizontally =
@@ -2091,10 +2075,10 @@ impl EditorElement {
                     &snapshot,
                     bounds.size.width,
                     scroll_width,
-                    gutter_padding,
-                    gutter_width,
+                    gutter_dimensions.padding,
+                    gutter_dimensions.width,
                     em_width,
-                    gutter_width + gutter_margin,
+                    gutter_dimensions.width + gutter_dimensions.margin,
                     line_height,
                     &style,
                     &line_layouts,
@@ -2187,7 +2171,7 @@ impl EditorElement {
                     &style,
                     editor.gutter_hovered,
                     line_height,
-                    gutter_margin,
+                    gutter_dimensions.margin,
                     editor_view,
                 )
             })
@@ -2242,13 +2226,13 @@ impl EditorElement {
                 visible_display_row_range: start_row..end_row,
                 wrap_guides,
                 gutter_size,
-                gutter_padding,
+                gutter_padding: gutter_dimensions.padding,
                 text_size,
                 scrollbar_row_range,
                 show_scrollbars,
                 is_singleton,
                 max_row,
-                gutter_margin,
+                gutter_margin: gutter_dimensions.margin,
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
@@ -3963,26 +3947,14 @@ fn compute_auto_height_layout(
         .width;
 
     let mut snapshot = editor.snapshot(cx);
-    let gutter_width;
-    let gutter_margin;
-    if snapshot.show_gutter {
-        let descent = cx.text_system().descent(font_id, font_size);
-        let gutter_padding_factor = 3.5;
-        let gutter_padding = (em_width * gutter_padding_factor).round();
-        let min_width_for_number_on_gutter = em_width * 4.0;
-        gutter_width =
-            max_line_number_width.max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
-        gutter_margin = -descent;
-    } else {
-        gutter_width = Pixels::ZERO;
-        gutter_margin = Pixels::ZERO;
-    };
+    let gutter_dimensions =
+        snapshot.gutter_dimensions(font_id, font_size, em_width, max_line_number_width, cx);
 
-    editor.gutter_width = gutter_width;
-    let text_width = width - gutter_width;
+    editor.gutter_width = gutter_dimensions.width;
+    let text_width = width - gutter_dimensions.width;
     let overscroll = size(em_width, px(0.));
 
-    let editor_width = text_width - gutter_margin - overscroll.width - em_width;
+    let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
     if editor.set_wrap_width(Some(editor_width), cx) {
         snapshot = editor.snapshot(cx);
     }
