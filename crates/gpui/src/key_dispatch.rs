@@ -1,7 +1,7 @@
 /// KeyDispatch is where GPUI deals with binding actions to key events.
 ///
 /// The key pieces to making a key binding work are to define an action,
-/// implement a method that takes that action as a type paramater,
+/// implement a method that takes that action as a type parameter,
 /// and then to register the action during render on a focused node
 /// with a keymap context:
 ///
