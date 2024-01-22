@@ -2,11 +2,11 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeymatchResult, KeystrokeEvent,
-    Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render,
-    ScaledPixels, SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, View,
-    VisualContext, WeakView, WindowBounds, WindowOptions,
+    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
+    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds, WindowOptions,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -289,10 +289,37 @@ pub struct Window {
 
 #[derive(Default, Debug)]
 struct PendingInput {
-    text: String,
+    keystrokes: SmallVec<[Keystroke; 1]>,
     bindings: SmallVec<[KeyBinding; 1]>,
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
+}
+
+impl PendingInput {
+    fn is_noop(&self) -> bool {
+        self.bindings.is_empty() && (self.keystrokes.iter().all(|k| k.ime_key.is_none()))
+    }
+
+    fn input(&self) -> String {
+        self.keystrokes
+            .iter()
+            .flat_map(|k| k.ime_key.clone())
+            .collect::<Vec<String>>()
+            .join("")
+    }
+
+    fn used_by_binding(&self, binding: &KeyBinding) -> bool {
+        if self.keystrokes.is_empty() {
+            return true;
+        }
+        let keystroke = &self.keystrokes[0];
+        for candidate in keystroke.match_candidates() {
+            if binding.match_keystrokes(&[candidate]) == KeyMatch::Pending {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub(crate) struct ElementStateBox {
@@ -1179,15 +1206,15 @@ impl<'a> WindowContext<'a> {
                     currently_pending = PendingInput::default();
                 }
                 currently_pending.focus = self.window.focus;
-                if let Some(new_text) = &key_down_event.keystroke.ime_key.as_ref() {
-                    currently_pending.text += new_text
-                }
+                currently_pending
+                    .keystrokes
+                    .push(key_down_event.keystroke.clone());
                 for binding in bindings {
                     currently_pending.bindings.push(binding);
                 }
 
                 // for vim compatibility, we also should check "is input handler enabled"
-                if !currently_pending.text.is_empty() || !currently_pending.bindings.is_empty() {
+                if !currently_pending.is_noop() {
                     currently_pending.timer = Some(self.spawn(|mut cx| async move {
                         cx.background_executor.timer(Duration::from_secs(1)).await;
                         cx.update(move |cx| {
@@ -1199,24 +1226,18 @@ impl<'a> WindowContext<'a> {
                         })
                         .log_err();
                     }));
-                    self.window.pending_input = Some(currently_pending);
+                } else {
+                    currently_pending.timer = None;
                 }
+                self.window.pending_input = Some(currently_pending);
 
                 self.propagate_event = false;
                 return;
             } else if let Some(currently_pending) = self.window.pending_input.take() {
-                // if you have bound , to one thing, and ,w to another.
-                // then typing ,i should trigger the comma actions, then the i actions.
-                // in that scenario "binding.keystrokes" is "i" and "pending.keystrokes" is ",".
-                // on the other hand if you type ,, it should not trigger the , action.
-                // in that scenario "binding.keystrokes" is ",w" and "pending.keystrokes" is ",".
-
-                if bindings.iter().all(|binding| {
-                    currently_pending
-                        .bindings
-                        .iter()
-                        .all(|pending| binding.keystrokes().starts_with(&pending.keystrokes))
-                }) {
+                if bindings
+                    .iter()
+                    .all(|binding| !currently_pending.used_by_binding(&binding))
+                {
                     self.replay_pending_input(currently_pending)
                 }
             }
@@ -1290,6 +1311,8 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
+        let input = currently_pending.input();
+
         self.propagate_event = true;
         for binding in currently_pending.bindings {
             self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
@@ -1298,9 +1321,9 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        if !currently_pending.text.is_empty() {
+        if !input.is_empty() {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                input_handler.flush_pending_input(&currently_pending.text, self);
+                input_handler.flush_pending_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler)
             }
         }

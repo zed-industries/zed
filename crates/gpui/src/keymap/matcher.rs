@@ -94,7 +94,7 @@ impl KeystrokeMatcher {
 /// - KeyMatch::None => No match is valid for this key given any pending keystrokes.
 /// - KeyMatch::Pending => There exist bindings that is still waiting for more keys.
 /// - KeyMatch::Some(matches) => One or more bindings have received the necessary key presses.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum KeyMatch {
     None,
     Pending,
