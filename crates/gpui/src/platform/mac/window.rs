@@ -1003,9 +1003,21 @@ impl PlatformWindow for MacWindow {
 }
 
 fn get_scale_factor(native_window: id) -> f32 {
-    unsafe {
+    let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
         NSScreen::backingScaleFactor(screen) as f32
+    };
+
+    // We are not certain what triggers this, but it seems that sometimes
+    // this method would return 0 (https://github.com/zed-industries/community/issues/2422)
+    // It seems most likely that this would happen if the window has no screen
+    // (if it is off-screen), though we'd expect to see viewDidChangeBackingProperties before
+    // it was rendered for real.
+    // Regardless, attempt to avoid the issue here.
+    if factor == 0.0 {
+        2.
+    } else {
+        factor
     }
 }
 
