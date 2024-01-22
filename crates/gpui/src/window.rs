@@ -1186,18 +1186,21 @@ impl<'a> WindowContext<'a> {
                     currently_pending.bindings.push(binding);
                 }
 
-                currently_pending.timer = Some(self.spawn(|mut cx| async move {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
-                    cx.update(move |cx| {
-                        cx.clear_pending_keystrokes();
-                        let Some(currently_pending) = cx.window.pending_input.take() else {
-                            return;
-                        };
-                        cx.replay_pending_input(currently_pending)
-                    })
-                    .log_err();
-                }));
-                self.window.pending_input = Some(currently_pending);
+                // for vim compatibility, we also shoul check "is input handler enabled"
+                if !currently_pending.text.is_empty() || !currently_pending.bindings.is_empty() {
+                    currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                        cx.background_executor.timer(Duration::from_secs(1)).await;
+                        cx.update(move |cx| {
+                            cx.clear_pending_keystrokes();
+                            let Some(currently_pending) = cx.window.pending_input.take() else {
+                                return;
+                            };
+                            cx.replay_pending_input(currently_pending)
+                        })
+                        .log_err();
+                    }));
+                    self.window.pending_input = Some(currently_pending);
+                }
 
                 self.propagate_event = false;
                 return;

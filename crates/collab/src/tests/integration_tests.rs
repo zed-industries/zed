@@ -34,6 +34,7 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
+    time::Duration,
 };
 use unindent::Unindent as _;
 
@@ -5944,4 +5945,27 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
         click_count: 1,
     });
     assert!(cx.debug_bounds("MENU_ITEM-Close").is_some());
+}
+
+#[gpui::test]
+async fn test_cmd_k_left(cx: &mut TestAppContext) {
+    let client = TestServer::start1(cx).await;
+    let (workspace, cx) = client.build_test_workspace(cx).await;
+
+    cx.simulate_keystrokes("cmd-n");
+    workspace.update(cx, |workspace, cx| {
+        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 1);
+    });
+    cx.simulate_keystrokes("cmd-k left");
+    workspace.update(cx, |workspace, cx| {
+        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
+    });
+    cx.simulate_keystrokes("cmd-k");
+    // sleep for longer than the timeout in keyboard shortcut handling
+    // to verify that it doesn't fire in this case.
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.simulate_keystrokes("left");
+    workspace.update(cx, |workspace, cx| {
+        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 3);
+    });
 }

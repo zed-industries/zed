@@ -272,12 +272,17 @@ impl DispatchTree {
             .collect()
     }
 
+    // dispatch_key pushses the next keystroke into any key binding matchers.
+    // any matching bindings are returned in the order that they should be dispatched:
+    // * First by length of binding (so if you have a binding for "b" and "ab", the "ab" binding fires first)
+    // * Secondly by depth in the tree (so if Editor has a binding for "b" and workspace a
+    // binding for "b", the Editor action fires first).
     pub fn dispatch_key(
         &mut self,
         keystroke: &Keystroke,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> KeymatchResult {
-        let mut bindings = SmallVec::new();
+        let mut bindings = SmallVec::<[KeyBinding; 1]>::new();
         let mut pending = false;
 
         let mut context_stack: SmallVec<[KeyContext; 4]> = SmallVec::new();
@@ -295,9 +300,19 @@ impl DispatchTree {
                 .entry(context_stack.clone())
                 .or_insert_with(|| KeystrokeMatcher::new(self.keymap.clone()));
 
-            let mut result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
+            let result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
             pending = result.pending || pending;
-            bindings.append(&mut result.bindings);
+            for new_binding in result.bindings {
+                match bindings
+                    .iter()
+                    .position(|el| el.keystrokes.len() < new_binding.keystrokes.len())
+                {
+                    Some(idx) => {
+                        bindings.insert(idx, new_binding);
+                    }
+                    None => bindings.push(new_binding),
+                }
+            }
             context_stack.pop();
         }
 

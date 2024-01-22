@@ -127,6 +127,11 @@ impl TestServer {
         (client_a, client_b, channel_id)
     }
 
+    pub async fn start1<'a>(cx: &'a mut TestAppContext) -> TestClient {
+        let mut server = Self::start(cx.executor().clone()).await;
+        server.create_client(cx, "user_a").await
+    }
+
     pub async fn reset(&self) {
         self.app_state.db.reset();
         let epoch = self
