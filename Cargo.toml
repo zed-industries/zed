@@ -93,6 +93,7 @@ resolver = "2"
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"
 derive_more = { version = "0.99.17" }
 env_logger = { version = "0.9" }

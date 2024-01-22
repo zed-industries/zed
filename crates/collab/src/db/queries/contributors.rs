@@ -22,6 +22,28 @@ impl Database {
     }
 
     /// Records that a given user has signed the CLA.
+    pub async fn get_contributor_sign_timestamp(
+        &self,
+        github_user_id: i32,
+    ) -> Result<Option<DateTime>> {
+        self.transaction(|tx| async move {
+            let Some(user) = user::Entity::find()
+                .filter(user::Column::GithubUserId.eq(github_user_id))
+                .one(&*tx)
+                .await?
+            else {
+                return Ok(None);
+            };
+            let Some(contributor) = contributor::Entity::find_by_id(user.id).one(&*tx).await?
+            else {
+                return Ok(None);
+            };
+            Ok(Some(contributor.signed_at))
+        })
+        .await
+    }
+
+    /// Records that a given user has signed the CLA.
     pub async fn add_contributor(
         &self,
         github_login: &str,

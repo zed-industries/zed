@@ -14,6 +14,7 @@ use axum::{
     Extension, Json, Router,
 };
 use axum_extra::response::ErasedJson;
+use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -26,6 +27,7 @@ pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body
         .route("/panic", post(trace_panic))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
         .route("/contributors", get(get_contributors).post(add_contributor))
+        .route("/contributor", get(check_is_contributor))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -135,6 +137,29 @@ async fn get_rpc_server_snapshot(
 
 async fn get_contributors(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<String>>> {
     Ok(Json(app.db.get_contributors().await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckIsContributorParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct CheckIsContributorResponse {
+    signed_at: Option<String>,
+}
+
+async fn check_is_contributor(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<CheckIsContributorParams>,
+) -> Result<Json<CheckIsContributorResponse>> {
+    Ok(Json(CheckIsContributorResponse {
+        signed_at: app
+            .db
+            .get_contributor_sign_timestamp(params.github_user_id)
+            .await?
+            .map(|ts| ts.and_utc().to_rfc3339_opts(SecondsFormat::Millis, true)),
+    }))
 }
 
 async fn add_contributor(
