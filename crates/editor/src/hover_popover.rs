@@ -409,8 +409,7 @@ async fn parse_blocks(
         region_ranges = region_ranges
             .into_iter()
             .map(|range| {
-                    range.start.saturating_sub(leading_space)
-                        ..range.end.saturating_sub(leading_space),
+                range.start.saturating_sub(leading_space)..range.end.saturating_sub(leading_space)
             })
             .collect();
     }
