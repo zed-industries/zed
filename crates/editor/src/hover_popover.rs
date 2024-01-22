@@ -545,6 +545,7 @@ impl DiagnosticPopover {
 
         div()
             .id("diagnostic")
+            .elevation_2(cx)
             .overflow_y_scroll()
             .px_2()
             .py_1()
