@@ -37,11 +37,17 @@ impl Database {
                     &*tx,
                 )
                 .await?;
-            contributor::ActiveModel {
+
+            contributor::Entity::insert(contributor::ActiveModel {
                 user_id: ActiveValue::Set(user.id),
                 signed_at: ActiveValue::NotSet,
-            }
-            .insert(&*tx)
+            })
+            .on_conflict(
+                OnConflict::column(contributor::Column::UserId)
+                    .do_nothing()
+                    .to_owned(),
+            )
+            .exec_without_returning(&*tx)
             .await?;
             Ok(())
         })
