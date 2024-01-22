@@ -950,7 +950,7 @@ async fn ping(_: proto::Ping, response: Response<proto::Ping>, _session: Session
     Ok(())
 }
 
-/// Create a new room for calling (outside of channels)
+/// Creates a new room for calling (outside of channels)
 async fn create_room(
     _request: proto::CreateRoom,
     response: Response<proto::CreateRoom>,
@@ -1276,7 +1276,7 @@ async fn leave_room(
     Ok(())
 }
 
-/// Update the permissions of someone else in the room.
+/// Updates the permissions of someone else in the room.
 async fn set_room_participant_role(
     request: proto::SetRoomParticipantRole,
     response: Response<proto::SetRoomParticipantRole>,
@@ -1460,7 +1460,7 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
     Ok(())
 }
 
-/// Update other participants in the room with your current location.
+/// Updates other participants in the room with your current location.
 async fn update_participant_location(
     request: proto::UpdateParticipantLocation,
     response: Response<proto::UpdateParticipantLocation>,
@@ -1673,7 +1673,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     Ok(())
 }
 
-/// Update other participants with changes to the project
+/// Updates other participants with changes to the project
 async fn update_project(
     request: proto::UpdateProject,
     response: Response<proto::UpdateProject>,
@@ -1700,7 +1700,7 @@ async fn update_project(
     Ok(())
 }
 
-/// Update other participants with changes to the worktree
+/// Updates other participants with changes to the worktree
 async fn update_worktree(
     request: proto::UpdateWorktree,
     response: Response<proto::UpdateWorktree>,
@@ -1725,7 +1725,7 @@ async fn update_worktree(
     Ok(())
 }
 
-/// Update other participants with changes to the diagnostics
+/// Updates other participants with changes to the diagnostics
 async fn update_diagnostic_summary(
     message: proto::UpdateDiagnosticSummary,
     session: Session,
@@ -1749,7 +1749,7 @@ async fn update_diagnostic_summary(
     Ok(())
 }
 
-/// Update other participants with changes to the worktree settings
+/// Updates other participants with changes to the worktree settings
 async fn update_worktree_settings(
     message: proto::UpdateWorktreeSettings,
     session: Session,
@@ -2293,7 +2293,7 @@ async fn remove_contact(
     Ok(())
 }
 
-/// Create a new channel.
+/// Creates a new channel.
 async fn create_channel(
     request: proto::CreateChannel,
     response: Response<proto::CreateChannel>,

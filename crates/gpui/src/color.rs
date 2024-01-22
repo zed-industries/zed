@@ -2,6 +2,7 @@ use anyhow::bail;
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 
+/// Convert an RGB hex color code number to a color type
 pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
     let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
     let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
@@ -9,6 +10,7 @@ pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
     Rgba { r, g, b, a: 1.0 }.into()
 }
 
+/// Convert an RGBA hex color code number to [`Rgba`]
 pub fn rgba(hex: u32) -> Rgba {
     let r = ((hex >> 24) & 0xFF) as f32 / 255.0;
     let g = ((hex >> 16) & 0xFF) as f32 / 255.0;
@@ -17,11 +19,16 @@ pub fn rgba(hex: u32) -> Rgba {
     Rgba { r, g, b, a }
 }
 
+/// An RGBA color
 #[derive(PartialEq, Clone, Copy, Default)]
 pub struct Rgba {
+    /// The red component of the color, in the range 0.0 to 1.0
     pub r: f32,
+    /// The green component of the color, in the range 0.0 to 1.0
     pub g: f32,
+    /// The blue component of the color, in the range 0.0 to 1.0
     pub b: f32,
+    /// The alpha component of the color, in the range 0.0 to 1.0
     pub a: f32,
 }
 
@@ -32,6 +39,8 @@ impl fmt::Debug for Rgba {
 }
 
 impl Rgba {
+    /// Create a new [`Rgba`] color by blending this and another color together
+    /// TODO!(docs): find the source for this algorithm
     pub fn blend(&self, other: Rgba) -> Self {
         if other.a >= 1.0 {
             other
@@ -165,12 +174,20 @@ impl TryFrom<&'_ str> for Rgba {
     }
 }
 
+/// An HSLA color
 #[derive(Default, Copy, Clone, Debug)]
 #[repr(C)]
 pub struct Hsla {
+    /// Hue, in a range from 0 to 1
     pub h: f32,
+
+    /// Saturation, in a range from 0 to 1
     pub s: f32,
+
+    /// Lightness, in a range from 0 to 1
     pub l: f32,
+
+    /// Alpha, in a range from 0 to 1
     pub a: f32,
 }
 
@@ -203,38 +220,9 @@ impl Ord for Hsla {
     }
 }
 
-impl Hsla {
-    pub fn to_rgb(self) -> Rgba {
-        self.into()
-    }
-
-    pub fn red() -> Self {
-        red()
-    }
-
-    pub fn green() -> Self {
-        green()
-    }
-
-    pub fn blue() -> Self {
-        blue()
-    }
-
-    pub fn black() -> Self {
-        black()
-    }
-
-    pub fn white() -> Self {
-        white()
-    }
-
-    pub fn transparent_black() -> Self {
-        transparent_black()
-    }
-}
-
 impl Eq for Hsla {}
 
+/// Construct an [`Hsla`] object from plain values
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
         h: h.clamp(0., 1.),
@@ -244,6 +232,7 @@ pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     }
 }
 
+/// Pure black in [`Hsla`]
 pub fn black() -> Hsla {
     Hsla {
         h: 0.,
@@ -253,6 +242,7 @@ pub fn black() -> Hsla {
     }
 }
 
+/// Transparent black in [`Hsla`]
 pub fn transparent_black() -> Hsla {
     Hsla {
         h: 0.,
@@ -262,6 +252,7 @@ pub fn transparent_black() -> Hsla {
     }
 }
 
+/// Pure white in [`Hsla`]
 pub fn white() -> Hsla {
     Hsla {
         h: 0.,
@@ -271,6 +262,7 @@ pub fn white() -> Hsla {
     }
 }
 
+/// The color red in [`Hsla`]
 pub fn red() -> Hsla {
     Hsla {
         h: 0.,
@@ -280,6 +272,7 @@ pub fn red() -> Hsla {
     }
 }
 
+/// The color blue in [`Hsla`]
 pub fn blue() -> Hsla {
     Hsla {
         h: 0.6,
@@ -289,6 +282,7 @@ pub fn blue() -> Hsla {
     }
 }
 
+/// The color green in [`Hsla`]
 pub fn green() -> Hsla {
     Hsla {
         h: 0.33,
@@ -298,6 +292,7 @@ pub fn green() -> Hsla {
     }
 }
 
+/// The color yellow in [`Hsla`]
 pub fn yellow() -> Hsla {
     Hsla {
         h: 0.16,
@@ -308,6 +303,41 @@ pub fn yellow() -> Hsla {
 }
 
 impl Hsla {
+    /// Converts this HSLA color to an RGBA color.
+    pub fn to_rgb(self) -> Rgba {
+        self.into()
+    }
+
+    /// The color red
+    pub fn red() -> Self {
+        red()
+    }
+
+    /// The color green
+    pub fn green() -> Self {
+        green()
+    }
+
+    /// The color blue
+    pub fn blue() -> Self {
+        blue()
+    }
+
+    /// The color black
+    pub fn black() -> Self {
+        black()
+    }
+
+    /// The color white
+    pub fn white() -> Self {
+        white()
+    }
+
+    /// The color transparent black
+    pub fn transparent_black() -> Self {
+        transparent_black()
+    }
+
     /// Returns true if the HSLA color is fully transparent, false otherwise.
     pub fn is_transparent(&self) -> bool {
         self.a == 0.0
@@ -339,6 +369,7 @@ impl Hsla {
         }
     }
 
+    /// Returns a new HSLA color with the same hue, and lightness, but with no saturation.
     pub fn grayscale(&self) -> Self {
         Hsla {
             h: self.h,

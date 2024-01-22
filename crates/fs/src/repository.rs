@@ -72,7 +72,7 @@ impl GitRepository for LibGitRepository {
             // This check is required because index.get_path() unwraps internally :(
             check_path_to_repo_path_errors(relative_file_path)?;
 
-            let oid = match index.get_path(&relative_file_path, STAGE_NORMAL) {
+            let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
                 Some(entry) => entry.id,
                 None => return Ok(None),
             };
@@ -81,7 +81,7 @@ impl GitRepository for LibGitRepository {
             Ok(Some(String::from_utf8(content)?))
         }
 
-        match logic(&self, relative_file_path) {
+        match logic(self, relative_file_path) {
             Ok(value) => return value,
             Err(err) => log::error!("Error loading head text: {:?}", err),
         }
@@ -199,7 +199,7 @@ impl GitRepository for LibGitRepository {
 
 fn matches_index(repo: &LibGitRepository, path: &RepoPath, mtime: SystemTime) -> bool {
     if let Some(index) = repo.index().log_err() {
-        if let Some(entry) = index.get_path(&path, 0) {
+        if let Some(entry) = index.get_path(path, 0) {
             if let Some(mtime) = mtime.duration_since(SystemTime::UNIX_EPOCH).log_err() {
                 if entry.mtime.seconds() == mtime.as_secs() as i32
                     && entry.mtime.nanoseconds() == mtime.subsec_nanos()

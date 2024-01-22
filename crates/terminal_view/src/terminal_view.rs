@@ -772,7 +772,7 @@ impl Item for TerminalView {
                 .log_err()
                 .flatten()
                 .or_else(|| {
-                    cx.update(|_, cx| {
+                    cx.update(|cx| {
                         let strategy = TerminalSettings::get_global(cx).working_directory.clone();
                         workspace
                             .upgrade()
@@ -832,7 +832,7 @@ impl SearchableItem for TerminalView {
         self.terminal().update(cx, |term, _| term.matches = matches)
     }
 
-    /// Return the selection content to pre-load into this search
+    /// Returns the selection content to pre-load into this search
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
         self.terminal()
             .read(cx)

@@ -32,11 +32,11 @@ use util::{
 };
 use uuid::Uuid;
 use welcome::BaseKeymap;
+use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
 };
-use workspace::{dock::Panel, Pane};
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
 
 actions!(
@@ -178,10 +178,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let (position, was_deserialized) = {
-                    let project_panel = project_panel.read(cx);
-                    (project_panel.position(cx), project_panel.was_deserialized())
-                };
+                let was_deserialized = project_panel.read(cx).was_deserialized();
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
@@ -200,7 +197,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                                 .map_or(false, |entry| entry.is_dir())
                         })
                 {
-                    workspace.toggle_dock(position, cx);
+                    workspace.open_panel::<ProjectPanel>(cx);
                 }
                 cx.focus_self();
             })
@@ -875,7 +872,7 @@ mod tests {
         let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
 
         let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
-            cx.test_window(window.into()).edited()
+            cx.update(|cx| window.read(cx).unwrap().is_edited())
         };
         let pane = window
             .read_with(cx, |workspace, _| workspace.active_pane().clone())

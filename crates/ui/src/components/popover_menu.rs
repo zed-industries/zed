@@ -1,9 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    overlay, point, px, rems, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
-    Element, ElementId, InteractiveBounds, IntoElement, LayoutId, ManagedView, MouseDownEvent,
-    ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    overlay, point, prelude::FluentBuilder, px, rems, AnchorCorner, AnyElement, Bounds,
+    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, InteractiveBounds,
+    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
+    VisualContext, WindowContext,
 };
 
 use crate::{Clickable, Selectable};
@@ -51,7 +52,7 @@ impl<M: ManagedView> PopoverMenu<M> {
                             cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
                                 if modal.focus_handle(cx).contains_focused(cx) {
                                     if previous_focus_handle.is_some() {
-                                        cx.focus(&previous_focus_handle.as_ref().unwrap())
+                                        cx.focus(previous_focus_handle.as_ref().unwrap())
                                     }
                                 }
                                 *menu2.borrow_mut() = None;
@@ -134,7 +135,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (gpui::LayoutId, Self::State) {
         let mut menu_layout_id = None;
 
@@ -188,7 +189,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         &mut self,
         _: Bounds<gpui::Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         if let Some(mut child) = element_state.child_element.take() {
             child.paint(cx);

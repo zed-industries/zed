@@ -21,11 +21,15 @@ use waker_fn::waker_fn;
 #[cfg(any(test, feature = "test-support"))]
 use rand::rngs::StdRng;
 
+/// A pointer to the executor that is currently running,
+/// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
     dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
+/// A pointer to the executor that is currently running,
+/// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     dispatcher: Arc<dyn PlatformDispatcher>,
@@ -37,16 +41,19 @@ pub struct ForegroundExecutor {
 /// It implements [`Future`] so you can `.await` on it.
 ///
 /// If you drop a task it will be cancelled immediately. Calling [`Task::detach`] allows
-/// the task to continue running in the background, but with no way to return a value.
+/// the task to continue running, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
 pub enum Task<T> {
+    /// A task that is ready to return a value
     Ready(Option<T>),
+
+    /// A task that is currently running.
     Spawned(async_task::Task<T>),
 }
 
 impl<T> Task<T> {
-    /// Create a new task that will resolve with the value
+    /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
         Task::Ready(Some(val))
     }
@@ -68,7 +75,7 @@ where
     /// Run the task to completion in the background and log any
     /// errors that occur.
     #[track_caller]
-    pub fn detach_and_log_err(self, cx: &mut AppContext) {
+    pub fn detach_and_log_err(self, cx: &AppContext) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err(*location))
@@ -87,6 +94,8 @@ impl<T> Future for Task<T> {
     }
 }
 
+/// A task label is an opaque identifier that you can use to
+/// refer to a task in tests.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TaskLabel(NonZeroUsize);
 
@@ -97,6 +106,7 @@ impl Default for TaskLabel {
 }
 
 impl TaskLabel {
+    /// Construct a new task label.
     pub fn new() -> Self {
         static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
         Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
@@ -363,6 +373,7 @@ impl BackgroundExecutor {
 
 /// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
+    /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self {
             dispatcher,
@@ -411,13 +422,14 @@ impl<'a> Scope<'a> {
         }
     }
 
+    /// Spawn a future into this scope.
     pub fn spawn<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'a,
     {
         let tx = self.tx.clone().unwrap();
 
-        // Safety: The 'a lifetime is guaranteed to outlive any of these futures because
+        // SAFETY: The 'a lifetime is guaranteed to outlive any of these futures because
         // dropping this `Scope` blocks until all of the futures have resolved.
         let f = unsafe {
             mem::transmute::<

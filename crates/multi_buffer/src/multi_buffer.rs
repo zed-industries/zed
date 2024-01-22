@@ -2316,7 +2316,7 @@ impl MultiBufferSnapshot {
         &self,
         point: T,
     ) -> Option<(&BufferSnapshot, usize)> {
-        let offset = point.to_offset(&self);
+        let offset = point.to_offset(self);
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
         if cursor.item().is_none() {
@@ -3028,7 +3028,7 @@ impl MultiBufferSnapshot {
 
     pub fn has_git_diffs(&self) -> bool {
         for excerpt in self.excerpts.iter() {
-            if !excerpt.buffer.git_diff.is_empty() {
+            if excerpt.buffer.has_git_diff() {
                 return true;
             }
         }
@@ -3694,7 +3694,7 @@ impl ExcerptId {
     pub fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> cmp::Ordering {
         let a = snapshot.excerpt_locator_for_id(*self);
         let b = snapshot.excerpt_locator_for_id(*other);
-        a.cmp(&b).then_with(|| self.0.cmp(&other.0))
+        a.cmp(b).then_with(|| self.0.cmp(&other.0))
     }
 }
 

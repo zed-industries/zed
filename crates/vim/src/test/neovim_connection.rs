@@ -42,6 +42,7 @@ pub enum NeovimData {
     Key(String),
     Get { state: String, mode: Option<Mode> },
     ReadRegister { name: char, value: String },
+    Exec { command: String },
     SetOption { value: String },
 }
 
@@ -264,6 +265,32 @@ impl NeovimConnection {
             self.data.pop_front(),
             Some(NeovimData::SetOption {
                 value: value.to_string(),
+            }),
+            "operation does not match recorded script. re-record with --features=neovim"
+        );
+    }
+
+    #[cfg(feature = "neovim")]
+    pub async fn exec(&mut self, value: &str) {
+        self.nvim
+            .command_output(format!("{}", value).as_str())
+            .await
+            .unwrap();
+
+        self.data.push_back(NeovimData::Exec {
+            command: value.to_string(),
+        })
+    }
+
+    #[cfg(not(feature = "neovim"))]
+    pub async fn exec(&mut self, value: &str) {
+        if let Some(NeovimData::Get { .. }) = self.data.front() {
+            self.data.pop_front();
+        };
+        assert_eq!(
+            self.data.pop_front(),
+            Some(NeovimData::Exec {
+                command: value.to_string(),
             }),
             "operation does not match recorded script. re-record with --features=neovim"
         );

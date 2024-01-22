@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 ///
 /// Related elements:
 ///
-/// `ContextMenu`:
+/// [`ContextMenu`](crate::ContextMenu):
 ///
 /// Used to display a popover menu that only contains a list of items. Context menus are always
 /// launched by secondary clicking on an element. The menu is positioned relative to the user's cursor.
@@ -74,7 +74,7 @@ impl Popover {
 }
 
 impl ParentElement for Popover {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }

@@ -52,7 +52,7 @@ pub struct NeovimBackedTestContext {
     // Lookup for exempted assertions. Keyed by the insertion text, and with a value indicating which
     // bindings are exempted. If None, all bindings are ignored for that insertion text.
     exemptions: HashMap<String, Option<HashSet<String>>>,
-    neovim: NeovimConnection,
+    pub(crate) neovim: NeovimConnection,
 
     last_set_state: Option<String>,
     recent_keystrokes: Vec<String>,
@@ -275,6 +275,24 @@ impl NeovimBackedTestContext {
 
     pub async fn neovim_mode(&mut self) -> Mode {
         self.neovim.mode().await.unwrap()
+    }
+
+    pub async fn assert_shared_mode(&mut self, mode: Mode) {
+        let neovim = self.neovim_mode().await;
+        let editor = self.cx.mode();
+
+        if neovim != mode || editor != mode {
+            panic!(
+                indoc! {"Test failed (zed does not match nvim behaviour)
+                    # desired mode:
+                    {:?}
+                    # neovim mode:
+                    {:?}
+                    # zed mode:
+                    {:?}"},
+                mode, neovim, editor,
+            )
+        }
     }
 
     pub async fn assert_state_matches(&mut self) {

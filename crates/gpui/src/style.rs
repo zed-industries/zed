@@ -1,10 +1,10 @@
 use std::{iter, mem, ops::Range};
 
 use crate::{
-    black, phi, point, quad, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds,
-    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, Edges, EdgesRefinement,
-    Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
+    black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
+    CursorStyle, DefiniteLength, Edges, EdgesRefinement, ElementContext, Font, FontFeatures,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
+    SizeRefinement, Styled, TextRun,
 };
 use collections::HashSet;
 use refineable::{Cascade, Refineable};
@@ -110,7 +110,7 @@ pub struct Style {
     /// The mouse cursor style shown when the mouse pointer is over an element.
     pub mouse_cursor: Option<CursorStyle>,
 
-    pub z_index: Option<u8>,
+    pub z_index: Option<u16>,
 
     #[cfg(debug_assertions)]
     pub debug: bool,
@@ -308,61 +308,12 @@ impl Style {
         }
     }
 
-    pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
-    where
-        C: BorrowAppContext,
-        F: FnOnce(&mut C) -> R,
-    {
-        if self.text.is_some() {
-            cx.with_text_style(Some(self.text.clone()), f)
-        } else {
-            f(cx)
-        }
-    }
-
-    /// Apply overflow to content mask
-    pub fn apply_overflow<C, F, R>(&self, bounds: Bounds<Pixels>, cx: &mut C, f: F) -> R
-    where
-        C: BorrowWindow,
-        F: FnOnce(&mut C) -> R,
-    {
-        let current_mask = cx.content_mask();
-
-        let min = current_mask.bounds.origin;
-        let max = current_mask.bounds.lower_right();
-
-        let mask_bounds = match (
-            self.overflow.x == Overflow::Visible,
-            self.overflow.y == Overflow::Visible,
-        ) {
-            // x and y both visible
-            (true, true) => return f(cx),
-            // x visible, y hidden
-            (true, false) => Bounds::from_corners(
-                point(min.x, bounds.origin.y),
-                point(max.x, bounds.lower_right().y),
-            ),
-            // x hidden, y visible
-            (false, true) => Bounds::from_corners(
-                point(bounds.origin.x, min.y),
-                point(bounds.lower_right().x, max.y),
-            ),
-            // both hidden
-            (false, false) => bounds,
-        };
-        let mask = ContentMask {
-            bounds: mask_bounds,
-        };
-
-        cx.with_content_mask(Some(mask), f)
-    }
-
     /// Paints the background of an element styled with this style.
     pub fn paint(
         &self,
         bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
-        continuation: impl FnOnce(&mut WindowContext),
+        cx: &mut ElementContext,
+        continuation: impl FnOnce(&mut ElementContext),
     ) {
         #[cfg(debug_assertions)]
         if self.debug_below {
@@ -386,7 +337,7 @@ impl Style {
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
-            cx.with_z_index(0, |cx| {
+            cx.with_z_index(1, |cx| {
                 let mut border_color = background_color.unwrap_or_default();
                 border_color.a = 0.;
                 cx.paint_quad(quad(
@@ -399,12 +350,12 @@ impl Style {
             });
         }
 
-        cx.with_z_index(0, |cx| {
+        cx.with_z_index(2, |cx| {
             continuation(cx);
         });
 
         if self.is_border_visible() {
-            cx.with_z_index(0, |cx| {
+            cx.with_z_index(3, |cx| {
                 let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
                 let border_widths = self.border_widths.to_pixels(rem_size);
                 let max_border_width = border_widths.max();

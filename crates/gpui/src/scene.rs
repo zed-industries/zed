@@ -10,12 +10,12 @@ pub(crate) type PointF = Point<f32>;
 #[allow(non_camel_case_types, unused)]
 pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
-pub type LayerId = u32;
-pub type DrawOrder = u32;
+pub(crate) type LayerId = u32;
+pub(crate) type DrawOrder = u32;
 
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
-pub struct ViewId {
+pub(crate) struct ViewId {
     low_bits: u32,
     high_bits: u32,
 }
@@ -38,7 +38,7 @@ impl From<ViewId> for EntityId {
 }
 
 #[derive(Default)]
-pub struct Scene {
+pub(crate) struct Scene {
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
     orders_by_layer: BTreeMap<LayerId, StackingOrder>,
     pub(crate) shadows: Vec<Shadow>,
@@ -153,49 +153,49 @@ impl Scene {
         for shadow in prev_scene.shadows.drain(..) {
             if views.contains(&shadow.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&shadow.layer_id];
-                self.insert(&order, shadow);
+                self.insert(order, shadow);
             }
         }
 
         for quad in prev_scene.quads.drain(..) {
             if views.contains(&quad.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&quad.layer_id];
-                self.insert(&order, quad);
+                self.insert(order, quad);
             }
         }
 
         for path in prev_scene.paths.drain(..) {
             if views.contains(&path.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&path.layer_id];
-                self.insert(&order, path);
+                self.insert(order, path);
             }
         }
 
         for underline in prev_scene.underlines.drain(..) {
             if views.contains(&underline.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&underline.layer_id];
-                self.insert(&order, underline);
+                self.insert(order, underline);
             }
         }
 
         for sprite in prev_scene.monochrome_sprites.drain(..) {
             if views.contains(&sprite.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(&order, sprite);
+                self.insert(order, sprite);
             }
         }
 
         for sprite in prev_scene.polychrome_sprites.drain(..) {
             if views.contains(&sprite.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&sprite.layer_id];
-                self.insert(&order, sprite);
+                self.insert(order, sprite);
             }
         }
 
         for surface in prev_scene.surfaces.drain(..) {
             if views.contains(&surface.view_id.into()) {
                 let order = &prev_scene.orders_by_layer[&surface.layer_id];
-                self.insert(&order, surface);
+                self.insert(order, surface);
             }
         }
     }
@@ -429,7 +429,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
-pub enum PrimitiveKind {
+pub(crate) enum PrimitiveKind {
     Shadow,
     #[default]
     Quad,
@@ -495,7 +495,7 @@ pub(crate) enum PrimitiveBatch<'a> {
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
-pub struct Quad {
+pub(crate) struct Quad {
     pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
@@ -527,7 +527,7 @@ impl From<Quad> for Primitive {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
-pub struct Underline {
+pub(crate) struct Underline {
     pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
@@ -558,7 +558,7 @@ impl From<Underline> for Primitive {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
-pub struct Shadow {
+pub(crate) struct Shadow {
     pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
@@ -655,7 +655,7 @@ impl From<PolychromeSprite> for Primitive {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Surface {
+pub(crate) struct Surface {
     pub view_id: ViewId,
     pub layer_id: LayerId,
     pub order: DrawOrder,
@@ -685,6 +685,7 @@ impl From<Surface> for Primitive {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PathId(pub(crate) usize);
 
+/// A line made up of a series of vertices and control points.
 #[derive(Debug)]
 pub struct Path<P: Clone + Default + Debug> {
     pub(crate) id: PathId,
@@ -701,6 +702,7 @@ pub struct Path<P: Clone + Default + Debug> {
 }
 
 impl Path<Pixels> {
+    /// Create a new path with the given starting point.
     pub fn new(start: Point<Pixels>) -> Self {
         Self {
             id: PathId(0),
@@ -720,6 +722,7 @@ impl Path<Pixels> {
         }
     }
 
+    /// Scale this path by the given factor.
     pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
         Path {
             id: self.id,
@@ -740,6 +743,7 @@ impl Path<Pixels> {
         }
     }
 
+    /// Draw a straight line from the current point to the given point.
     pub fn line_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;
         if self.contour_count > 1 {
@@ -751,6 +755,7 @@ impl Path<Pixels> {
         self.current = to;
     }
 
+    /// Draw a curve from the current point to the given point, using the given control point.
     pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
         self.contour_count += 1;
         if self.contour_count > 1 {
@@ -833,7 +838,7 @@ impl From<Path<ScaledPixels>> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub struct PathVertex<P: Clone + Default + Debug> {
+pub(crate) struct PathVertex<P: Clone + Default + Debug> {
     pub(crate) xy_position: Point<P>,
     pub(crate) st_position: Point<f32>,
     pub(crate) content_mask: ContentMask<P>,
@@ -850,4 +855,4 @@ impl PathVertex<Pixels> {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct AtlasId(pub(crate) usize);
+pub(crate) struct AtlasId(pub(crate) usize);

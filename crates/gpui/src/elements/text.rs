@@ -1,12 +1,19 @@
 use crate::{
-    Bounds, DispatchPhase, Element, ElementId, HighlightStyle, IntoElement, LayoutId,
-    MouseDownEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle,
-    WhiteSpace, WindowContext, WrappedLine,
+    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementContext, ElementId,
+    HighlightStyle, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
+    TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
-use std::{cell::Cell, mem, ops::Range, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    mem,
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+};
 use util::ResultExt;
 
 impl Element for &'static str {
@@ -15,14 +22,14 @@ impl Element for &'static str {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(SharedString::from(*self), None, cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
         state.paint(bounds, self, cx)
     }
 }
@@ -45,14 +52,14 @@ impl Element for SharedString {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
         let text_str: &str = self.as_ref();
         state.paint(bounds, text_str, cx)
     }
@@ -81,6 +88,7 @@ pub struct StyledText {
 }
 
 impl StyledText {
+    /// Construct a new styled text element from the given string.
     pub fn new(text: impl Into<SharedString>) -> Self {
         StyledText {
             text: text.into(),
@@ -88,6 +96,8 @@ impl StyledText {
         }
     }
 
+    /// Set the styling attributes for the given text, as well as
+    /// as any ranges of text that have had their style customized.
     pub fn with_highlights(
         mut self,
         default_style: &TextStyle,
@@ -121,14 +131,14 @@ impl Element for StyledText {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         state.paint(bounds, &self.text, cx)
     }
 }
@@ -145,6 +155,7 @@ impl IntoElement for StyledText {
     }
 }
 
+#[doc(hidden)]
 #[derive(Default, Clone)]
 pub struct TextState(Arc<Mutex<Option<TextStateInner>>>);
 
@@ -164,7 +175,7 @@ impl TextState {
         &mut self,
         text: SharedString,
         runs: Option<Vec<TextRun>>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> LayoutId {
         let text_style = cx.text_style();
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
@@ -239,7 +250,7 @@ impl TextState {
         layout_id
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, text: &str, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, text: &str, cx: &mut ElementContext) {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()
@@ -284,11 +295,14 @@ impl TextState {
     }
 }
 
+/// A text element that can be interacted with.
 pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
     click_listener:
         Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext<'_>)>>,
+    hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut WindowContext<'_>)>>,
+    tooltip_builder: Option<Rc<dyn Fn(usize, &mut WindowContext<'_>) -> Option<AnyView>>>,
     clickable_ranges: Vec<Range<usize>>,
 }
 
@@ -297,21 +311,30 @@ struct InteractiveTextClickEvent {
     mouse_up_index: usize,
 }
 
+#[doc(hidden)]
 pub struct InteractiveTextState {
     text_state: TextState,
     mouse_down_index: Rc<Cell<Option<usize>>>,
+    hovered_index: Rc<Cell<Option<usize>>>,
+    active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
 }
 
+/// InteractiveTest is a wrapper around StyledText that adds mouse interactions.
 impl InteractiveText {
+    /// Creates a new InteractiveText from the given text.
     pub fn new(id: impl Into<ElementId>, text: StyledText) -> Self {
         Self {
             element_id: id.into(),
             text,
             click_listener: None,
+            hover_listener: None,
+            tooltip_builder: None,
             clickable_ranges: Vec::new(),
         }
     }
 
+    /// on_click is called when the user clicks on one of the given ranges, passing the index of
+    /// the clicked range.
     pub fn on_click(
         mut self,
         ranges: Vec<Range<usize>>,
@@ -328,6 +351,25 @@ impl InteractiveText {
         self.clickable_ranges = ranges;
         self
     }
+
+    /// on_hover is called when the mouse moves over a character within the text, passing the
+    /// index of the hovered character, or None if the mouse leaves the text.
+    pub fn on_hover(
+        mut self,
+        listener: impl Fn(Option<usize>, MouseMoveEvent, &mut WindowContext<'_>) + 'static,
+    ) -> Self {
+        self.hover_listener = Some(Box::new(listener));
+        self
+    }
+
+    /// tooltip lets you specify a tooltip for a given character index in the string.
+    pub fn tooltip(
+        mut self,
+        builder: impl Fn(usize, &mut WindowContext<'_>) -> Option<AnyView> + 'static,
+    ) -> Self {
+        self.tooltip_builder = Some(Rc::new(builder));
+        self
+    }
 }
 
 impl Element for InteractiveText {
@@ -336,16 +378,21 @@ impl Element for InteractiveText {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         if let Some(InteractiveTextState {
-            mouse_down_index, ..
+            mouse_down_index,
+            hovered_index,
+            active_tooltip,
+            ..
         }) = state
         {
             let (layout_id, text_state) = self.text.request_layout(None, cx);
             let element_state = InteractiveTextState {
                 text_state,
                 mouse_down_index,
+                hovered_index,
+                active_tooltip,
             };
             (layout_id, element_state)
         } else {
@@ -353,12 +400,14 @@ impl Element for InteractiveText {
             let element_state = InteractiveTextState {
                 text_state,
                 mouse_down_index: Rc::default(),
+                hovered_index: Rc::default(),
+                active_tooltip: Rc::default(),
             };
             (layout_id, element_state)
         }
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         if let Some(click_listener) = self.click_listener.take() {
             let mouse_position = cx.mouse_position();
             if let Some(ix) = state.text_state.index_for_position(bounds, mouse_position) {
@@ -406,6 +455,83 @@ impl Element for InteractiveText {
                         }
                     }
                 });
+            }
+        }
+        if let Some(hover_listener) = self.hover_listener.take() {
+            let text_state = state.text_state.clone();
+            let hovered_index = state.hovered_index.clone();
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let current = hovered_index.get();
+                    let updated = text_state.index_for_position(bounds, event.position);
+                    if current != updated {
+                        hovered_index.set(updated);
+                        hover_listener(updated, event.clone(), cx);
+                        cx.refresh();
+                    }
+                }
+            });
+        }
+        if let Some(tooltip_builder) = self.tooltip_builder.clone() {
+            let active_tooltip = state.active_tooltip.clone();
+            let pending_mouse_down = state.mouse_down_index.clone();
+            let text_state = state.text_state.clone();
+
+            cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+                let position = text_state.index_for_position(bounds, event.position);
+                let is_hovered = position.is_some() && pending_mouse_down.get().is_none();
+                if !is_hovered {
+                    active_tooltip.take();
+                    return;
+                }
+                let position = position.unwrap();
+
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                if active_tooltip.borrow().is_none() {
+                    let task = cx.spawn({
+                        let active_tooltip = active_tooltip.clone();
+                        let tooltip_builder = tooltip_builder.clone();
+
+                        move |mut cx| async move {
+                            cx.background_executor().timer(TOOLTIP_DELAY).await;
+                            cx.update(|cx| {
+                                let new_tooltip =
+                                    tooltip_builder(position, cx).map(|tooltip| ActiveTooltip {
+                                        tooltip: Some(AnyTooltip {
+                                            view: tooltip,
+                                            cursor_offset: cx.mouse_position(),
+                                        }),
+                                        _task: None,
+                                    });
+                                *active_tooltip.borrow_mut() = new_tooltip;
+                                cx.refresh();
+                            })
+                            .ok();
+                        }
+                    });
+                    *active_tooltip.borrow_mut() = Some(ActiveTooltip {
+                        tooltip: None,
+                        _task: Some(task),
+                    });
+                }
+            });
+
+            let active_tooltip = state.active_tooltip.clone();
+            cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
+                active_tooltip.take();
+            });
+
+            if let Some(tooltip) = state
+                .active_tooltip
+                .clone()
+                .borrow()
+                .as_ref()
+                .and_then(|at| at.tooltip.clone())
+            {
+                cx.set_tooltip(tooltip);
             }
         }
 

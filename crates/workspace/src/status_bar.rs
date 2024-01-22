@@ -1,6 +1,6 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    div, AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
+    AnyView, IntoElement, ParentElement, Render, Styled, Subscription, View, ViewContext,
     WindowContext,
 };
 use std::any::TypeId;
@@ -34,13 +34,12 @@ pub struct StatusBar {
 
 impl Render for StatusBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        h_flex()
+            .w_full()
+            .justify_between()
+            .gap_2()
             .py_0p5()
             .px_1()
-            .flex()
-            .items_center()
-            .justify_between()
-            .w_full()
             .h_8()
             .bg(cx.theme().colors().status_bar_background)
             .child(self.render_left_tools(cx))
@@ -51,14 +50,13 @@ impl Render for StatusBar {
 impl StatusBar {
     fn render_left_tools(&self, _: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .items_center()
             .gap_2()
+            .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
     fn render_right_tools(&self, _: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .items_center()
             .gap_2()
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
     }

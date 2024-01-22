@@ -1584,27 +1584,34 @@ mod tests {
     }
 
     fn editor_blocks(editor: &View<Editor>, cx: &mut WindowContext) -> Vec<(u32, SharedString)> {
+        let editor_view = editor.clone();
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             snapshot
                 .blocks_in_range(0..snapshot.max_point().row())
                 .enumerate()
                 .filter_map(|(ix, (row, block))| {
-                    let name = match block {
-                        TransformBlock::Custom(block) => block
-                            .render(&mut BlockContext {
-                                view_context: cx,
-                                anchor_x: px(0.),
-                                gutter_padding: px(0.),
-                                gutter_width: px(0.),
-                                line_height: px(0.),
-                                em_width: px(0.),
-                                block_id: ix,
-                                editor_style: &editor::EditorStyle::default(),
-                            })
-                            .inner_id()?
-                            .try_into()
-                            .ok()?,
+                    let name: SharedString = match block {
+                        TransformBlock::Custom(block) => cx.with_element_context({
+                            let editor_view = editor_view.clone();
+                            |cx| -> Option<SharedString> {
+                                block
+                                    .render(&mut BlockContext {
+                                        context: cx,
+                                        anchor_x: px(0.),
+                                        gutter_padding: px(0.),
+                                        gutter_width: px(0.),
+                                        line_height: px(0.),
+                                        em_width: px(0.),
+                                        block_id: ix,
+                                        view: editor_view,
+                                        editor_style: &editor::EditorStyle::default(),
+                                    })
+                                    .inner_id()?
+                                    .try_into()
+                                    .ok()
+                            }
+                        })?,
 
                         TransformBlock::ExcerptHeader {
                             starts_new_buffer, ..

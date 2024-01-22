@@ -20,7 +20,7 @@ impl AvatarAvailabilityIndicator {
         }
     }
 
-    /// Sets the size of the [`Avatar`] this indicator appears on.
+    /// Sets the size of the [`Avatar`](crate::Avatar) this indicator appears on.
     pub fn avatar_size(mut self, size: impl Into<Option<Pixels>>) -> Self {
         self.avatar_size = size.into();
         self

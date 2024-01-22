@@ -83,8 +83,8 @@ impl TabBar {
 }
 
 impl ParentElement for TabBar {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 
@@ -117,7 +117,7 @@ impl RenderOnce for TabBar {
                     .relative()
                     .flex_1()
                     .h_full()
-                    .overflow_hidden_x()
+                    .overflow_x_hidden()
                     .child(
                         div()
                             .absolute()

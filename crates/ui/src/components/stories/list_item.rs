@@ -4,6 +4,8 @@ use story::Story;
 use crate::{prelude::*, Avatar};
 use crate::{IconName, ListItem};
 
+const OVERFLOWING_TEXT: &'static str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Aenean mauris ligula, luctus vel dignissim eu, vestibulum sed libero. Sed at convallis velit.";
+
 pub struct ListItemStory;
 
 impl Render for ListItemStory {
@@ -97,6 +99,30 @@ impl Render for ListItemStory {
                     .on_secondary_mouse_down(|_event, _cx| {
                         println!("Right mouse down!");
                     }),
+            )
+            .child(Story::label("With overflowing content in the `end_slot`"))
+            .child(
+                ListItem::new("with_overflowing_content_in_end_slot")
+                    .child("An excerpt")
+                    .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
+            )
+            .child(Story::label(
+                "`inset` with overflowing content in the `end_slot`",
+            ))
+            .child(
+                ListItem::new("inset_with_overflowing_content_in_end_slot")
+                    .inset(true)
+                    .child("An excerpt")
+                    .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
+            )
+            .child(Story::label(
+                "`inset` with overflowing content in `children` and `end_slot`",
+            ))
+            .child(
+                ListItem::new("inset_with_overflowing_content_in_children_and_end_slot")
+                    .inset(true)
+                    .child(Label::new(OVERFLOWING_TEXT))
+                    .end_slot(Label::new(OVERFLOWING_TEXT).color(Color::Muted)),
             )
     }
 }

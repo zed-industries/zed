@@ -10,7 +10,7 @@ use std::{
     sync::{self, Arc},
 };
 
-pub struct TestWindowState {
+pub(crate) struct TestWindowState {
     pub(crate) bounds: WindowBounds,
     pub(crate) handle: AnyWindowHandle,
     display: Rc<dyn PlatformDisplay>,
@@ -23,11 +23,11 @@ pub struct TestWindowState {
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
-    input_handler: Option<Box<dyn PlatformInputHandler>>,
+    input_handler: Option<PlatformInputHandler>,
 }
 
 #[derive(Clone)]
-pub struct TestWindow(pub(crate) Arc<Mutex<TestWindowState>>);
+pub(crate) struct TestWindow(pub(crate) Arc<Mutex<TestWindowState>>);
 
 impl TestWindow {
     pub fn new(
@@ -96,7 +96,19 @@ impl TestWindow {
         result
     }
 
-    pub fn simulate_keystroke(&mut self, keystroke: Keystroke, is_held: bool) {
+    pub fn simulate_keystroke(&mut self, mut keystroke: Keystroke, is_held: bool) {
+        if keystroke.ime_key.is_none()
+            && !keystroke.modifiers.command
+            && !keystroke.modifiers.control
+            && !keystroke.modifiers.function
+        {
+            keystroke.ime_key = Some(if keystroke.modifiers.shift {
+                keystroke.key.to_ascii_uppercase().clone()
+            } else {
+                keystroke.key.clone()
+            })
+        }
+
         if self.simulate_input(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
             is_held,
@@ -112,13 +124,11 @@ impl TestWindow {
             );
         };
         drop(lock);
-        let text = keystroke.ime_key.unwrap_or(keystroke.key);
-        input_handler.replace_text_in_range(None, &text);
+        if let Some(text) = keystroke.ime_key.as_ref() {
+            input_handler.replace_text_in_range(None, &text);
+        }
 
         self.0.lock().input_handler = Some(input_handler);
-    }
-    pub fn edited(&self) -> bool {
-        self.0.lock().edited
     }
 }
 
@@ -163,11 +173,11 @@ impl PlatformWindow for TestWindow {
         self
     }
 
-    fn set_input_handler(&mut self, input_handler: Box<dyn crate::PlatformInputHandler>) {
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.lock().input_handler = Some(input_handler);
     }
 
-    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>> {
+    fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.0.lock().input_handler.take()
     }
 
@@ -269,12 +279,12 @@ impl PlatformWindow for TestWindow {
     }
 }
 
-pub struct TestAtlasState {
+pub(crate) struct TestAtlasState {
     next_id: u32,
     tiles: HashMap<AtlasKey, AtlasTile>,
 }
 
-pub struct TestAtlas(Mutex<TestAtlasState>);
+pub(crate) struct TestAtlas(Mutex<TestAtlasState>);
 
 impl TestAtlas {
     pub fn new() -> Self {

@@ -8,7 +8,7 @@ use objc::{msg_send, sel, sel_impl};
 use std::ffi::CStr;
 
 impl WindowAppearance {
-    pub unsafe fn from_native(appearance: id) -> Self {
+    pub(crate) unsafe fn from_native(appearance: id) -> Self {
         let name: id = msg_send![appearance, name];
         if name == NSAppearanceNameVibrantLight {
             Self::VibrantLight

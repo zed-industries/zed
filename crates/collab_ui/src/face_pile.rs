@@ -1,28 +1,49 @@
-use gpui::{div, AnyElement, Div, IntoElement, ParentElement, Styled};
+use gpui::AnyElement;
 use smallvec::SmallVec;
+use ui::prelude::*;
 
-#[derive(Default)]
+#[derive(IntoElement)]
 pub struct FacePile {
-    pub faces: SmallVec<[AnyElement; 2]>,
+    base: Div,
+    faces: SmallVec<[AnyElement; 2]>,
 }
 
 impl FacePile {
-    pub fn render(self) -> Div {
+    pub fn empty() -> Self {
+        Self::new(SmallVec::new())
+    }
+
+    pub fn new(faces: SmallVec<[AnyElement; 2]>) -> Self {
+        Self {
+            base: h_flex(),
+            faces,
+        }
+    }
+}
+
+impl RenderOnce for FacePile {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         let player_count = self.faces.len();
         let player_list = self.faces.into_iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;
 
             div()
-                .z_index((player_count - ix) as u8)
+                .z_index((player_count - ix) as u16)
                 .when(isnt_last, |div| div.neg_mr_1())
                 .child(player)
         });
-        div().flex().items_center().children(player_list)
+        self.base.children(player_list)
     }
 }
 
 impl ParentElement for FacePile {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.faces
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.faces.extend(elements);
+    }
+}
+
+impl Styled for FacePile {
+    fn style(&mut self) -> &mut gpui::StyleRefinement {
+        self.base.style()
     }
 }

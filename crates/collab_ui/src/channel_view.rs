@@ -442,4 +442,13 @@ impl CollaborationHub for ChannelBufferCollaborationHub {
     ) -> &'a HashMap<u64, ParticipantIndex> {
         self.0.read(cx).user_store().read(cx).participant_indices()
     }
+
+    fn user_names(&self, cx: &AppContext) -> HashMap<u64, SharedString> {
+        let user_ids = self.collaborators(cx).values().map(|c| c.user_id);
+        self.0
+            .read(cx)
+            .user_store()
+            .read(cx)
+            .participant_names(user_ids, cx)
+    }
 }

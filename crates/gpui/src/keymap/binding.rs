@@ -2,6 +2,7 @@ use crate::{Action, KeyBindingContextPredicate, KeyMatch, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
+/// A keybinding and it's associated metadata, from the keymap.
 pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
     pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
@@ -19,10 +20,12 @@ impl Clone for KeyBinding {
 }
 
 impl KeyBinding {
+    /// Construct a new keybinding from the given data.
     pub fn new<A: Action>(keystrokes: &str, action: A, context_predicate: Option<&str>) -> Self {
         Self::load(keystrokes, Box::new(action), context_predicate).unwrap()
     }
 
+    /// Load a keybinding from the given raw data.
     pub fn load(keystrokes: &str, action: Box<dyn Action>, context: Option<&str>) -> Result<Self> {
         let context = if let Some(context) = context {
             Some(KeyBindingContextPredicate::parse(context)?)
@@ -42,11 +45,12 @@ impl KeyBinding {
         })
     }
 
+    /// Check if the given keystrokes match this binding.
     pub fn match_keystrokes(&self, pending_keystrokes: &[Keystroke]) -> KeyMatch {
         if self.keystrokes.as_ref().starts_with(pending_keystrokes) {
             // If the binding is completed, push it onto the matches list
             if self.keystrokes.as_ref().len() == pending_keystrokes.len() {
-                KeyMatch::Some(vec![self.action.boxed_clone()])
+                KeyMatch::Matched
             } else {
                 KeyMatch::Pending
             }
@@ -55,10 +59,12 @@ impl KeyBinding {
         }
     }
 
+    /// Get the keystrokes associated with this binding
     pub fn keystrokes(&self) -> &[Keystroke] {
         self.keystrokes.as_slice()
     }
 
+    /// Get the action associated with this binding
     pub fn action(&self) -> &dyn Action {
         self.action.as_ref()
     }

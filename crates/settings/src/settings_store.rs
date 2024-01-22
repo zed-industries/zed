@@ -246,7 +246,7 @@ impl SettingsStore {
         this
     }
 
-    /// Update the value of a setting in the user's global configuration.
+    /// Updates the value of a setting in the user's global configuration.
     ///
     /// This is only for tests. Normally, settings are only loaded from
     /// JSON files.
@@ -261,7 +261,7 @@ impl SettingsStore {
         self.set_user_settings(&new_text, cx).unwrap();
     }
 
-    /// Update the value of a setting in a JSON file, returning the new text
+    /// Updates the value of a setting in a JSON file, returning the new text
     /// for that JSON file.
     pub fn new_text_for_update<T: Settings>(
         &self,
@@ -276,7 +276,7 @@ impl SettingsStore {
         new_text
     }
 
-    /// Update the value of a setting in a JSON file, returning a list
+    /// Updates the value of a setting in a JSON file, returning a list
     /// of edits to apply to the JSON file.
     pub fn edits_for_update<T: Settings>(
         &self,
@@ -344,7 +344,7 @@ impl SettingsStore {
         DEFAULT_JSON_TAB_SIZE
     }
 
-    /// Set the default settings via a JSON string.
+    /// Sets the default settings via a JSON string.
     ///
     /// The string should contain a JSON object with a default value for every setting.
     pub fn set_default_settings(
@@ -362,7 +362,7 @@ impl SettingsStore {
         }
     }
 
-    /// Set the user settings via a JSON string.
+    /// Sets the user settings via a JSON string.
     pub fn set_user_settings(
         &mut self,
         user_settings_content: &str,
@@ -533,7 +533,7 @@ impl SettingsStore {
                 }
 
                 if let Some(local_settings) =
-                    setting_value.deserialize_setting(&local_settings).log_err()
+                    setting_value.deserialize_setting(local_settings).log_err()
                 {
                     paths_stack.push(Some((*root_id, path.as_ref())));
                     user_settings_stack.push(local_settings);
@@ -697,8 +697,7 @@ fn update_value_in_json_text<'a>(
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());
         }
-        let (range, replacement) =
-            replace_value_in_json_text(text, &key_path, tab_size, &new_value);
+        let (range, replacement) = replace_value_in_json_text(text, key_path, tab_size, &new_value);
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }

@@ -1310,7 +1310,7 @@ impl Client {
         drop(state);
 
         if let Some(handler) = handler {
-            let future = handler(subscriber, message, &self, cx.clone());
+            let future = handler(subscriber, message, self, cx.clone());
             let client_id = self.id();
             log::debug!(
                 "rpc message received. client_id:{}, sender_id:{:?}, type:{}",

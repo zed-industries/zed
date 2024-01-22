@@ -147,12 +147,17 @@ where
     }
 }
 
+/// A handle to a subscription created by GPUI. When dropped, the subscription
+/// is cancelled and the callback will no longer be invoked.
 #[must_use]
 pub struct Subscription {
     unsubscribe: Option<Box<dyn FnOnce() + 'static>>,
 }
 
 impl Subscription {
+    /// Detaches the subscription from this handle. The callback will
+    /// continue to be invoked until the views or models it has been
+    /// subscribed to are dropped
     pub fn detach(mut self) {
         self.unsubscribe.take();
     }

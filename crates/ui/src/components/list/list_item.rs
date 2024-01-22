@@ -141,8 +141,8 @@ impl Selectable for ListItem {
 }
 
 impl ParentElement for ListItem {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 
@@ -222,17 +222,19 @@ impl RenderOnce for ListItem {
                     }))
                     .child(
                         h_flex()
-                            // HACK: We need to set *any* width value here in order for this container to size correctly.
-                            // Without this the `h_flex` will overflow the parent `inner_list_item`.
-                            .w_px()
-                            .flex_1()
+                            .flex_grow()
+                            .flex_shrink_0()
+                            .flex_basis(relative(0.25))
                             .gap_1()
+                            .overflow_hidden()
                             .children(self.start_slot)
                             .children(self.children),
                     )
                     .when_some(self.end_slot, |this, end_slot| {
                         this.justify_between().child(
                             h_flex()
+                                .flex_shrink()
+                                .overflow_hidden()
                                 .when(self.end_hover_slot.is_some(), |this| {
                                     this.visible()
                                         .group_hover("list_item", |this| this.invisible())

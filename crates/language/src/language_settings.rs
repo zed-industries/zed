@@ -1,3 +1,5 @@
+//! Provides `language`-related settings.
+
 use crate::{File, Language};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
@@ -11,10 +13,12 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
+/// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
     AllLanguageSettings::register(cx);
 }
 
+/// Returns the settings for the specified language from the provided file.
 pub fn language_settings<'a>(
     language: Option<&Arc<Language>>,
     file: Option<&Arc<dyn File>>,
@@ -24,6 +28,7 @@ pub fn language_settings<'a>(
     all_language_settings(file, cx).language(language_name.as_deref())
 }
 
+/// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
@@ -32,51 +37,91 @@ pub fn all_language_settings<'a>(
     AllLanguageSettings::get(location, cx)
 }
 
+/// The settings for all languages.
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
+    /// The settings for GitHub Copilot.
     pub copilot: CopilotSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
 }
 
+/// The settings for a particular language.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageSettings {
+    /// How many columns a tab should occupy.
     pub tab_size: NonZeroU32,
+    /// Whether to indent lines using tab characters, as opposed to multiple
+    /// spaces.
     pub hard_tabs: bool,
+    /// How to soft-wrap long lines of text.
     pub soft_wrap: SoftWrap,
+    /// The column at which to soft-wrap lines, for buffers where soft-wrap
+    /// is enabled.
     pub preferred_line_length: u32,
+    /// Whether to show wrap guides in the editor. Setting this to true will
+    /// show a guide at the 'preferred_line_length' value if softwrap is set to
+    /// 'preferred_line_length', and will show any additional guides as specified
+    /// by the 'wrap_guides' setting.
     pub show_wrap_guides: bool,
+    /// Character counts at which to show wrap guides in the editor.
     pub wrap_guides: Vec<usize>,
+    /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
+    /// Whether or not to remove any trailing whitespace from lines of a buffer
+    /// before saving it.
     pub remove_trailing_whitespace_on_save: bool,
+    /// Whether or not to ensure there's a single newline at the end of a buffer
+    /// when saving it.
     pub ensure_final_newline_on_save: bool,
+    /// How to perform a buffer format.
     pub formatter: Formatter,
+    /// Zed's Prettier integration settings.
+    /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+    /// the project has no other Prettier installed.
     pub prettier: HashMap<String, serde_json::Value>,
+    /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
+    /// Controls whether Copilot provides suggestion immediately (true)
+    /// or waits for a `copilot::Toggle` (false).
     pub show_copilot_suggestions: bool,
+    /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
+    /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
+    /// Whether to automatically close brackets.
+    pub use_autoclose: bool,
 }
 
+/// The settings for [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
+    /// Whether Copilot is enabled.
     pub feature_enabled: bool,
+    /// A list of globs representing files that Copilot should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
 }
 
+/// The settings for all languages.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
+    /// The settings for enabling/disabling features.
     #[serde(default)]
     pub features: Option<FeaturesContent>,
+    /// The settings for GitHub Copilot.
     #[serde(default)]
     pub copilot: Option<CopilotSettingsContent>,
+    /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
+    /// The settings for individual languages.
     #[serde(default, alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
 }
 
+/// The settings for a particular language.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
@@ -138,7 +183,7 @@ pub struct LanguageSettingsContent {
     pub formatter: Option<Formatter>,
     /// Zed's Prettier integration settings.
     /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
-    /// project has no other Prettier installed.
+    /// the project has no other Prettier installed.
     ///
     /// Default: {}
     #[serde(default)]
@@ -148,7 +193,7 @@ pub struct LanguageSettingsContent {
     /// Default: true
     #[serde(default)]
     pub enable_language_server: Option<bool>,
-    /// Controls whether copilot provides suggestion immediately (true)
+    /// Controls whether Copilot provides suggestion immediately (true)
     /// or waits for a `copilot::Toggle` (false).
     ///
     /// Default: true
@@ -165,20 +210,30 @@ pub struct LanguageSettingsContent {
     /// Inlay hint related settings.
     #[serde(default)]
     pub inlay_hints: Option<InlayHintSettings>,
+    /// Whether to automatically type closing characters for you. For example,
+    /// when you type (, Zed will automatically add a closing ) at the correct position.
+    ///
+    /// Default: true
+    pub use_autoclose: Option<bool>,
 }
 
+/// The contents of the GitHub Copilot settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CopilotSettingsContent {
+    /// A list of globs representing files that Copilot should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
 }
 
+/// The settings for enabling/disabling features.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
+    /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
 }
 
+/// Controls the soft-wrapping behavior in the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
@@ -190,29 +245,38 @@ pub enum SoftWrap {
     PreferredLineLength,
 }
 
+/// Controls the behavior of formatting files when they are saved.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
+    /// Files should be formatted on save.
     On,
+    /// Files should not be formatted on save.
     Off,
+    /// Files should be formatted using the current language server.
     LanguageServer,
+    /// The external program to use to format the files on save.
     External {
+        /// The external program to run.
         command: Arc<str>,
+        /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
 }
 
+/// Controls how whitespace should be displayedin the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
-    /// Draw tabs and spaces only for the selected text.
+    /// Draw whitespace only for the selected text.
     Selection,
-    /// Do not draw any tabs or spaces
+    /// Do not draw any tabs or spaces.
     None,
-    /// Draw all invisible symbols
+    /// Draw all invisible symbols.
     All,
 }
 
+/// Controls which formatter should be used when formatting code.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
@@ -226,11 +290,14 @@ pub enum Formatter {
     Prettier,
     /// Format code using an external command.
     External {
+        /// The external program to run.
         command: Arc<str>,
+        /// The arguments to pass to the program.
         arguments: Arc<[String]>,
     },
 }
 
+/// The settings for inlay hints.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct InlayHintSettings {
     /// Global switch to toggle hints on and off.
@@ -238,10 +305,19 @@ pub struct InlayHintSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
+    /// Whether type hints should be shown.
+    ///
+    /// Default: true
     #[serde(default = "default_true")]
     pub show_type_hints: bool,
+    /// Whether parameter hints should be shown.
+    ///
+    /// Default: true
     #[serde(default = "default_true")]
     pub show_parameter_hints: bool,
+    /// Whether other hints should be shown.
+    ///
+    /// Default: true
     #[serde(default = "default_true")]
     pub show_other_hints: bool,
 }
@@ -251,6 +327,7 @@ fn default_true() -> bool {
 }
 
 impl InlayHintSettings {
+    /// Returns the kinds of inlay hints that are enabled based on the settings.
     pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
         let mut kinds = HashSet::default();
         if self.show_type_hints {
@@ -267,6 +344,7 @@ impl InlayHintSettings {
 }
 
 impl AllLanguageSettings {
+    /// Returns the [`LanguageSettings`] for the language with the specified name.
     pub fn language<'a>(&'a self, language_name: Option<&str>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
             if let Some(overrides) = self.languages.get(name) {
@@ -276,6 +354,7 @@ impl AllLanguageSettings {
         &self.defaults
     }
 
+    /// Returns whether GitHub Copilot is enabled for the given path.
     pub fn copilot_enabled_for_path(&self, path: &Path) -> bool {
         !self
             .copilot
@@ -284,6 +363,7 @@ impl AllLanguageSettings {
             .any(|glob| glob.is_match(path))
     }
 
+    /// Returns whether GitHub Copilot is enabled for the given language and path.
     pub fn copilot_enabled(&self, language: Option<&Arc<Language>>, path: Option<&Path>) -> bool {
         if !self.copilot.feature_enabled {
             return false;
@@ -300,13 +380,20 @@ impl AllLanguageSettings {
     }
 }
 
+/// The kind of an inlay hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InlayHintKind {
+    /// An inlay hint for a type.
     Type,
+    /// An inlay hint for a parameter.
     Parameter,
 }
 
 impl InlayHintKind {
+    /// Returns the [`InlayHintKind`] from the given name.
+    ///
+    /// Returns `None` if `name` does not match any of the expected
+    /// string representations.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "type" => Some(InlayHintKind::Type),
@@ -315,6 +402,7 @@ impl InlayHintKind {
         }
     }
 
+    /// Returns the name of this [`InlayHintKind`].
     pub fn name(&self) -> &'static str {
         match self {
             InlayHintKind::Type => "type",
@@ -340,7 +428,7 @@ impl settings::Settings for AllLanguageSettings {
         let mut languages = HashMap::default();
         for (language_name, settings) in &default_value.languages {
             let mut language_settings = defaults.clone();
-            merge_settings(&mut language_settings, &settings);
+            merge_settings(&mut language_settings, settings);
             languages.insert(language_name.clone(), language_settings);
         }
 
@@ -380,7 +468,7 @@ impl settings::Settings for AllLanguageSettings {
                     languages
                         .entry(language_name.clone())
                         .or_insert_with(|| defaults.clone()),
-                    &user_language_settings,
+                    user_language_settings,
                 );
             }
         }
@@ -459,6 +547,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.tab_size, src.tab_size);
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
+    merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
 

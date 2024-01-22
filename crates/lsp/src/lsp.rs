@@ -345,7 +345,7 @@ impl LanguageServer {
                 if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
                     handler(
                         msg.id,
-                        &msg.params.map(|params| params.get()).unwrap_or("null"),
+                        msg.params.map(|params| params.get()).unwrap_or("null"),
                         cx.clone(),
                     );
                 } else {
@@ -863,17 +863,31 @@ impl LanguageServer {
             .try_send(message)
             .context("failed to write to language server's stdin");
 
+        let outbound_tx = outbound_tx.downgrade();
         let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
         async move {
             handle_response?;
             send?;
 
+            let cancel_on_drop = util::defer(move || {
+                if let Some(outbound_tx) = outbound_tx.upgrade() {
+                    Self::notify_internal::<notification::Cancel>(
+                        &outbound_tx,
+                        CancelParams {
+                            id: NumberOrString::Number(id as i32),
+                        },
+                    )
+                    .log_err();
+                }
+            });
+
             let method = T::METHOD;
             futures::select! {
                 response = rx.fuse() => {
                     let elapsed = started.elapsed();
                     log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
+                    cancel_on_drop.abort();
                     response?
                 }
 

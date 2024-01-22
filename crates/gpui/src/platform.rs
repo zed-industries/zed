@@ -6,10 +6,10 @@ mod mac;
 mod test;
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, Bounds, DevicePixels, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene, SharedString,
-    Size, TaskLabel,
+    Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
+    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
+    Scene, SharedString, Size, TaskLabel, WindowContext,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -34,9 +34,9 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keystroke::*;
 #[cfg(target_os = "macos")]
-pub use mac::*;
+pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use test::*;
+pub(crate) use test::*;
 use time::UtcOffset;
 
 #[cfg(target_os = "macos")]
@@ -69,11 +69,10 @@ pub(crate) trait Platform: 'static {
     fn set_display_link_output_callback(
         &self,
         display_id: DisplayId,
-        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp) + Send>,
+        callback: Box<dyn FnMut() + Send>,
     );
     fn start_display_link(&self, display_id: DisplayId);
     fn stop_display_link(&self, display_id: DisplayId);
-    // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn PlatformWindow>;
 
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
@@ -149,8 +148,8 @@ pub(crate) trait PlatformWindow {
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
-    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>>;
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
+    fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
@@ -325,30 +324,175 @@ impl From<TileId> for etagere::AllocId {
     }
 }
 
-pub trait PlatformInputHandler: 'static {
-    fn selected_text_range(&mut self) -> Option<Range<usize>>;
-    fn marked_text_range(&mut self) -> Option<Range<usize>>;
-    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String>;
-    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str);
+pub(crate) struct PlatformInputHandler {
+    cx: AsyncWindowContext,
+    handler: Box<dyn InputHandler>,
+}
+
+impl PlatformInputHandler {
+    pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
+        Self { cx, handler }
+    }
+
+    fn selected_text_range(&mut self) -> Option<Range<usize>> {
+        self.cx
+            .update(|cx| self.handler.selected_text_range(cx))
+            .ok()
+            .flatten()
+    }
+
+    fn marked_text_range(&mut self) -> Option<Range<usize>> {
+        self.cx
+            .update(|cx| self.handler.marked_text_range(cx))
+            .ok()
+            .flatten()
+    }
+
+    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
+        self.cx
+            .update(|cx| self.handler.text_for_range(range_utf16, cx))
+            .ok()
+            .flatten()
+    }
+
+    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+        self.cx
+            .update(|cx| {
+                self.handler
+                    .replace_text_in_range(replacement_range, text, cx);
+            })
+            .ok();
+    }
+
     fn replace_and_mark_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
-    );
-    fn unmark_text(&mut self);
-    fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>>;
+    ) {
+        self.cx
+            .update(|cx| {
+                self.handler.replace_and_mark_text_in_range(
+                    range_utf16,
+                    new_text,
+                    new_selected_range,
+                    cx,
+                )
+            })
+            .ok();
+    }
+
+    fn unmark_text(&mut self) {
+        self.cx.update(|cx| self.handler.unmark_text(cx)).ok();
+    }
+
+    fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
+        self.cx
+            .update(|cx| self.handler.bounds_for_range(range_utf16, cx))
+            .ok()
+            .flatten()
+    }
+
+    pub(crate) fn flush_pending_input(&mut self, input: &str, cx: &mut WindowContext) {
+        let Some(range) = self.handler.selected_text_range(cx) else {
+            return;
+        };
+        self.handler.replace_text_in_range(Some(range), &input, cx);
+    }
 }
 
+/// Zed's interface for handling text input from the platform's IME system
+/// This is currently a 1:1 exposure of the NSTextInputClient API:
+///
+/// <https://developer.apple.com/documentation/appkit/nstextinputclient>
+pub trait InputHandler: 'static {
+    /// Get the range of the user's currently selected text, if any
+    /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
+    ///
+    /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
+    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+
+    /// Get the range of the currently marked text, if any
+    /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
+    ///
+    /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
+    fn marked_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+
+    /// Get the text for the given document range in UTF-16 characters
+    /// Corresponds to [attributedSubstring(forProposedRange: actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438238-attributedsubstring)
+    ///
+    /// range_utf16 is in terms of UTF-16 characters
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        cx: &mut WindowContext,
+    ) -> Option<String>;
+
+    /// Replace the text in the given document range with the given text
+    /// Corresponds to [insertText(_:replacementRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438258-inserttext)
+    ///
+    /// replacement_range is in terms of UTF-16 characters
+    fn replace_text_in_range(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        cx: &mut WindowContext,
+    );
+
+    /// Replace the text in the given document range with the given text,
+    /// and mark the given text as part of of an IME 'composing' state
+    /// Corresponds to [setMarkedText(_:selectedRange:replacementRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438246-setmarkedtext)
+    ///
+    /// range_utf16 is in terms of UTF-16 characters
+    /// new_selected_range is in terms of UTF-16 characters
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        cx: &mut WindowContext,
+    );
+
+    /// Remove the IME 'composing' state from the document
+    /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)
+    fn unmark_text(&mut self, cx: &mut WindowContext);
+
+    /// Get the bounds of the given document range in screen coordinates
+    /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
+    ///
+    /// This is used for positioning the IME candidate window
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        cx: &mut WindowContext,
+    ) -> Option<Bounds<Pixels>>;
+}
+
+/// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
+    /// The initial bounds of the window
     pub bounds: WindowBounds,
+
+    /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
+
+    /// Whether the window should be centered on the screen
     pub center: bool,
+
+    /// Whether the window should be focused when created
     pub focus: bool,
+
+    /// Whether the window should be shown when created
     pub show: bool,
+
+    /// The kind of window to create
     pub kind: WindowKind,
+
+    /// Whether the window should be movable by the user
     pub is_movable: bool,
+
+    /// The display to create the window on
     pub display_id: Option<DisplayId>,
 }
 
@@ -371,46 +515,67 @@ impl Default for WindowOptions {
     }
 }
 
+/// The options that can be configured for a window's titlebar
 #[derive(Debug, Default)]
 pub struct TitlebarOptions {
+    /// The initial title of the window
     pub title: Option<SharedString>,
+
+    /// Whether the titlebar should appear transparent
     pub appears_transparent: bool,
+
+    /// The position of the macOS traffic light buttons
     pub traffic_light_position: Option<Point<Pixels>>,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum Appearance {
-    Light,
-    VibrantLight,
-    Dark,
-    VibrantDark,
-}
-
-impl Default for Appearance {
-    fn default() -> Self {
-        Self::Light
-    }
-}
-
+/// The kind of window to create
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WindowKind {
+    /// A normal application window
     Normal,
+
+    /// A window that appears above all other windows, usually used for alerts or popups
+    /// use sparingly!
     PopUp,
 }
 
+/// Which bounds algorithm to use for the initial size a window
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub enum WindowBounds {
+    /// The window should be full screen, on macOS this corresponds to the full screen feature
     Fullscreen,
+
+    /// Make the window as large as the current display's size.
     #[default]
     Maximized,
+
+    /// Set the window to the given size in pixels
     Fixed(Bounds<GlobalPixels>),
 }
 
+/// The appearance of the window, as defined by the operating system
+/// On macOS, this corresponds to named [NSAppearance](https://developer.apple.com/documentation/appkit/nsappearance)
+/// values
 #[derive(Copy, Clone, Debug)]
 pub enum WindowAppearance {
+    /// A light appearance
+    ///
+    /// on macOS, this corresponds to the `aqua` appearance
     Light,
+
+    /// A light appearance with vibrant colors
+    ///
+    /// on macOS, this corresponds to the `NSAppearanceNameVibrantLight` appearance
     VibrantLight,
+
+    /// A dark appearance
+    ///
+    /// on macOS, this corresponds to the `darkAqua` appearance
     Dark,
+
+    /// A dark appearance with vibrant colors
+    ///
+    /// on macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance
     VibrantDark,
 }
 
@@ -420,40 +585,102 @@ impl Default for WindowAppearance {
     }
 }
 
+/// The options that can be configured for a file dialog prompt
 #[derive(Copy, Clone, Debug)]
 pub struct PathPromptOptions {
+    /// Should the prompt allow files to be selected?
     pub files: bool,
+    /// Should the prompt allow directories to be selected?
     pub directories: bool,
+    /// Should the prompt allow multiple files to be selected?
     pub multiple: bool,
 }
 
+/// What kind of prompt styling to show
 #[derive(Copy, Clone, Debug)]
 pub enum PromptLevel {
+    /// A prompt that is shown when the user should be notified of something
     Info,
+
+    /// A prompt that is shown when the user needs to be warned of a potential problem
     Warning,
+
+    /// A prompt that is shown when a critical problem has occurred
     Critical,
 }
 
 /// The style of the cursor (pointer)
 #[derive(Copy, Clone, Debug)]
 pub enum CursorStyle {
+    /// The default cursor
     Arrow,
+
+    /// A text input cursor
+    /// corresponds to the CSS cursor value `text`
     IBeam,
+
+    /// A crosshair cursor
+    /// corresponds to the CSS cursor value `crosshair`
     Crosshair,
+
+    /// A closed hand cursor
+    /// corresponds to the CSS cursor value `grabbing`
     ClosedHand,
+
+    /// An open hand cursor
+    /// corresponds to the CSS cursor value `grab`
     OpenHand,
+
+    /// A pointing hand cursor
+    /// corresponds to the CSS cursor value `pointer`
     PointingHand,
+
+    /// A resize left cursor
+    /// corresponds to the CSS cursor value `w-resize`
     ResizeLeft,
+
+    /// A resize right cursor
+    /// corresponds to the CSS cursor value `e-resize`
     ResizeRight,
+
+    /// A resize cursor to the left and right
+    /// corresponds to the CSS cursor value `col-resize`
     ResizeLeftRight,
+
+    /// A resize up cursor
+    /// corresponds to the CSS cursor value `n-resize`
     ResizeUp,
+
+    /// A resize down cursor
+    /// corresponds to the CSS cursor value `s-resize`
     ResizeDown,
+
+    /// A resize cursor directing up and down
+    /// corresponds to the CSS cursor value `row-resize`
     ResizeUpDown,
+
+    /// A cursor indicating that something will disappear if moved here
+    /// Does not correspond to a CSS cursor value
     DisappearingItem,
+
+    /// A text input cursor for vertical layout
+    /// corresponds to the CSS cursor value `vertical-text`
     IBeamCursorForVerticalLayout,
+
+    /// A cursor indicating that the operation is not allowed
+    /// corresponds to the CSS cursor value `not-allowed`
     OperationNotAllowed,
+
+    /// A cursor indicating that the operation will result in a link
+    /// corresponds to the CSS cursor value `alias`
     DragLink,
+
+    /// A cursor indicating that the operation will result in a copy
+    /// corresponds to the CSS cursor value `copy`
     DragCopy,
+
+    /// A cursor indicating that the operation will result in a context menu
+    /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
 }
 
@@ -463,6 +690,7 @@ impl Default for CursorStyle {
     }
 }
 
+/// A datastructure representing a semantic version number
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct SemanticVersion {
     major: usize,
@@ -501,6 +729,7 @@ impl Display for SemanticVersion {
     }
 }
 
+/// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
     pub(crate) text: String,
@@ -508,6 +737,7 @@ pub struct ClipboardItem {
 }
 
 impl ClipboardItem {
+    /// Create a new clipboard item with the given text
     pub fn new(text: String) -> Self {
         Self {
             text,
@@ -515,15 +745,18 @@ impl ClipboardItem {
         }
     }
 
+    /// Create a new clipboard item with the given text and metadata
     pub fn with_metadata<T: Serialize>(mut self, metadata: T) -> Self {
         self.metadata = Some(serde_json::to_string(&metadata).unwrap());
         self
     }
 
+    /// Get the text of the clipboard item
     pub fn text(&self) -> &String {
         &self.text
     }
 
+    /// Get the metadata of the clipboard item
     pub fn metadata<T>(&self) -> Option<T>
     where
         T: for<'a> Deserialize<'a>,

@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.37.0"
+version = "0.38.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1548,6 +1548,7 @@ dependencies = [
  "log",
  "menu",
  "notifications",
+ "parking_lot 0.11.2",
  "picker",
  "postage",
  "pretty_assertions",
@@ -6144,6 +6145,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "theme",
+ "ui",
  "util",
 ]
 
@@ -9079,6 +9081,7 @@ dependencies = [
  "nvim-rs",
  "parking_lot 0.11.2",
  "project",
+ "regex",
  "search",
  "serde",
  "serde_derive",

@@ -1,6 +1,57 @@
+/// KeyDispatch is where GPUI deals with binding actions to key events.
+///
+/// The key pieces to making a key binding work are to define an action,
+/// implement a method that takes that action as a type parameter,
+/// and then to register the action during render on a focused node
+/// with a keymap context:
+///
+/// ```rust
+/// actions!(editor,[Undo, Redo]);;
+///
+/// impl Editor {
+///   fn undo(&mut self, _: &Undo, _cx: &mut ViewContext<Self>) { ... }
+///   fn redo(&mut self, _: &Redo, _cx: &mut ViewContext<Self>) { ... }
+/// }
+///
+/// impl Render for Editor {
+///   fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+///     div()
+///       .track_focus(&self.focus_handle)
+///       .keymap_context("Editor")
+///       .on_action(cx.listener(Editor::undo))
+///       .on_action(cx.listener(Editor::redo))
+///     ...
+///    }
+/// }
+///```
+///
+/// The keybindings themselves are managed independently by calling cx.bind_keys().
+/// (Though mostly when developing Zed itself, you just need to add a new line to
+///  assets/keymaps/default.json).
+///
+/// ```rust
+/// cx.bind_keys([
+///   KeyBinding::new("cmd-z", Editor::undo, Some("Editor")),
+///   KeyBinding::new("cmd-shift-z", Editor::redo, Some("Editor")),
+/// ])
+/// ```
+///
+/// With all of this in place, GPUI will ensure that if you have an Editor that contains
+/// the focus, hitting cmd-z will Undo.
+///
+/// In real apps, it is a little more complicated than this, because typically you have
+/// several nested views that each register keyboard handlers. In this case action matching
+/// bubbles up from the bottom. For example in Zed, the Workspace is the top-level view, which contains Pane's, which contain Editors. If there are conflicting keybindings defined
+/// then the Editor's bindings take precedence over the Pane's bindings, which take precedence over the Workspace.
+///
+/// In GPUI, keybindings are not limited to just single keystrokes, you can define
+/// sequences by separating the keys with a space:
+///
+///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
+///
 use crate::{
-    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, KeyMatch,
-    Keymap, Keystroke, KeystrokeMatcher, WindowContext,
+    Action, ActionRegistry, DispatchPhase, ElementContext, EntityId, FocusId, KeyBinding,
+    KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, WindowContext,
 };
 use collections::FxHashMap;
 use parking_lot::Mutex;
@@ -13,7 +64,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct DispatchNodeId(usize);
+pub(crate) struct DispatchNodeId(usize);
 
 pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
@@ -36,7 +87,7 @@ pub(crate) struct DispatchNode {
     parent: Option<DispatchNodeId>,
 }
 
-type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
+type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut ElementContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {
@@ -272,30 +323,51 @@ impl DispatchTree {
             .collect()
     }
 
+    // dispatch_key pushses the next keystroke into any key binding matchers.
+    // any matching bindings are returned in the order that they should be dispatched:
+    // * First by length of binding (so if you have a binding for "b" and "ab", the "ab" binding fires first)
+    // * Secondly by depth in the tree (so if Editor has a binding for "b" and workspace a
+    // binding for "b", the Editor action fires first).
     pub fn dispatch_key(
         &mut self,
         keystroke: &Keystroke,
-        context: &[KeyContext],
-    ) -> Vec<Box<dyn Action>> {
-        if !self.keystroke_matchers.contains_key(context) {
-            let keystroke_contexts = context.iter().cloned().collect();
-            self.keystroke_matchers.insert(
-                keystroke_contexts,
-                KeystrokeMatcher::new(self.keymap.clone()),
-            );
-        }
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> KeymatchResult {
+        let mut bindings = SmallVec::<[KeyBinding; 1]>::new();
+        let mut pending = false;
 
-        let keystroke_matcher = self.keystroke_matchers.get_mut(context).unwrap();
-        if let KeyMatch::Some(actions) = keystroke_matcher.match_keystroke(keystroke, context) {
-            // Clear all pending keystrokes when an action has been found.
-            for keystroke_matcher in self.keystroke_matchers.values_mut() {
-                keystroke_matcher.clear_pending();
+        let mut context_stack: SmallVec<[KeyContext; 4]> = SmallVec::new();
+        for node_id in dispatch_path {
+            let node = self.node(*node_id);
+
+            if let Some(context) = node.context.clone() {
+                context_stack.push(context);
             }
-
-            actions
-        } else {
-            vec![]
         }
+
+        while !context_stack.is_empty() {
+            let keystroke_matcher = self
+                .keystroke_matchers
+                .entry(context_stack.clone())
+                .or_insert_with(|| KeystrokeMatcher::new(self.keymap.clone()));
+
+            let result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
+            pending = result.pending || pending;
+            for new_binding in result.bindings {
+                match bindings
+                    .iter()
+                    .position(|el| el.keystrokes.len() < new_binding.keystrokes.len())
+                {
+                    Some(idx) => {
+                        bindings.insert(idx, new_binding);
+                    }
+                    None => bindings.push(new_binding),
+                }
+            }
+            context_stack.pop();
+        }
+
+        KeymatchResult { bindings, pending }
     }
 
     pub fn has_pending_keystrokes(&self) -> bool {

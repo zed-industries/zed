@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
     AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Entity, EventEmitter,
@@ -352,7 +350,7 @@ impl TestAppContext {
     }
 
     /// Returns the `TestWindow` backing the given handle.
-    pub fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
+    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app
             .borrow_mut()
             .windows
@@ -578,7 +576,7 @@ impl<'a> VisualTestContext {
         self.cx.update_window(self.window, |_, cx| f(cx)).unwrap()
     }
 
-    /// Create a new VisualTestContext. You would typically shadow the passed in
+    /// Creates a new VisualTestContext. You would typically shadow the passed in
     /// TestAppContext with this, as this is typically more useful.
     /// `let cx = VisualTestContext::from_window(window, cx);`
     pub fn from_window(window: AnyWindowHandle, cx: &TestAppContext) -> Self {
@@ -642,8 +640,11 @@ impl<'a> VisualTestContext {
                 .as_ref()
                 .expect("Can't draw to this window without a root view")
                 .entity_id();
-            cx.with_view_id(entity_id, |cx| {
-                f(cx).draw(origin, space, cx);
+
+            cx.with_element_context(|cx| {
+                cx.with_view_id(entity_id, |cx| {
+                    f(cx).draw(origin, space, cx);
+                })
             });
 
             cx.refresh();

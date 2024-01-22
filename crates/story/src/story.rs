@@ -67,8 +67,8 @@ impl StoryContainer {
 }
 
 impl ParentElement for StoryContainer {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 
@@ -104,7 +104,7 @@ impl RenderOnce for StoryContainer {
                     .h_px()
                     .flex_1()
                     .id("story_body")
-                    .overflow_hidden_x()
+                    .overflow_x_hidden()
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
@@ -372,7 +372,7 @@ impl RenderOnce for StorySection {
 }
 
 impl ParentElement for StorySection {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement; 2]> {
-        &mut self.children
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }

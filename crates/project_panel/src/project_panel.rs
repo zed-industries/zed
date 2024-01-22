@@ -381,67 +381,57 @@ impl ProjectPanel {
             let is_local = project.is_local();
             let is_read_only = project.is_read_only();
 
-            let context_menu = ContextMenu::build(cx, |mut menu, cx| {
-                if is_read_only {
-                    menu = menu.action("Copy Relative Path", Box::new(CopyRelativePath));
-                    if is_dir {
-                        menu = menu.action("Search Inside", Box::new(NewSearchInDirectory))
-                    }
-
-                    return menu;
-                }
-
-                if is_local {
-                    menu = menu.action(
-                        "Add Folder to Project",
-                        Box::new(workspace::AddFolderToProject),
-                    );
-                    if is_root {
-                        menu = menu.entry(
-                            "Remove from Project",
-                            None,
-                            cx.handler_for(&this, move |this, cx| {
-                                this.project.update(cx, |project, cx| {
-                                    project.remove_worktree(worktree_id, cx)
-                                });
-                            }),
-                        );
-                    }
-                }
-
-                menu = menu
-                    .action("New File", Box::new(NewFile))
-                    .action("New Folder", Box::new(NewDirectory))
-                    .separator()
-                    .action("Cut", Box::new(Cut))
-                    .action("Copy", Box::new(Copy));
-
-                if let Some(clipboard_entry) = self.clipboard_entry {
-                    if clipboard_entry.worktree_id() == worktree_id {
-                        menu = menu.action("Paste", Box::new(Paste));
-                    }
-                }
-
-                menu = menu
-                    .separator()
-                    .action("Copy Path", Box::new(CopyPath))
-                    .action("Copy Relative Path", Box::new(CopyRelativePath))
-                    .separator()
-                    .action("Reveal in Finder", Box::new(RevealInFinder));
-
-                if is_dir {
-                    menu = menu
-                        .action("Open in Terminal", Box::new(OpenInTerminal))
-                        .action("Search Inside", Box::new(NewSearchInDirectory))
-                }
-
-                menu = menu.separator().action("Rename", Box::new(Rename));
-
-                if !is_root {
-                    menu = menu.action("Delete", Box::new(Delete));
-                }
-
-                menu
+            let context_menu = ContextMenu::build(cx, |menu, cx| {
+                menu.context(self.focus_handle.clone()).when_else(
+                    is_read_only,
+                    |menu| {
+                        menu.action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .when(is_dir, |menu| {
+                                menu.action("Search Inside", Box::new(NewSearchInDirectory))
+                            })
+                    },
+                    |menu| {
+                        menu.when(is_local, |menu| {
+                            menu.action(
+                                "Add Folder to Project",
+                                Box::new(workspace::AddFolderToProject),
+                            )
+                            .when(is_root, |menu| {
+                                menu.entry(
+                                    "Remove from Project",
+                                    None,
+                                    cx.handler_for(&this, move |this, cx| {
+                                        this.project.update(cx, |project, cx| {
+                                            project.remove_worktree(worktree_id, cx)
+                                        });
+                                    }),
+                                )
+                            })
+                        })
+                        .action("New File", Box::new(NewFile))
+                        .action("New Folder", Box::new(NewDirectory))
+                        .separator()
+                        .action("Cut", Box::new(Cut))
+                        .action("Copy", Box::new(Copy))
+                        .when_some(self.clipboard_entry, |menu, entry| {
+                            menu.when(entry.worktree_id() == worktree_id, |menu| {
+                                menu.action("Paste", Box::new(Paste))
+                            })
+                        })
+                        .separator()
+                        .action("Copy Path", Box::new(CopyPath))
+                        .action("Copy Relative Path", Box::new(CopyRelativePath))
+                        .separator()
+                        .action("Reveal in Finder", Box::new(RevealInFinder))
+                        .when(is_dir, |menu| {
+                            menu.action("Open in Terminal", Box::new(OpenInTerminal))
+                                .action("Search Inside", Box::new(NewSearchInDirectory))
+                        })
+                        .separator()
+                        .action("Rename", Box::new(Rename))
+                        .when(!is_root, |menu| menu.action("Delete", Box::new(Delete)))
+                    },
+                )
             });
 
             cx.focus_view(&context_menu);

@@ -61,7 +61,7 @@ impl Project {
 
                 if let Some(python_settings) = &python_settings.as_option() {
                     let activate_script_path =
-                        self.find_activate_script_path(&python_settings, working_directory);
+                        self.find_activate_script_path(python_settings, working_directory);
                     self.activate_python_virtual_environment(
                         activate_script_path,
                         &terminal_handle,

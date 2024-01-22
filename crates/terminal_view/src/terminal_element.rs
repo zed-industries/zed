@@ -1,12 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, red, relative, AnyElement, AsyncWindowContext, AvailableSpace,
-    BorrowWindow, Bounds, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveBounds, InteractiveElement,
-    InteractiveElementState, Interactivity, IntoElement, LayoutId, Model, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, PlatformInputHandler, Point,
-    ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem, UnderlineStyle,
-    WeakView, WhiteSpace, WindowContext,
+    div, fill, point, px, relative, AnyElement, AvailableSpace, Bounds, DispatchPhase, Element,
+    ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
+    InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
+    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem,
+    UnderlineStyle, WeakView, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -29,7 +28,7 @@ use workspace::Workspace;
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive};
 
-///The information generated during layout that is necessary for painting
+/// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
@@ -43,7 +42,7 @@ pub struct LayoutState {
     gutter: Pixels,
 }
 
-///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
+/// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
 struct DisplayCursor {
     line: i32,
     col: usize,
@@ -82,7 +81,7 @@ impl LayoutCell {
         origin: Point<Pixels>,
         layout: &LayoutState,
         _visible_bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let pos = {
             let point = self.point;
@@ -121,7 +120,7 @@ impl LayoutRect {
         }
     }
 
-    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
+    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut ElementContext) {
         let position = {
             let alac_point = self.point;
             point(
@@ -139,8 +138,8 @@ impl LayoutRect {
     }
 }
 
-///The GPUI element that paints the terminal.
-///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
+/// The GPUI element that paints the terminal.
+/// We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
     workspace: WeakView<Workspace>,
@@ -278,8 +277,8 @@ impl TerminalElement {
         (cells, rects)
     }
 
-    // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
-    // the same position for sequential indexes. Use em_width instead
+    /// Computes the cursor position and expected block width, may return a zero width if x_for_index returns
+    /// the same position for sequential indexes. Use em_width instead
     fn shape_cursor(
         cursor_point: DisplayCursor,
         size: TerminalSize,
@@ -306,7 +305,7 @@ impl TerminalElement {
         }
     }
 
-    /// Convert the Alacritty cell styles to GPUI text styles and background color
+    /// Converts the Alacritty cell styles to GPUI text styles and background color.
     fn cell_style(
         indexed: &IndexedCell,
         fg: terminal::alacritty_terminal::ansi::Color,
@@ -366,7 +365,7 @@ impl TerminalElement {
         result
     }
 
-    fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut WindowContext) -> LayoutState {
+    fn compute_layout(&self, bounds: Bounds<gpui::Pixels>, cx: &mut ElementContext) -> LayoutState {
         let settings = ThemeSettings::get_global(cx).clone();
 
         let buffer_font_size = settings.buffer_font_size(cx);
@@ -506,8 +505,8 @@ impl TerminalElement {
             cx,
         );
 
-        //Layout cursor. Rectangle is used for IME, so we should lay it out even
-        //if we don't end up showing it.
+        // Layout cursor. Rectangle is used for IME, so we should lay it out even
+        // if we don't end up showing it.
         let cursor = if let AlacCursorShape::Hidden = cursor.shape {
             None
         } else {
@@ -550,12 +549,12 @@ impl TerminalElement {
                         theme.players().local().cursor,
                         shape,
                         text,
+                        None,
                     )
                 },
             )
         };
 
-        //Done!
         LayoutState {
             cells,
             cursor,
@@ -591,7 +590,7 @@ impl TerminalElement {
         origin: Point<Pixels>,
         mode: TermMode,
         bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
@@ -622,9 +621,17 @@ impl TerminalElement {
                 }
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() {
+                    let visibly_contains = interactive_bounds.visibly_contains(&e.position, cx);
                     terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_drag(e, origin, bounds);
-                        cx.notify();
+                        if !terminal.selection_started() {
+                            if visibly_contains {
+                                terminal.mouse_drag(e, origin, bounds);
+                                cx.notify();
+                            }
+                        } else {
+                            terminal.mouse_drag(e, origin, bounds);
+                            cx.notify();
+                        }
                     })
                 }
 
@@ -715,7 +722,7 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext<'_>,
+        cx: &mut ElementContext<'_>,
     ) -> (LayoutId, Self::State) {
         let (layout_id, interactive_state) =
             self.interactivity
@@ -734,7 +741,7 @@ impl Element for TerminalElement {
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::State,
-        cx: &mut WindowContext<'_>,
+        cx: &mut ElementContext<'_>,
     ) {
         let mut layout = self.compute_layout(bounds, cx);
 
@@ -742,7 +749,6 @@ impl Element for TerminalElement {
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
 
         let terminal_input_handler = TerminalInputHandler {
-            cx: cx.to_async(),
             terminal: self.terminal.clone(),
             cursor_bounds: layout
                 .cursor
@@ -831,37 +837,35 @@ impl IntoElement for TerminalElement {
 }
 
 struct TerminalInputHandler {
-    cx: AsyncWindowContext,
     terminal: Model<Terminal>,
     workspace: WeakView<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 
-impl PlatformInputHandler for TerminalInputHandler {
-    fn selected_text_range(&mut self) -> Option<std::ops::Range<usize>> {
-        self.cx
-            .update(|_, cx| {
-                if self
-                    .terminal
-                    .read(cx)
-                    .last_content
-                    .mode
-                    .contains(TermMode::ALT_SCREEN)
-                {
-                    None
-                } else {
-                    Some(0..0)
-                }
-            })
-            .ok()
-            .flatten()
+impl InputHandler for TerminalInputHandler {
+    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<std::ops::Range<usize>> {
+        if self
+            .terminal
+            .read(cx)
+            .last_content
+            .mode
+            .contains(TermMode::ALT_SCREEN)
+        {
+            None
+        } else {
+            Some(0..0)
+        }
     }
 
-    fn marked_text_range(&mut self) -> Option<std::ops::Range<usize>> {
+    fn marked_text_range(&mut self, _: &mut WindowContext) -> Option<std::ops::Range<usize>> {
         None
     }
 
-    fn text_for_range(&mut self, _: std::ops::Range<usize>) -> Option<String> {
+    fn text_for_range(
+        &mut self,
+        _: std::ops::Range<usize>,
+        _: &mut WindowContext,
+    ) -> Option<String> {
         None
     }
 
@@ -869,19 +873,16 @@ impl PlatformInputHandler for TerminalInputHandler {
         &mut self,
         _replacement_range: Option<std::ops::Range<usize>>,
         text: &str,
+        cx: &mut WindowContext,
     ) {
-        self.cx
-            .update(|_, cx| {
-                self.terminal.update(cx, |terminal, _| {
-                    terminal.input(text.into());
-                });
+        self.terminal.update(cx, |terminal, _| {
+            terminal.input(text.into());
+        });
 
-                self.workspace
-                    .update(cx, |this, cx| {
-                        let telemetry = this.project().read(cx).client().telemetry().clone();
-                        telemetry.log_edit_event("terminal");
-                    })
-                    .ok();
+        self.workspace
+            .update(cx, |this, cx| {
+                let telemetry = this.project().read(cx).client().telemetry().clone();
+                telemetry.log_edit_event("terminal");
             })
             .ok();
     }
@@ -891,12 +892,17 @@ impl PlatformInputHandler for TerminalInputHandler {
         _range_utf16: Option<std::ops::Range<usize>>,
         _new_text: &str,
         _new_selected_range: Option<std::ops::Range<usize>>,
+        _: &mut WindowContext,
     ) {
     }
 
-    fn unmark_text(&mut self) {}
+    fn unmark_text(&mut self, _: &mut WindowContext) {}
 
-    fn bounds_for_range(&mut self, _range_utf16: std::ops::Range<usize>) -> Option<Bounds<Pixels>> {
+    fn bounds_for_range(
+        &mut self,
+        _range_utf16: std::ops::Range<usize>,
+        _: &mut WindowContext,
+    ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
     }
 }
@@ -990,11 +996,11 @@ fn to_highlighted_range_lines(
     Some((start_y, highlighted_range_lines))
 }
 
-///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
+/// Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent.
 fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) -> Hsla {
     let colors = theme.colors();
     match fg {
-        //Named and theme defined colors
+        // Named and theme defined colors
         terminal::alacritty_terminal::ansi::Color::Named(n) => match n {
             NamedColor::Black => colors.terminal_ansi_black,
             NamedColor::Red => colors.terminal_ansi_red,
@@ -1015,24 +1021,22 @@ fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) 
             NamedColor::Foreground => colors.text,
             NamedColor::Background => colors.background,
             NamedColor::Cursor => theme.players().local().cursor,
-
-            // todo!(more colors)
-            NamedColor::DimBlack => red(),
-            NamedColor::DimRed => red(),
-            NamedColor::DimGreen => red(),
-            NamedColor::DimYellow => red(),
-            NamedColor::DimBlue => red(),
-            NamedColor::DimMagenta => red(),
-            NamedColor::DimCyan => red(),
-            NamedColor::DimWhite => red(),
-            NamedColor::BrightForeground => red(),
-            NamedColor::DimForeground => red(),
+            NamedColor::DimBlack => colors.terminal_ansi_dim_black,
+            NamedColor::DimRed => colors.terminal_ansi_dim_red,
+            NamedColor::DimGreen => colors.terminal_ansi_dim_green,
+            NamedColor::DimYellow => colors.terminal_ansi_dim_yellow,
+            NamedColor::DimBlue => colors.terminal_ansi_dim_blue,
+            NamedColor::DimMagenta => colors.terminal_ansi_dim_magenta,
+            NamedColor::DimCyan => colors.terminal_ansi_dim_cyan,
+            NamedColor::DimWhite => colors.terminal_ansi_dim_white,
+            NamedColor::BrightForeground => colors.terminal_bright_foreground,
+            NamedColor::DimForeground => colors.terminal_dim_foreground,
         },
-        //'True' colors
+        // 'True' colors
         terminal::alacritty_terminal::ansi::Color::Spec(rgb) => {
             terminal::rgba_color(rgb.r, rgb.g, rgb.b)
         }
-        //8 bit, indexed colors
+        // 8 bit, indexed colors
         terminal::alacritty_terminal::ansi::Color::Indexed(i) => {
             terminal::get_color_at_index(*i as usize, theme)
         }

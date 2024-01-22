@@ -1,6 +1,6 @@
 use editor::{ClipboardSelection, Editor};
 use gpui::{AppContext, ClipboardItem};
-use language::Point;
+use language::{CharKind, Point};
 
 pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut AppContext) {
     let selections = editor.selections.all_adjusted(cx);
@@ -47,4 +47,12 @@ pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut App
     }
 
     cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+}
+
+pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
+    if treat_punctuation_as_word && kind == CharKind::Punctuation {
+        CharKind::Word
+    } else {
+        kind
+    }
 }

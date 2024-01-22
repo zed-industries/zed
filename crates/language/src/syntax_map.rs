@@ -29,7 +29,7 @@ pub struct SyntaxMap {
 
 #[derive(Clone, Default)]
 pub struct SyntaxSnapshot {
-    layers: SumTree<SyntaxLayer>,
+    layers: SumTree<SyntaxLayerEntry>,
     parsed_version: clock::Global,
     interpolated_version: clock::Global,
     language_registry_version: usize,
@@ -84,7 +84,7 @@ struct SyntaxMapMatchesLayer<'a> {
 }
 
 #[derive(Clone)]
-struct SyntaxLayer {
+struct SyntaxLayerEntry {
     depth: usize,
     range: Range<Anchor>,
     content: SyntaxLayerContent,
@@ -117,17 +117,22 @@ impl SyntaxLayerContent {
     }
 }
 
+/// A layer of syntax highlighting, corresponding to a single syntax
+/// tree in a particular language.
 #[derive(Debug)]
-pub struct SyntaxLayerInfo<'a> {
-    pub depth: usize,
+pub struct SyntaxLayer<'a> {
+    /// The language for this layer.
     pub language: &'a Arc<Language>,
+    depth: usize,
     tree: &'a Tree,
     offset: (usize, tree_sitter::Point),
 }
 
+/// A layer of syntax highlighting. Like [SyntaxLayer], but holding
+/// owned data instead of references.
 #[derive(Clone)]
-pub struct OwnedSyntaxLayerInfo {
-    pub depth: usize,
+pub struct OwnedSyntaxLayer {
+    /// The language for this layer.
     pub language: Arc<Language>,
     tree: tree_sitter::Tree,
     offset: (usize, tree_sitter::Point),
@@ -278,7 +283,7 @@ impl SyntaxSnapshot {
                     depth,
                     position: edit_range.start,
                 };
-                if target.cmp(&cursor.start(), text).is_gt() {
+                if target.cmp(cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&target, Bias::Left, text);
                     layers.append(slice, text);
                 }
@@ -363,7 +368,7 @@ impl SyntaxSnapshot {
             cursor.next(text);
         }
 
-        layers.append(cursor.suffix(&text), &text);
+        layers.append(cursor.suffix(text), text);
         drop(cursor);
         self.layers = layers;
     }
@@ -428,7 +433,7 @@ impl SyntaxSnapshot {
 
         let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
-        cursor.next(&text);
+        cursor.next(text);
         let mut layers = SumTree::new();
 
         let mut changed_regions = ChangeRegionSet::default();
@@ -466,17 +471,17 @@ impl SyntaxSnapshot {
             };
 
             let mut done = cursor.item().is_none();
-            while !done && position.cmp(&cursor.end(text), &text).is_gt() {
+            while !done && position.cmp(&cursor.end(text), text).is_gt() {
                 done = true;
 
                 let bounded_position = SyntaxLayerPositionBeforeChange {
                     position: position.clone(),
                     change: changed_regions.start_position(),
                 };
-                if bounded_position.cmp(&cursor.start(), &text).is_gt() {
+                if bounded_position.cmp(cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&bounded_position, Bias::Left, text);
                     if !slice.is_empty() {
-                        layers.append(slice, &text);
+                        layers.append(slice, text);
                         if changed_regions.prune(cursor.end(text), text) {
                             done = false;
                         }
@@ -486,7 +491,7 @@ impl SyntaxSnapshot {
                 while position.cmp(&cursor.end(text), text).is_gt() {
                     let Some(layer) = cursor.item() else { break };
 
-                    if changed_regions.intersects(&layer, text) {
+                    if changed_regions.intersects(layer, text) {
                         if let SyntaxLayerContent::Parsed { language, .. } = &layer.content {
                             log::trace!(
                                 "discard layer. language:{}, range:{:?}. changed_regions:{:?}",
@@ -524,7 +529,7 @@ impl SyntaxSnapshot {
                 if layer.range.to_offset(text) == (step_start_byte..step_end_byte)
                     && layer.content.language_id() == step.language.id()
                 {
-                    cursor.next(&text);
+                    cursor.next(text);
                 } else {
                     old_layer = None;
                 }
@@ -556,7 +561,7 @@ impl SyntaxSnapshot {
                         log::trace!(
                             "existing layer. language:{}, start:{:?}, ranges:{:?}",
                             language.name(),
-                            LogPoint(layer_start.to_point(&text)),
+                            LogPoint(layer_start.to_point(text)),
                             LogIncludedRanges(&old_tree.included_ranges())
                         );
 
@@ -579,7 +584,7 @@ impl SyntaxSnapshot {
                             insert_newlines_between_ranges(
                                 changed_indices,
                                 &mut included_ranges,
-                                &text,
+                                text,
                                 step_start_byte,
                                 step_start_point,
                             );
@@ -691,12 +696,12 @@ impl SyntaxSnapshot {
             };
 
             layers.push(
-                SyntaxLayer {
+                SyntaxLayerEntry {
                     depth: step.depth,
                     range: step.range,
                     content,
                 },
-                &text,
+                text,
             );
         }
 
@@ -741,7 +746,7 @@ impl SyntaxSnapshot {
         SyntaxMapCaptures::new(
             range.clone(),
             text,
-            [SyntaxLayerInfo {
+            [SyntaxLayer {
                 language,
                 tree,
                 depth: 0,
@@ -781,7 +786,7 @@ impl SyntaxSnapshot {
     }
 
     #[cfg(test)]
-    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayerInfo> {
+    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer> {
         self.layers_for_range(0..buffer.len(), buffer).collect()
     }
 
@@ -789,7 +794,7 @@ impl SyntaxSnapshot {
         &'a self,
         range: Range<T>,
         buffer: &'a BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = SyntaxLayerInfo> {
+    ) -> impl 'a + Iterator<Item = SyntaxLayer> {
         let start_offset = range.start.to_offset(buffer);
         let end_offset = range.end.to_offset(buffer);
         let start = buffer.anchor_before(start_offset);
@@ -813,7 +818,7 @@ impl SyntaxSnapshot {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
 
-                    info = Some(SyntaxLayerInfo {
+                    info = Some(SyntaxLayer {
                         tree,
                         language,
                         depth: layer.depth,
@@ -842,7 +847,7 @@ impl<'a> SyntaxMapCaptures<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
-        layers: impl Iterator<Item = SyntaxLayerInfo<'a>>,
+        layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> Self {
         let mut result = Self {
@@ -855,7 +860,7 @@ impl<'a> SyntaxMapCaptures<'a> {
                 Some(grammar) => grammar,
                 None => continue,
             };
-            let query = match query(&grammar) {
+            let query = match query(grammar) {
                 Some(query) => query,
                 None => continue,
             };
@@ -964,7 +969,7 @@ impl<'a> SyntaxMapMatches<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
-        layers: impl Iterator<Item = SyntaxLayerInfo<'a>>,
+        layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> Self {
         let mut result = Self::default();
@@ -973,7 +978,7 @@ impl<'a> SyntaxMapMatches<'a> {
                 Some(grammar) => grammar,
                 None => continue,
             };
-            let query = match query(&grammar) {
+            let query = match query(grammar) {
                 Some(query) => query,
                 None => continue,
             };
@@ -1082,7 +1087,7 @@ impl<'a> SyntaxMapMatchesLayer<'a> {
     fn advance(&mut self) {
         if let Some(mat) = self.matches.next() {
             self.next_captures.clear();
-            self.next_captures.extend_from_slice(&mat.captures);
+            self.next_captures.extend_from_slice(mat.captures);
             self.next_pattern_index = mat.pattern_index;
             self.has_next = true;
         } else {
@@ -1296,7 +1301,7 @@ fn get_injections(
     }
 }
 
-/// Update the given list of included `ranges`, removing any ranges that intersect
+/// Updates the given list of included `ranges`, removing any ranges that intersect
 /// `removed_ranges`, and inserting the given `new_ranges`.
 ///
 /// Returns a new vector of ranges, and the range of the vector that was changed,
@@ -1436,23 +1441,25 @@ fn insert_newlines_between_ranges(
     }
 }
 
-impl OwnedSyntaxLayerInfo {
+impl OwnedSyntaxLayer {
+    /// Returns the root syntax node for this layer.
     pub fn node(&self) -> Node {
         self.tree
             .root_node_with_offset(self.offset.0, self.offset.1)
     }
 }
 
-impl<'a> SyntaxLayerInfo<'a> {
-    pub fn to_owned(&self) -> OwnedSyntaxLayerInfo {
-        OwnedSyntaxLayerInfo {
+impl<'a> SyntaxLayer<'a> {
+    /// Returns an owned version of this layer.
+    pub fn to_owned(&self) -> OwnedSyntaxLayer {
+        OwnedSyntaxLayer {
             tree: self.tree.clone(),
             offset: self.offset,
-            depth: self.depth,
             language: self.language.clone(),
         }
     }
 
+    /// Returns the root node for this layer.
     pub fn node(&self) -> Node<'a> {
         self.tree
             .root_node_with_offset(self.offset.0, self.offset.1)
@@ -1510,7 +1517,7 @@ impl Eq for ParseStep {}
 
 impl PartialOrd for ParseStep {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
@@ -1564,7 +1571,7 @@ impl ChangeRegionSet {
         )
     }
 
-    fn intersects(&self, layer: &SyntaxLayer, text: &BufferSnapshot) -> bool {
+    fn intersects(&self, layer: &SyntaxLayerEntry, text: &BufferSnapshot) -> bool {
         for region in &self.0 {
             if region.depth < layer.depth {
                 continue;
@@ -1675,7 +1682,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
     }
 }
 
-impl sum_tree::Item for SyntaxLayer {
+impl sum_tree::Item for SyntaxLayerEntry {
     type Summary = SyntaxLayerSummary;
 
     fn summary(&self) -> Self::Summary {
@@ -1690,7 +1697,7 @@ impl sum_tree::Item for SyntaxLayer {
     }
 }
 
-impl std::fmt::Debug for SyntaxLayer {
+impl std::fmt::Debug for SyntaxLayerEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyntaxLayer")
             .field("depth", &self.depth)

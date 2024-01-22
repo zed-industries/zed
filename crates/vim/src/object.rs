@@ -10,7 +10,10 @@ use language::{char_kind, CharKind, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
 
-use crate::{motion::right, normal::normal_object, state::Mode, visual::visual_object, Vim};
+use crate::{
+    motion::right, normal::normal_object, state::Mode, utils::coerce_punctuation,
+    visual::visual_object, Vim,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Object {
@@ -195,9 +198,10 @@ impl Object {
     }
 }
 
-/// Return a range that surrounds the word relative_to is in
-/// If relative_to is at the start of a word, return the word.
-/// If relative_to is between words, return the space between
+/// Returns a range that surrounds the word `relative_to` is in.
+///
+/// If `relative_to` is at the start of a word, return the word.
+/// If `relative_to` is between words, return the space between.
 fn in_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -212,24 +216,25 @@ fn in_word(
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
         |left, right| {
-            char_kind(&scope, left).coerce_punctuation(ignore_punctuation)
-                != char_kind(&scope, right).coerce_punctuation(ignore_punctuation)
+            coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
+                != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
         },
     );
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        char_kind(&scope, left).coerce_punctuation(ignore_punctuation)
-            != char_kind(&scope, right).coerce_punctuation(ignore_punctuation)
+        coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
+            != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
     });
 
     Some(start..end)
 }
 
-/// Return a range that surrounds the word and following whitespace
+/// Returns a range that surrounds the word and following whitespace
 /// relative_to is in.
-/// If relative_to is at the start of a word, return the word and following whitespace.
-/// If relative_to is between words, return the whitespace back and the following word
-
+///
+/// If `relative_to` is at the start of a word, return the word and following whitespace.
+/// If `relative_to` is between words, return the whitespace back and the following word.
+///
 /// if in word
 ///   delete that word
 ///   if there is whitespace following the word, delete that as well
@@ -281,15 +286,15 @@ fn around_next_word(
         right(map, relative_to, 1),
         FindRange::SingleLine,
         |left, right| {
-            char_kind(&scope, left).coerce_punctuation(ignore_punctuation)
-                != char_kind(&scope, right).coerce_punctuation(ignore_punctuation)
+            coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
+                != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
         },
     );
 
     let mut word_found = false;
     let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
-        let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
-        let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
+        let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
+        let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
         let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
 

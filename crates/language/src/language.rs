@@ -1,3 +1,11 @@
+//! The `language` crate provides a large chunk of Zed's language-related
+//! features (the other big contributors being project and lsp crates that revolve around LSP features).
+//! Namely, this crate:
+//! - Provides [`Language`], [`Grammar`] and [`LanguageRegistry`] types that
+//! use Tree-sitter to provide syntax highlighting to the editor; note though that `language` doesn't perform the highlighting by itself. It only maps ranges in a buffer to colors. Treesitter is also used for buffer outlines (lists of symbols in a buffer)
+//! - Exposes [`LanguageConfig`] that describes how constructs (like brackets or line comments) should be handled by the editor for a source file of a particular language.
+//!
+//! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in it's API.
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
@@ -54,10 +62,13 @@ pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
-pub use syntax_map::{OwnedSyntaxLayerInfo, SyntaxLayerInfo};
+pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
 
+/// Initializes the `language` crate.
+///
+/// This should be called before making use of items from the create.
 pub fn init(cx: &mut AppContext) {
     language_settings::init(cx);
 }
@@ -90,7 +101,9 @@ thread_local! {
 }
 
 lazy_static! {
-    pub static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
+    pub(crate) static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
+    /// A shared grammar for plain text, exposed for reuse by downstream crates.
+    #[doc(hidden)]
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
@@ -100,10 +113,14 @@ lazy_static! {
     ));
 }
 
+/// Types that represent a position in a buffer, and can be converted into
+/// an LSP position, to send to a language server.
 pub trait ToLspPosition {
+    /// Converts the value into an LSP position.
     fn to_lsp_position(self) -> lsp::Position;
 }
 
+/// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
 
@@ -239,6 +256,8 @@ impl CachedLspAdapter {
     }
 }
 
+/// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
+// e.g. to display a notification or fetch data from the web.
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
@@ -284,6 +303,10 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
+    /// Returns true if a language server can be reinstalled.
+    /// If language server initialization fails, a reinstallation will be attempted unless the value returned from this method is false.
+    /// Implementations that rely on software already installed on user's system
+    /// should have [`can_be_reinstalled`] return false.
     fn can_be_reinstalled(&self) -> bool {
         true
     }
@@ -295,6 +318,9 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
+    /// A callback called for each [`lsp_types::CompletionItem`] obtained from LSP server.
+    /// Some LspAdapter implementations might want to modify the obtained item to
+    /// change how it's displayed.
     async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
 
     async fn label_for_completion(
@@ -314,6 +340,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
+    /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp_types::InitializeParams`]
     async fn initialization_options(&self) -> Option<Value> {
         None
     }
@@ -322,6 +349,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         futures::future::ready(serde_json::json!({})).boxed()
     }
 
+    /// Returns a list of code actions supported by a given LspAdapter
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![
             CodeActionKind::EMPTY,
@@ -351,43 +379,69 @@ pub trait LspAdapter: 'static + Send + Sync {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeLabel {
+    /// The text to display.
     pub text: String,
+    /// Syntax highlighting runs.
     pub runs: Vec<(Range<usize>, HighlightId)>,
+    /// The portion of the text that should be used in fuzzy filtering.
     pub filter_range: Range<usize>,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct LanguageConfig {
+    /// Human-readable name of the language.
     pub name: Arc<str>,
+    // The name of the grammar in a WASM bundle (experimental).
     pub grammar_name: Option<Arc<str>>,
+    /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     pub path_suffixes: Vec<String>,
+    /// List of bracket types in a language.
     pub brackets: BracketPairConfig,
+    /// A regex pattern that determines whether the language should be assigned to a file or not.
     #[serde(default, deserialize_with = "deserialize_regex")]
     pub first_line_pattern: Option<Regex>,
+    /// If set to true, auto indentation uses last non empty line to determine
+    /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
+    /// A regex that is used to determine whether the indentation level should be
+    /// increased in the following line.
     #[serde(default, deserialize_with = "deserialize_regex")]
     pub increase_indent_pattern: Option<Regex>,
+    /// A regex that is used to determine whether the indentation level should be
+    /// decreased in the following line.
     #[serde(default, deserialize_with = "deserialize_regex")]
     pub decrease_indent_pattern: Option<Regex>,
+    /// A list of characters that trigger the automatic insertion of a closing
+    /// bracket when they immediately precede the point where an opening
+    /// bracket is inserted.
     #[serde(default)]
     pub autoclose_before: String,
-    #[serde(default)]
-    pub line_comment: Option<Arc<str>>,
+    /// A placeholder used internally by Semantic Index.
     #[serde(default)]
     pub collapsed_placeholder: String,
+    /// A line comment string that is inserted in e.g. `toggle comments` action.
+    #[serde(default)]
+    pub line_comment: Option<Arc<str>>,
+    /// Starting and closing characters of a block comment.
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
+    /// A list of language servers that are allowed to run on subranges of a given language.
     #[serde(default)]
     pub scope_opt_in_language_servers: Vec<String>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
+    /// A list of characters that Zed should treat as word characters for the
+    /// purpose of features that operate on word boundaries, like 'move to next word end'
+    /// or a whole-word search in buffer search.
     #[serde(default)]
     pub word_characters: HashSet<char>,
+    /// The name of a Prettier parser that should be used for this language.
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
 }
 
+/// Tree-sitter language queries for a given language.
 #[derive(Debug, Default)]
 pub struct LanguageQueries {
     pub highlights: Option<Cow<'static, str>>,
@@ -399,6 +453,9 @@ pub struct LanguageQueries {
     pub overrides: Option<Cow<'static, str>>,
 }
 
+/// Represents a language for the given range. Some languages (e.g. HTML)
+/// interleave several languages together, thus a single buffer might actually contain
+/// several nested scopes.
 #[derive(Clone, Debug)]
 pub struct LanguageScope {
     language: Arc<Language>,
@@ -458,9 +515,9 @@ impl Default for LanguageConfig {
             block_comment: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
-            collapsed_placeholder: Default::default(),
             word_characters: Default::default(),
             prettier_parser_name: None,
+            collapsed_placeholder: Default::default(),
         }
     }
 }
@@ -478,6 +535,7 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
     }
 }
 
+#[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLspAdapter {
     pub name: &'static str,
@@ -489,9 +547,16 @@ pub struct FakeLspAdapter {
     pub prettier_plugins: Vec<&'static str>,
 }
 
+/// Configuration of handling bracket pairs for a given language.
+///
+/// This struct includes settings for defining which pairs of characters are considered brackets and
+/// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
 #[derive(Clone, Debug, Default)]
 pub struct BracketPairConfig {
+    /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
+    /// A list of tree-sitter scopes for which a given bracket should not be active.
+    /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
 }
 
@@ -523,11 +588,18 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
     }
 }
 
+/// Describes a single bracket pair and how an editor should react to e.g. inserting
+/// an opening bracket or to a newline character insertion inbetween `start` and `end` characters.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct BracketPair {
+    /// Starting substring for a bracket.
     pub start: String,
+    /// Ending substring for a bracket.
     pub end: String,
+    /// True if `end` should be automatically inserted right after `start` characters.
     pub close: bool,
+    /// True if an extra newline should be inserted while the cursor is in the middle
+    /// of that bracket pair.
     pub newline: bool,
 }
 
@@ -780,7 +852,7 @@ impl LanguageRegistry {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            language.set_theme(&theme.syntax());
+            language.set_theme(theme.syntax());
         }
     }
 
@@ -1094,7 +1166,7 @@ impl LanguageRegistryState {
 
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
-            language.set_theme(&theme.syntax());
+            language.set_theme(theme.syntax());
         }
         self.languages.push(language);
         self.version += 1;
@@ -1641,6 +1713,8 @@ impl LanguageScope {
         self.language.config.collapsed_placeholder.as_ref()
     }
 
+    /// Returns line prefix that is inserted in e.g. line continuations or
+    /// in `toggle comments` action.
     pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
         Override::as_option(
             self.config_override().map(|o| &o.line_comment),
@@ -1656,6 +1730,11 @@ impl LanguageScope {
         .map(|e| (&e.0, &e.1))
     }
 
+    /// Returns a list of language-specific word characters.
+    ///
+    /// By default, Zed treats alphanumeric characters (and '_') as word characters for
+    /// the purpose of actions like 'move to next word end` or whole-word search.
+    /// It additionally accounts for language's additional word characters.
     pub fn word_characters(&self) -> Option<&HashSet<char>> {
         Override::as_option(
             self.config_override().map(|o| &o.word_characters),
@@ -1663,6 +1742,8 @@ impl LanguageScope {
         )
     }
 
+    /// Returns a list of bracket pairs for a given language with an additional
+    /// piece of information about whether the particular bracket pair is currently active for a given language.
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
         let mut disabled_ids = self
             .config_override()

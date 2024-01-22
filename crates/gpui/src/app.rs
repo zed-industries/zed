@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 mod async_context;
 mod entity_map;
 mod model_context;
@@ -864,7 +862,7 @@ impl AppContext {
             .unwrap()
     }
 
-    /// Set the value of the global of the given type.
+    /// Sets the value of the global of the given type.
     pub fn set_global<G: Any>(&mut self, global: G) {
         let global_type = TypeId::of::<G>();
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
@@ -889,7 +887,7 @@ impl AppContext {
             .unwrap()
     }
 
-    /// Update the global of the given type with a closure. Unlike `global_mut`, this method provides
+    /// Updates the global of the given type with a closure. Unlike `global_mut`, this method provides
     /// your closure with mutable access to the `AppContext` and the global simultaneously.
     pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R {
         self.update(|cx| {
@@ -1106,7 +1104,7 @@ impl AppContext {
             .contains_key(&action.as_any().type_id())
     }
 
-    /// Set the menu bar for this application. This will replace any existing menu bar.
+    /// Sets the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.lock());
     }
@@ -1190,7 +1188,7 @@ impl Context for AppContext {
         })
     }
 
-    /// Update the entity referenced by the given model. The function is passed a mutable reference to the
+    /// Updates the entity referenced by the given model. The function is passed a mutable reference to the
     /// entity along with a `ModelContext` for the entity.
     fn update_model<T: 'static, R>(
         &mut self,

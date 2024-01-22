@@ -5,7 +5,7 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Render, Styled,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
-use language::{Buffer, OwnedSyntaxLayerInfo};
+use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
@@ -54,7 +54,7 @@ struct EditorState {
 struct BufferState {
     buffer: Model<Buffer>,
     excerpt_id: ExcerptId,
-    active_layer: Option<OwnedSyntaxLayerInfo>,
+    active_layer: Option<OwnedSyntaxLayer>,
 }
 
 impl SyntaxTreeView {
@@ -477,7 +477,7 @@ impl SyntaxTreeToolbarItemView {
         })
     }
 
-    fn render_header(active_layer: &OwnedSyntaxLayerInfo) -> ButtonLike {
+    fn render_header(active_layer: &OwnedSyntaxLayer) -> ButtonLike {
         ButtonLike::new("syntax tree header")
             .child(Label::new(active_layer.language.name()))
             .child(Label::new(format_node_range(active_layer.node())))

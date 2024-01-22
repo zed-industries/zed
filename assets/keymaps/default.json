@@ -183,6 +183,7 @@
     "context": "Editor && mode == auto_height",
     "bindings": {
       "ctrl-enter": "editor::Newline",
+      "shift-enter": "editor::Newline",
       "ctrl-shift-enter": "editor::NewlineBelow"
     }
   },
@@ -349,7 +350,8 @@
       "alt-cmd-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
-      "alt-cmd-r": "editor::RevealInFinder"
+      "alt-cmd-r": "editor::RevealInFinder",
+      "ctrl-cmd-c": "editor::DisplayCursorNames"
     }
   },
   {

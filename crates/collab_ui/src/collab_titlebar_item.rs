@@ -85,7 +85,14 @@ impl Render for CollabTitlebarItem {
                     .gap_1()
                     .children(self.render_project_host(cx))
                     .child(self.render_project_name(cx))
-                    .child(div().pr_1().children(self.render_project_branch(cx)))
+                    .children(self.render_project_branch(cx)),
+            )
+            .child(
+                h_flex()
+                    .id("collaborator-list")
+                    .w_full()
+                    .gap_1()
+                    .overflow_x_scroll()
                     .when_some(
                         current_user.clone().zip(client.peer_id()).zip(room.clone()),
                         |this, ((current_user, peer_id), room)| {
@@ -495,7 +502,7 @@ impl CollabTitlebarItem {
                     div.rounded_md().bg(color)
                 })
                 .child(
-                    FacePile::default()
+                    FacePile::empty()
                         .child(
                             Avatar::new(user.avatar_uri.clone())
                                 .grayscale(!is_present)
@@ -547,8 +554,7 @@ impl CollabTitlebarItem {
                             )
                         } else {
                             None
-                        })
-                        .render(),
+                        }),
                 ),
         )
     }

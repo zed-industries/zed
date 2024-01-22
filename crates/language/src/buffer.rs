@@ -10,7 +10,7 @@ use crate::{
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
-        SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
+        SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
     CodeLabel, LanguageScope, Outline,
@@ -42,7 +42,13 @@ use std::{
 };
 use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
-pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
+use text::*;
+pub use text::{
+    Anchor, Bias, Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Edit, OffsetRangeExt,
+    OffsetUtf16, Patch, Point, PointUtf16, Rope, RopeFingerprint, Selection, SelectionGoal,
+    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
+    Transaction, TransactionId, Unclipped,
+};
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
@@ -54,15 +60,22 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 pub use lsp::DiagnosticSeverity;
 
 lazy_static! {
+    /// A label for the background task spawned by the buffer to compute
+    /// a diff against the contents of its file.
     pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
 }
 
+/// Indicate whether a [Buffer] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Capability {
+    /// The buffer is a mutable replica.
     ReadWrite,
+    /// The buffer is a read-only replica.
     ReadOnly,
 }
 
+/// An in-memory representation of a source code file, including its text,
+/// syntax trees, git status, and diagnostics.
 pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<String>,
@@ -99,9 +112,11 @@ pub struct Buffer {
     capability: Capability,
 }
 
+/// An immutable, cheaply cloneable representation of a fixed
+/// state of a buffer.
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    pub git_diff: git::diff::BufferDiff,
+    git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -114,25 +129,37 @@ pub struct BufferSnapshot {
     parse_count: usize,
 }
 
+/// The kind and amount of indentation in a particular line. For now,
+/// assumes that indentation is all the same character.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct IndentSize {
+    /// The number of bytes that comprise the indentation.
     pub len: u32,
+    /// The kind of whitespace used for indentation.
     pub kind: IndentKind,
 }
 
+/// A whitespace character that's used for indentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum IndentKind {
+    /// An ASCII space character.
     #[default]
     Space,
+    /// An ASCII tab character.
     Tab,
 }
 
+/// The shape of a selection cursor.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum CursorShape {
+    /// A vertical bar
     #[default]
     Bar,
+    /// A block that surrounds the following character
     Block,
+    /// An underline that runs along the following character
     Underscore,
+    /// A box drawn around the following character
     Hollow,
 }
 
@@ -144,25 +171,40 @@ struct SelectionSet {
     lamport_timestamp: clock::Lamport,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GroupId {
-    source: Arc<str>,
-    id: usize,
-}
-
+/// A diagnostic associated with a certain range of a buffer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
+    /// The name of the service that produced this diagnostic.
     pub source: Option<String>,
+    /// A machine-readable code that identifies this diagnostic.
     pub code: Option<String>,
+    /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
+    /// The human-readable message associated with this diagnostic.
     pub message: String,
+    /// An id that identifies the group to which this diagnostic belongs.
+    ///
+    /// When a language server produces a diagnostic with
+    /// one or more associated diagnostics, those diagnostics are all
+    /// assigned a single group id.
     pub group_id: usize,
-    pub is_valid: bool,
+    /// Whether this diagnostic is the primary diagnostic for its group.
+    ///
+    /// In a given group, the primary diagnostic is the top-level diagnostic
+    /// returned by the language server. The non-primary diagnostics are the
+    /// associated diagnostics.
     pub is_primary: bool,
+    /// Whether this diagnostic is considered to originate from an analysis of
+    /// files on disk, as opposed to any unsaved buffer contents. This is a
+    /// property of a given diagnostic source, and is configured for a given
+    /// language server via the [LspAdapter::disk_based_diagnostic_sources] method
+    /// for the language server.
     pub is_disk_based: bool,
+    /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
 }
 
+/// TODO - move this into the `project` crate and make it private.
 pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
@@ -194,77 +236,127 @@ pub async fn prepare_completion_documentation(
     }
 }
 
+/// Documentation associated with a [Completion].
 #[derive(Clone, Debug)]
 pub enum Documentation {
+    /// There is no documentation for this completion.
     Undocumented,
+    /// A single line of documentation.
     SingleLine(String),
+    /// Multiple lines of plain text documentation.
     MultiLinePlainText(String),
+    /// Markdown documentation.
     MultiLineMarkdown(ParsedMarkdown),
 }
 
+/// A completion provided by a language server
 #[derive(Clone, Debug)]
 pub struct Completion {
+    /// The range of the buffer that will be replaced.
     pub old_range: Range<Anchor>,
+    /// The new text that will be inserted.
     pub new_text: String,
+    /// A label for this completion that is shown in the menu.
     pub label: CodeLabel,
+    /// The id of the language server that produced this completion.
     pub server_id: LanguageServerId,
+    /// The documentation for this completion.
     pub documentation: Option<Documentation>,
+    /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
 }
 
+/// A code action provided by a language server.
 #[derive(Clone, Debug)]
 pub struct CodeAction {
+    /// The id of the language server that produced this code action.
     pub server_id: LanguageServerId,
+    /// The range of the buffer where this code action is applicable.
     pub range: Range<Anchor>,
+    /// The raw code action provided by the language server.
     pub lsp_action: lsp::CodeAction,
 }
 
+/// An operation used to synchronize this buffer with its other replicas.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
+    /// A text operation.
     Buffer(text::Operation),
 
+    /// An update to the buffer's diagnostics.
     UpdateDiagnostics {
+        /// The id of the language server that produced the new diagnostics.
         server_id: LanguageServerId,
+        /// The diagnostics.
         diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
+        /// The buffer's lamport timestamp.
         lamport_timestamp: clock::Lamport,
     },
 
+    /// An update to the most recent selections in this buffer.
     UpdateSelections {
+        /// The selections.
         selections: Arc<[Selection<Anchor>]>,
+        /// The buffer's lamport timestamp.
         lamport_timestamp: clock::Lamport,
+        /// Whether the selections are in 'line mode'.
         line_mode: bool,
+        /// The [CursorShape] associated with these selections.
         cursor_shape: CursorShape,
     },
 
+    /// An update to the characters that should trigger autocompletion
+    /// for this buffer.
     UpdateCompletionTriggers {
+        /// The characters that trigger autocompletion.
         triggers: Vec<String>,
+        /// The buffer's lamport timestamp.
         lamport_timestamp: clock::Lamport,
     },
 }
 
+/// An event that occurs in a buffer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
+    /// The buffer was changed in a way that must be
+    /// propagated to its other replicas.
     Operation(Operation),
+    /// The buffer was edited.
     Edited,
+    /// The buffer's `dirty` bit changed.
     DirtyChanged,
+    /// The buffer was saved.
     Saved,
+    /// The buffer's file was changed on disk.
     FileHandleChanged,
+    /// The buffer was reloaded.
     Reloaded,
+    /// The buffer's diff_base changed.
     DiffBaseChanged,
+    /// The buffer's language was changed.
     LanguageChanged,
+    /// The buffer's syntax trees were updated.
     Reparsed,
+    /// The buffer's diagnostics were updated.
     DiagnosticsUpdated,
+    /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
+    /// The buffer was explicitly requested to close.
     Closed,
 }
 
+/// The file associated with a buffer.
 pub trait File: Send + Sync {
+    /// Returns the [LocalFile] associated with this file, if the
+    /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
 
+    /// Returns whether this file is local.
     fn is_local(&self) -> bool {
         self.as_local().is_some()
     }
 
+    /// Returns the file's mtime.
     fn mtime(&self) -> SystemTime;
 
     /// Returns the path of this file relative to the worktree's root directory.
@@ -283,19 +375,25 @@ pub trait File: Send + Sync {
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self) -> usize;
 
+    /// Returns whether the file has been deleted.
     fn is_deleted(&self) -> bool;
 
+    /// Converts this file into an [Any] trait object.
     fn as_any(&self) -> &dyn Any;
 
+    /// Converts this file into a protobuf message.
     fn to_proto(&self) -> rpc::proto::File;
 }
 
+/// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
     /// Returns the absolute path of this file.
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
+    /// Loads the file's contents from disk.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 
+    /// Called when the buffer is reloaded from disk.
     fn buffer_reloaded(
         &self,
         buffer_id: u64,
@@ -307,6 +405,10 @@ pub trait LocalFile: File {
     );
 }
 
+/// The auto-indent behavior associated with an editing operation.
+/// For some editing operations, each affected line of text has its
+/// indentation recomputed. For other operations, the entire block
+/// of edited text is adjusted uniformly.
 #[derive(Clone, Debug)]
 pub enum AutoindentMode {
     /// Indent each line of inserted text.
@@ -354,6 +456,8 @@ struct BufferChunkHighlights<'a> {
     highlight_maps: Vec<HighlightMap>,
 }
 
+/// An iterator that yields chunks of a buffer's text, along with their
+/// syntax highlights and diagnostic status.
 pub struct BufferChunks<'a> {
     range: Range<usize>,
     chunks: text::Chunks<'a>,
@@ -366,16 +470,26 @@ pub struct BufferChunks<'a> {
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
+/// A chunk of a buffer's text, along with its syntax highlight and
+/// diagnostic status.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Chunk<'a> {
+    /// The text of the chunk.
     pub text: &'a str,
+    /// The syntax highlighting style of the chunk.
     pub syntax_highlight_id: Option<HighlightId>,
+    /// The highlight style that has been applied to this chunk in
+    /// the editor.
     pub highlight_style: Option<HighlightStyle>,
+    /// The severity of diagnostic associated with this chunk, if any.
     pub diagnostic_severity: Option<DiagnosticSeverity>,
+    /// Whether this chunk of text is marked as unnecessary.
     pub is_unnecessary: bool,
+    /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
 }
 
+/// A set of edits to a given version of a buffer, computed asynchronously.
 pub struct Diff {
     pub(crate) base_version: clock::Global,
     line_ending: LineEnding,
@@ -390,24 +504,19 @@ pub(crate) struct DiagnosticEndpoint {
     is_unnecessary: bool,
 }
 
+/// A class of characters, used for characterizing a run of text.
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub enum CharKind {
+    /// Whitespace.
     Whitespace,
+    /// Punctuation.
     Punctuation,
+    /// Word.
     Word,
 }
 
-impl CharKind {
-    pub fn coerce_punctuation(self, treat_punctuation_as_word: bool) -> Self {
-        if treat_punctuation_as_word && self == CharKind::Punctuation {
-            CharKind::Word
-        } else {
-            self
-        }
-    }
-}
-
 impl Buffer {
+    /// Create a new buffer with the given base text.
     pub fn new<T: Into<String>>(replica_id: ReplicaId, id: u64, base_text: T) -> Self {
         Self::build(
             TextBuffer::new(replica_id, id, base_text.into()),
@@ -417,6 +526,7 @@ impl Buffer {
         )
     }
 
+    /// Create a new buffer that is a replica of a remote buffer.
     pub fn remote(
         remote_id: u64,
         replica_id: ReplicaId,
@@ -431,6 +541,8 @@ impl Buffer {
         )
     }
 
+    /// Create a new buffer that is a replica of a remote buffer, populating its
+    /// state from the given protobuf message.
     pub fn from_proto(
         replica_id: ReplicaId,
         capability: Capability,
@@ -457,6 +569,7 @@ impl Buffer {
         Ok(this)
     }
 
+    /// Serialize the buffer's state to a protobuf message.
     pub fn to_proto(&self) -> proto::BufferState {
         proto::BufferState {
             id: self.remote_id(),
@@ -470,6 +583,7 @@ impl Buffer {
         }
     }
 
+    /// Serialize as protobufs all of the changes to the buffer since the given version.
     pub fn serialize_ops(
         &self,
         since: Option<clock::Global>,
@@ -516,19 +630,23 @@ impl Buffer {
         })
     }
 
+    /// Assign a language to the buffer, returning the buffer.
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
         self.set_language(Some(language), cx);
         self
     }
 
+    /// Returns the [Capability] of this buffer.
     pub fn capability(&self) -> Capability {
         self.capability
     }
 
+    /// Whether this buffer can only be read.
     pub fn read_only(&self) -> bool {
         self.capability == Capability::ReadOnly
     }
 
+    /// Builds a [Buffer] with the given underlying [TextBuffer], diff base, [File] and [Capability].
     pub fn build(
         buffer: TextBuffer,
         diff_base: Option<String>,
@@ -573,6 +691,8 @@ impl Buffer {
         }
     }
 
+    /// Retrieve a snapshot of the buffer's current state. This is computationally
+    /// cheap, and allows reading from the buffer on a background thread.
     pub fn snapshot(&self) -> BufferSnapshot {
         let text = self.text.snapshot();
         let mut syntax_map = self.syntax_map.lock();
@@ -595,30 +715,38 @@ impl Buffer {
         }
     }
 
-    pub fn as_text_snapshot(&self) -> &text::BufferSnapshot {
+    #[cfg(test)]
+    pub(crate) fn as_text_snapshot(&self) -> &text::BufferSnapshot {
         &self.text
     }
 
+    /// Retrieve a snapshot of the buffer's raw text, without any
+    /// language-related state like the syntax tree or diagnostics.
     pub fn text_snapshot(&self) -> text::BufferSnapshot {
         self.text.snapshot()
     }
 
+    /// The file associated with the buffer, if any.
     pub fn file(&self) -> Option<&Arc<dyn File>> {
         self.file.as_ref()
     }
 
+    /// The version of the buffer that was last saved or reloaded from disk.
     pub fn saved_version(&self) -> &clock::Global {
         &self.saved_version
     }
 
+    /// The fingerprint of the buffer's text when the buffer was last saved or reloaded from disk.
     pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
         self.file_fingerprint
     }
 
+    /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
     pub fn saved_mtime(&self) -> SystemTime {
         self.saved_mtime
     }
 
+    /// Assign a language to the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
         self.syntax_map.lock().clear();
         self.language = language;
@@ -626,17 +754,21 @@ impl Buffer {
         cx.emit(Event::LanguageChanged);
     }
 
+    /// Assign a language registry to the buffer. This allows the buffer to retrieve
+    /// other languages if parts of the buffer are written in different languages.
     pub fn set_language_registry(&mut self, language_registry: Arc<LanguageRegistry>) {
         self.syntax_map
             .lock()
             .set_language_registry(language_registry);
     }
 
+    /// Assign the buffer a new [Capability].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
         self.capability = capability;
         cx.emit(Event::CapabilityChanged)
     }
 
+    /// This method is called to signal that the buffer has been saved.
     pub fn did_save(
         &mut self,
         version: clock::Global,
@@ -651,6 +783,7 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Reloads the contents of the buffer from disk.
     pub fn reload(
         &mut self,
         cx: &mut ModelContext<Self>,
@@ -699,6 +832,7 @@ impl Buffer {
         rx
     }
 
+    /// This method is called to signal that the buffer has been reloaded.
     pub fn did_reload(
         &mut self,
         version: clock::Global,
@@ -725,6 +859,8 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Updates the [File] backing this buffer. This should be called when
+    /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
         let mut file_changed = false;
 
@@ -762,16 +898,20 @@ impl Buffer {
         }
     }
 
+    /// Returns the current diff base, see [Buffer::set_diff_base].
     pub fn diff_base(&self) -> Option<&str> {
         self.diff_base.as_deref()
     }
 
+    /// Sets the text that will be used to compute a Git diff
+    /// against the buffer text.
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
         self.git_diff_recalc(cx);
         cx.emit(Event::DiffBaseChanged);
     }
 
+    /// Recomputes the Git diff status.
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
         let diff_base = self.diff_base.clone()?; // TODO: Make this an Arc
         let snapshot = self.snapshot();
@@ -792,14 +932,12 @@ impl Buffer {
         }))
     }
 
-    pub fn close(&mut self, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::Closed);
-    }
-
+    /// Returns the primary [Language] assigned to this [Buffer].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
 
+    /// Returns the [Language] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
         self.syntax_map
@@ -810,31 +948,39 @@ impl Buffer {
             .or_else(|| self.language.clone())
     }
 
+    /// The number of times the buffer was parsed.
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
 
+    /// The number of times selections were updated.
     pub fn selections_update_count(&self) -> usize {
         self.selections_update_count
     }
 
+    /// The number of times diagnostics were updated.
     pub fn diagnostics_update_count(&self) -> usize {
         self.diagnostics_update_count
     }
 
+    /// The number of times the underlying file was updated.
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
 
+    /// The number of times the git diff status was updated.
     pub fn git_diff_update_count(&self) -> usize {
         self.git_diff_update_count
     }
 
+    /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
         self.parsing_in_background
     }
 
+    /// Indicates whether the buffer contains any regions that may be
+    /// written in a language that hasn't been loaded yet.
     pub fn contains_unknown_injections(&self) -> bool {
         self.syntax_map.lock().contains_unknown_injections()
     }
@@ -941,6 +1087,7 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Assign to the buffer a set of diagnostics created by a given language server.
     pub fn update_diagnostics(
         &mut self,
         server_id: LanguageServerId,
@@ -1170,9 +1317,9 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
-    // Create a minimal edit that will cause the the given row to be indented
-    // with the given size. After applying this edit, the length of the line
-    // will always be at least `new_size.len`.
+    /// Create a minimal edit that will cause the the given row to be indented
+    /// with the given size. After applying this edit, the length of the line
+    /// will always be at least `new_size.len`.
     pub fn edit_for_indent_size_adjustment(
         row: u32,
         current_size: IndentSize,
@@ -1207,6 +1354,8 @@ impl Buffer {
         }
     }
 
+    /// Spawns a background task that asynchronously computes a `Diff` between the buffer's text
+    /// and the given new text.
     pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
@@ -1278,7 +1427,7 @@ impl Buffer {
             })
     }
 
-    /// Spawn a background task that searches the buffer for any whitespace
+    /// Spawns a background task that searches the buffer for any whitespace
     /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
     pub fn remove_trailing_whitespace(&self, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
@@ -1298,7 +1447,7 @@ impl Buffer {
         })
     }
 
-    /// Ensure that the buffer ends with a single newline character, and
+    /// Ensures that the buffer ends with a single newline character, and
     /// no other whitespace.
     pub fn ensure_final_newline(&mut self, cx: &mut ModelContext<Self>) {
         let len = self.len();
@@ -1319,7 +1468,7 @@ impl Buffer {
         self.edit([(offset..len, "\n")], None, cx);
     }
 
-    /// Apply a diff to the buffer. If the buffer has changed since the given diff was
+    /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
     pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -1358,11 +1507,14 @@ impl Buffer {
         self.end_transaction(cx)
     }
 
+    /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.file_fingerprint != self.as_rope().fingerprint()
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
+    /// Checks if the buffer and its file have both changed since the buffer
+    /// was last saved or reloaded.
     pub fn has_conflict(&self) -> bool {
         self.file_fingerprint != self.as_rope().fingerprint()
             && self
@@ -1371,14 +1523,23 @@ impl Buffer {
                 .map_or(false, |file| file.mtime() > self.saved_mtime)
     }
 
+    /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
     pub fn subscribe(&mut self) -> Subscription {
         self.text.subscribe()
     }
 
+    /// Starts a transaction, if one is not already in-progress. When undoing or
+    /// redoing edits, all of the edits performed within a transaction are undone
+    /// or redone together.
     pub fn start_transaction(&mut self) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now())
     }
 
+    /// Starts a transaction, providing the current time. Subsequent transactions
+    /// that occur within a short period of time will be grouped together. This
+    /// is controlled by the buffer's undo grouping duration.
+    ///
+    /// See [`Buffer::set_group_interval`].
     pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.was_dirty_before_starting_transaction.is_none() {
@@ -1387,10 +1548,16 @@ impl Buffer {
         self.text.start_transaction_at(now)
     }
 
+    /// Terminates the current transaction, if this is the outermost transaction.
     pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         self.end_transaction_at(Instant::now(), cx)
     }
 
+    /// Terminates the current transaction, providing the current time. Subsequent transactions
+    /// that occur within a short period of time will be grouped together. This
+    /// is controlled by the buffer's undo grouping duration.
+    ///
+    /// See [`Buffer::set_group_interval`].
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
@@ -1411,26 +1578,33 @@ impl Buffer {
         }
     }
 
+    /// Manually add a transaction to the buffer's undo history.
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.text.push_transaction(transaction, now);
     }
 
+    /// Prevent the last transaction from being grouped with any subsequent transactions,
+    /// even if they occur with the buffer's undo grouping duration.
     pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
         self.text.finalize_last_transaction()
     }
 
+    /// Manually group all changes since a given transaction.
     pub fn group_until_transaction(&mut self, transaction_id: TransactionId) {
         self.text.group_until_transaction(transaction_id);
     }
 
+    /// Manually remove a transaction from the buffer's undo history
     pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
         self.text.forget_transaction(transaction_id);
     }
 
+    /// Manually merge two adjacent transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
     }
 
+    /// Waits for the buffer to receive operations with the given timestamps.
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Lamport>,
@@ -1438,6 +1612,7 @@ impl Buffer {
         self.text.wait_for_edits(edit_ids)
     }
 
+    /// Waits for the buffer to receive the operations necessary for resolving the given anchors.
     pub fn wait_for_anchors(
         &mut self,
         anchors: impl IntoIterator<Item = Anchor>,
@@ -1445,14 +1620,18 @@ impl Buffer {
         self.text.wait_for_anchors(anchors)
     }
 
+    /// Waits for the buffer to receive operations up to the given version.
     pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
         self.text.wait_for_version(version)
     }
 
+    /// Forces all futures returned by [`Buffer::wait_for_version`], [`Buffer::wait_for_edits`], or
+    /// [`Buffer::wait_for_version`] to resolve with an error.
     pub fn give_up_waiting(&mut self) {
         self.text.give_up_waiting();
     }
 
+    /// Stores a set of selections that should be broadcasted to all of the buffer's replicas.
     pub fn set_active_selections(
         &mut self,
         selections: Arc<[Selection<Anchor>]>,
@@ -1481,6 +1660,8 @@ impl Buffer {
         );
     }
 
+    /// Clears the selections, so that other replicas of the buffer do not see any selections for
+    /// this replica.
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
         if self
             .remote_selections
@@ -1491,6 +1672,7 @@ impl Buffer {
         }
     }
 
+    /// Replaces the buffer's entire text.
     pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Lamport>
     where
         T: Into<Arc<str>>,
@@ -1499,6 +1681,15 @@ impl Buffer {
         self.edit([(0..self.len(), text)], None, cx)
     }
 
+    /// Applies the given edits to the buffer. Each edit is specified as a range of text to
+    /// delete, and a string of text to insert at that location.
+    ///
+    /// If an [`AutoindentMode`] is provided, then the buffer will enqueue an auto-indent
+    /// request for the edited ranges, which will be processed when the buffer finishes
+    /// parsing.
+    ///
+    /// Parsing takes place at the end of a transaction, and may compute synchronously
+    /// or asynchronously, depending on the changes.
     pub fn edit<I, S, T>(
         &mut self,
         edits_iter: I,
@@ -1632,6 +1823,7 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Applies the given remote operations to the buffer.
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,
         ops: I,
@@ -1779,11 +1971,13 @@ impl Buffer {
         cx.emit(Event::Operation(operation));
     }
 
+    /// Removes the selections for a given peer.
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
         self.remote_selections.remove(&replica_id);
         cx.notify();
     }
 
+    /// Undoes the most recent transaction.
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1797,6 +1991,7 @@ impl Buffer {
         }
     }
 
+    /// Manually undoes a specific transaction in the buffer's undo history.
     pub fn undo_transaction(
         &mut self,
         transaction_id: TransactionId,
@@ -1813,6 +2008,7 @@ impl Buffer {
         }
     }
 
+    /// Manually undoes all changes after a given transaction in the buffer's undo history.
     pub fn undo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
@@ -1832,6 +2028,7 @@ impl Buffer {
         undone
     }
 
+    /// Manually redoes a specific transaction in the buffer's redo history.
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1845,6 +2042,7 @@ impl Buffer {
         }
     }
 
+    /// Manually undoes all changes until a given transaction in the buffer's redo history.
     pub fn redo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
@@ -1864,6 +2062,7 @@ impl Buffer {
         redone
     }
 
+    /// Override current completion triggers with the user-provided completion triggers.
     pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
         self.completion_triggers = triggers.clone();
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
@@ -1877,11 +2076,14 @@ impl Buffer {
         cx.notify();
     }
 
+    /// Returns a list of strings which trigger a completion menu for this language.
+    /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
     }
 }
 
+#[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
     pub fn edit_via_marked_text(
@@ -1954,10 +2156,12 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
+    /// Returns [`IndentSize`] for a given line that respects user settings and /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         indent_size_for_line(self, row)
     }
-
+    /// Returns [`IndentSize`] for a given position that respects user settings
+    /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
         let settings = language_settings(self.language_at(position), self.file(), cx);
         if settings.hard_tabs {
@@ -1967,6 +2171,8 @@ impl BufferSnapshot {
         }
     }
 
+    /// Retrieve the suggested indent size for all of the given rows. The unit of indentation
+    /// is passed in as `single_indent_size`.
     pub fn suggested_indents(
         &self,
         rows: impl Iterator<Item = u32>,
@@ -2213,6 +2419,10 @@ impl BufferSnapshot {
         None
     }
 
+    /// Iterates over chunks of text in the given range of the buffer. Text is chunked
+    /// in an arbitrary way due to being stored in a [`rope::Rope`]. The text is also
+    /// returned in chunks where each chunk has a single syntax highlighting style and
+    /// diagnostic status.
     pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
@@ -2249,7 +2459,9 @@ impl BufferSnapshot {
         BufferChunks::new(self.text.as_rope(), range, syntax, diagnostic_endpoints)
     }
 
-    pub fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
+    /// Invokes the given callback for each line of text in the given range of the buffer.
+    /// Uses callback to avoid allocating a string for each line.
+    fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
         let mut line = String::new();
         let mut row = range.start.row;
         for chunk in self
@@ -2268,11 +2480,12 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayerInfo> + '_ {
+    /// Iterates over every [`SyntaxLayer`] in the buffer.
+    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer> + '_ {
         self.syntax.layers_for_range(0..self.len(), &self.text)
     }
 
-    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayerInfo> {
+    fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text)
@@ -2280,12 +2493,14 @@ impl BufferSnapshot {
             .last()
     }
 
+    /// Returns the [Language] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
         self.syntax_layer_at(position)
             .map(|info| info.language)
             .or(self.language.as_ref())
     }
 
+    /// Returns the settings for the language at the given location.
     pub fn settings_at<'a, D: ToOffset>(
         &self,
         position: D,
@@ -2294,6 +2509,7 @@ impl BufferSnapshot {
         language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 
+    /// Returns the [LanguageScope] at the given location.
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
         let mut scope = None;
@@ -2338,6 +2554,8 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns a tuple of the range and character kind of the word
+    /// surrounding the given position.
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
@@ -2370,6 +2588,7 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
+    /// Returns the range for the closes syntax node enclosing the given range.
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<Range<usize>> = None;
@@ -2438,11 +2657,19 @@ impl BufferSnapshot {
         result
     }
 
+    /// Returns the outline for the buffer.
+    ///
+    /// This method allows passing an optional [SyntaxTheme] to
+    /// syntax-highlight the returned symbols.
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         self.outline_items_containing(0..self.len(), true, theme)
             .map(Outline::new)
     }
 
+    /// Returns all the symbols that contain the given position.
+    ///
+    /// This method allows passing an optional [SyntaxTheme] to
+    /// syntax-highlight the returned symbols.
     pub fn symbols_containing<T: ToOffset>(
         &self,
         position: T,
@@ -2594,6 +2821,8 @@ impl BufferSnapshot {
         Some(items)
     }
 
+    /// For each grammar in the language, runs the provided
+    /// [tree_sitter::Query] against the given range.
     pub fn matches(
         &self,
         range: Range<usize>,
@@ -2650,6 +2879,7 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
     pub fn remote_selections_in_range(
         &self,
@@ -2688,6 +2918,13 @@ impl BufferSnapshot {
             })
     }
 
+    /// Whether the buffer contains any git changes.
+    pub fn has_git_diff(&self) -> bool {
+        !self.git_diff.is_empty()
+    }
+
+    /// Returns all the Git diff hunks intersecting the given
+    /// row range.
     pub fn git_diff_hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
@@ -2695,6 +2932,8 @@ impl BufferSnapshot {
         self.git_diff.hunks_in_row_range(range, self)
     }
 
+    /// Returns all the Git diff hunks intersecting the given
+    /// range.
     pub fn git_diff_hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -2702,6 +2941,8 @@ impl BufferSnapshot {
         self.git_diff.hunks_intersecting_range(range, self)
     }
 
+    /// Returns all the Git diff hunks intersecting the given
+    /// range, in reverse order.
     pub fn git_diff_hunks_intersecting_range_rev<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -2709,6 +2950,7 @@ impl BufferSnapshot {
         self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 
+    /// Returns all the diagnostics intersecting the given range.
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
@@ -2738,6 +2980,9 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns all the diagnostic groups associated with the given
+    /// language server id. If no language server id is provided,
+    /// all diagnostics groups are returned.
     pub fn diagnostic_groups(
         &self,
         language_server_id: Option<LanguageServerId>,
@@ -2762,12 +3007,13 @@ impl BufferSnapshot {
         groups.sort_by(|(id_a, group_a), (id_b, group_b)| {
             let a_start = &group_a.entries[group_a.primary_ix].range.start;
             let b_start = &group_b.entries[group_b.primary_ix].range.start;
-            a_start.cmp(b_start, self).then_with(|| id_a.cmp(&id_b))
+            a_start.cmp(b_start, self).then_with(|| id_a.cmp(id_b))
         });
 
         groups
     }
 
+    /// Returns an iterator over the diagnostics for the given group.
     pub fn diagnostic_group<'a, O>(
         &'a self,
         group_id: usize,
@@ -2780,22 +3026,27 @@ impl BufferSnapshot {
             .flat_map(move |(_, set)| set.group(group_id, self))
     }
 
+    /// The number of times diagnostics were updated.
     pub fn diagnostics_update_count(&self) -> usize {
         self.diagnostics_update_count
     }
 
+    /// The number of times the buffer was parsed.
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
 
+    /// The number of times selections were updated.
     pub fn selections_update_count(&self) -> usize {
         self.selections_update_count
     }
 
+    /// Returns a snapshot of underlying file.
     pub fn file(&self) -> Option<&Arc<dyn File>> {
         self.file.as_ref()
     }
 
+    /// Resolves the file path (relative to the worktree root) associated with the underlying file.
     pub fn resolve_file_path(&self, cx: &AppContext, include_root: bool) -> Option<PathBuf> {
         if let Some(file) = self.file() {
             if file.path().file_name().is_none() || include_root {
@@ -2808,10 +3059,12 @@ impl BufferSnapshot {
         }
     }
 
+    /// The number of times the underlying file was updated.
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
 
+    /// The number of times the git diff status was updated.
     pub fn git_diff_update_count(&self) -> usize {
         self.git_diff_update_count
     }
@@ -2821,7 +3074,7 @@ fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
     indent_size_for_text(text.chars_at(Point::new(row, 0)))
 }
 
-pub fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
+fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
     let mut result = IndentSize::spaces(0);
     for c in text {
         let kind = match c {
@@ -2899,6 +3152,7 @@ impl<'a> BufferChunks<'a> {
         }
     }
 
+    /// Seeks to the given byte offset in the buffer.
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
@@ -2922,6 +3176,7 @@ impl<'a> BufferChunks<'a> {
         }
     }
 
+    /// The current byte offset in the buffer.
     pub fn offset(&self) -> usize {
         self.range.start
     }
@@ -3074,7 +3329,6 @@ impl Default for Diagnostic {
             message: Default::default(),
             group_id: 0,
             is_primary: false,
-            is_valid: true,
             is_disk_based: false,
             is_unnecessary: false,
         }
@@ -3082,6 +3336,7 @@ impl Default for Diagnostic {
 }
 
 impl IndentSize {
+    /// Returns an [IndentSize] representing the given spaces.
     pub fn spaces(len: u32) -> Self {
         Self {
             len,
@@ -3089,6 +3344,7 @@ impl IndentSize {
         }
     }
 
+    /// Returns an [IndentSize] representing a tab.
     pub fn tab() -> Self {
         Self {
             len: 1,
@@ -3096,10 +3352,12 @@ impl IndentSize {
         }
     }
 
+    /// An iterator over the characters represented by this [IndentSize].
     pub fn chars(&self) -> impl Iterator<Item = char> {
         iter::repeat(self.char()).take(self.len as usize)
     }
 
+    /// The character representation of this [IndentSize].
     pub fn char(&self) -> char {
         match self.kind {
             IndentKind::Space => ' ',
@@ -3107,6 +3365,8 @@ impl IndentSize {
         }
     }
 
+    /// Consumes the current [IndentSize] and returns a new one that has
+    /// been shrunk or enlarged by the given size along the given direction.
     pub fn with_delta(mut self, direction: Ordering, size: IndentSize) -> Self {
         match direction {
             Ordering::Less => {
@@ -3128,6 +3388,8 @@ impl IndentSize {
 }
 
 impl Completion {
+    /// A key that can be used to sort completions when displaying
+    /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
         let kind_key = match self.lsp_completion.kind {
             Some(lsp::CompletionItemKind::VARIABLE) => 0,
@@ -3136,12 +3398,13 @@ impl Completion {
         (kind_key, &self.label.text[self.label.filter_range.clone()])
     }
 
+    /// Whether this completion is a snippet.
     pub fn is_snippet(&self) -> bool {
         self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 
-pub fn contiguous_ranges(
+pub(crate) fn contiguous_ranges(
     values: impl Iterator<Item = u32>,
     max_len: usize,
 ) -> impl Iterator<Item = Range<u32>> {
@@ -3167,6 +3430,9 @@ pub fn contiguous_ranges(
     })
 }
 
+/// Returns the [CharKind] for the given character. When a scope is provided,
+/// the function checks if the character is considered a word character
+/// based on the language scope's word character settings.
 pub fn char_kind(scope: &Option<LanguageScope>, c: char) -> CharKind {
     if c.is_whitespace() {
         return CharKind::Whitespace;

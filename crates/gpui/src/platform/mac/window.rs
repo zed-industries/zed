@@ -1,9 +1,9 @@
-use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
+use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
+    Bounds, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
     PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
@@ -220,7 +220,7 @@ unsafe fn build_classes() {
     };
 }
 
-pub fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
+pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
         // MacOS screen coordinates are relative to bottom left
@@ -327,7 +327,7 @@ struct MacWindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
-    input_handler: Option<Box<dyn PlatformInputHandler>>,
+    input_handler: Option<PlatformInputHandler>,
     pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
@@ -411,10 +411,8 @@ impl MacWindowState {
     }
 
     fn frame(&self) -> Bounds<GlobalPixels> {
-        unsafe {
-            let frame = NSWindow::frame(self.native_window);
-            display_bounds_from_native(mem::transmute::<NSRect, CGRect>(frame))
-        }
+        let frame = unsafe { NSWindow::frame(self.native_window) };
+        global_bounds_from_ns_rect(frame)
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -448,7 +446,7 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-pub struct MacWindow(Arc<Mutex<MacWindowState>>);
+pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
     pub fn open(
@@ -515,25 +513,6 @@ impl MacWindow {
                 registerForDraggedTypes:
                     NSArray::arrayWithObject(nil, NSFilenamesPboardType)
             ];
-
-            let screen = native_window.screen();
-            match options.bounds {
-                WindowBounds::Fullscreen => {
-                    native_window.toggleFullScreen_(nil);
-                }
-                WindowBounds::Maximized => {
-                    native_window.setFrame_display_(screen.visibleFrame(), YES);
-                }
-                WindowBounds::Fixed(bounds) => {
-                    let display_bounds = display.bounds();
-                    let frame = if bounds.intersects(&display_bounds) {
-                        display_bounds_to_native(bounds)
-                    } else {
-                        display_bounds_to_native(display_bounds)
-                    };
-                    native_window.setFrame_display_(mem::transmute::<CGRect, NSRect>(frame), YES);
-                }
-            }
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
@@ -656,6 +635,27 @@ impl MacWindow {
                 native_window.orderFront_(nil);
             }
 
+            let screen = native_window.screen();
+            match options.bounds {
+                WindowBounds::Fullscreen => {
+                    // We need to toggle full screen asynchronously as doing so may
+                    // call back into the platform handlers.
+                    window.toggle_full_screen()
+                }
+                WindowBounds::Maximized => {
+                    native_window.setFrame_display_(screen.visibleFrame(), YES);
+                }
+                WindowBounds::Fixed(bounds) => {
+                    let display_bounds = display.bounds();
+                    let frame = if bounds.intersects(&display_bounds) {
+                        global_bounds_to_ns_rect(bounds)
+                    } else {
+                        global_bounds_to_ns_rect(display_bounds)
+                    };
+                    native_window.setFrame_display_(frame, YES);
+                }
+            }
+
             window.0.lock().move_traffic_light();
             pool.drain();
 
@@ -764,11 +764,11 @@ impl PlatformWindow for MacWindow {
         self
     }
 
-    fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>) {
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
-    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>> {
+    fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.0.as_ref().lock().input_handler.take()
     }
 
@@ -1003,9 +1003,21 @@ impl PlatformWindow for MacWindow {
 }
 
 fn get_scale_factor(native_window: id) -> f32 {
-    unsafe {
+    let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
         NSScreen::backingScaleFactor(screen) as f32
+    };
+
+    // We are not certain what triggers this, but it seems that sometimes
+    // this method would return 0 (https://github.com/zed-industries/community/issues/2422)
+    // It seems most likely that this would happen if the window has no screen
+    // (if it is off-screen), though we'd expect to see viewDidChangeBackingProperties before
+    // it was rendered for real.
+    // Regardless, attempt to avoid the issue here.
+    if factor == 0.0 {
+        2.
+    } else {
+        factor
     }
 }
 
@@ -1542,9 +1554,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 replacement_range,
                 text: text.to_string(),
             });
-            if text.to_string().to_ascii_lowercase() != pending_key_down.0.keystroke.key {
-                pending_key_down.0.keystroke.ime_key = Some(text.to_string());
-            }
+            pending_key_down.0.keystroke.ime_key = Some(text.to_string());
             window_state.lock().pending_key_down = Some(pending_key_down);
         }
     }
@@ -1761,13 +1771,13 @@ fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) 
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
 where
-    F: FnOnce(&mut dyn PlatformInputHandler) -> R,
+    F: FnOnce(&mut PlatformInputHandler) -> R,
 {
     let window_state = unsafe { get_window_state(window) };
     let mut lock = window_state.as_ref().lock();
     if let Some(mut input_handler) = lock.input_handler.take() {
         drop(lock);
-        let result = f(input_handler.as_mut());
+        let result = f(&mut input_handler);
         window_state.lock().input_handler = Some(input_handler);
         Some(result)
     } else {

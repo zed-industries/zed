@@ -1,19 +1,23 @@
 use std::sync::Arc;
 
 use crate::{
-    point, size, BorrowWindow, Bounds, DevicePixels, Element, ImageData, InteractiveElement,
+    point, size, Bounds, DevicePixels, Element, ElementContext, ImageData, InteractiveElement,
     InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUrl, Size,
-    StyleRefinement, Styled, WindowContext,
+    StyleRefinement, Styled,
 };
 use futures::FutureExt;
 use media::core_video::CVImageBuffer;
 use util::ResultExt;
 
+/// A source of image content.
 #[derive(Clone, Debug)]
 pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
     Uri(SharedUrl),
+    /// Cached image data
     Data(Arc<ImageData>),
+    // TODO: move surface definitions into mac platform module
+    /// A CoreVideo image buffer
     Surface(CVImageBuffer),
 }
 
@@ -47,12 +51,14 @@ impl From<CVImageBuffer> for ImageSource {
     }
 }
 
+/// An image element.
 pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     grayscale: bool,
 }
 
+/// Create a new image element.
 pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
         interactivity: Interactivity::default(),
@@ -62,6 +68,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
 }
 
 impl Img {
+    /// Set the image to be displayed in grayscale.
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
         self
@@ -74,7 +81,7 @@ impl Element for Img {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.interactivity
             .layout(element_state, cx, |style, cx| cx.request_layout(&style, []))
@@ -84,7 +91,7 @@ impl Element for Img {
         &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let source = self.source.clone();
         self.interactivity.paint(

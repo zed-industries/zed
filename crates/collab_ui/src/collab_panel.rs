@@ -20,7 +20,7 @@ use gpui::{
     Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString, Styled,
     Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace,
 };
-use menu::{Cancel, Confirm, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use rpc::proto::{self, PeerId};
 use serde_derive::{Deserialize, Serialize};
@@ -1124,7 +1124,7 @@ impl CollabPanel {
                     )
                     .entry(
                         "Rename",
-                        None,
+                        Some(Box::new(SecondaryConfirm)),
                         cx.handler_for(&this, move |this, cx| this.rename_channel(channel_id, cx)),
                     )
                     .entry(
@@ -1492,7 +1492,7 @@ impl CollabPanel {
         }
     }
 
-    fn rename_selected_channel(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+    fn rename_selected_channel(&mut self, _: &SecondaryConfirm, cx: &mut ViewContext<Self>) {
         if let Some(channel) = self.selected_channel() {
             self.rename_channel(channel.id, cx);
         }
@@ -2214,15 +2214,15 @@ impl CollabPanel {
 
         let face_pile = if !participants.is_empty() {
             let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
-            let result = FacePile {
-                faces: participants
+            let result = FacePile::new(
+                participants
                     .iter()
                     .map(|user| Avatar::new(user.avatar_uri.clone()).into_any_element())
                     .take(FACEPILE_LIMIT)
                     .chain(if extra_count > 0 {
                         Some(
                             div()
-                                .ml_1()
+                                .ml_2()
                                 .child(Label::new(format!("+{extra_count}")))
                                 .into_any_element(),
                         )
@@ -2230,7 +2230,7 @@ impl CollabPanel {
                         None
                     })
                     .collect::<SmallVec<_>>(),
-            };
+            );
 
             Some(result)
         } else {
@@ -2295,7 +2295,7 @@ impl CollabPanel {
                         h_flex()
                             .id(channel_id as usize)
                             .child(Label::new(channel.name.clone()))
-                            .children(face_pile.map(|face_pile| face_pile.render().p_1())),
+                            .children(face_pile.map(|face_pile| face_pile.p_1())),
                     ),
             )
             .child(

@@ -1,4 +1,10 @@
-use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
+use crate::{
+    motion::Motion,
+    object::Object,
+    state::Mode,
+    utils::{coerce_punctuation, copy_selections_content},
+    Vim,
+};
 use editor::{
     display_map::DisplaySnapshot,
     movement::{self, FindRange, TextLayoutDetails},
@@ -102,9 +108,9 @@ fn expand_changed_word_selection(
         if in_word {
             selection.end =
                 movement::find_boundary(map, selection.end, FindRange::MultiLine, |left, right| {
-                    let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
+                    let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
                     let right_kind =
-                        char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
+                        coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
 
                     left_kind != right_kind && left_kind != CharKind::Whitespace
                 });

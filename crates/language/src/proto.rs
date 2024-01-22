@@ -1,3 +1,5 @@
+//! Handles conversions of `language` items to and from the [`rpc`] protocol.
+
 use crate::{
     diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, CursorShape, Diagnostic,
     Language,
@@ -11,15 +13,18 @@ use text::*;
 
 pub use proto::{BufferState, Operation};
 
+/// Serializes a [`RopeFingerprint`] to be sent over RPC.
 pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
     fingerprint.to_hex()
 }
 
+/// Deserializes a [`RopeFingerprint`] from the RPC representation.
 pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
     RopeFingerprint::from_hex(fingerprint)
         .map_err(|error| anyhow!("invalid fingerprint: {}", error))
 }
 
+/// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
         proto::LineEnding::Unix => text::LineEnding::Unix,
@@ -27,6 +32,7 @@ pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     }
 }
 
+/// Serializes a [`text::LineEnding`] to be sent over RPC.
 pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     match message {
         text::LineEnding::Unix => proto::LineEnding::Unix,
@@ -34,6 +40,7 @@ pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     }
 }
 
+/// Serializes a [`crate::Operation`] to be sent over RPC.
 pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
     proto::Operation {
         variant: Some(match operation {
@@ -96,6 +103,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
     }
 }
 
+/// Serializes an [`operation::EditOperation`] to be sent over RPC.
 pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::Edit {
     proto::operation::Edit {
         replica_id: operation.timestamp.replica_id as u32,
@@ -110,6 +118,7 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
     }
 }
 
+/// Serializes an entry in the undo map to be sent over RPC.
 pub fn serialize_undo_map_entry(
     (edit_id, counts): (&clock::Lamport, &[(clock::Lamport, u32)]),
 ) -> proto::UndoMapEntry {
@@ -127,6 +136,7 @@ pub fn serialize_undo_map_entry(
     }
 }
 
+/// Splits the given list of operations into chunks.
 pub fn split_operations(
     mut operations: Vec<proto::Operation>,
 ) -> impl Iterator<Item = Vec<proto::Operation>> {
@@ -152,10 +162,12 @@ pub fn split_operations(
     })
 }
 
+/// Serializes selections to be sent over RPC.
 pub fn serialize_selections(selections: &Arc<[Selection<Anchor>]>) -> Vec<proto::Selection> {
     selections.iter().map(serialize_selection).collect()
 }
 
+/// Serializes a [`Selection`] to be sent over RPC.
 pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
@@ -171,6 +183,7 @@ pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
     }
 }
 
+/// Serializes a [`CursorShape`] to be sent over RPC.
 pub fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape {
     match cursor_shape {
         CursorShape::Bar => proto::CursorShape::CursorBar,
@@ -180,6 +193,7 @@ pub fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape 
     }
 }
 
+/// Deserializes a [`CursorShape`] from the RPC representation.
 pub fn deserialize_cursor_shape(cursor_shape: proto::CursorShape) -> CursorShape {
     match cursor_shape {
         proto::CursorShape::CursorBar => CursorShape::Bar,
@@ -189,6 +203,7 @@ pub fn deserialize_cursor_shape(cursor_shape: proto::CursorShape) -> CursorShape
     }
 }
 
+/// Serializes a list of diagnostics to be sent over RPC.
 pub fn serialize_diagnostics<'a>(
     diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<Anchor>>,
 ) -> Vec<proto::Diagnostic> {
@@ -208,7 +223,7 @@ pub fn serialize_diagnostics<'a>(
             } as i32,
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
-            is_valid: entry.diagnostic.is_valid,
+            is_valid: true,
             code: entry.diagnostic.code.clone(),
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,
@@ -216,6 +231,7 @@ pub fn serialize_diagnostics<'a>(
         .collect()
 }
 
+/// Serializes an [`Anchor`] to be sent over RPC.
 pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
     proto::Anchor {
         replica_id: anchor.timestamp.replica_id as u32,
@@ -230,6 +246,7 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
 }
 
 // This behavior is currently copied in the collab database, for snapshotting channel notes
+/// Deserializes an [`crate::Operation`] from the RPC representation.
 pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operation> {
     Ok(
         match message
@@ -312,6 +329,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
     )
 }
 
+/// Deserializes an [`EditOperation`] from the RPC representation.
 pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation {
     EditOperation {
         timestamp: clock::Lamport {
@@ -324,6 +342,7 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
     }
 }
 
+/// Deserializes an entry in the undo map from the RPC representation.
 pub fn deserialize_undo_map_entry(
     entry: proto::UndoMapEntry,
 ) -> (clock::Lamport, Vec<(clock::Lamport, u32)>) {
@@ -348,6 +367,7 @@ pub fn deserialize_undo_map_entry(
     )
 }
 
+/// Deserializes selections from the RPC representation.
 pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {
     Arc::from(
         selections
@@ -357,6 +377,7 @@ pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selecti
     )
 }
 
+/// Deserializes a [`Selection`] from the RPC representation.
 pub fn deserialize_selection(selection: proto::Selection) -> Option<Selection<Anchor>> {
     Some(Selection {
         id: selection.id as usize,
@@ -367,6 +388,7 @@ pub fn deserialize_selection(selection: proto::Selection) -> Option<Selection<An
     })
 }
 
+/// Deserializes a list of diagnostics from the RPC representation.
 pub fn deserialize_diagnostics(
     diagnostics: Vec<proto::Diagnostic>,
 ) -> Arc<[DiagnosticEntry<Anchor>]> {
@@ -387,7 +409,6 @@ pub fn deserialize_diagnostics(
                     message: diagnostic.message,
                     group_id: diagnostic.group_id as usize,
                     code: diagnostic.code,
-                    is_valid: diagnostic.is_valid,
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
@@ -397,6 +418,7 @@ pub fn deserialize_diagnostics(
         .collect()
 }
 
+/// Deserializes an [`Anchor`] from the RPC representation.
 pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     Some(Anchor {
         timestamp: clock::Lamport {
@@ -412,6 +434,7 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     })
 }
 
+/// Returns a `[clock::Lamport`] timestamp for the given [`proto::Operation`].
 pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<clock::Lamport> {
     let replica_id;
     let value;
@@ -444,6 +467,7 @@ pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<c
     })
 }
 
+/// Serializes a [`Completion`] to be sent over RPC.
 pub fn serialize_completion(completion: &Completion) -> proto::Completion {
     proto::Completion {
         old_start: Some(serialize_anchor(&completion.old_range.start)),
@@ -454,6 +478,7 @@ pub fn serialize_completion(completion: &Completion) -> proto::Completion {
     }
 }
 
+/// Deserializes a [`Completion`] from the RPC representation.
 pub async fn deserialize_completion(
     completion: proto::Completion,
     language: Option<Arc<Language>>,
@@ -488,6 +513,7 @@ pub async fn deserialize_completion(
     })
 }
 
+/// Serializes a [`CodeAction`] to be sent over RPC.
 pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
     proto::CodeAction {
         server_id: action.server_id.0 as u64,
@@ -497,6 +523,7 @@ pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
     }
 }
 
+/// Deserializes a [`CodeAction`] from the RPC representation.
 pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
     let start = action
         .start
@@ -514,6 +541,7 @@ pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> 
     })
 }
 
+/// Serializes a [`Transaction`] to be sent over RPC.
 pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
     proto::Transaction {
         id: Some(serialize_timestamp(transaction.id)),
@@ -527,6 +555,7 @@ pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
     }
 }
 
+/// Deserializes a [`Transaction`] from the RPC representation.
 pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transaction> {
     Ok(Transaction {
         id: deserialize_timestamp(
@@ -543,6 +572,7 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
     })
 }
 
+/// Serializes a [`clock::Lamport`] timestamp to be sent over RPC.
 pub fn serialize_timestamp(timestamp: clock::Lamport) -> proto::LamportTimestamp {
     proto::LamportTimestamp {
         replica_id: timestamp.replica_id as u32,
@@ -550,6 +580,7 @@ pub fn serialize_timestamp(timestamp: clock::Lamport) -> proto::LamportTimestamp
     }
 }
 
+/// Deserializes a [`clock::Lamport`] timestamp from the RPC representation.
 pub fn deserialize_timestamp(timestamp: proto::LamportTimestamp) -> clock::Lamport {
     clock::Lamport {
         replica_id: timestamp.replica_id as ReplicaId,
@@ -557,6 +588,7 @@ pub fn deserialize_timestamp(timestamp: proto::LamportTimestamp) -> clock::Lampo
     }
 }
 
+/// Serializes a range of [`FullOffset`]s to be sent over RPC.
 pub fn serialize_range(range: &Range<FullOffset>) -> proto::Range {
     proto::Range {
         start: range.start.0 as u64,
@@ -564,10 +596,12 @@ pub fn serialize_range(range: &Range<FullOffset>) -> proto::Range {
     }
 }
 
+/// Deserializes a range of [`FullOffset`]s from the RPC representation.
 pub fn deserialize_range(range: proto::Range) -> Range<FullOffset> {
     FullOffset(range.start as usize)..FullOffset(range.end as usize)
 }
 
+/// Deserializes a clock version from the RPC representation.
 pub fn deserialize_version(message: &[proto::VectorClockEntry]) -> clock::Global {
     let mut version = clock::Global::new();
     for entry in message {
@@ -579,6 +613,7 @@ pub fn deserialize_version(message: &[proto::VectorClockEntry]) -> clock::Global
     version
 }
 
+/// Serializes a clock version to be sent over RPC.
 pub fn serialize_version(version: &clock::Global) -> Vec<proto::VectorClockEntry> {
     version
         .iter()

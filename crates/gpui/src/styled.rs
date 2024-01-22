@@ -1,18 +1,18 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
-    DefiniteLength, Display, Fill, FlexDirection, FontWeight, Hsla, JustifyContent, Length,
-    Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
+    DefiniteLength, Fill, FlexDirection, FontWeight, Hsla, JustifyContent, Length, Position,
+    SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::{smallvec, SmallVec};
-use taffy::style::Overflow;
+use taffy::style::{Display, Overflow};
 
 pub trait Styled: Sized {
     fn style(&mut self) -> &mut StyleRefinement;
 
     gpui_macros::style_helpers!();
 
-    fn z_index(mut self, z_index: u8) -> Self {
+    fn z_index(mut self, z_index: u16) -> Self {
         self.style().z_index = Some(z_index);
         self
     }
@@ -66,18 +66,24 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the behavior of content that overflows the container to be hidden.
+    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
     fn overflow_hidden(mut self) -> Self {
         self.style().overflow.x = Some(Overflow::Hidden);
         self.style().overflow.y = Some(Overflow::Hidden);
         self
     }
 
-    fn overflow_hidden_x(mut self) -> Self {
+    /// Sets the behavior of content that overflows the container on the X axis to be hidden.
+    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+    fn overflow_x_hidden(mut self) -> Self {
         self.style().overflow.x = Some(Overflow::Hidden);
         self
     }
 
-    fn overflow_hidden_y(mut self) -> Self {
+    /// Sets the behavior of content that overflows the container on the Y axis to be hidden.
+    /// [Docs](https://tailwindcss.com/docs/overflow#hiding-content-that-overflows)
+    fn overflow_y_hidden(mut self) -> Self {
         self.style().overflow.y = Some(Overflow::Hidden);
         self
     }
@@ -301,10 +307,31 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the initial size of flex items for this element.
+    /// [Docs](https://tailwindcss.com/docs/flex-basis)
+    fn flex_basis(mut self, basis: impl Into<Length>) -> Self {
+        self.style().flex_basis = Some(basis.into());
+        self
+    }
+
     /// Sets the element to allow a flex item to grow to fill any available space.
     /// [Docs](https://tailwindcss.com/docs/flex-grow)
     fn flex_grow(mut self) -> Self {
         self.style().flex_grow = Some(1.);
+        self
+    }
+
+    /// Sets the element to allow a flex item to shrink if needed.
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink)
+    fn flex_shrink(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
+        self
+    }
+
+    /// Sets the element to prevent a flex item from shrinking.
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink#dont-shrink)
+    fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
         self
     }
 

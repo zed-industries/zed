@@ -7,18 +7,20 @@ pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub use backtrace::Backtrace;
+use futures::Future;
+use lazy_static::lazy_static;
+use rand::{seq::SliceRandom, Rng};
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
+    env,
     ops::{AddAssign, Range, RangeInclusive},
     panic::Location,
     pin::Pin,
     task::{Context, Poll},
+    time::Instant,
 };
-
-pub use backtrace::Backtrace;
-use futures::Future;
-use rand::{seq::SliceRandom, Rng};
 
 pub use take_until::*;
 
@@ -130,6 +132,24 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
         }
     } else if !source.is_null() {
         *target = source
+    }
+}
+
+pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
+    lazy_static! {
+        pub static ref ZED_MEASUREMENTS: bool = env::var("ZED_MEASUREMENTS")
+            .map(|measurements| measurements == "1" || measurements == "true")
+            .unwrap_or(false);
+    }
+
+    if *ZED_MEASUREMENTS {
+        let start = Instant::now();
+        let result = f();
+        let elapsed = start.elapsed();
+        eprintln!("{}: {:?}", label, elapsed);
+        result
+    } else {
+        f()
     }
 }
 
@@ -299,7 +319,7 @@ pub struct Deferred<F: FnOnce()>(Option<F>);
 
 impl<F: FnOnce()> Deferred<F> {
     /// Drop without running the deferred function.
-    pub fn cancel(mut self) {
+    pub fn abort(mut self) {
         self.0.take();
     }
 }

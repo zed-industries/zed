@@ -1,14 +1,16 @@
 use crate::{
-    Bounds, Element, ElementId, InteractiveElement, InteractiveElementState, Interactivity,
-    IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
+    Bounds, Element, ElementContext, ElementId, InteractiveElement, InteractiveElementState,
+    Interactivity, IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
+/// An SVG element.
 pub struct Svg {
     interactivity: Interactivity,
     path: Option<SharedString>,
 }
 
+/// Create a new SVG element.
 pub fn svg() -> Svg {
     Svg {
         interactivity: Interactivity::default(),
@@ -17,6 +19,7 @@ pub fn svg() -> Svg {
 }
 
 impl Svg {
+    /// Set the path to the SVG file for this element.
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
         self
@@ -29,7 +32,7 @@ impl Element for Svg {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
@@ -40,7 +43,7 @@ impl Element for Svg {
         &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) where
         Self: Sized,
     {

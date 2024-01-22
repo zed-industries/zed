@@ -1437,7 +1437,7 @@ impl LocalWorktree {
                 if let Err(e) = self.client.send(proto::UpdateDiagnosticSummary {
                     project_id,
                     worktree_id: cx.entity_id().as_u64(),
-                    summary: Some(summary.to_proto(server_id, &path)),
+                    summary: Some(summary.to_proto(server_id, path)),
                 }) {
                     return Task::ready(Err(e));
                 }
@@ -1866,7 +1866,7 @@ impl Snapshot {
         })
     }
 
-    /// Update the `git_status` of the given entries such that files'
+    /// Updates the `git_status` of the given entries such that files'
     /// statuses bubble up to their ancestor directories.
     pub fn propagate_git_statuses(&self, result: &mut [Entry]) {
         let mut cursor = self
@@ -2309,7 +2309,7 @@ impl LocalSnapshot {
 impl BackgroundScannerState {
     fn should_scan_directory(&self, entry: &Entry) -> bool {
         (!entry.is_external && !entry.is_ignored)
-            || entry.path.file_name() == Some(&*DOT_GIT)
+            || entry.path.file_name() == Some(*DOT_GIT)
             || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || self
                 .paths_to_scan
@@ -3374,7 +3374,7 @@ impl BackgroundScanner {
                 let mut is_git_related = false;
                 if let Some(dot_git_dir) = abs_path
                     .ancestors()
-                    .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))
+                    .find(|ancestor| ancestor.file_name() == Some(*DOT_GIT))
                 {
                     let dot_git_path = dot_git_dir
                         .strip_prefix(&root_canonical_path)
@@ -3772,7 +3772,7 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(&entry) {
+                if state.should_scan_directory(entry) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -3814,9 +3814,9 @@ impl BackgroundScanner {
             abs_paths
                 .iter()
                 .map(|abs_path| async move {
-                    let metadata = self.fs.metadata(&abs_path).await?;
+                    let metadata = self.fs.metadata(abs_path).await?;
                     if let Some(metadata) = metadata {
-                        let canonical_path = self.fs.canonicalize(&abs_path).await?;
+                        let canonical_path = self.fs.canonicalize(abs_path).await?;
                         anyhow::Ok(Some((metadata, canonical_path)))
                     } else {
                         Ok(None)
@@ -3864,7 +3864,7 @@ impl BackgroundScanner {
                     fs_entry.is_external = !canonical_path.starts_with(&root_canonical_path);
 
                     if !is_dir && !fs_entry.is_ignored {
-                        if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(&path) {
+                        if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(path) {
                             if let Ok(repo_path) = path.strip_prefix(work_dir.0) {
                                 let repo_path = RepoPath(repo_path.into());
                                 let repo = repo.repo_ptr.lock();
@@ -3884,7 +3884,7 @@ impl BackgroundScanner {
                     state.insert_entry(fs_entry, self.fs.as_ref());
                 }
                 Ok(None) => {
-                    self.remove_repo_path(&path, &mut state.snapshot);
+                    self.remove_repo_path(path, &mut state.snapshot);
                 }
                 Err(err) => {
                     // TODO - create a special 'error' entry in the entries tree to mark this

@@ -9,20 +9,36 @@ use std::{
 use sum_tree::{self, Bias, SumTree};
 use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
 
+/// A set of diagnostics associated with a given buffer, provided
+/// by a single language server.
+///
+/// The diagnostics are stored in a [SumTree], which allows this struct
+/// to be cheaply copied, and allows for efficient retrieval of the
+/// diagnostics that intersect a given range of the buffer.
 #[derive(Clone, Debug, Default)]
 pub struct DiagnosticSet {
     diagnostics: SumTree<DiagnosticEntry<Anchor>>,
 }
 
+/// A single diagnostic in a set. Generic over its range type, because
+/// the diagnostics are stored internally as [Anchor]s, but can be
+/// resolved to different coordinates types like [usize] byte offsets or
+/// [Point]s.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticEntry<T> {
+    /// The range of the buffer where the diagnostic applies.
     pub range: Range<T>,
+    /// The information about the diagnostic.
     pub diagnostic: Diagnostic,
 }
 
+/// A group of related diagnostics, ordered by their start position
+/// in the buffer.
 #[derive(Debug)]
 pub struct DiagnosticGroup<T> {
+    /// The diagnostics.
     pub entries: Vec<DiagnosticEntry<T>>,
+    /// The index into `entries` where the primary diagnostic is stored.
     pub primary_ix: usize,
 }
 
@@ -36,7 +52,8 @@ pub struct Summary {
 }
 
 impl<T> DiagnosticEntry<T> {
-    // Used to provide diagnostic context to lsp codeAction request
+    /// Returns a raw LSP diagnostic ssed to provide diagnostic context to lsp
+    /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> lsp::Diagnostic {
         let code = self
             .diagnostic
@@ -53,6 +70,8 @@ impl<T> DiagnosticEntry<T> {
 }
 
 impl DiagnosticSet {
+    /// Constructs a [DiagnosticSet] from a sequence of entries, ordered by
+    /// their position in the buffer.
     pub fn from_sorted_entries<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<Anchor>>,
@@ -62,6 +81,7 @@ impl DiagnosticSet {
         }
     }
 
+    /// Constructs a [DiagnosticSet] from a sequence of entries in an arbitrary order.
     pub fn new<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
@@ -80,14 +100,18 @@ impl DiagnosticSet {
         }
     }
 
+    /// Returns the number of diagnostics in the set.
     pub fn len(&self) -> usize {
         self.diagnostics.summary().count
     }
 
+    /// Returns an iterator over the diagnostic entries in the set.
     pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry<Anchor>> {
         self.diagnostics.iter()
     }
 
+    /// Returns an iterator over the diagnostic entries that intersect the
+    /// given range of the buffer.
     pub fn range<'a, T, O>(
         &'a self,
         range: Range<T>,
@@ -134,6 +158,7 @@ impl DiagnosticSet {
         })
     }
 
+    /// Adds all of this set's diagnostic groups to the given output vector.
     pub fn groups(
         &self,
         language_server_id: LanguageServerId,
@@ -169,10 +194,12 @@ impl DiagnosticSet {
                 .range
                 .start
                 .cmp(&group_b.entries[group_b.primary_ix].range.start, buffer)
-                .then_with(|| id_a.cmp(&id_b))
+                .then_with(|| id_a.cmp(id_b))
         });
     }
 
+    /// Returns all of the diagnostics in a particular diagnostic group,
+    /// in order of their position in the buffer.
     pub fn group<'a, O: FromAnchor>(
         &'a self,
         group_id: usize,
@@ -183,6 +210,7 @@ impl DiagnosticSet {
             .map(|entry| entry.resolve(buffer))
     }
 }
+
 impl sum_tree::Item for DiagnosticEntry<Anchor> {
     type Summary = Summary;
 
@@ -198,6 +226,7 @@ impl sum_tree::Item for DiagnosticEntry<Anchor> {
 }
 
 impl DiagnosticEntry<Anchor> {
+    /// Converts the [DiagnosticEntry] to a different buffer coordinate type.
     pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticEntry<O> {
         DiagnosticEntry {
             range: O::from_anchor(&self.range.start, buffer)

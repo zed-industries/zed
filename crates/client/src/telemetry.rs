@@ -38,8 +38,9 @@ struct TelemetryState {
     flush_events_task: Option<Task<()>>,
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
-    first_event_datetime: Option<DateTime<Utc>>,
+    first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
+    max_queue_size: usize,
 }
 
 const EVENTS_URL_PATH: &'static str = "/api/events";
@@ -69,14 +70,14 @@ struct EventWrapper {
     event: Event,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssistantKind {
     Panel,
     Inline,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type")]
 pub enum Event {
     Editor {
@@ -168,8 +169,9 @@ impl Telemetry {
             flush_events_task: None,
             log_file: None,
             is_staff: None,
-            first_event_datetime: None,
+            first_event_date_time: None,
             event_coalescer: EventCoalescer::new(),
+            max_queue_size: MAX_QUEUE_LEN,
         }));
 
         #[cfg(not(debug_assertions))]
@@ -310,7 +312,7 @@ impl Telemetry {
             operation,
             copilot_enabled,
             copilot_enabled_for_language,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
@@ -326,7 +328,7 @@ impl Telemetry {
             suggestion_id,
             suggestion_accepted,
             file_extension,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
@@ -342,7 +344,7 @@ impl Telemetry {
             conversation_id,
             kind,
             model,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
@@ -358,7 +360,7 @@ impl Telemetry {
             operation,
             room_id,
             channel_id,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
@@ -368,7 +370,7 @@ impl Telemetry {
         let event = Event::Cpu {
             usage_as_percentage,
             core_count,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
@@ -382,26 +384,36 @@ impl Telemetry {
         let event = Event::Memory {
             memory_in_bytes,
             virtual_memory_in_bytes,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
     }
 
     pub fn report_app_event(self: &Arc<Self>, operation: String) {
+        self.report_app_event_with_date_time(operation, Utc::now());
+    }
+
+    fn report_app_event_with_date_time(
+        self: &Arc<Self>,
+        operation: String,
+        date_time: DateTime<Utc>,
+    ) -> Event {
         let event = Event::App {
             operation,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(date_time),
         };
 
-        self.report_event(event)
+        self.report_event(event.clone());
+
+        event
     }
 
     pub fn report_setting_event(self: &Arc<Self>, setting: &'static str, value: String) {
         let event = Event::Setting {
             setting,
             value,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
@@ -416,7 +428,7 @@ impl Telemetry {
             let event = Event::Edit {
                 duration: end.timestamp_millis() - start.timestamp_millis(),
                 environment,
-                milliseconds_since_first_event: self.milliseconds_since_first_event(),
+                milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
             };
 
             self.report_event(event);
@@ -427,22 +439,21 @@ impl Telemetry {
         let event = Event::Action {
             source,
             action,
-            milliseconds_since_first_event: self.milliseconds_since_first_event(),
+            milliseconds_since_first_event: self.milliseconds_since_first_event(Utc::now()),
         };
 
         self.report_event(event)
     }
 
-    fn milliseconds_since_first_event(&self) -> i64 {
+    fn milliseconds_since_first_event(self: &Arc<Self>, date_time: DateTime<Utc>) -> i64 {
         let mut state = self.state.lock();
 
-        match state.first_event_datetime {
-            Some(first_event_datetime) => {
-                let now: DateTime<Utc> = Utc::now();
-                now.timestamp_millis() - first_event_datetime.timestamp_millis()
+        match state.first_event_date_time {
+            Some(first_event_date_time) => {
+                date_time.timestamp_millis() - first_event_date_time.timestamp_millis()
             }
             None => {
-                state.first_event_datetime = Some(Utc::now());
+                state.first_event_date_time = Some(date_time);
                 0
             }
         }
@@ -468,7 +479,7 @@ impl Telemetry {
         state.events_queue.push(EventWrapper { signed_in, event });
 
         if state.installation_id.is_some() {
-            if state.events_queue.len() >= MAX_QUEUE_LEN {
+            if state.events_queue.len() >= state.max_queue_size {
                 drop(state);
                 self.flush_events();
             }
@@ -489,7 +500,7 @@ impl Telemetry {
 
     pub fn flush_events(self: &Arc<Self>) {
         let mut state = self.state.lock();
-        state.first_event_datetime = None;
+        state.first_event_date_time = None;
         let mut events = mem::take(&mut state.events_queue);
         state.flush_events_task.take();
         drop(state);
@@ -546,5 +557,161 @@ impl Telemetry {
                 .log_err(),
             )
             .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use gpui::TestAppContext;
+    use util::http::FakeHttpClient;
+
+    #[gpui::test]
+    fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
+        init_test(cx);
+        let http = FakeHttpClient::with_200_response();
+        let installation_id = Some("installation_id".to_string());
+        let session_id = "session_id".to_string();
+
+        cx.update(|cx| {
+            let telemetry = Telemetry::new(http, cx);
+
+            telemetry.state.lock().max_queue_size = 4;
+            telemetry.start(installation_id, session_id, cx);
+
+            assert!(is_empty_state(&telemetry));
+
+            let first_date_time = Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap();
+            let operation = "test".to_string();
+
+            let event =
+                telemetry.report_app_event_with_date_time(operation.clone(), first_date_time);
+            assert_eq!(
+                event,
+                Event::App {
+                    operation: operation.clone(),
+                    milliseconds_since_first_event: 0
+                }
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 1);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
+
+            let mut date_time = first_date_time + chrono::Duration::milliseconds(100);
+
+            let event = telemetry.report_app_event_with_date_time(operation.clone(), date_time);
+            assert_eq!(
+                event,
+                Event::App {
+                    operation: operation.clone(),
+                    milliseconds_since_first_event: 100
+                }
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 2);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
+
+            date_time += chrono::Duration::milliseconds(100);
+
+            let event = telemetry.report_app_event_with_date_time(operation.clone(), date_time);
+            assert_eq!(
+                event,
+                Event::App {
+                    operation: operation.clone(),
+                    milliseconds_since_first_event: 200
+                }
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 3);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
+
+            date_time += chrono::Duration::milliseconds(100);
+
+            // Adding a 4th event should cause a flush
+            let event = telemetry.report_app_event_with_date_time(operation.clone(), date_time);
+            assert_eq!(
+                event,
+                Event::App {
+                    operation: operation.clone(),
+                    milliseconds_since_first_event: 300
+                }
+            );
+
+            assert!(is_empty_state(&telemetry));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_connection_timeout(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        init_test(cx);
+        let http = FakeHttpClient::with_200_response();
+        let installation_id = Some("installation_id".to_string());
+        let session_id = "session_id".to_string();
+
+        cx.update(|cx| {
+            let telemetry = Telemetry::new(http, cx);
+            telemetry.state.lock().max_queue_size = 4;
+            telemetry.start(installation_id, session_id, cx);
+
+            assert!(is_empty_state(&telemetry));
+
+            let first_date_time = Utc.with_ymd_and_hms(1990, 4, 12, 12, 0, 0).unwrap();
+            let operation = "test".to_string();
+
+            let event =
+                telemetry.report_app_event_with_date_time(operation.clone(), first_date_time);
+            assert_eq!(
+                event,
+                Event::App {
+                    operation: operation.clone(),
+                    milliseconds_since_first_event: 0
+                }
+            );
+            assert_eq!(telemetry.state.lock().events_queue.len(), 1);
+            assert!(telemetry.state.lock().flush_events_task.is_some());
+            assert_eq!(
+                telemetry.state.lock().first_event_date_time,
+                Some(first_date_time)
+            );
+
+            let duration = Duration::from_millis(1);
+
+            // Test 1 millisecond before the flush interval limit is met
+            executor.advance_clock(FLUSH_INTERVAL - duration);
+
+            assert!(!is_empty_state(&telemetry));
+
+            // Test the exact moment the flush interval limit is met
+            executor.advance_clock(duration);
+
+            assert!(is_empty_state(&telemetry));
+        });
+    }
+
+    // TODO:
+    // Test settings
+    // Update FakeHTTPClient to keep track of the number of requests and assert on it
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn is_empty_state(telemetry: &Telemetry) -> bool {
+        telemetry.state.lock().events_queue.is_empty()
+            && telemetry.state.lock().flush_events_task.is_none()
+            && telemetry.state.lock().first_event_date_time.is_none()
     }
 }

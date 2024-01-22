@@ -86,11 +86,11 @@ pub struct ChannelPathsInsertGuard<'a> {
 
 impl<'a> ChannelPathsInsertGuard<'a> {
     pub fn note_changed(&mut self, channel_id: ChannelId, epoch: u64, version: &clock::Global) {
-        insert_note_changed(&mut self.channels_by_id, channel_id, epoch, &version);
+        insert_note_changed(self.channels_by_id, channel_id, epoch, version);
     }
 
     pub fn new_messages(&mut self, channel_id: ChannelId, message_id: u64) {
-        insert_new_message(&mut self.channels_by_id, channel_id, message_id)
+        insert_new_message(self.channels_by_id, channel_id, message_id)
     }
 
     pub fn insert(&mut self, channel_proto: proto::Channel) -> bool {
@@ -131,8 +131,8 @@ impl<'a> ChannelPathsInsertGuard<'a> {
 impl<'a> Drop for ChannelPathsInsertGuard<'a> {
     fn drop(&mut self) {
         self.channels_ordered.sort_by(|a, b| {
-            let a = channel_path_sorting_key(*a, &self.channels_by_id);
-            let b = channel_path_sorting_key(*b, &self.channels_by_id);
+            let a = channel_path_sorting_key(*a, self.channels_by_id);
+            let b = channel_path_sorting_key(*b, self.channels_by_id);
             a.cmp(b)
         });
         self.channels_ordered.dedup();
@@ -167,7 +167,7 @@ fn insert_note_changed(
         if epoch > unseen_version.0 {
             *unseen_version = (epoch, version.clone());
         } else {
-            unseen_version.1.join(&version);
+            unseen_version.1.join(version);
         }
     }
 }

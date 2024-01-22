@@ -3,7 +3,10 @@ use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
-use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, SharedUrl, Task};
+use gpui::{
+    AppContext, AsyncAppContext, EventEmitter, Model, ModelContext, SharedString, SharedUrl, Task,
+    WeakModel,
+};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
@@ -77,6 +80,7 @@ pub struct UserStore {
     client: Weak<Client>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<Result<()>>,
+    weak_self: WeakModel<Self>,
 }
 
 #[derive(Clone)]
@@ -194,6 +198,7 @@ impl UserStore {
                 Ok(())
             }),
             pending_contact_requests: Default::default(),
+            weak_self: cx.weak_model(),
         }
     }
 
@@ -579,6 +584,19 @@ impl UserStore {
         self.users.get(&user_id).cloned()
     }
 
+    pub fn get_user_optimistic(
+        &mut self,
+        user_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Arc<User>> {
+        if let Some(user) = self.users.get(&user_id).cloned() {
+            return Some(user);
+        }
+
+        self.get_user(user_id, cx).detach_and_log_err(cx);
+        None
+    }
+
     pub fn get_user(
         &mut self,
         user_id: u64,
@@ -650,6 +668,31 @@ impl UserStore {
 
     pub fn participant_indices(&self) -> &HashMap<u64, ParticipantIndex> {
         &self.participant_indices
+    }
+
+    pub fn participant_names(
+        &self,
+        user_ids: impl Iterator<Item = u64>,
+        cx: &AppContext,
+    ) -> HashMap<u64, SharedString> {
+        let mut ret = HashMap::default();
+        let mut missing_user_ids = Vec::new();
+        for id in user_ids {
+            if let Some(github_login) = self.get_cached_user(id).map(|u| u.github_login.clone()) {
+                ret.insert(id, github_login.into());
+            } else {
+                missing_user_ids.push(id)
+            }
+        }
+        if !missing_user_ids.is_empty() {
+            let this = self.weak_self.clone();
+            cx.spawn(|mut cx| async move {
+                this.update(&mut cx, |this, cx| this.get_users(missing_user_ids, cx))?
+                    .await
+            })
+            .detach_and_log_err(cx);
+        }
+        ret
     }
 }
 

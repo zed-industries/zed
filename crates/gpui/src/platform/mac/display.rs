@@ -3,18 +3,15 @@ use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
-    foundation::{NSDictionary, NSString},
+    foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString},
 };
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
-use core_graphics::{
-    display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList},
-    geometry::{CGPoint, CGRect, CGSize},
-};
+use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
 use objc::{msg_send, sel, sel_impl};
 use uuid::Uuid;
 
 #[derive(Debug)]
-pub struct MacDisplay(pub(crate) CGDirectDisplayID);
+pub(crate) struct MacDisplay(pub(crate) CGDirectDisplayID);
 
 unsafe impl Send for MacDisplay {}
 
@@ -22,11 +19,6 @@ impl MacDisplay {
     /// Get the screen with the given [`DisplayId`].
     pub fn find_by_id(id: DisplayId) -> Option<Self> {
         Self::all().find(|screen| screen.id() == id)
-    }
-
-    /// Get the screen with the given persistent [`Uuid`].
-    pub fn find_by_uuid(uuid: Uuid) -> Option<Self> {
-        Self::all().find(|screen| screen.uuid().ok() == Some(uuid))
     }
 
     /// Get the primary screen - the one with the menu bar, and whose bottom left
@@ -77,14 +69,14 @@ extern "C" {
     fn CGDisplayCreateUUIDFromDisplayID(display: CGDirectDisplayID) -> CFUUIDRef;
 }
 
-/// Convert the given rectangle from CoreGraphics' native coordinate space to GPUI's coordinate space.
+/// Convert the given rectangle from Cocoa's coordinate space to GPUI's coordinate space.
 ///
-/// CoreGraphics' coordinate space has its origin at the bottom left of the primary screen,
+/// Cocoa's coordinate space has its origin at the bottom left of the primary screen,
 /// with the Y axis pointing upwards.
 ///
 /// Conversely, in GPUI's coordinate system, the origin is placed at the top left of the primary
-/// screen, with the Y axis pointing downwards.
-pub(crate) fn display_bounds_from_native(rect: CGRect) -> Bounds<GlobalPixels> {
+/// screen, with the Y axis pointing downwards (matching CoreGraphics)
+pub(crate) fn global_bounds_from_ns_rect(rect: NSRect) -> Bounds<GlobalPixels> {
     let primary_screen_size = unsafe { CGDisplayBounds(MacDisplay::primary().id().0) }.size;
 
     Bounds {
@@ -101,22 +93,22 @@ pub(crate) fn display_bounds_from_native(rect: CGRect) -> Bounds<GlobalPixels> {
     }
 }
 
-/// Convert the given rectangle from GPUI's coordinate system to CoreGraphics' native coordinate space.
+/// Convert the given rectangle from GPUI's coordinate system to Cocoa's native coordinate space.
 ///
-/// CoreGraphics' coordinate space has its origin at the bottom left of the primary screen,
+/// Cocoa's coordinate space has its origin at the bottom left of the primary screen,
 /// with the Y axis pointing upwards.
 ///
 /// Conversely, in GPUI's coordinate system, the origin is placed at the top left of the primary
-/// screen, with the Y axis pointing downwards.
-pub(crate) fn display_bounds_to_native(bounds: Bounds<GlobalPixels>) -> CGRect {
+/// screen, with the Y axis pointing downwards (matching CoreGraphics)
+pub(crate) fn global_bounds_to_ns_rect(bounds: Bounds<GlobalPixels>) -> NSRect {
     let primary_screen_height = MacDisplay::primary().bounds().size.height;
 
-    CGRect::new(
-        &CGPoint::new(
+    NSRect::new(
+        NSPoint::new(
             bounds.origin.x.into(),
             (primary_screen_height - bounds.origin.y - bounds.size.height).into(),
         ),
-        &CGSize::new(bounds.size.width.into(), bounds.size.height.into()),
+        NSSize::new(bounds.size.width.into(), bounds.size.height.into()),
     )
 }
 
@@ -155,8 +147,20 @@ impl PlatformDisplay for MacDisplay {
 
     fn bounds(&self) -> Bounds<GlobalPixels> {
         unsafe {
-            let native_bounds = CGDisplayBounds(self.0);
-            display_bounds_from_native(native_bounds)
+            // CGDisplayBounds is in "global display" coordinates, where 0 is
+            // the top left of the primary display.
+            let bounds = CGDisplayBounds(self.0);
+
+            Bounds {
+                origin: point(
+                    GlobalPixels(bounds.origin.x as f32),
+                    GlobalPixels(bounds.origin.y as f32),
+                ),
+                size: size(
+                    GlobalPixels(bounds.size.width as f32),
+                    GlobalPixels(bounds.size.height as f32),
+                ),
+            }
         }
     }
 }

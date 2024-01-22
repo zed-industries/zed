@@ -20,7 +20,7 @@ pub enum ElevationIndex {
 }
 
 impl ElevationIndex {
-    pub fn z_index(self) -> u8 {
+    pub fn z_index(self) -> u16 {
         match self {
             ElevationIndex::Background => 0,
             ElevationIndex::Surface => 42,

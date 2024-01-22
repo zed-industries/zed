@@ -52,9 +52,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, red, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter,
-    Hsla, Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
+    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
+    Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -599,7 +599,11 @@ impl Terminal {
         }
     }
 
-    /// Update the cached process info, returns whether the Zed-relevant info has changed
+    pub fn selection_started(&self) -> bool {
+        self.selection_phase == SelectionPhase::Selecting
+    }
+
+    /// Updates the cached process info, returns whether the Zed-relevant info has changed
     fn update_process_info(&mut self) -> bool {
         let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
         if pid < 0 {
@@ -1206,7 +1210,7 @@ impl Terminal {
     pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Point<Pixels>) {
         let mouse_mode = self.mouse_mode(e.shift);
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(&e, mouse_mode) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
             if mouse_mode {
                 let point = grid_point(
                     e.position - origin,
@@ -1215,7 +1219,7 @@ impl Terminal {
                 );
 
                 if let Some(scrolls) =
-                    scroll_report(point, scroll_lines as i32, &e, self.last_content.mode)
+                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
                 {
                     for scroll in scrolls {
                         self.pty_tx.notify(scroll);
@@ -1295,7 +1299,7 @@ impl Terminal {
                     "{}{}",
                     fpi.name,
                     if fpi.argv.len() >= 1 {
-                        format!(" {}", (&fpi.argv[1..]).join(" "))
+                        format!(" {}", (fpi.argv[1..]).join(" "))
                     } else {
                         "".to_string()
                     }
@@ -1380,7 +1384,7 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
     let colors = theme.colors();
 
     match index {
-        //0-15 are the same as the named colors above
+        // 0-15 are the same as the named colors above
         0 => colors.terminal_ansi_black,
         1 => colors.terminal_ansi_red,
         2 => colors.terminal_ansi_green,
@@ -1397,34 +1401,32 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         13 => colors.terminal_ansi_bright_magenta,
         14 => colors.terminal_ansi_bright_cyan,
         15 => colors.terminal_ansi_bright_white,
-        //16-231 are mapped to their RGB colors on a 0-5 range per channel
+        // 16-231 are mapped to their RGB colors on a 0-5 range per channel
         16..=231 => {
-            let (r, g, b) = rgb_for_index(&(index as u8)); //Split the index into it's ANSI-RGB components
-            let step = (u8::MAX as f32 / 5.).floor() as u8; //Split the RGB range into 5 chunks, with floor so no overflow
-            rgba_color(r * step, g * step, b * step) //Map the ANSI-RGB components to an RGB color
+            let (r, g, b) = rgb_for_index(&(index as u8)); // Split the index into it's ANSI-RGB components
+            let step = (u8::MAX as f32 / 5.).floor() as u8; // Split the RGB range into 5 chunks, with floor so no overflow
+            rgba_color(r * step, g * step, b * step) // Map the ANSI-RGB components to an RGB color
         }
-        //232-255 are a 24 step grayscale from black to white
+        // 232-255 are a 24 step grayscale from black to white
         232..=255 => {
-            let i = index as u8 - 232; //Align index to 0..24
-            let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the RGB grayscale values into 24 chunks
-            rgba_color(i * step, i * step, i * step) //Map the ANSI-grayscale components to the RGB-grayscale
+            let i = index as u8 - 232; // Align index to 0..24
+            let step = (u8::MAX as f32 / 24.).floor() as u8; // Split the RGB grayscale values into 24 chunks
+            rgba_color(i * step, i * step, i * step) // Map the ANSI-grayscale components to the RGB-grayscale
         }
-        //For compatibility with the alacritty::Colors interface
+        // For compatibility with the alacritty::Colors interface
         256 => colors.text,
         257 => colors.background,
         258 => theme.players().local().cursor,
-
-        // todo!(more colors)
-        259 => red(),                      //style.dim_black,
-        260 => red(),                      //style.dim_red,
-        261 => red(),                      //style.dim_green,
-        262 => red(),                      //style.dim_yellow,
-        263 => red(),                      //style.dim_blue,
-        264 => red(),                      //style.dim_magenta,
-        265 => red(),                      //style.dim_cyan,
-        266 => red(),                      //style.dim_white,
-        267 => red(),                      //style.bright_foreground,
-        268 => colors.terminal_ansi_black, //'Dim Background', non-standard color
+        259 => colors.terminal_ansi_dim_black,
+        260 => colors.terminal_ansi_dim_red,
+        261 => colors.terminal_ansi_dim_green,
+        262 => colors.terminal_ansi_dim_yellow,
+        263 => colors.terminal_ansi_dim_blue,
+        264 => colors.terminal_ansi_dim_magenta,
+        265 => colors.terminal_ansi_dim_cyan,
+        266 => colors.terminal_ansi_dim_white,
+        267 => colors.terminal_bright_foreground,
+        268 => colors.terminal_ansi_black, // 'Dim Background', non-standard color
 
         _ => black(),
     }

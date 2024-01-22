@@ -1,10 +1,8 @@
-#![deny(missing_docs)]
-
 use crate::{
-    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
-    Bounds, ContentMask, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
-    IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style, TextStyle,
-    ViewContext, VisualContext, WeakModel, WindowContext,
+    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, Bounds,
+    ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
+    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style,
+    TextStyle, ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -25,6 +23,7 @@ impl<V> Sealed for View<V> {}
 #[doc(hidden)]
 pub struct AnyViewState {
     root_style: Style,
+    next_stacking_order_id: u16,
     cache_key: Option<ViewCacheKey>,
     element: Option<AnyElement>,
 }
@@ -64,7 +63,7 @@ impl<V: 'static> View<V> {
         Entity::downgrade(self)
     }
 
-    /// Update the view's state with the given function, which is passed a mutable reference and a context.
+    /// Updates the view's state with the given function, which is passed a mutable reference and a context.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -96,7 +95,7 @@ impl<V: Render> Element for View<V> {
     fn request_layout(
         &mut self,
         _state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         cx.with_view_id(self.entity_id(), |cx| {
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
@@ -105,7 +104,7 @@ impl<V: Render> Element for View<V> {
         })
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
         cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
     }
 }
@@ -156,7 +155,7 @@ impl<V: 'static> WeakView<V> {
         Entity::upgrade_from(self)
     }
 
-    /// Update this view's state if it hasn't been released.
+    /// Updates this view's state if it hasn't been released.
     /// Returns an error if this view has been released.
     pub fn update<C, R>(
         &self,
@@ -204,7 +203,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    request_layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
+    request_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
     cache: bool,
 }
 
@@ -252,7 +251,7 @@ impl AnyView {
         &self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         cx.paint_view(self.entity_id(), |cx| {
             cx.with_absolute_element_offset(origin, |cx| {
@@ -280,7 +279,7 @@ impl Element for AnyView {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         cx.with_view_id(self.entity_id(), |cx| {
             if self.cache {
@@ -294,6 +293,7 @@ impl Element for AnyView {
             let root_style = cx.layout_style(layout_id).unwrap().clone();
             let state = AnyViewState {
                 root_style,
+                next_stacking_order_id: 0,
                 cache_key: None,
                 element: Some(element),
             };
@@ -301,7 +301,7 @@ impl Element for AnyView {
         })
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         cx.paint_view(self.entity_id(), |cx| {
             if !self.cache {
                 state.element.take().unwrap().paint(cx);
@@ -316,14 +316,19 @@ impl Element for AnyView {
                     && !cx.window.dirty_views.contains(&self.entity_id())
                     && !cx.window.refreshing
                 {
-                    cx.reuse_view();
+                    cx.reuse_view(state.next_stacking_order_id);
                     return;
                 }
             }
 
-            let mut element = (self.request_layout)(self, cx).1;
-            element.draw(bounds.origin, bounds.size.into(), cx);
+            if let Some(mut element) = state.element.take() {
+                element.paint(cx);
+            } else {
+                let mut element = (self.request_layout)(self, cx).1;
+                element.draw(bounds.origin, bounds.size.into(), cx);
+            }
 
+            state.next_stacking_order_id = cx.window.next_frame.next_stacking_order_id;
             state.cache_key = Some(ViewCacheKey {
                 bounds,
                 stacking_order: cx.stacking_order().clone(),
@@ -361,7 +366,7 @@ impl IntoElement for AnyView {
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
     model: AnyWeakModel,
-    layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
+    layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
 }
 
 impl AnyWeakView {
@@ -400,11 +405,11 @@ impl std::fmt::Debug for AnyWeakView {
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, IntoElement, LayoutId, Render, WindowContext};
+    use crate::{AnyElement, AnyView, ElementContext, IntoElement, LayoutId, Render};
 
     pub(crate) fn request_layout<V: 'static + Render>(
         view: &AnyView,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, AnyElement) {
         let view = view.clone().downcast::<V>().unwrap();
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());

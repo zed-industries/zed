@@ -40,7 +40,7 @@ pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use client::{Client, Collaborator, ParticipantIndex};
+use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -56,10 +56,11 @@ use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InputHandler, InteractiveText, KeyContext, Model, MouseButton,
+    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
     ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView,
+    WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -71,8 +72,7 @@ use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
     CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
-    Language, LanguageRegistry, LanguageServerName, OffsetRangeExt, Point, Selection,
-    SelectionGoal, TransactionId,
+    Language, LanguageServerName, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 
 use link_go_to_definition::{GoToDefinitionLink, InlayHighlight, LinkGoToDefinitionState};
@@ -88,7 +88,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
-use rpc::proto::{self, *};
+use rpc::proto::*;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
@@ -365,8 +365,11 @@ pub struct Editor {
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     project: Option<Model<Project>>,
+    completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
+    show_cursor_names: bool,
+    hovered_cursor: Option<HoveredCursor>,
     pub show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
@@ -406,11 +409,12 @@ pub struct Editor {
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
+    use_autoclose: bool,
 }
 
 pub struct EditorSnapshot {
     pub mode: EditorMode,
-    pub show_gutter: bool,
+    show_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -418,6 +422,23 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
+pub struct GutterDimensions {
+    pub padding: Pixels,
+    pub width: Pixels,
+    pub margin: Pixels,
+}
+
+impl Default for GutterDimensions {
+    fn default() -> Self {
+        Self {
+            padding: Pixels::ZERO,
+            width: Pixels::ZERO,
+            margin: Pixels::ZERO,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct RemoteSelection {
     pub replica_id: ReplicaId,
     pub selection: Selection<Anchor>,
@@ -425,6 +446,7 @@ pub struct RemoteSelection {
     pub peer_id: PeerId,
     pub line_mode: bool,
     pub participant_index: Option<ParticipantIndex>,
+    pub user_name: Option<SharedString>,
 }
 
 #[derive(Clone, Debug)]
@@ -439,6 +461,11 @@ enum SelectionHistoryMode {
     Normal,
     Undoing,
     Redoing,
+}
+
+struct HoveredCursor {
+    replica_id: u16,
+    selection_id: usize,
 }
 
 impl Default for SelectionHistoryMode {
@@ -722,85 +749,21 @@ impl CompletionsMenu {
             return None;
         }
 
-        let Some(project) = editor.project.clone() else {
+        let Some(provider) = editor.completion_provider.as_ref() else {
             return None;
         };
 
-        let client = project.read(cx).client();
-        let language_registry = project.read(cx).languages().clone();
+        let resolve_task = provider.resolve_completions(
+            self.matches.iter().map(|m| m.candidate_id).collect(),
+            self.completions.clone(),
+            cx,
+        );
 
-        let is_remote = project.read(cx).is_remote();
-        let project_id = project.read(cx).remote_id();
-
-        let completions = self.completions.clone();
-        let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
-
-        Some(cx.spawn(move |this, mut cx| async move {
-            if is_remote {
-                let Some(project_id) = project_id else {
-                    log::error!("Remote project without remote_id");
-                    return;
-                };
-
-                for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
-
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
-
-                    Self::resolve_completion_documentation_remote(
-                        project_id,
-                        server_id,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        client.clone(),
-                        language_registry.clone(),
-                    )
-                    .await;
-
-                    _ = this.update(&mut cx, |_, cx| cx.notify());
-                }
-            } else {
-                for completion_index in completion_indices {
-                    let completions_guard = completions.read();
-                    let completion = &completions_guard[completion_index];
-                    if completion.documentation.is_some() {
-                        continue;
-                    }
-
-                    let server_id = completion.server_id;
-                    let completion = completion.lsp_completion.clone();
-                    drop(completions_guard);
-
-                    let server = project
-                        .read_with(&mut cx, |project, _| {
-                            project.language_server_for_id(server_id)
-                        })
-                        .ok()
-                        .flatten();
-                    let Some(server) = server else {
-                        return;
-                    };
-
-                    Self::resolve_completion_documentation_local(
-                        server,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        language_registry.clone(),
-                    )
-                    .await;
-
-                    _ = this.update(&mut cx, |_, cx| cx.notify());
-                }
+        return Some(cx.spawn(move |this, mut cx| async move {
+            if let Some(true) = resolve_task.await.log_err() {
+                this.update(&mut cx, |_, cx| cx.notify()).ok();
             }
-        }))
+        }));
     }
 
     fn attempt_resolve_selected_completion_documentation(
@@ -817,146 +780,16 @@ impl CompletionsMenu {
         let Some(project) = project else {
             return;
         };
-        let language_registry = project.read(cx).languages().clone();
 
-        let completions = self.completions.clone();
-        let completions_guard = completions.read();
-        let completion = &completions_guard[completion_index];
-        if completion.documentation.is_some() {
-            return;
-        }
-
-        let server_id = completion.server_id;
-        let completion = completion.lsp_completion.clone();
-        drop(completions_guard);
-
-        if project.read(cx).is_remote() {
-            let Some(project_id) = project.read(cx).remote_id() else {
-                log::error!("Remote project without remote_id");
-                return;
-            };
-
-            let client = project.read(cx).client();
-
-            cx.spawn(move |this, mut cx| async move {
-                Self::resolve_completion_documentation_remote(
-                    project_id,
-                    server_id,
-                    completions.clone(),
-                    completion_index,
-                    completion,
-                    client,
-                    language_registry.clone(),
-                )
-                .await;
-
-                _ = this.update(&mut cx, |_, cx| cx.notify());
-            })
-            .detach();
-        } else {
-            let Some(server) = project.read(cx).language_server_for_id(server_id) else {
-                return;
-            };
-
-            cx.spawn(move |this, mut cx| async move {
-                Self::resolve_completion_documentation_local(
-                    server,
-                    completions,
-                    completion_index,
-                    completion,
-                    language_registry,
-                )
-                .await;
-
-                _ = this.update(&mut cx, |_, cx| cx.notify());
-            })
-            .detach();
-        }
-    }
-
-    async fn resolve_completion_documentation_remote(
-        project_id: u64,
-        server_id: LanguageServerId,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        client: Arc<Client>,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let request = proto::ResolveCompletionDocumentation {
-            project_id,
-            language_server_id: server_id.0 as u64,
-            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-        };
-
-        let Some(response) = client
-            .request(request)
-            .await
-            .context("completion documentation resolve proto request")
-            .log_err()
-        else {
-            return;
-        };
-
-        if response.text.is_empty() {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
-
-        let documentation = if response.is_markdown {
-            Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.text, &language_registry, None).await,
-            )
-        } else if response.text.lines().count() <= 1 {
-            Documentation::SingleLine(response.text)
-        } else {
-            Documentation::MultiLinePlainText(response.text)
-        };
-
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.documentation = Some(documentation);
-    }
-
-    async fn resolve_completion_documentation_local(
-        server: Arc<lsp::LanguageServer>,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let can_resolve = server
-            .capabilities()
-            .completion_provider
-            .as_ref()
-            .and_then(|options| options.resolve_provider)
-            .unwrap_or(false);
-        if !can_resolve {
-            return;
-        }
-
-        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        let Some(completion_item) = request.await.log_err() else {
-            return;
-        };
-
-        if let Some(lsp_documentation) = completion_item.documentation {
-            let documentation = language::prepare_completion_documentation(
-                &lsp_documentation,
-                &language_registry,
-                None, // TODO: Try to reasonably work out which language the completion is for
-            )
-            .await;
-
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
-        } else {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
+        let resolve_task = project.update(cx, |project, cx| {
+            project.resolve_completions(vec![completion_index], self.completions.clone(), cx)
+        });
+        cx.spawn(move |this, mut cx| async move {
+            if let Some(true) = resolve_task.await.log_err() {
+                this.update(&mut cx, |_, cx| cx.notify()).ok();
+            }
+        })
+        .detach();
     }
 
     fn visible(&self) -> bool {
@@ -1565,6 +1398,7 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override,
+            completion_provider: project.clone().map(|project| Box::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -1594,6 +1428,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             read_only: false,
+            use_autoclose: true,
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
@@ -1604,6 +1439,8 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             gutter_width: Default::default(),
             style: None,
+            show_cursor_names: false,
+            hovered_cursor: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
             _subscriptions: vec![
@@ -1795,6 +1632,10 @@ impl Editor {
         self.collaboration_hub = Some(hub);
     }
 
+    pub fn set_completion_provider(&mut self, hub: Box<dyn CompletionProvider>) {
+        self.completion_provider = Some(hub);
+    }
+
     pub fn placeholder_text(&self) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
@@ -1867,6 +1708,10 @@ impl Editor {
 
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn set_use_autoclose(&mut self, autoclose: bool) {
+        self.use_autoclose = autoclose;
     }
 
     pub fn set_show_copilot_suggestions(&mut self, show_copilot_suggestions: bool) {
@@ -2467,7 +2312,12 @@ impl Editor {
                                         ),
                                         &bracket_pair.start[..prefix_len],
                                     ));
-                            if following_text_allows_autoclose && preceding_text_matches_prefix {
+                            let autoclose = self.use_autoclose
+                                && snapshot.settings_at(selection.start, cx).use_autoclose;
+                            if autoclose
+                                && following_text_allows_autoclose
+                                && preceding_text_matches_prefix
+                            {
                                 let anchor = snapshot.anchor_before(selection.end);
                                 new_selections.push((selection.map(|_| anchor), text.len()));
                                 new_autoclose_regions.push((
@@ -3241,9 +3091,7 @@ impl Editor {
             return;
         }
 
-        let project = if let Some(project) = self.project.clone() {
-            project
-        } else {
+        let Some(provider) = self.completion_provider.as_ref() else {
             return;
         };
 
@@ -3259,9 +3107,7 @@ impl Editor {
         };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
-        let completions = project.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position, cx)
-        });
+        let completions = provider.completions(&buffer, buffer_position, cx);
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn(|this, mut cx| {
@@ -3370,6 +3216,7 @@ impl Editor {
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.read();
         let completion = completions.get(mat.candidate_id)?;
+        cx.stop_propagation();
 
         let snippet;
         let text;
@@ -3466,15 +3313,13 @@ impl Editor {
             this.refresh_copilot_suggestions(true, cx);
         });
 
-        let project = self.project.clone()?;
-        let apply_edits = project.update(cx, |project, cx| {
-            project.apply_additional_edits_for_completion(
-                buffer_handle,
-                completion.clone(),
-                true,
-                cx,
-            )
-        });
+        let provider = self.completion_provider.as_ref()?;
+        let apply_edits = provider.apply_additional_edits_for_completion(
+            buffer_handle,
+            completion.clone(),
+            true,
+            cx,
+        );
         Some(cx.foreground_executor().spawn(async move {
             apply_edits.await?;
             Ok(())
@@ -3561,7 +3406,7 @@ impl Editor {
         let replica_id = this.update(&mut cx, |this, cx| this.replica_id(cx))?;
 
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
-        cx.update(|_, cx| {
+        cx.update(|cx| {
             entries.sort_unstable_by_key(|(buffer, _)| {
                 buffer.read(cx).file().map(|f| f.path().clone())
             });
@@ -3888,6 +3733,24 @@ impl Editor {
         self.update_visible_copilot_suggestion(cx);
     }
 
+    pub fn display_cursor_names(&mut self, _: &DisplayCursorNames, cx: &mut ViewContext<Self>) {
+        self.show_cursor_names(cx);
+    }
+
+    fn show_cursor_names(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_cursor_names = true;
+        cx.notify();
+        cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(Duration::from_secs(3)).await;
+            this.update(&mut cx, |this, cx| {
+                this.show_cursor_names = false;
+                cx.notify()
+            })
+            .ok()
+        })
+        .detach();
+    }
+
     fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
         if self.has_active_copilot_suggestion(cx) {
             self.cycle_copilot_suggestions(Direction::Next, cx);
@@ -4065,7 +3928,7 @@ impl Editor {
         gutter_hovered: bool,
         _line_height: Pixels,
         _gutter_margin: Pixels,
-        cx: &mut ViewContext<Self>,
+        editor_view: View<Editor>,
     ) -> Vec<Option<IconButton>> {
         fold_data
             .iter()
@@ -4075,14 +3938,19 @@ impl Editor {
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
                             IconButton::new(ix as usize, ui::IconName::ChevronDown)
-                                .on_click(cx.listener(move |editor, _e, cx| match fold_status {
-                                    FoldStatus::Folded => {
-                                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                .on_click({
+                                    let view = editor_view.clone();
+                                    move |_e, cx| {
+                                        view.update(cx, |editor, cx| match fold_status {
+                                            FoldStatus::Folded => {
+                                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                            }
+                                            FoldStatus::Foldable => {
+                                                editor.fold_at(&FoldAt { buffer_row }, cx);
+                                            }
+                                        })
                                     }
-                                    FoldStatus::Foldable => {
-                                        editor.fold_at(&FoldAt { buffer_row }, cx);
-                                    }
-                                }))
+                                })
                                 .icon_color(ui::Color::Muted)
                                 .icon_size(ui::IconSize::Small)
                                 .selected(fold_status == FoldStatus::Folded)
@@ -8992,6 +8860,7 @@ impl Editor {
             cx.focus(&rename_editor_focus_handle);
         } else {
             self.blink_manager.update(cx, BlinkManager::enable);
+            self.show_cursor_names(cx);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_peer_id.is_none() {
@@ -9043,6 +8912,7 @@ pub trait CollaborationHub {
         &self,
         cx: &'a AppContext,
     ) -> &'a HashMap<u64, ParticipantIndex>;
+    fn user_names(&self, cx: &AppContext) -> HashMap<u64, SharedString>;
 }
 
 impl CollaborationHub for Model<Project> {
@@ -9055,6 +8925,74 @@ impl CollaborationHub for Model<Project> {
         cx: &'a AppContext,
     ) -> &'a HashMap<u64, ParticipantIndex> {
         self.read(cx).user_store().read(cx).participant_indices()
+    }
+
+    fn user_names(&self, cx: &AppContext) -> HashMap<u64, SharedString> {
+        let this = self.read(cx);
+        let user_ids = this.collaborators().values().map(|c| c.user_id);
+        this.user_store().read_with(cx, |user_store, cx| {
+            user_store.participant_names(user_ids, cx)
+        })
+    }
+}
+
+pub trait CompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: text::Anchor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Vec<Completion>>>;
+
+    fn resolve_completions(
+        &self,
+        completion_indices: Vec<usize>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<bool>>;
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer: Model<Buffer>,
+        completion: Completion,
+        push_to_history: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Option<language::Transaction>>>;
+}
+
+impl CompletionProvider for Model<Project> {
+    fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: text::Anchor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Vec<Completion>>> {
+        self.update(cx, |project, cx| {
+            project.completions(&buffer, buffer_position, cx)
+        })
+    }
+
+    fn resolve_completions(
+        &self,
+        completion_indices: Vec<usize>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<bool>> {
+        self.update(cx, |project, cx| {
+            project.resolve_completions(completion_indices, completions, cx)
+        })
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer: Model<Buffer>,
+        completion: Completion,
+        push_to_history: bool,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Option<language::Transaction>>> {
+        self.update(cx, |project, cx| {
+            project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
+        })
     }
 }
 
@@ -9107,6 +9045,7 @@ impl EditorSnapshot {
         collaboration_hub: &dyn CollaborationHub,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = RemoteSelection> {
+        let participant_names = collaboration_hub.user_names(cx);
         let participant_indices = collaboration_hub.user_participant_indices(cx);
         let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
         let collaborators_by_replica_id = collaborators_by_peer_id
@@ -9118,6 +9057,7 @@ impl EditorSnapshot {
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
                 let collaborator = collaborators_by_replica_id.get(&replica_id)?;
                 let participant_index = participant_indices.get(&collaborator.user_id).copied();
+                let user_name = participant_names.get(&collaborator.user_id).cloned();
                 Some(RemoteSelection {
                     replica_id,
                     selection,
@@ -9125,6 +9065,7 @@ impl EditorSnapshot {
                     line_mode,
                     participant_index,
                     peer_id: collaborator.peer_id,
+                    user_name,
                 })
             })
     }
@@ -9143,6 +9084,34 @@ impl EditorSnapshot {
 
     pub fn scroll_position(&self) -> gpui::Point<f32> {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
+    }
+
+    pub fn gutter_dimensions(
+        &self,
+        font_id: FontId,
+        font_size: Pixels,
+        em_width: Pixels,
+        max_line_number_width: Pixels,
+        cx: &AppContext,
+    ) -> GutterDimensions {
+        if self.show_gutter {
+            let descent = cx.text_system().descent(font_id, font_size);
+            let gutter_padding_factor = 4.0;
+            let gutter_padding = (em_width * gutter_padding_factor).round();
+            // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
+            let min_width_for_number_on_gutter = em_width * 4.0;
+            let gutter_width =
+                max_line_number_width.max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
+            let gutter_margin = -descent;
+
+            GutterDimensions {
+                padding: gutter_padding,
+                width: gutter_width,
+                margin: gutter_margin,
+            }
+        } else {
+            GutterDimensions::default()
+        }
     }
 }
 
@@ -9258,7 +9227,7 @@ impl Render for Editor {
     }
 }
 
-impl InputHandler for Editor {
+impl ViewInputHandler for Editor {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -9655,10 +9624,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
                     .size(ButtonSize::Compact)
                     .style(ButtonStyle::Transparent)
                     .visible_on_hover(group_id)
-                    .on_click(cx.listener({
+                    .on_click({
                         let message = diagnostic.message.clone();
-                        move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
-                    }))
+                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                    })
                     .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
             )
             .into_any_element()

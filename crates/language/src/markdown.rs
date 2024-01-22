@@ -1,3 +1,5 @@
+//! Provides Markdown-related constructs.
+
 use std::sync::Arc;
 use std::{ops::Range, path::PathBuf};
 
@@ -5,21 +7,30 @@ use crate::{HighlightId, Language, LanguageRegistry};
 use gpui::{px, FontStyle, FontWeight, HighlightStyle, UnderlineStyle};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
+/// Parsed Markdown content.
 #[derive(Debug, Clone)]
 pub struct ParsedMarkdown {
+    /// The Markdown text.
     pub text: String,
+    /// The list of highlights contained in the Markdown document.
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
+    /// The regions of the various ranges in the Markdown document.
     pub region_ranges: Vec<Range<usize>>,
+    /// The regions of the Markdown document.
     pub regions: Vec<ParsedRegion>,
 }
 
+/// A run of highlighted Markdown text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MarkdownHighlight {
+    /// A styled Markdown highlight.
     Style(MarkdownHighlightStyle),
+    /// A highlighted code block.
     Code(HighlightId),
 }
 
 impl MarkdownHighlight {
+    /// Converts this [`MarkdownHighlight`] to a [`HighlightStyle`].
     pub fn to_highlight_style(&self, theme: &theme::SyntaxTheme) -> Option<HighlightStyle> {
         match self {
             MarkdownHighlight::Style(style) => {
@@ -48,23 +59,39 @@ impl MarkdownHighlight {
     }
 }
 
+/// The style for a Markdown highlight.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MarkdownHighlightStyle {
+    /// Whether the text should be italicized.
     pub italic: bool,
+    /// Whether the text should be underlined.
     pub underline: bool,
+    /// The weight of the text.
     pub weight: FontWeight,
 }
 
+/// A parsed region in a Markdown document.
 #[derive(Debug, Clone)]
 pub struct ParsedRegion {
+    /// Whether the region is a code block.
     pub code: bool,
+    /// The link contained in this region, if it has one.
     pub link: Option<Link>,
 }
 
+/// A Markdown link.
 #[derive(Debug, Clone)]
 pub enum Link {
-    Web { url: String },
-    Path { path: PathBuf },
+    /// A link to a webpage.
+    Web {
+        /// The URL of the webpage.
+        url: String,
+    },
+    /// A link to a path on the filesystem.
+    Path {
+        /// The path to the item.
+        path: PathBuf,
+    },
 }
 
 impl Link {
@@ -82,6 +109,7 @@ impl Link {
     }
 }
 
+/// Parses a string of Markdown.
 pub async fn parse_markdown(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
@@ -111,6 +139,7 @@ pub async fn parse_markdown(
     }
 }
 
+/// Parses a Markdown block.
 pub async fn parse_markdown_block(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
@@ -126,7 +155,7 @@ pub async fn parse_markdown_block(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    for event in Parser::new_ext(&markdown, Options::all()) {
+    for event in Parser::new_ext(markdown, Options::all()) {
         let prev_len = text.len();
         match event {
             Event::Text(t) => {
@@ -261,6 +290,7 @@ pub async fn parse_markdown_block(
     }
 }
 
+/// Appends a highlighted run of text to the provided `text` buffer.
 pub fn highlight_code(
     text: &mut String,
     highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
@@ -275,6 +305,7 @@ pub fn highlight_code(
     }
 }
 
+/// Appends a new paragraph to the provided `text` buffer.
 pub fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
     let mut is_subsequent_paragraph_of_list = false;
     if let Some((_, has_content)) = list_stack.last_mut() {
