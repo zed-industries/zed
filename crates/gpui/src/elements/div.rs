@@ -23,11 +23,12 @@
 //!
 
 use crate::{
-    point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds, ClickEvent,
-    DispatchPhase, Element, ElementContext, ElementId, FocusHandle, IntoElement, IsZero,
-    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
-    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
+    ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, IntoElement,
+    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
+    WindowContext,
 };
 
 use collections::HashMap;
@@ -1802,7 +1803,27 @@ impl Interactivity {
                                 .get_or_insert_with(Rc::default)
                                 .clone();
                             let line_height = cx.line_height();
-                            let scroll_max = (content_size - bounds.size).max(&Size::default());
+                            let rem_size = cx.rem_size();
+                            let padding_size = size(
+                                style
+                                    .padding
+                                    .left
+                                    .to_pixels(bounds.size.width.into(), rem_size)
+                                    + style
+                                        .padding
+                                        .right
+                                        .to_pixels(bounds.size.width.into(), rem_size),
+                                style
+                                    .padding
+                                    .top
+                                    .to_pixels(bounds.size.height.into(), rem_size)
+                                    + style
+                                        .padding
+                                        .bottom
+                                        .to_pixels(bounds.size.height.into(), rem_size),
+                            );
+                            let scroll_max =
+                                (content_size + padding_size - bounds.size).max(&Size::default());
                             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
                             // were removed or the bounds became larger).
                             {

@@ -497,6 +497,20 @@ where
     }
 }
 
+impl<T> Add for Size<T>
+where
+    T: Add<Output = T> + Clone + Default + Debug,
+{
+    type Output = Size<T>;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Size {
+            width: self.width + rhs.width,
+            height: self.height + rhs.height,
+        }
+    }
+}
+
 impl<T, Rhs> Mul<Rhs> for Size<T>
 where
     T: Mul<Rhs, Output = Rhs> + Clone + Default + Debug,
