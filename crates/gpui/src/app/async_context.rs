@@ -213,7 +213,12 @@ impl AsyncWindowContext {
     }
 
     /// A convenience method for [WindowContext::update()]
-    pub fn update<R>(
+    pub fn update<R>(&mut self, update: impl FnOnce(&mut WindowContext) -> R) -> Result<R> {
+        self.app.update_window(self.window, |_, cx| update(cx))
+    }
+
+    /// A convenience method for [WindowContext::update()]
+    pub fn update_root<R>(
         &mut self,
         update: impl FnOnce(AnyView, &mut WindowContext) -> R,
     ) -> Result<R> {

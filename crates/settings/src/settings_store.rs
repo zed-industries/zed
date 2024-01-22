@@ -533,7 +533,7 @@ impl SettingsStore {
                 }
 
                 if let Some(local_settings) =
-                    setting_value.deserialize_setting(&local_settings).log_err()
+                    setting_value.deserialize_setting(local_settings).log_err()
                 {
                     paths_stack.push(Some((*root_id, path.as_ref())));
                     user_settings_stack.push(local_settings);
@@ -697,8 +697,7 @@ fn update_value_in_json_text<'a>(
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());
         }
-        let (range, replacement) =
-            replace_value_in_json_text(text, &key_path, tab_size, &new_value);
+        let (range, replacement) = replace_value_in_json_text(text, key_path, tab_size, &new_value);
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }

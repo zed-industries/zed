@@ -710,7 +710,7 @@ mod element {
             pane_bounds: Bounds<Pixels>,
             axis_bounds: Bounds<Pixels>,
             workspace: WeakView<Workspace>,
-            cx: &mut WindowContext,
+            cx: &mut ElementContext,
         ) {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {
@@ -803,7 +803,7 @@ mod element {
         fn request_layout(
             &mut self,
             state: Option<Self::State>,
-            cx: &mut ui::prelude::WindowContext,
+            cx: &mut ui::prelude::ElementContext,
         ) -> (gpui::LayoutId, Self::State) {
             let mut style = Style::default();
             style.flex_grow = 1.;
@@ -820,7 +820,7 @@ mod element {
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             state: &mut Self::State,
-            cx: &mut ui::prelude::WindowContext,
+            cx: &mut ui::prelude::ElementContext,
         ) {
             let flexes = self.flexes.lock().clone();
             let len = self.children.len();
@@ -904,8 +904,8 @@ mod element {
     }
 
     impl ParentElement for PaneAxisElement {
-        fn children_mut(&mut self) -> &mut smallvec::SmallVec<[AnyElement; 2]> {
-            &mut self.children
+        fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+            self.children.extend(elements)
         }
     }
 

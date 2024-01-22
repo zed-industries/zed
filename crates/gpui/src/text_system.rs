@@ -377,7 +377,7 @@ impl TextSystem {
         Ok(lines)
     }
 
-    pub fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
+    pub(crate) fn finish_frame(&self, reused_views: &FxHashSet<EntityId>) {
         self.line_layout_cache.finish_frame(reused_views)
     }
 

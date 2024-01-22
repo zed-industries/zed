@@ -1,6 +1,6 @@
 use crate::{
-    black, fill, point, px, size, BorrowWindow, Bounds, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
+    black, fill, point, px, size, Bounds, ElementContext, Hsla, LineLayout, Pixels, Point, Result,
+    SharedString, UnderlineStyle, WrapBoundary, WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -24,6 +24,7 @@ pub struct ShapedLine {
 }
 
 impl ShapedLine {
+    /// The length of the line in utf-8 bytes.
     pub fn len(&self) -> usize {
         self.layout.len
     }
@@ -32,7 +33,7 @@ impl ShapedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Result<()> {
         paint_line(
             origin,
@@ -65,7 +66,7 @@ impl WrappedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Result<()> {
         paint_line(
             origin,
@@ -86,7 +87,7 @@ fn paint_line(
     line_height: Pixels,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
-    cx: &mut WindowContext<'_>,
+    cx: &mut ElementContext<'_>,
 ) -> Result<()> {
     let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
     let baseline_offset = point(px(0.), padding_top + layout.ascent);

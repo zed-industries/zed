@@ -3,12 +3,12 @@ use anyhow::anyhow;
 use std::{hash::Hash, sync::Arc};
 
 #[derive(Clone, PartialEq, Hash, Eq)]
-pub struct RenderSvgParams {
+pub(crate) struct RenderSvgParams {
     pub(crate) path: SharedString,
     pub(crate) size: Size<DevicePixels>,
 }
 
-pub struct SvgRenderer {
+pub(crate) struct SvgRenderer {
     asset_source: Arc<dyn AssetSource>,
 }
 

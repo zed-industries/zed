@@ -1532,7 +1532,7 @@ impl LspCommand for GetCompletions {
                 .iter()
                 .map(language::proto::serialize_completion)
                 .collect(),
-            version: serialize_version(&buffer_version),
+            version: serialize_version(buffer_version),
         }
     }
 
@@ -1672,7 +1672,7 @@ impl LspCommand for GetCodeActions {
                 .iter()
                 .map(language::proto::serialize_code_action)
                 .collect(),
-            version: serialize_version(&buffer_version),
+            version: serialize_version(buffer_version),
         }
     }
 

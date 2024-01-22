@@ -1092,7 +1092,7 @@ impl Pane {
             return Ok(true);
         }
 
-        let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.update(|_, cx| {
+        let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.update(|cx| {
             (
                 item.has_conflict(cx),
                 item.is_dirty(cx),
@@ -1132,7 +1132,7 @@ impl Pane {
             }
         } else if is_dirty && (can_save || can_save_as) {
             if save_intent == SaveIntent::Close {
-                let will_autosave = cx.update(|_, cx| {
+                let will_autosave = cx.update(|cx| {
                     matches!(
                         WorkspaceSettings::get_global(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
@@ -1166,7 +1166,7 @@ impl Pane {
                     })?
                     .unwrap_or_else(|| Path::new("").into());
 
-                let abs_path = cx.update(|_, cx| cx.prompt_for_new_path(&start_abs_path))?;
+                let abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path))?;
                 if let Some(abs_path) = abs_path.await.ok().flatten() {
                     pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
                         .await?;
@@ -2054,7 +2054,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     let path = buffer_path
         .as_ref()
         .and_then(|p| p.path.to_str())
-        .unwrap_or(&"This buffer");
+        .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")
 }

@@ -379,8 +379,11 @@ pub trait LspAdapter: 'static + Send + Sync {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeLabel {
+    /// The text to display.
     pub text: String,
+    /// Syntax highlighting runs.
     pub runs: Vec<(Range<usize>, HighlightId)>,
+    /// The portion of the text that should be used in fuzzy filtering.
     pub filter_range: Range<usize>,
 }
 
@@ -849,7 +852,7 @@ impl LanguageRegistry {
         let mut state = self.state.write();
         state.theme = Some(theme.clone());
         for language in &state.languages {
-            language.set_theme(&theme.syntax());
+            language.set_theme(theme.syntax());
         }
     }
 
@@ -1163,7 +1166,7 @@ impl LanguageRegistryState {
 
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
-            language.set_theme(&theme.syntax());
+            language.set_theme(theme.syntax());
         }
         self.languages.push(language);
         self.version += 1;

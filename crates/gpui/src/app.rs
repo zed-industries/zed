@@ -1,5 +1,3 @@
-#![deny(missing_docs)]
-
 mod async_context;
 mod entity_map;
 mod model_context;

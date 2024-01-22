@@ -974,7 +974,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                 .browser_download_url;
 
             let mut response = http
-                .get(&url, Default::default(), true)
+                .get(url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading copilot release: {}", err))?;
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));

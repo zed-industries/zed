@@ -1,19 +1,24 @@
-use std::{sync::Arc, time::Duration};
-
+use anyhow::Result;
 use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
 use collections::HashMap;
-use editor::{AnchorRangeExt, Editor, EditorElement, EditorStyle};
+use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
+use fuzzy::StringMatchCandidate;
 use gpui::{
     AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
     Render, SharedString, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
 };
-use language::{language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry};
+use language::{
+    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, Completion,
+    LanguageRegistry, LanguageServerId, ToOffset,
+};
 use lazy_static::lazy_static;
+use parking_lot::RwLock;
 use project::search::SearchQuery;
 use settings::Settings;
+use std::{sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, UiTextSize};
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -31,6 +36,43 @@ pub struct MessageEditor {
     channel_id: Option<ChannelId>,
 }
 
+struct MessageEditorCompletionProvider(WeakView<MessageEditor>);
+
+impl CompletionProvider for MessageEditorCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<anyhow::Result<Vec<language::Completion>>> {
+        let Some(handle) = self.0.upgrade() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+        handle.update(cx, |message_editor, cx| {
+            message_editor.completions(buffer, buffer_position, cx)
+        })
+    }
+
+    fn resolve_completions(
+        &self,
+        _completion_indices: Vec<usize>,
+        _completions: Arc<RwLock<Box<[language::Completion]>>>,
+        _cx: &mut ViewContext<Editor>,
+    ) -> Task<anyhow::Result<bool>> {
+        Task::ready(Ok(false))
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        _buffer: Model<Buffer>,
+        _completion: Completion,
+        _push_to_history: bool,
+        _cx: &mut ViewContext<Editor>,
+    ) -> Task<Result<Option<language::Transaction>>> {
+        Task::ready(Ok(None))
+    }
+}
+
 impl MessageEditor {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
@@ -38,8 +80,11 @@ impl MessageEditor {
         editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let this = cx.view().downgrade();
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_use_autoclose(false);
+            editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
         });
 
         let buffer = editor
@@ -149,6 +194,71 @@ impl MessageEditor {
         }
     }
 
+    fn completions(
+        &mut self,
+        buffer: &Model<Buffer>,
+        end_anchor: Anchor,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Vec<Completion>>> {
+        let end_offset = end_anchor.to_offset(buffer.read(cx));
+
+        let Some(query) = buffer.update(cx, |buffer, _| {
+            let mut query = String::new();
+            for ch in buffer.reversed_chars_at(end_offset).take(100) {
+                if ch == '@' {
+                    return Some(query.chars().rev().collect::<String>());
+                }
+                if ch.is_whitespace() || !ch.is_ascii() {
+                    break;
+                }
+                query.push(ch);
+            }
+            return None;
+        }) else {
+            return Task::ready(Ok(vec![]));
+        };
+
+        let start_offset = end_offset - query.len();
+        let start_anchor = buffer.read(cx).anchor_before(start_offset);
+
+        let candidates = self
+            .users
+            .keys()
+            .map(|user| StringMatchCandidate {
+                id: 0,
+                string: user.clone(),
+                char_bag: user.chars().collect(),
+            })
+            .collect::<Vec<_>>();
+        cx.spawn(|_, cx| async move {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                true,
+                10,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+
+            Ok(matches
+                .into_iter()
+                .map(|mat| Completion {
+                    old_range: start_anchor..end_anchor,
+                    new_text: mat.string.clone(),
+                    label: CodeLabel {
+                        filter_range: 1..mat.string.len() + 1,
+                        text: format!("@{}", mat.string),
+                        runs: Vec::new(),
+                    },
+                    documentation: None,
+                    server_id: LanguageServerId(0), // TODO: Make this optional or something?
+                    lsp_completion: Default::default(), // TODO: Make this optional or something?
+                })
+                .collect())
+        })
+    }
+
     async fn find_mentions(
         this: WeakView<MessageEditor>,
         buffer: BufferSnapshot,
@@ -216,7 +326,7 @@ impl Render for MessageEditor {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features,
-            font_size: rems(0.875).into(),
+            font_size: UiTextSize::Small.rems().into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: relative(1.3).into(),

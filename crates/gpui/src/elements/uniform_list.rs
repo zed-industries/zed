@@ -1,5 +1,11 @@
+//! A scrollable list of elements with uniform height, optimized for large lists.
+//! Rather than use the full taffy layout system, uniform_list simply measures
+//! the first element and then lays out all remaining elements in a line based on that
+//! measurement. This is much faster than the full layout system, but only works for
+//! elements with uniform height.
+
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Element,
+    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
     ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
     Pixels, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
@@ -53,6 +59,7 @@ where
     }
 }
 
+/// A list element for efficiently laying out and displaying a list of uniform-height elements.
 pub struct UniformList {
     id: ElementId,
     item_count: usize,
@@ -63,18 +70,22 @@ pub struct UniformList {
     scroll_handle: Option<UniformListScrollHandle>,
 }
 
+/// A handle for controlling the scroll position of a uniform list.
+/// This should be stored in your view and passed to the uniform_list on each frame.
 #[derive(Clone, Default)]
 pub struct UniformListScrollHandle {
     deferred_scroll_to_item: Rc<RefCell<Option<usize>>>,
 }
 
 impl UniformListScrollHandle {
+    /// Create a new scroll handle to bind to a uniform list.
     pub fn new() -> Self {
         Self {
             deferred_scroll_to_item: Rc::new(RefCell::new(None)),
         }
     }
 
+    /// Scroll the list to the given item index.
     pub fn scroll_to_item(&mut self, ix: usize) {
         self.deferred_scroll_to_item.replace(Some(ix));
     }
@@ -86,6 +97,7 @@ impl Styled for UniformList {
     }
 }
 
+#[doc(hidden)]
 #[derive(Default)]
 pub struct UniformListState {
     interactive: InteractiveElementState,
@@ -98,7 +110,7 @@ impl Element for UniformList {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let max_items = self.item_count;
         let item_size = state
@@ -146,7 +158,7 @@ impl Element for UniformList {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let style =
             self.interactivity
@@ -262,12 +274,13 @@ impl IntoElement for UniformList {
 }
 
 impl UniformList {
+    /// Selects a specific list item for measurement.
     pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
         self.item_to_measure_index = item_index.unwrap_or(0);
         self
     }
 
-    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut WindowContext) -> Size<Pixels> {
+    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut ElementContext) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();
         }
@@ -284,6 +297,7 @@ impl UniformList {
         item_to_measure.measure(available_space, cx)
     }
 
+    /// Track and render scroll state of this list with reference to the given scroll handle.
     pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
         self.scroll_handle = Some(handle);
         self

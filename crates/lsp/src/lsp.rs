@@ -345,7 +345,7 @@ impl LanguageServer {
                 if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
                     handler(
                         msg.id,
-                        &msg.params.map(|params| params.get()).unwrap_or("null"),
+                        msg.params.map(|params| params.get()).unwrap_or("null"),
                         cx.clone(),
                     );
                 } else {

@@ -21,13 +21,13 @@ use metal_renderer::*;
 use objc::runtime::{BOOL, NO, YES};
 use std::ops::Range;
 
-pub use dispatcher::*;
-pub use display::*;
-pub use display_linker::*;
-pub use metal_atlas::*;
-pub use platform::*;
-pub use text_system::*;
-pub use window::*;
+pub(crate) use dispatcher::*;
+pub(crate) use display::*;
+pub(crate) use display_linker::*;
+pub(crate) use metal_atlas::*;
+pub(crate) use platform::*;
+pub(crate) use text_system::*;
+pub(crate) use window::*;
 
 trait BoolExt {
     fn to_objc(self) -> BOOL;

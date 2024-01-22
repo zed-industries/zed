@@ -1,13 +1,22 @@
+//! A list element that can be used to render a large number of differently sized elements
+//! efficiently. Clients of this API need to ensure that elements outside of the scrolled
+//! area do not change their height for this element to function correctly. In order to minimize
+//! re-renders, this element's state is stored intrusively on your own views, so that your code
+//! can coordinate directly with the list element's cached state.
+//!
+//! If all of your elements are the same height, see [`UniformList`] for a simpler API
+
 use crate::{
-    point, px, AnyElement, AvailableSpace, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    DispatchPhase, Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
-    StyleRefinement, Styled, WindowContext,
+    point, px, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
+    IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 
+/// Construct a new list element
 pub fn list(state: ListState) -> List {
     List {
         state,
@@ -15,11 +24,13 @@ pub fn list(state: ListState) -> List {
     }
 }
 
+/// A list element
 pub struct List {
     state: ListState,
     style: StyleRefinement,
 }
 
+/// The list state that views must hold on behalf of the list element.
 #[derive(Clone)]
 pub struct ListState(Rc<RefCell<StateInner>>);
 
@@ -35,15 +46,24 @@ struct StateInner {
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut WindowContext)>>,
 }
 
+/// Whether the list is scrolling from top to bottom or bottom to top.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListAlignment {
+    /// The list is scrolling from top to bottom, like most lists.
     Top,
+    /// The list is scrolling from bottom to top, like a chat log.
     Bottom,
 }
 
+/// A scroll event that has been converted to be in terms of the list's items.
 pub struct ListScrollEvent {
+    /// The range of items currently visible in the list, after applying the scroll event.
     pub visible_range: Range<usize>,
+
+    /// The number of items that are currently visible in the list, after applying the scroll event.
     pub count: usize,
+
+    /// Whether the list has been scrolled.
     pub is_scrolled: bool,
 }
 
@@ -74,6 +94,11 @@ struct UnrenderedCount(usize);
 struct Height(Pixels);
 
 impl ListState {
+    /// Construct a new list state, for storage on a view.
+    ///
+    /// the overdraw parameter controls how much extra space is rendered
+    /// above and below the visible area. This can help ensure that the list
+    /// doesn't flicker or pop in when scrolling.
     pub fn new<F>(
         element_count: usize,
         orientation: ListAlignment,
@@ -111,10 +136,13 @@ impl ListState {
             .extend((0..element_count).map(|_| ListItem::Unrendered), &());
     }
 
+    /// The number of items in this list.
     pub fn item_count(&self) -> usize {
         self.0.borrow().items.summary().count
     }
 
+    /// Register with the list state that the items in `old_range` have been replaced
+    /// by `count` new items that must be recalculated.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         let state = &mut *self.0.borrow_mut();
 
@@ -141,6 +169,7 @@ impl ListState {
         state.items = new_heights;
     }
 
+    /// Set a handler that will be called when the list is scrolled.
     pub fn set_scroll_handler(
         &self,
         handler: impl FnMut(&ListScrollEvent, &mut WindowContext) + 'static,
@@ -148,10 +177,12 @@ impl ListState {
         self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
     }
 
+    /// Get the current scroll offset, in terms of the list's items.
     pub fn logical_scroll_top(&self) -> ListOffset {
         self.0.borrow().logical_scroll_top()
     }
 
+    /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
@@ -163,6 +194,7 @@ impl ListState {
         state.logical_scroll_top = Some(scroll_top);
     }
 
+    /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
 
@@ -193,7 +225,8 @@ impl ListState {
         state.logical_scroll_top = Some(scroll_top);
     }
 
-    /// Get the bounds for the given item in window coordinates.
+    /// Get the bounds for the given item in window coordinates, if it's
+    /// been rendered.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         let state = &*self.0.borrow();
 
@@ -310,9 +343,13 @@ impl std::fmt::Debug for ListItem {
     }
 }
 
+/// An offset into the list's items, in terms of the item index and the number
+/// of pixels off the top left of the item.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ListOffset {
+    /// The index of an item in the list
     pub item_ix: usize,
+    /// The number of pixels to offset from the item index.
     pub offset_in_item: Pixels,
 }
 
@@ -322,7 +359,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _state: Option<Self::State>,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::State) {
         let mut style = Style::default();
         style.refine(&self.style);
@@ -336,7 +373,7 @@ impl Element for List {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         _state: &mut Self::State,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::ElementContext,
     ) {
         let state = &mut *self.state.0.borrow_mut();
 

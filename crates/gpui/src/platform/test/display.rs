@@ -3,7 +3,7 @@ use anyhow::{Ok, Result};
 use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point};
 
 #[derive(Debug)]
-pub struct TestDisplay {
+pub(crate) struct TestDisplay {
     id: DisplayId,
     uuid: uuid::Uuid,
     bounds: Bounds<GlobalPixels>,

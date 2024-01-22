@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    overlay, AnchorCorner, AnyElement, BorrowWindow, Bounds, DismissEvent, DispatchPhase, Element,
-    ElementId, InteractiveBounds, IntoElement, LayoutId, ManagedView, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    overlay, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase, Element,
+    ElementContext, ElementId, InteractiveBounds, IntoElement, LayoutId, ManagedView, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
@@ -64,7 +64,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (gpui::LayoutId, Self::State) {
         let (menu, position) = if let Some(element_state) = element_state {
             (element_state.menu, element_state.position)
@@ -116,7 +116,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         &mut self,
         bounds: Bounds<gpui::Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         if let Some(mut child) = element_state.child_element.take() {
             child.paint(cx);
@@ -155,7 +155,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                 cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
                     if modal.focus_handle(cx).contains_focused(cx) {
                         if previous_focus_handle.is_some() {
-                            cx.focus(&previous_focus_handle.as_ref().unwrap())
+                            cx.focus(previous_focus_handle.as_ref().unwrap())
                         }
                     }
                     *menu2.borrow_mut() = None;

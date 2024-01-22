@@ -4,15 +4,25 @@ use crate::{
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
 
+/// An event from a platform input source.
 pub trait InputEvent: Sealed + 'static {
+    /// Convert this event into the platform input enum.
     fn to_platform_input(self) -> PlatformInput;
 }
+
+/// A key event from the platform.
 pub trait KeyEvent: InputEvent {}
+
+/// A mouse event from the platform.
 pub trait MouseEvent: InputEvent {}
 
+/// The key down event equivalent for the platform.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
+    /// The keystroke that was generated.
     pub keystroke: Keystroke,
+
+    /// Whether the key is currently held down.
     pub is_held: bool,
 }
 
@@ -24,8 +34,10 @@ impl InputEvent for KeyDownEvent {
 }
 impl KeyEvent for KeyDownEvent {}
 
+/// The key up event equivalent for the platform.
 #[derive(Clone, Debug)]
 pub struct KeyUpEvent {
+    /// The keystroke that was released.
     pub keystroke: Keystroke,
 }
 
@@ -37,8 +49,10 @@ impl InputEvent for KeyUpEvent {
 }
 impl KeyEvent for KeyUpEvent {}
 
+/// The modifiers changed event equivalent for the platform.
 #[derive(Clone, Debug, Default)]
 pub struct ModifiersChangedEvent {
+    /// The new state of the modifier keys
     pub modifiers: Modifiers,
 }
 
@@ -62,17 +76,28 @@ impl Deref for ModifiersChangedEvent {
 /// Based on the winit enum of the same name.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum TouchPhase {
+    /// The touch started.
     Started,
+    /// The touch event is moving.
     #[default]
     Moved,
+    /// The touch phase has ended
     Ended,
 }
 
+/// A mouse down event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseDownEvent {
+    /// Which mouse button was pressed.
     pub button: MouseButton,
+
+    /// The position of the mouse on the window.
     pub position: Point<Pixels>,
+
+    /// The modifiers that were held down when the mouse was pressed.
     pub modifiers: Modifiers,
+
+    /// The number of times the button has been clicked.
     pub click_count: usize,
 }
 
@@ -84,11 +109,19 @@ impl InputEvent for MouseDownEvent {
 }
 impl MouseEvent for MouseDownEvent {}
 
+/// A mouse up event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseUpEvent {
+    /// Which mouse button was released.
     pub button: MouseButton,
+
+    /// The position of the mouse on the window.
     pub position: Point<Pixels>,
+
+    /// The modifiers that were held down when the mouse was released.
     pub modifiers: Modifiers,
+
+    /// The number of times the button has been clicked.
     pub click_count: usize,
 }
 
@@ -100,21 +133,34 @@ impl InputEvent for MouseUpEvent {
 }
 impl MouseEvent for MouseUpEvent {}
 
+/// A click event, generated when a mouse button is pressed and released.
 #[derive(Clone, Debug, Default)]
 pub struct ClickEvent {
+    /// The mouse event when the button was pressed.
     pub down: MouseDownEvent,
+
+    /// The mouse event when the button was released.
     pub up: MouseUpEvent,
 }
 
+/// An enum representing the mouse button that was pressed.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum MouseButton {
+    /// The left mouse button.
     Left,
+
+    /// The right mouse button.
     Right,
+
+    /// The middle mouse button.
     Middle,
+
+    /// A navigation button, such as back or forward.
     Navigate(NavigationDirection),
 }
 
 impl MouseButton {
+    /// Get all the mouse buttons in a list.
     pub fn all() -> Vec<Self> {
         vec![
             MouseButton::Left,
@@ -132,9 +178,13 @@ impl Default for MouseButton {
     }
 }
 
+/// A navigation direction, such as back or forward.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum NavigationDirection {
+    /// The back button.
     Back,
+
+    /// The forward button.
     Forward,
 }
 
@@ -144,10 +194,16 @@ impl Default for NavigationDirection {
     }
 }
 
+/// A mouse move event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseMoveEvent {
+    /// The position of the mouse on the window.
     pub position: Point<Pixels>,
+
+    /// The mouse button that was pressed, if any.
     pub pressed_button: Option<MouseButton>,
+
+    /// The modifiers that were held down when the mouse was moved.
     pub modifiers: Modifiers,
 }
 
@@ -160,16 +216,25 @@ impl InputEvent for MouseMoveEvent {
 impl MouseEvent for MouseMoveEvent {}
 
 impl MouseMoveEvent {
+    /// Returns true if the left mouse button is currently held down.
     pub fn dragging(&self) -> bool {
         self.pressed_button == Some(MouseButton::Left)
     }
 }
 
+/// A mouse wheel event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
+    /// The position of the mouse on the window.
     pub position: Point<Pixels>,
+
+    /// The change in scroll wheel position for this event.
     pub delta: ScrollDelta,
+
+    /// The modifiers that were held down when the mouse was moved.
     pub modifiers: Modifiers,
+
+    /// The phase of the touch event.
     pub touch_phase: TouchPhase,
 }
 
@@ -189,9 +254,12 @@ impl Deref for ScrollWheelEvent {
     }
 }
 
+/// The scroll delta for a scroll wheel event.
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
+    /// An exact scroll delta in pixels.
     Pixels(Point<Pixels>),
+    /// An inexact scroll delta in lines.
     Lines(Point<f32>),
 }
 
@@ -202,6 +270,7 @@ impl Default for ScrollDelta {
 }
 
 impl ScrollDelta {
+    /// Returns true if this is a precise scroll delta in pixels.
     pub fn precise(&self) -> bool {
         match self {
             ScrollDelta::Pixels(_) => true,
@@ -209,6 +278,7 @@ impl ScrollDelta {
         }
     }
 
+    /// Converts this scroll event into exact pixels.
     pub fn pixel_delta(&self, line_height: Pixels) -> Point<Pixels> {
         match self {
             ScrollDelta::Pixels(delta) => *delta,
@@ -216,6 +286,7 @@ impl ScrollDelta {
         }
     }
 
+    /// Combines two scroll deltas into one.
     pub fn coalesce(self, other: ScrollDelta) -> ScrollDelta {
         match (self, other) {
             (ScrollDelta::Pixels(px_a), ScrollDelta::Pixels(px_b)) => {
@@ -231,10 +302,15 @@ impl ScrollDelta {
     }
 }
 
+/// A mouse exit event from the platform, generated when the mouse leaves the window.
+/// The position generated should be just outside of the window's bounds.
 #[derive(Clone, Debug, Default)]
 pub struct MouseExitEvent {
+    /// The position of the mouse relative to the window.
     pub position: Point<Pixels>,
+    /// The mouse button that was pressed, if any.
     pub pressed_button: Option<MouseButton>,
+    /// The modifiers that were held down when the mouse was moved.
     pub modifiers: Modifiers,
 }
 
@@ -254,10 +330,12 @@ impl Deref for MouseExitEvent {
     }
 }
 
+/// A collection of paths from the platform, such as from a file drop.
 #[derive(Debug, Clone, Default)]
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
 impl ExternalPaths {
+    /// Convert this collection of paths into a slice.
     pub fn paths(&self) -> &[PathBuf] {
         &self.0
     }
@@ -269,18 +347,27 @@ impl Render for ExternalPaths {
     }
 }
 
+/// A file drop event from the platform, generated when files are dragged and dropped onto the window.
 #[derive(Debug, Clone)]
 pub enum FileDropEvent {
+    /// The files have entered the window.
     Entered {
+        /// The position of the mouse relative to the window.
         position: Point<Pixels>,
+        /// The paths of the files that are being dragged.
         paths: ExternalPaths,
     },
+    /// The files are being dragged over the window
     Pending {
+        /// The position of the mouse relative to the window.
         position: Point<Pixels>,
     },
+    /// The files have been dropped onto the window.
     Submit {
+        /// The position of the mouse relative to the window.
         position: Point<Pixels>,
     },
+    /// The user has stopped dragging the files over the window.
     Exited,
 }
 
@@ -292,40 +379,31 @@ impl InputEvent for FileDropEvent {
 }
 impl MouseEvent for FileDropEvent {}
 
+/// An enum corresponding to all kinds of platform input events.
 #[derive(Clone, Debug)]
 pub enum PlatformInput {
+    /// A key was pressed.
     KeyDown(KeyDownEvent),
+    /// A key was released.
     KeyUp(KeyUpEvent),
+    /// The keyboard modifiers were changed.
     ModifiersChanged(ModifiersChangedEvent),
+    /// The mouse was pressed.
     MouseDown(MouseDownEvent),
+    /// The mouse was released.
     MouseUp(MouseUpEvent),
+    /// The mouse was moved.
     MouseMove(MouseMoveEvent),
+    /// The mouse exited the window.
     MouseExited(MouseExitEvent),
+    /// The scroll wheel was used.
     ScrollWheel(ScrollWheelEvent),
+    /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
 }
 
 impl PlatformInput {
-    pub fn position(&self) -> Option<Point<Pixels>> {
-        match self {
-            PlatformInput::KeyDown { .. } => None,
-            PlatformInput::KeyUp { .. } => None,
-            PlatformInput::ModifiersChanged { .. } => None,
-            PlatformInput::MouseDown(event) => Some(event.position),
-            PlatformInput::MouseUp(event) => Some(event.position),
-            PlatformInput::MouseMove(event) => Some(event.position),
-            PlatformInput::MouseExited(event) => Some(event.position),
-            PlatformInput::ScrollWheel(event) => Some(event.position),
-            PlatformInput::FileDrop(FileDropEvent::Exited) => None,
-            PlatformInput::FileDrop(
-                FileDropEvent::Entered { position, .. }
-                | FileDropEvent::Pending { position, .. }
-                | FileDropEvent::Submit { position, .. },
-            ) => Some(*position),
-        }
-    }
-
-    pub fn mouse_event(&self) -> Option<&dyn Any> {
+    pub(crate) fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown { .. } => None,
             PlatformInput::KeyUp { .. } => None,
@@ -339,7 +417,7 @@ impl PlatformInput {
         }
     }
 
-    pub fn keyboard_event(&self) -> Option<&dyn Any> {
+    pub(crate) fn keyboard_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown(event) => Some(event),
             PlatformInput::KeyUp(event) => Some(event),

@@ -1,9 +1,9 @@
-use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
+use super::{global_bounds_from_ns_rect, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
+    Bounds, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels, KeyDownEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
     PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
@@ -220,7 +220,7 @@ unsafe fn build_classes() {
     };
 }
 
-pub fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
+pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
         // MacOS screen coordinates are relative to bottom left
@@ -327,7 +327,7 @@ struct MacWindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
-    input_handler: Option<Box<dyn PlatformInputHandler>>,
+    input_handler: Option<PlatformInputHandler>,
     pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
@@ -411,10 +411,8 @@ impl MacWindowState {
     }
 
     fn frame(&self) -> Bounds<GlobalPixels> {
-        unsafe {
-            let frame = NSWindow::frame(self.native_window);
-            display_bounds_from_native(mem::transmute::<NSRect, CGRect>(frame))
-        }
+        let frame = unsafe { NSWindow::frame(self.native_window) };
+        global_bounds_from_ns_rect(frame)
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -448,7 +446,7 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-pub struct MacWindow(Arc<Mutex<MacWindowState>>);
+pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
     pub fn open(
@@ -650,11 +648,11 @@ impl MacWindow {
                 WindowBounds::Fixed(bounds) => {
                     let display_bounds = display.bounds();
                     let frame = if bounds.intersects(&display_bounds) {
-                        display_bounds_to_native(bounds)
+                        global_bounds_to_ns_rect(bounds)
                     } else {
-                        display_bounds_to_native(display_bounds)
+                        global_bounds_to_ns_rect(display_bounds)
                     };
-                    native_window.setFrame_display_(mem::transmute::<CGRect, NSRect>(frame), YES);
+                    native_window.setFrame_display_(frame, YES);
                 }
             }
 
@@ -766,11 +764,11 @@ impl PlatformWindow for MacWindow {
         self
     }
 
-    fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>) {
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
-    fn take_input_handler(&mut self) -> Option<Box<dyn PlatformInputHandler>> {
+    fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.0.as_ref().lock().input_handler.take()
     }
 
@@ -1763,13 +1761,13 @@ fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) 
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
 where
-    F: FnOnce(&mut dyn PlatformInputHandler) -> R,
+    F: FnOnce(&mut PlatformInputHandler) -> R,
 {
     let window_state = unsafe { get_window_state(window) };
     let mut lock = window_state.as_ref().lock();
     if let Some(mut input_handler) = lock.input_handler.take() {
         drop(lock);
-        let result = f(input_handler.as_mut());
+        let result = f(&mut input_handler);
         window_state.lock().input_handler = Some(input_handler);
         Some(result)
     } else {

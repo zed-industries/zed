@@ -3007,7 +3007,7 @@ impl BufferSnapshot {
         groups.sort_by(|(id_a, group_a), (id_b, group_b)| {
             let a_start = &group_a.entries[group_a.primary_ix].range.start;
             let b_start = &group_b.entries[group_b.primary_ix].range.start;
-            a_start.cmp(b_start, self).then_with(|| id_a.cmp(&id_b))
+            a_start.cmp(b_start, self).then_with(|| id_a.cmp(id_b))
         });
 
         groups

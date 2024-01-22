@@ -875,7 +875,7 @@ mod tests {
         let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
 
         let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
-            cx.test_window(window.into()).edited()
+            cx.update(|cx| window.read(cx).unwrap().is_edited())
         };
         let pane = window
             .read_with(cx, |workspace, _| workspace.active_pane().clone())

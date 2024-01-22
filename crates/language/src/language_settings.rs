@@ -91,6 +91,8 @@ pub struct LanguageSettings {
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
+    /// Whether to automatically close brackets.
+    pub use_autoclose: bool,
 }
 
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
@@ -208,6 +210,11 @@ pub struct LanguageSettingsContent {
     /// Inlay hint related settings.
     #[serde(default)]
     pub inlay_hints: Option<InlayHintSettings>,
+    /// Whether to automatically type closing characters for you. For example,
+    /// when you type (, Zed will automatically add a closing ) at the correct position.
+    ///
+    /// Default: true
+    pub use_autoclose: Option<bool>,
 }
 
 /// The contents of the GitHub Copilot settings.
@@ -421,7 +428,7 @@ impl settings::Settings for AllLanguageSettings {
         let mut languages = HashMap::default();
         for (language_name, settings) in &default_value.languages {
             let mut language_settings = defaults.clone();
-            merge_settings(&mut language_settings, &settings);
+            merge_settings(&mut language_settings, settings);
             languages.insert(language_name.clone(), language_settings);
         }
 
@@ -461,7 +468,7 @@ impl settings::Settings for AllLanguageSettings {
                     languages
                         .entry(language_name.clone())
                         .or_insert_with(|| defaults.clone()),
-                    &user_language_settings,
+                    user_language_settings,
                 );
             }
         }
@@ -540,6 +547,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.tab_size, src.tab_size);
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
+    merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
     merge(&mut settings.wrap_guides, src.wrap_guides.clone());
 

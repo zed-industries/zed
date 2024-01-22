@@ -247,7 +247,7 @@ fn show_hover(
             };
 
             // query the LSP for hover info
-            let hover_request = cx.update(|_, cx| {
+            let hover_request = cx.update(|cx| {
                 project.update(cx, |project, cx| {
                     project.hover(&buffer, buffer_position, cx)
                 })

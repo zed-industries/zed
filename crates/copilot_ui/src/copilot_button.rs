@@ -355,7 +355,7 @@ fn initiate_sign_in(cx: &mut WindowContext) {
 
             cx.spawn(|mut cx| async move {
                 task.await;
-                if let Some(copilot) = cx.update(|_, cx| Copilot::global(cx)).ok().flatten() {
+                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
                     workspace
                         .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
                             Status::Authorized => workspace.show_toast(

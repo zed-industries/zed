@@ -591,7 +591,7 @@ impl WorkspaceDb {
                 Ok(())
             }
             SerializedPaneGroup::Pane(pane) => {
-                Self::save_pane(conn, workspace_id, &pane, parent)?;
+                Self::save_pane(conn, workspace_id, pane, parent)?;
                 Ok(())
             }
         }
