@@ -344,3 +344,9 @@ CREATE INDEX
     "index_notifications_on_recipient_id_is_read_kind_entity_id"
     ON "notifications"
     ("recipient_id", "is_read", "kind", "entity_id");
+
+CREATE TABLE contributors (
+    user_id INTEGER REFERENCES users(id),
+    signed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id)
+);

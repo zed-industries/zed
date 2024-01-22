@@ -25,6 +25,7 @@ pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/panic", post(trace_panic))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
+        .route("/contributors", get(get_contributors).post(add_contributor))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -66,7 +67,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
 #[derive(Debug, Deserialize)]
 struct AuthenticatedUserParams {
-    github_user_id: Option<i32>,
+    github_user_id: i32,
     github_login: String,
     github_email: Option<String>,
 }
@@ -88,8 +89,7 @@ async fn get_authenticated_user(
             params.github_user_id,
             params.github_email.as_deref(),
         )
-        .await?
-        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "user not found".into()))?;
+        .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
     return Ok(Json(AuthenticatedUserResponse { user, metrics_id }));
 }
@@ -131,6 +131,24 @@ async fn get_rpc_server_snapshot(
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<ErasedJson> {
     Ok(ErasedJson::pretty(rpc_server.snapshot().await))
+}
+
+async fn get_contributors(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<String>>> {
+    Ok(Json(app.db.get_contributors().await?))
+}
+
+async fn add_contributor(
+    Json(params): Json<AuthenticatedUserParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    Ok(app
+        .db
+        .add_contributor(
+            &params.github_login,
+            params.github_user_id,
+            params.github_email.as_deref(),
+        )
+        .await?)
 }
 
 #[derive(Deserialize)]
