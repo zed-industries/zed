@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{User, UserId},
+    db::{ContributorSelector, User, UserId},
     rpc, AppState, Error, Result,
 };
 use anyhow::anyhow;
@@ -141,7 +141,24 @@ async fn get_contributors(Extension(app): Extension<Arc<AppState>>) -> Result<Js
 
 #[derive(Debug, Deserialize)]
 struct CheckIsContributorParams {
-    github_user_id: i32,
+    github_user_id: Option<i32>,
+    github_login: Option<String>,
+}
+
+impl CheckIsContributorParams {
+    fn as_contributor_selector(self) -> Result<ContributorSelector> {
+        if let Some(github_user_id) = self.github_user_id {
+            return Ok(ContributorSelector::GitHubUserId { github_user_id });
+        }
+
+        if let Some(github_login) = self.github_login {
+            return Ok(ContributorSelector::GitHubLogin { github_login });
+        }
+
+        Err(anyhow!(
+            "must be one of `github_user_id` or `github_login`."
+        ))?
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -153,10 +170,11 @@ async fn check_is_contributor(
     Extension(app): Extension<Arc<AppState>>,
     Query(params): Query<CheckIsContributorParams>,
 ) -> Result<Json<CheckIsContributorResponse>> {
+    let params = params.as_contributor_selector()?;
     Ok(Json(CheckIsContributorResponse {
         signed_at: app
             .db
-            .get_contributor_sign_timestamp(params.github_user_id)
+            .get_contributor_sign_timestamp(&params)
             .await?
             .map(|ts| ts.and_utc().to_rfc3339_opts(SecondsFormat::Millis, true)),
     }))

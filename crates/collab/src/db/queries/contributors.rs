@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Debug)]
+pub enum ContributorSelector {
+    GitHubUserId { github_user_id: i32 },
+    GitHubLogin { github_login: String },
+}
+
 impl Database {
     /// Retrieves the GitHub logins of all users who have signed the CLA.
     pub async fn get_contributors(&self) -> Result<Vec<String>> {
@@ -24,14 +30,19 @@ impl Database {
     /// Records that a given user has signed the CLA.
     pub async fn get_contributor_sign_timestamp(
         &self,
-        github_user_id: i32,
+        selector: &ContributorSelector,
     ) -> Result<Option<DateTime>> {
         self.transaction(|tx| async move {
-            let Some(user) = user::Entity::find()
-                .filter(user::Column::GithubUserId.eq(github_user_id))
-                .one(&*tx)
-                .await?
-            else {
+            let condition = match selector {
+                ContributorSelector::GitHubUserId { github_user_id } => {
+                    user::Column::GithubUserId.eq(*github_user_id)
+                }
+                ContributorSelector::GitHubLogin { github_login } => {
+                    user::Column::GithubLogin.eq(github_login)
+                }
+            };
+
+            let Some(user) = user::Entity::find().filter(condition).one(&*tx).await? else {
                 return Ok(None);
             };
             let Some(contributor) = contributor::Entity::find_by_id(user.id).one(&*tx).await?
