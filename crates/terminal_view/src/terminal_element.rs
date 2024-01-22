@@ -1,11 +1,11 @@
 use editor::{Cursor, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, AnyElement, AvailableSpace, BorrowWindow, Bounds,
-    DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle,
-    Hsla, InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState,
-    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
-    MouseMoveEvent, Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun,
-    TextStyle, TextSystem, UnderlineStyle, WeakView, WhiteSpace, WindowContext,
+    div, fill, point, px, relative, AnyElement, AvailableSpace, Bounds, DispatchPhase, Element,
+    ElementContext, ElementId, FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hsla,
+    InputHandler, InteractiveBounds, InteractiveElement, InteractiveElementState, Interactivity,
+    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
+    Pixels, Point, ShapedLine, StatefulInteractiveElement, Styled, TextRun, TextStyle, TextSystem,
+    UnderlineStyle, WeakView, WhiteSpace, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -81,7 +81,7 @@ impl LayoutCell {
         origin: Point<Pixels>,
         layout: &LayoutState,
         _visible_bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let pos = {
             let point = self.point;
@@ -120,7 +120,7 @@ impl LayoutRect {
         }
     }
 
-    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
+    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut ElementContext) {
         let position = {
             let alac_point = self.point;
             point(
@@ -590,7 +590,7 @@ impl TerminalElement {
         origin: Point<Pixels>,
         mode: TermMode,
         bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
@@ -722,7 +722,7 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext<'_>,
+        cx: &mut ElementContext<'_>,
     ) -> (LayoutId, Self::State) {
         let (layout_id, interactive_state) =
             self.interactivity
@@ -741,7 +741,7 @@ impl Element for TerminalElement {
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::State,
-        cx: &mut WindowContext<'_>,
+        cx: &mut ElementContext<'_>,
     ) {
         let mut layout = self.compute_layout(bounds, cx);
 

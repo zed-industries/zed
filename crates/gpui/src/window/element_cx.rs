@@ -30,10 +30,7 @@ pub struct ElementContext<'a> {
 }
 
 impl<'a> WindowContext<'a> {
-    pub(crate) fn with_element_context<R>(
-        &mut self,
-        f: impl FnOnce(&mut ElementContext) -> R,
-    ) -> R {
+    pub fn with_element_context<R>(&mut self, f: impl FnOnce(&mut ElementContext) -> R) -> R {
         f(&mut ElementContext {
             cx: WindowContext::new(self.app, self.window),
         })
@@ -176,7 +173,7 @@ impl<'a> ElementContext<'a> {
     /// with a `GlobalElementId`, which disambiguates the given id in the context of its ancestor
     /// ids. Because elements are discarded and recreated on each frame, the `GlobalElementId` is
     /// used to associate state with identified elements across separate frames.
-    pub(crate) fn with_element_id<R>(
+    pub fn with_element_id<R>(
         &mut self,
         id: Option<impl Into<ElementId>>,
         f: impl FnOnce(&mut Self) -> R,
@@ -195,7 +192,7 @@ impl<'a> ElementContext<'a> {
 
     /// Invoke the given function with the given content mask after intersecting it
     /// with the current mask.
-    pub(crate) fn with_content_mask<R>(
+    pub fn with_content_mask<R>(
         &mut self,
         mask: Option<ContentMask<Pixels>>,
         f: impl FnOnce(&mut Self) -> R,
@@ -213,7 +210,7 @@ impl<'a> ElementContext<'a> {
 
     /// Invoke the given function with the content mask reset to that
     /// of the window.
-    pub(crate) fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let mask = ContentMask {
             bounds: Bounds {
                 origin: Point::default(),
@@ -238,7 +235,7 @@ impl<'a> ElementContext<'a> {
 
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
-    pub(crate) fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
         let old_stacking_order_id = mem::replace(
@@ -255,7 +252,7 @@ impl<'a> ElementContext<'a> {
 
     /// Updates the global element offset relative to the current offset. This is used to implement
     /// scrolling.
-    pub(crate) fn with_element_offset<R>(
+    pub fn with_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
@@ -270,7 +267,7 @@ impl<'a> ElementContext<'a> {
 
     /// Updates the global element offset based on the given offset. This is used to implement
     /// drag handles and other manual painting of elements.
-    pub(crate) fn with_absolute_element_offset<R>(
+    pub fn with_absolute_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
@@ -285,7 +282,7 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Obtain the current element offset.
-    pub(crate) fn element_offset(&self) -> Point<Pixels> {
+    pub fn element_offset(&self) -> Point<Pixels> {
         self.window()
             .next_frame
             .element_offset_stack
@@ -295,7 +292,7 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Obtain the current content mask.
-    pub(crate) fn content_mask(&self) -> ContentMask<Pixels> {
+    pub fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()
             .next_frame
             .content_mask_stack
@@ -311,7 +308,7 @@ impl<'a> ElementContext<'a> {
 
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
-    pub(crate) fn rem_size(&self) -> Pixels {
+    pub fn rem_size(&self) -> Pixels {
         self.window().rem_size
     }
 
@@ -319,7 +316,7 @@ impl<'a> ElementContext<'a> {
     /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
     /// when drawing the next frame.
-    pub(crate) fn with_element_state<S, R>(
+    pub fn with_element_state<S, R>(
         &mut self,
         id: ElementId,
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
