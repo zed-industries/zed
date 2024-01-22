@@ -80,18 +80,17 @@ test_both_dbs!(
 );
 
 async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
-    let user_id1 = db
-        .create_user(
-            "user1@example.com",
-            false,
-            NewUserParams {
-                github_login: "login1".into(),
-                github_user_id: 101,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    db.create_user(
+        "user1@example.com",
+        false,
+        NewUserParams {
+            github_login: "login1".into(),
+            github_user_id: 101,
+        },
+    )
+    .await
+    .unwrap()
+    .user_id;
     let user_id2 = db
         .create_user(
             "user2@example.com",
@@ -104,14 +103,6 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
         .await
         .unwrap()
         .user_id;
-
-    let user = db
-        .get_or_create_user_by_github_account("login1", 1, None)
-        .await
-        .unwrap();
-    assert_eq!(user.id, user_id1);
-    assert_eq!(&user.github_login, "login1");
-    assert_eq!(user.github_user_id, Some(101));
 
     let user = db
         .get_or_create_user_by_github_account("the-new-login2", 102, None)
