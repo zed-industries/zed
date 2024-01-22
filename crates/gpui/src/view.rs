@@ -23,6 +23,7 @@ impl<V> Sealed for View<V> {}
 #[doc(hidden)]
 pub struct AnyViewState {
     root_style: Style,
+    next_stacking_order_id: u16,
     cache_key: Option<ViewCacheKey>,
     element: Option<AnyElement>,
 }
@@ -292,6 +293,7 @@ impl Element for AnyView {
             let root_style = cx.layout_style(layout_id).unwrap().clone();
             let state = AnyViewState {
                 root_style,
+                next_stacking_order_id: 0,
                 cache_key: None,
                 element: Some(element),
             };
@@ -314,7 +316,7 @@ impl Element for AnyView {
                     && !cx.window.dirty_views.contains(&self.entity_id())
                     && !cx.window.refreshing
                 {
-                    cx.reuse_view();
+                    cx.reuse_view(state.next_stacking_order_id);
                     return;
                 }
             }
@@ -326,6 +328,7 @@ impl Element for AnyView {
                 element.draw(bounds.origin, bounds.size.into(), cx);
             }
 
+            state.next_stacking_order_id = cx.window.next_frame.next_stacking_order_id;
             state.cache_key = Some(ViewCacheKey {
                 bounds,
                 stacking_order: cx.stacking_order().clone(),

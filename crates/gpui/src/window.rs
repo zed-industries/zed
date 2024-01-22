@@ -39,30 +39,23 @@ use util::{measure, ResultExt};
 mod element_cx;
 pub use element_cx::*;
 
-const ACTIVE_DRAG_Z_INDEX: u8 = 1;
+const ACTIVE_DRAG_Z_INDEX: u16 = 1;
 
 /// A global stacking order, which is created by stacking successive z-index values.
 /// Each z-index will always be interpreted in the context of its parent z-index.
-#[derive(Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
-pub struct StackingOrder {
-    #[deref]
-    #[deref_mut]
-    context_stack: SmallVec<[u8; 64]>,
-    pub(crate) id: u32,
+#[derive(Debug, Deref, DerefMut, Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
+pub struct StackingOrder(SmallVec<[StackingContext; 64]>);
+
+/// A single entry in a primitive's z-index stacking order
+#[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Default)]
+pub struct StackingContext {
+    pub(crate) z_index: u16,
+    pub(crate) id: u16,
 }
 
-impl std::fmt::Debug for StackingOrder {
+impl std::fmt::Debug for StackingContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut stacks = self.context_stack.iter().peekable();
-        write!(f, "[({}): ", self.id)?;
-        while let Some(z_index) = stacks.next() {
-            write!(f, "{z_index}")?;
-            if stacks.peek().is_some() {
-                write!(f, "->")?;
-            }
-        }
-        write!(f, "]")?;
-        Ok(())
+        write!(f, "{{{}.{}}} ", self.z_index, self.id)
     }
 }
 
@@ -807,18 +800,39 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns true if there is no opaque layer containing the given point
-    /// on top of the given level. Layers whose level is an extension of the
-    /// level are not considered to be on top of the level.
-    pub fn was_top_layer(&self, point: &Point<Pixels>, level: &StackingOrder) -> bool {
-        for (opaque_level, _, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if level >= opaque_level {
-                break;
+    /// on top of the given level. Layers who are extensions of the queried layer
+    /// are not considered to be on top of queried layer.
+    pub fn was_top_layer(&self, point: &Point<Pixels>, layer: &StackingOrder) -> bool {
+        // Precondition: the depth map is ordered from topmost to bottomost.
+
+        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+            if layer >= opaque_layer {
+                // The queried layer is either above or is the same as the this opaque layer.
+                // Anything after this point is guaranteed to be below the queried layer.
+                return true;
             }
 
-            if bounds.contains(point) && !opaque_level.starts_with(level) {
+            if !bounds.contains(point) {
+                // This opaque layer is above the queried layer but it doesn't contain
+                // the given position, so we can ignore it even if it's above.
+                continue;
+            }
+
+            // At this point, we've established that this opaque layer is on top of the queried layer
+            // and contains the position:
+            // - If the opaque layer is an extension of the queried layer, we don't want
+            // to consider the opaque layer to be on top and so we ignore it.
+            // - Else, we will bail early and say that the queried layer wasn't the top one.
+            let opaque_layer_is_extension_of_queried_layer = opaque_layer.len() >= layer.len()
+                && opaque_layer
+                    .iter()
+                    .zip(layer.iter())
+                    .all(|(a, b)| a.z_index == b.z_index);
+            if !opaque_layer_is_extension_of_queried_layer {
                 return false;
             }
         }
+
         true
     }
 
@@ -831,11 +845,16 @@ impl<'a> WindowContext<'a> {
             if level >= opaque_level {
                 break;
             }
-            if opaque_level.starts_with(&[ACTIVE_DRAG_Z_INDEX]) {
+
+            if opaque_level
+                .first()
+                .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
+                .unwrap_or(false)
+            {
                 continue;
             }
 
-            if bounds.contains(point) && !opaque_level.starts_with(level) {
+            if bounds.contains(point) {
                 return false;
             }
         }

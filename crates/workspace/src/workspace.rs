@@ -4326,7 +4326,7 @@ impl Element for DisconnectedOverlay {
         overlay: &mut Self::State,
         cx: &mut ElementContext,
     ) {
-        cx.with_z_index(u8::MAX, |cx| {
+        cx.with_z_index(u16::MAX, |cx| {
             cx.add_opaque_layer(bounds);
             overlay.paint(cx);
         })

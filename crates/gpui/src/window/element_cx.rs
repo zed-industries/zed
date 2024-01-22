@@ -19,9 +19,9 @@ use crate::{
     EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
     InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, MonochromeSprite, MouseEvent, PaintQuad,
     Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingOrder, Style,
-    Surface, TextStyleRefinement, Underline, UnderlineStyle, Window, WindowContext,
-    SUBPIXEL_VARIANTS,
+    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StackingContext,
+    StackingOrder, Style, Surface, TextStyleRefinement, Underline, UnderlineStyle, Window,
+    WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
@@ -45,8 +45,8 @@ pub(crate) struct Frame {
     pub(crate) scene: Scene,
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
-    pub(crate) next_stacking_order_id: u32,
-    pub(crate) next_root_z_index: u8,
+    pub(crate) next_stacking_order_id: u16,
+    pub(crate) next_root_z_index: u16,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) requested_input_handler: Option<RequestedInputHandler>,
@@ -292,7 +292,7 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
-    pub(crate) fn reuse_view(&mut self) {
+    pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
         let view_id = self.parent_view_id();
         let grafted_view_ids = self
             .cx
@@ -333,6 +333,9 @@ impl<'a> ElementContext<'a> {
                 self.window.next_frame.requested_cursor_style = Some(style);
             }
         }
+
+        debug_assert!(next_stacking_order_id >= self.window.next_frame.next_stacking_order_id);
+        self.window.next_frame.next_stacking_order_id = next_stacking_order_id;
     }
 
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
@@ -410,36 +413,40 @@ impl<'a> ElementContext<'a> {
                 size: self.window().viewport_size,
             },
         };
+
+        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
-        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
+        let new_context = StackingContext {
+            z_index: new_root_z_index,
+            id: new_stacking_order_id,
+        };
+
         let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
-        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
-        self.window_mut()
-            .next_frame
-            .z_index_stack
-            .push(new_root_z_index);
+
+        self.window_mut().next_frame.z_index_stack.push(new_context);
         self.window_mut().next_frame.content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().next_frame.content_mask_stack.pop();
         self.window_mut().next_frame.z_index_stack = old_stacking_order;
+
         result
     }
 
     /// Called during painting to invoke the given closure in a new stacking context. The given
     /// z-index is interpreted relative to the previous call to `stack`.
-    pub fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_z_index<R>(&mut self, z_index: u16, f: impl FnOnce(&mut Self) -> R) -> R {
         let new_stacking_order_id =
             post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
-        let old_stacking_order_id = mem::replace(
-            &mut self.window_mut().next_frame.z_index_stack.id,
-            new_stacking_order_id,
-        );
-        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
-        self.window_mut().next_frame.z_index_stack.push(z_index);
+        let new_context = StackingContext {
+            z_index,
+            id: new_stacking_order_id,
+        };
+
+        self.window_mut().next_frame.z_index_stack.push(new_context);
         let result = f(self);
-        self.window_mut().next_frame.z_index_stack.id = old_stacking_order_id;
         self.window_mut().next_frame.z_index_stack.pop();
+
         result
     }
 
