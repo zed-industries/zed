@@ -292,7 +292,7 @@ impl<'a> VisualContext for ElementContext<'a> {
 }
 
 impl<'a> ElementContext<'a> {
-    pub(crate) fn reuse_view(&mut self) {
+    pub(crate) fn reuse_view(&mut self, next_stacking_order_id: u16) {
         let view_id = self.parent_view_id();
         let grafted_view_ids = self
             .cx
@@ -333,6 +333,9 @@ impl<'a> ElementContext<'a> {
                 self.window.next_frame.requested_cursor_style = Some(style);
             }
         }
+
+        debug_assert!(next_stacking_order_id >= self.window.next_frame.next_stacking_order_id);
+        self.window.next_frame.next_stacking_order_id = next_stacking_order_id;
     }
 
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
