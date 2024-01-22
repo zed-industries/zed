@@ -359,7 +359,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _state: Option<Self::State>,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::State) {
         let mut style = Style::default();
         style.refine(&self.style);
@@ -373,7 +373,7 @@ impl Element for List {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         _state: &mut Self::State,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::ElementContext,
     ) {
         let state = &mut *self.state.0.borrow_mut();
 

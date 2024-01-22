@@ -5,9 +5,9 @@
 //! elements with uniform height.
 
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
-    InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels,
-    Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
+    ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
+    Pixels, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -110,7 +110,7 @@ impl Element for UniformList {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let max_items = self.item_count;
         let item_size = state
@@ -158,7 +158,7 @@ impl Element for UniformList {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let style =
             self.interactivity
@@ -280,7 +280,7 @@ impl UniformList {
         self
     }
 
-    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut WindowContext) -> Size<Pixels> {
+    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut ElementContext) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();
         }

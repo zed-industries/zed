@@ -1,16 +1,13 @@
 use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyTooltip, AnyView, AppContext, Arena,
-    AsyncWindowContext, AvailableSpace, Bounds, BoxShadow, Context, Corners, CursorStyle,
-    DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
-    Entity, EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GlobalElementId, GlyphId, Hsla,
-    ImageData, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    KeystrokeEvent, LayoutId, Model, ModelContext, Modifiers, MonochromeSprite, MouseButton,
-    MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel,
-    Quad, Render, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    Shadow, SharedString, Size, Style, SubscriberSet, Subscription, Surface, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, View, VisualContext, WeakView, WindowBounds, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, GlobalElementId, Hsla, KeyBinding, KeyContext,
+    KeyDownEvent, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, Render, ScaledPixels, Scene, SharedString, Size,
+    SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView,
+    WindowBounds, WindowOptions,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -19,13 +16,12 @@ use futures::{
     channel::{mpsc, oneshot},
     StreamExt,
 };
-use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
-    borrow::{Borrow, BorrowMut, Cow},
+    borrow::{Borrow, BorrowMut},
     cell::RefCell,
     collections::hash_map::Entry,
     fmt::{Debug, Display},
@@ -40,6 +36,9 @@ use std::{
     },
 };
 use util::ResultExt;
+
+mod element_cx;
+pub use element_cx::*;
 
 const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
@@ -98,7 +97,7 @@ impl DispatchPhase {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
-type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut WindowContext) + 'static>;
+type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 struct FocusEvent {
@@ -804,80 +803,6 @@ impl<'a> WindowContext<'a> {
         result
     }
 
-    #[must_use]
-    /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
-    /// layout is being requested, along with the layout ids of any children. This method is called during
-    /// calls to the `Element::layout` trait method and enables any element to participate in layout.
-    pub fn request_layout(
-        &mut self,
-        style: &Style,
-        children: impl IntoIterator<Item = LayoutId>,
-    ) -> LayoutId {
-        self.app.layout_id_buffer.clear();
-        self.app.layout_id_buffer.extend(children);
-        let rem_size = self.rem_size();
-
-        self.window.layout_engine.as_mut().unwrap().request_layout(
-            style,
-            rem_size,
-            &self.app.layout_id_buffer,
-        )
-    }
-
-    /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
-    /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
-    /// determine the element's size. One place this is used internally is when measuring text.
-    ///
-    /// The given closure is invoked at layout time with the known dimensions and available space and
-    /// returns a `Size`.
-    pub fn request_measured_layout<
-        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
-            + 'static,
-    >(
-        &mut self,
-        style: Style,
-        measure: F,
-    ) -> LayoutId {
-        let rem_size = self.rem_size();
-        self.window
-            .layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measured_layout(style, rem_size, measure)
-    }
-
-    pub(crate) fn layout_style(&self, layout_id: LayoutId) -> Option<&Style> {
-        self.window
-            .layout_engine
-            .as_ref()
-            .unwrap()
-            .requested_style(layout_id)
-    }
-
-    /// Compute the layout for the given id within the given available space.
-    /// This method is called for its side effect, typically by the framework prior to painting.
-    /// After calling it, you can request the bounds of the given layout node id or any descendant.
-    pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
-        let mut layout_engine = self.window.layout_engine.take().unwrap();
-        layout_engine.compute_layout(layout_id, available_space, self);
-        self.window.layout_engine = Some(layout_engine);
-    }
-
-    /// Obtain the bounds computed for the given LayoutId relative to the window. This method should not
-    /// be invoked until the paint phase begins, and will usually be invoked by GPUI itself automatically
-    /// in order to pass your element its `Bounds` automatically.
-    pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
-        let mut bounds = self
-            .window
-            .layout_engine
-            .as_mut()
-            .unwrap()
-            .layout_bounds(layout_id)
-            .map(Into::into);
-        bounds.origin += self.element_offset();
-        bounds
-    }
-
     fn window_bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
@@ -973,67 +898,6 @@ impl<'a> WindowContext<'a> {
         self.window.default_prevented
     }
 
-    /// Register a mouse event listener on the window for the next frame. The type of event
-    /// is determined by the first parameter of the given listener. When the next frame is rendered
-    /// the listener will be cleared.
-    pub fn on_mouse_event<Event: MouseEvent>(
-        &mut self,
-        mut handler: impl FnMut(&Event, DispatchPhase, &mut WindowContext) + 'static,
-    ) {
-        let view_id = self.parent_view_id();
-        let order = self.window.next_frame.z_index_stack.clone();
-        self.window
-            .next_frame
-            .mouse_listeners
-            .entry(TypeId::of::<Event>())
-            .or_default()
-            .push((
-                order,
-                view_id,
-                Box::new(
-                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_>| {
-                        handler(event.downcast_ref().unwrap(), phase, cx)
-                    },
-                ),
-            ))
-    }
-
-    /// Register a key event listener on the window for the next frame. The type of event
-    /// is determined by the first parameter of the given listener. When the next frame is rendered
-    /// the listener will be cleared.
-    ///
-    /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
-    /// a specific need to register a global listener.
-    pub fn on_key_event<Event: KeyEvent>(
-        &mut self,
-        listener: impl Fn(&Event, DispatchPhase, &mut WindowContext) + 'static,
-    ) {
-        self.window.next_frame.dispatch_tree.on_key_event(Rc::new(
-            move |event: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                if let Some(event) = event.downcast_ref::<Event>() {
-                    listener(event, phase, cx)
-                }
-            },
-        ));
-    }
-
-    /// Register an action listener on the window for the next frame. The type of action
-    /// is determined by the first parameter of the given listener. When the next frame is rendered
-    /// the listener will be cleared.
-    ///
-    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
-    /// a specific need to register a global listener.
-    pub fn on_action(
-        &mut self,
-        action_type: TypeId,
-        listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
-    ) {
-        self.window
-            .next_frame
-            .dispatch_tree
-            .on_action(action_type, Rc::new(listener));
-    }
-
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
         let target = self
@@ -1072,16 +936,6 @@ impl<'a> WindowContext<'a> {
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) {
         let view_id = self.parent_view_id();
         self.window.next_frame.tooltip_request = Some(TooltipRequest { view_id, tooltip });
-    }
-
-    /// Called during painting to track which z-index is on top at each pixel position
-    pub fn add_opaque_layer(&mut self, bounds: Bounds<Pixels>) {
-        let stacking_order = self.window.next_frame.z_index_stack.clone();
-        let view_id = self.parent_view_id();
-        let depth_map = &mut self.window.next_frame.depth_map;
-        match depth_map.binary_search_by(|(level, _, _)| stacking_order.cmp(level)) {
-            Ok(i) | Err(i) => depth_map.insert(i, (stacking_order, view_id, bounds)),
-        }
     }
 
     /// Returns true if there is no opaque layer containing the given point
@@ -1123,329 +977,6 @@ impl<'a> WindowContext<'a> {
     /// Called during painting to get the current stacking order.
     pub fn stacking_order(&self) -> &StackingOrder {
         &self.window.next_frame.z_index_stack
-    }
-
-    /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
-    pub fn paint_shadows(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        shadows: &[BoxShadow],
-    ) {
-        let scale_factor = self.scale_factor();
-        let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-        let window = &mut *self.window;
-        for shadow in shadows {
-            let mut shadow_bounds = bounds;
-            shadow_bounds.origin += shadow.offset;
-            shadow_bounds.dilate(shadow.spread_radius);
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                Shadow {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds: shadow_bounds.scale(scale_factor),
-                    content_mask: content_mask.scale(scale_factor),
-                    corner_radii: corner_radii.scale(scale_factor),
-                    color: shadow.color,
-                    blur_radius: shadow.blur_radius.scale(scale_factor),
-                },
-            );
-        }
-    }
-
-    /// Paint one or more quads into the scene for the next frame at the current stacking context.
-    /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
-    pub fn paint_quad(&mut self, quad: PaintQuad) {
-        let scale_factor = self.scale_factor();
-        let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Quad {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: quad.bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                background: quad.background,
-                border_color: quad.border_color,
-                corner_radii: quad.corner_radii.scale(scale_factor),
-                border_widths: quad.border_widths.scale(scale_factor),
-            },
-        );
-    }
-
-    /// Paint the given `Path` into the scene for the next frame at the current z-index.
-    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
-        let scale_factor = self.scale_factor();
-        let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-
-        path.content_mask = content_mask;
-        path.color = color.into();
-        path.view_id = view_id.into();
-        let window = &mut *self.window;
-        window
-            .next_frame
-            .scene
-            .insert(&window.next_frame.z_index_stack, path.scale(scale_factor));
-    }
-
-    /// Paint an underline into the scene for the next frame at the current z-index.
-    pub fn paint_underline(
-        &mut self,
-        origin: Point<Pixels>,
-        width: Pixels,
-        style: &UnderlineStyle,
-    ) {
-        let scale_factor = self.scale_factor();
-        let height = if style.wavy {
-            style.thickness * 3.
-        } else {
-            style.thickness
-        };
-        let bounds = Bounds {
-            origin,
-            size: size(width, height),
-        };
-        let content_mask = self.content_mask();
-        let view_id = self.parent_view_id();
-
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Underline {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds: bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
-                thickness: style.thickness.scale(scale_factor),
-                color: style.color.unwrap_or_default(),
-                wavy: style.wavy,
-            },
-        );
-    }
-
-    /// Paint a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
-    /// The y component of the origin is the baseline of the glyph.
-    pub fn paint_glyph(
-        &mut self,
-        origin: Point<Pixels>,
-        font_id: FontId,
-        glyph_id: GlyphId,
-        font_size: Pixels,
-        color: Hsla,
-    ) -> Result<()> {
-        let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
-        let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-        };
-        let params = RenderGlyphParams {
-            font_id,
-            glyph_id,
-            font_size,
-            subpixel_variant,
-            scale_factor,
-            is_emoji: false,
-        };
-
-        let raster_bounds = self.text_system().raster_bounds(&params)?;
-        if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id();
-            let window = &mut *self.window;
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                MonochromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds,
-                    content_mask,
-                    color,
-                    tile,
-                },
-            );
-        }
-        Ok(())
-    }
-
-    /// Paint an emoji glyph into the scene for the next frame at the current z-index.
-    /// The y component of the origin is the baseline of the glyph.
-    pub fn paint_emoji(
-        &mut self,
-        origin: Point<Pixels>,
-        font_id: FontId,
-        glyph_id: GlyphId,
-        font_size: Pixels,
-    ) -> Result<()> {
-        let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
-        let params = RenderGlyphParams {
-            font_id,
-            glyph_id,
-            font_size,
-            // We don't render emojis with subpixel variants.
-            subpixel_variant: Default::default(),
-            scale_factor,
-            is_emoji: true,
-        };
-
-        let raster_bounds = self.text_system().raster_bounds(&params)?;
-        if !raster_bounds.is_zero() {
-            let tile =
-                self.window
-                    .sprite_atlas
-                    .get_or_insert_with(&params.clone().into(), &mut || {
-                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                        Ok((size, Cow::Owned(bytes)))
-                    })?;
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.content_mask().scale(scale_factor);
-            let view_id = self.parent_view_id();
-            let window = &mut *self.window;
-
-            window.next_frame.scene.insert(
-                &window.next_frame.z_index_stack,
-                PolychromeSprite {
-                    view_id: view_id.into(),
-                    layer_id: 0,
-                    order: 0,
-                    bounds,
-                    corner_radii: Default::default(),
-                    content_mask,
-                    tile,
-                    grayscale: false,
-                },
-            );
-        }
-        Ok(())
-    }
-
-    /// Paint a monochrome SVG into the scene for the next frame at the current stacking context.
-    pub fn paint_svg(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        path: SharedString,
-        color: Hsla,
-    ) -> Result<()> {
-        let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
-        // Render the SVG at twice the size to get a higher quality result.
-        let params = RenderSvgParams {
-            path,
-            size: bounds
-                .size
-                .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
-        };
-
-        let tile =
-            self.window
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    let bytes = self.svg_renderer.render(&params)?;
-                    Ok((params.size, Cow::Owned(bytes)))
-                })?;
-        let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id();
-
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            MonochromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                content_mask,
-                color,
-                tile,
-            },
-        );
-
-        Ok(())
-    }
-
-    /// Paint an image into the scene for the next frame at the current z-index.
-    pub fn paint_image(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        data: Arc<ImageData>,
-        grayscale: bool,
-    ) -> Result<()> {
-        let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
-        let params = RenderImageParams { image_id: data.id };
-
-        let tile = self
-            .window
-            .sprite_atlas
-            .get_or_insert_with(&params.clone().into(), &mut || {
-                Ok((data.size(), Cow::Borrowed(data.as_bytes())))
-            })?;
-        let content_mask = self.content_mask().scale(scale_factor);
-        let corner_radii = corner_radii.scale(scale_factor);
-        let view_id = self.parent_view_id();
-
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            PolychromeSprite {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                content_mask,
-                corner_radii,
-                tile,
-                grayscale,
-            },
-        );
-        Ok(())
-    }
-
-    /// Paint a surface into the scene for the next frame at the current z-index.
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
-        let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
-        let content_mask = self.content_mask().scale(scale_factor);
-        let view_id = self.parent_view_id();
-        let window = &mut *self.window;
-        window.next_frame.scene.insert(
-            &window.next_frame.z_index_stack,
-            Surface {
-                view_id: view_id.into(),
-                layer_id: 0,
-                order: 0,
-                bounds,
-                content_mask,
-                image_buffer,
-            },
-        );
     }
 
     pub(crate) fn reuse_view(&mut self) {
@@ -1502,44 +1033,55 @@ impl<'a> WindowContext<'a> {
 
         if let Some(requested_handler) = self.window.rendered_frame.requested_input_handler.as_mut()
         {
-            requested_handler.handler = self.window.platform_window.take_input_handler();
+            let input_handler = self.window.platform_window.take_input_handler();
+            requested_handler.handler = input_handler;
         }
 
         let root_view = self.window.root_view.take().unwrap();
-
-        self.with_z_index(0, |cx| {
-            cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
-                for (action_type, action_listeners) in &cx.app.global_action_listeners {
-                    for action_listener in action_listeners.iter().cloned() {
-                        cx.window.next_frame.dispatch_tree.on_action(
-                            *action_type,
-                            Rc::new(move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
-                                action_listener(action, phase, cx)
-                            }),
-                        )
+        self.with_element_context(|cx| {
+            cx.with_z_index(0, |cx| {
+                cx.with_key_dispatch(Some(KeyContext::default()), None, |_, cx| {
+                    // We need to use cx.cx here so we can utilize borrow splitting
+                    for (action_type, action_listeners) in &cx.cx.app.global_action_listeners {
+                        for action_listener in action_listeners.iter().cloned() {
+                            cx.cx.window.next_frame.dispatch_tree.on_action(
+                                *action_type,
+                                Rc::new(
+                                    move |action: &dyn Any, phase, cx: &mut WindowContext<'_>| {
+                                        action_listener(action, phase, cx)
+                                    },
+                                ),
+                            )
+                        }
                     }
-                }
 
-                let available_space = cx.window.viewport_size.map(Into::into);
-                root_view.draw(Point::default(), available_space, cx);
+                    let available_space = cx.window.viewport_size.map(Into::into);
+                    root_view.draw(Point::default(), available_space, cx);
+                })
             })
         });
 
         if let Some(active_drag) = self.app.active_drag.take() {
-            self.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
-                let offset = cx.mouse_position() - active_drag.cursor_offset;
-                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                active_drag.view.draw(offset, available_space, cx);
+            self.with_element_context(|cx| {
+                cx.with_z_index(ACTIVE_DRAG_Z_INDEX, |cx| {
+                    let offset = cx.mouse_position() - active_drag.cursor_offset;
+                    let available_space =
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    active_drag.view.draw(offset, available_space, cx);
+                })
             });
             self.active_drag = Some(active_drag);
         } else if let Some(tooltip_request) = self.window.next_frame.tooltip_request.take() {
-            self.with_z_index(1, |cx| {
-                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-                tooltip_request.tooltip.view.draw(
-                    tooltip_request.tooltip.cursor_offset,
-                    available_space,
-                    cx,
-                );
+            self.with_element_context(|cx| {
+                cx.with_z_index(1, |cx| {
+                    let available_space =
+                        size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                    tooltip_request.tooltip.view.draw(
+                        tooltip_request.tooltip.cursor_offset,
+                        available_space,
+                        cx,
+                    );
+                })
             });
             self.window.next_frame.tooltip_request = Some(tooltip_request);
         }
@@ -1730,7 +1272,9 @@ impl<'a> WindowContext<'a> {
             // Capture phase, events bubble from back to front. Handlers for this phase are used for
             // special purposes, such as detecting events outside of a given Bounds.
             for (_, _, handler) in &mut handlers {
-                handler(event, DispatchPhase::Capture, self);
+                self.with_element_context(|cx| {
+                    handler(event, DispatchPhase::Capture, cx);
+                });
                 if !self.app.propagate_event {
                     break;
                 }
@@ -1739,7 +1283,9 @@ impl<'a> WindowContext<'a> {
             // Bubble phase, where most normal handlers do their work.
             if self.app.propagate_event {
                 for (_, _, handler) in handlers.iter_mut().rev() {
-                    handler(event, DispatchPhase::Bubble, self);
+                    self.with_element_context(|cx| {
+                        handler(event, DispatchPhase::Bubble, cx);
+                    });
                     if !self.app.propagate_event {
                         break;
                     }
@@ -1830,7 +1376,9 @@ impl<'a> WindowContext<'a> {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
 
             for key_listener in node.key_listeners.clone() {
-                key_listener(event, DispatchPhase::Capture, self);
+                self.with_element_context(|cx| {
+                    key_listener(event, DispatchPhase::Capture, cx);
+                });
                 if !self.propagate_event {
                     return;
                 }
@@ -1842,7 +1390,9 @@ impl<'a> WindowContext<'a> {
             // Handle low level key events
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
             for key_listener in node.key_listeners.clone() {
-                key_listener(event, DispatchPhase::Bubble, self);
+                self.with_element_context(|cx| {
+                    key_listener(event, DispatchPhase::Bubble, cx);
+                });
                 if !self.propagate_event {
                     return;
                 }
@@ -1877,7 +1427,10 @@ impl<'a> WindowContext<'a> {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
-                    listener(any_action, DispatchPhase::Capture, self);
+                    self.with_element_context(|cx| {
+                        listener(any_action, DispatchPhase::Capture, cx);
+                    });
+
                     if !self.propagate_event {
                         return;
                     }
@@ -1895,7 +1448,11 @@ impl<'a> WindowContext<'a> {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
                     self.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    listener(any_action, DispatchPhase::Bubble, self);
+
+                    self.with_element_context(|cx| {
+                        listener(any_action, DispatchPhase::Bubble, cx);
+                    });
+
                     if !self.propagate_event {
                         return;
                     }
@@ -2019,84 +1576,6 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    /// Invoke the given function with the given focus handle present on the key dispatch stack.
-    /// If you want an element to participate in key dispatch, use this method to push its key context and focus handle into the stack during paint.
-    pub fn with_key_dispatch<R>(
-        &mut self,
-        context: Option<KeyContext>,
-        focus_handle: Option<FocusHandle>,
-        f: impl FnOnce(Option<FocusHandle>, &mut Self) -> R,
-    ) -> R {
-        let window = &mut self.window;
-        let focus_id = focus_handle.as_ref().map(|handle| handle.id);
-        window
-            .next_frame
-            .dispatch_tree
-            .push_node(context.clone(), focus_id, None);
-
-        let result = f(focus_handle, self);
-
-        self.window.next_frame.dispatch_tree.pop_node();
-
-        result
-    }
-
-    /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to layout views.
-    pub fn with_view_id<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let text_system = self.text_system().clone();
-        text_system.with_view(view_id, || {
-            if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                return f(self);
-            } else {
-                self.window.next_frame.view_stack.push(view_id);
-                let result = f(self);
-                self.window.next_frame.view_stack.pop();
-                result
-            }
-        })
-    }
-
-    /// Invoke the given function with the given view id present on the view stack.
-    /// This is a fairly low-level method used to paint views.
-    pub fn paint_view<R>(&mut self, view_id: EntityId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let text_system = self.text_system().clone();
-        text_system.with_view(view_id, || {
-            if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                return f(self);
-            } else {
-                self.window.next_frame.view_stack.push(view_id);
-                self.window
-                    .next_frame
-                    .dispatch_tree
-                    .push_node(None, None, Some(view_id));
-                let result = f(self);
-                self.window.next_frame.dispatch_tree.pop_node();
-                self.window.next_frame.view_stack.pop();
-                result
-            }
-        })
-    }
-
-    /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
-    /// platform to receive textual input with proper integration with concerns such
-    /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
-    /// rendered.
-    ///
-    /// [element_input_handler]: crate::ElementInputHandler
-    pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
-        if focus_handle.is_focused(self) {
-            let view_id = self.parent_view_id();
-            self.window.next_frame.requested_input_handler = Some(RequestedInputHandler {
-                view_id,
-                handler: Some(PlatformInputHandler::new(
-                    self.to_async(),
-                    Box::new(input_handler),
-                )),
-            })
-        }
-    }
-
     /// Register a callback that can interrupt the closing of the current window based the returned boolean.
     /// If the callback returns false, the window won't be closed.
     pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
@@ -2114,6 +1593,32 @@ impl<'a> WindowContext<'a> {
                 })
                 .unwrap_or(true)
             }))
+    }
+
+    pub(crate) fn parent_view_id(&self) -> EntityId {
+        *self
+            .window
+            .next_frame
+            .view_stack
+            .last()
+            .expect("a view should always be on the stack while drawing")
+    }
+
+    /// Register an action listener on the window for the next frame. The type of action
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action(
+        &mut self,
+        action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
+    ) {
+        self.window
+            .next_frame
+            .dispatch_tree
+            .on_action(action_type, Rc::new(listener));
     }
 }
 
@@ -2737,34 +2242,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         );
         self.app.defer(move |_| activate());
         subscription
-    }
-
-    /// Add a listener for any mouse event that occurs in the window.
-    /// This is a fairly low level method.
-    /// Typically, you'll want to use methods on UI elements, which perform bounds checking etc.
-    pub fn on_mouse_event<Event: MouseEvent>(
-        &mut self,
-        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
-    ) {
-        let handle = self.view().clone();
-        self.window_cx.on_mouse_event(move |event, phase, cx| {
-            handle.update(cx, |view, cx| {
-                handler(view, event, phase, cx);
-            })
-        });
-    }
-
-    /// Register a callback to be invoked when the given Key Event is dispatched to the window.
-    pub fn on_key_event<Event: KeyEvent>(
-        &mut self,
-        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + 'static,
-    ) {
-        let handle = self.view().clone();
-        self.window_cx.on_key_event(move |event, phase, cx| {
-            handle.update(cx, |view, cx| {
-                handler(view, event, phase, cx);
-            })
-        });
     }
 
     /// Register a callback to be invoked when the given Action type is dispatched to the window.

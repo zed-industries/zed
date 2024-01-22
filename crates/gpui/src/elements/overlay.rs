@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, BorrowWindow, Bounds, Element, IntoElement, LayoutId, ParentElement, Pixels,
-    Point, Size, Style, WindowContext,
+    point, AnyElement, Bounds, Element, ElementContext, IntoElement, LayoutId, ParentElement,
+    Pixels, Point, Size, Style,
 };
 
 /// The state that the overlay element uses to track its children.
@@ -74,7 +74,7 @@ impl Element for Overlay {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (crate::LayoutId, Self::State) {
         let child_layout_ids = self
             .children
@@ -97,7 +97,7 @@ impl Element for Overlay {
         &mut self,
         bounds: crate::Bounds<crate::Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         if element_state.child_layout_ids.is_empty() {
             return;

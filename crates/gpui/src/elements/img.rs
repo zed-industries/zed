@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::{
-    point, size, Bounds, DevicePixels, Element, ImageData, InteractiveElement,
+    point, size, Bounds, DevicePixels, Element, ElementContext, ImageData, InteractiveElement,
     InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUrl, Size,
-    StyleRefinement, Styled, WindowContext,
+    StyleRefinement, Styled,
 };
 use futures::FutureExt;
 use media::core_video::CVImageBuffer;
@@ -81,7 +81,7 @@ impl Element for Img {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.interactivity
             .layout(element_state, cx, |style, cx| cx.request_layout(&style, []))
@@ -91,7 +91,7 @@ impl Element for Img {
         &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let source = self.source.clone();
         self.interactivity.paint(

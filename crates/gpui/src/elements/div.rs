@@ -24,10 +24,11 @@
 
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement, IsZero,
-    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
-    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    Bounds, ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle,
+    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task,
+    View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -1052,7 +1053,7 @@ impl Element for Div {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut child_layout_ids = SmallVec::new();
         let (layout_id, interactive_state) = self.interactivity.layout(
@@ -1082,7 +1083,7 @@ impl Element for Div {
         &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
@@ -1233,8 +1234,8 @@ impl Interactivity {
     pub fn layout(
         &mut self,
         element_state: Option<InteractiveElementState>,
-        cx: &mut WindowContext,
-        f: impl FnOnce(Style, &mut WindowContext) -> LayoutId,
+        cx: &mut ElementContext,
+        f: impl FnOnce(Style, &mut ElementContext) -> LayoutId,
     ) -> (LayoutId, InteractiveElementState) {
         let mut element_state = element_state.unwrap_or_default();
 
@@ -1281,8 +1282,8 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut WindowContext),
+        cx: &mut ElementContext,
+        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
         let z_index = style.z_index.unwrap_or(0);
@@ -1295,7 +1296,7 @@ impl Interactivity {
                 .insert(debug_selector.clone(), bounds);
         }
 
-        let paint_hover_group_handler = |cx: &mut WindowContext| {
+        let paint_hover_group_handler = |cx: &mut ElementContext| {
             let hover_group_bounds = self
                 .group_hover_style
                 .as_ref()
@@ -1319,7 +1320,7 @@ impl Interactivity {
         }
 
         cx.with_z_index(z_index, |cx| {
-            style.paint(bounds, cx, |cx| {
+            style.paint(bounds, cx, |cx: &mut ElementContext| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         #[cfg(debug_assertions)]
@@ -1333,7 +1334,7 @@ impl Interactivity {
                             let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
                             let str_len = element_id.len();
 
-                            let render_debug_text = |cx: &mut WindowContext| {
+                            let render_debug_text = |cx: &mut ElementContext| {
                                 if let Some(text) = cx
                                     .text_system()
                                     .shape_text(
@@ -1902,7 +1903,7 @@ impl Interactivity {
         &self,
         bounds: Option<Bounds<Pixels>>,
         element_state: &mut InteractiveElementState,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
@@ -2103,12 +2104,12 @@ where
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         self.element.paint(bounds, state, cx)
     }
 }
@@ -2178,12 +2179,12 @@ where
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         self.element.paint(bounds, state, cx)
     }
 }
