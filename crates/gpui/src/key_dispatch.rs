@@ -1,6 +1,6 @@
 use crate::{
-    Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, KeyMatch,
-    Keymap, Keystroke, KeystrokeMatcher, WindowContext,
+    Action, ActionRegistry, DispatchPhase, ElementContext, EntityId, FocusId, KeyBinding,
+    KeyContext, KeyMatch, Keymap, Keystroke, KeystrokeMatcher, WindowContext,
 };
 use collections::FxHashMap;
 use parking_lot::Mutex;
@@ -36,7 +36,7 @@ pub(crate) struct DispatchNode {
     parent: Option<DispatchNodeId>,
 }
 
-type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
+type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut ElementContext)>;
 
 #[derive(Clone)]
 pub(crate) struct DispatchActionListener {

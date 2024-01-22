@@ -1,8 +1,8 @@
 use crate::{
-    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, BorrowWindow,
-    Bounds, ContentMask, Element, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView,
-    IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style, TextStyle,
-    ViewContext, VisualContext, WeakModel, WindowContext,
+    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, AvailableSpace, Bounds,
+    ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
+    FocusableView, IntoElement, LayoutId, Model, Pixels, Point, Render, Size, StackingOrder, Style,
+    TextStyle, ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -94,7 +94,7 @@ impl<V: Render> Element for View<V> {
     fn request_layout(
         &mut self,
         _state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         cx.with_view_id(self.entity_id(), |cx| {
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
@@ -103,7 +103,7 @@ impl<V: Render> Element for View<V> {
         })
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
         cx.paint_view(self.entity_id(), |cx| element.take().unwrap().paint(cx));
     }
 }
@@ -202,7 +202,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    request_layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
+    request_layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
     cache: bool,
 }
 
@@ -250,7 +250,7 @@ impl AnyView {
         &self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         cx.paint_view(self.entity_id(), |cx| {
             cx.with_absolute_element_offset(origin, |cx| {
@@ -278,7 +278,7 @@ impl Element for AnyView {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         cx.with_view_id(self.entity_id(), |cx| {
             if self.cache {
@@ -299,7 +299,7 @@ impl Element for AnyView {
         })
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         cx.paint_view(self.entity_id(), |cx| {
             if !self.cache {
                 state.element.take().unwrap().paint(cx);
@@ -363,7 +363,7 @@ impl IntoElement for AnyView {
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
     model: AnyWeakModel,
-    layout: fn(&AnyView, &mut WindowContext) -> (LayoutId, AnyElement),
+    layout: fn(&AnyView, &mut ElementContext) -> (LayoutId, AnyElement),
 }
 
 impl AnyWeakView {
@@ -402,11 +402,11 @@ impl std::fmt::Debug for AnyWeakView {
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, IntoElement, LayoutId, Render, WindowContext};
+    use crate::{AnyElement, AnyView, ElementContext, IntoElement, LayoutId, Render};
 
     pub(crate) fn request_layout<V: 'static + Render>(
         view: &AnyView,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, AnyElement) {
         let view = view.clone().downcast::<V>().unwrap();
         let mut element = view.update(cx, |view, cx| view.render(cx).into_any_element());

@@ -26,12 +26,12 @@ use futures::{
 };
 use gpui::{
     actions, canvas, div, impl_actions, point, px, size, Action, AnyElement, AnyModel, AnyView,
-    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, BorrowWindow, Bounds, Context,
-    Div, DragMoveEvent, Element, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId, ManagedView, Model,
-    ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, Size,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    AnyWeakView, AppContext, AsyncAppContext, AsyncWindowContext, Bounds, Context, Div,
+    DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
+    ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
+    Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -3539,9 +3539,14 @@ impl Render for Workspace {
                     .border_b()
                     .border_color(colors.border)
                     .child(
-                        canvas(cx.listener(|workspace, bounds, _| {
-                            workspace.bounds = *bounds;
-                        }))
+                        canvas({
+                            let this = cx.view().clone();
+                            move |bounds, cx| {
+                                this.update(cx, |this, _cx| {
+                                    this.bounds = *bounds;
+                                })
+                            }
+                        })
                         .absolute()
                         .size_full(),
                     )
@@ -4293,7 +4298,7 @@ impl Element for DisconnectedOverlay {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
@@ -4315,7 +4320,12 @@ impl Element for DisconnectedOverlay {
         (overlay.request_layout(cx), overlay)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, overlay: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        overlay: &mut Self::State,
+        cx: &mut ElementContext,
+    ) {
         cx.with_z_index(u8::MAX, |cx| {
             cx.add_opaque_layer(bounds);
             overlay.paint(cx);

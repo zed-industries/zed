@@ -3912,7 +3912,7 @@ impl Editor {
         gutter_hovered: bool,
         _line_height: Pixels,
         _gutter_margin: Pixels,
-        cx: &mut ViewContext<Self>,
+        editor_view: View<Editor>,
     ) -> Vec<Option<IconButton>> {
         fold_data
             .iter()
@@ -3922,14 +3922,19 @@ impl Editor {
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
                             IconButton::new(ix as usize, ui::IconName::ChevronDown)
-                                .on_click(cx.listener(move |editor, _e, cx| match fold_status {
-                                    FoldStatus::Folded => {
-                                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                .on_click({
+                                    let view = editor_view.clone();
+                                    move |_e, cx| {
+                                        view.update(cx, |editor, cx| match fold_status {
+                                            FoldStatus::Folded => {
+                                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                            }
+                                            FoldStatus::Foldable => {
+                                                editor.fold_at(&FoldAt { buffer_row }, cx);
+                                            }
+                                        })
                                     }
-                                    FoldStatus::Foldable => {
-                                        editor.fold_at(&FoldAt { buffer_row }, cx);
-                                    }
-                                }))
+                                })
                                 .icon_color(ui::Color::Muted)
                                 .icon_size(ui::IconSize::Small)
                                 .selected(fold_status == FoldStatus::Folded)
@@ -9575,10 +9580,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
                     .size(ButtonSize::Compact)
                     .style(ButtonStyle::Transparent)
                     .visible_on_hover(group_id)
-                    .on_click(cx.listener({
+                    .on_click({
                         let message = diagnostic.message.clone();
-                        move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
-                    }))
+                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                    })
                     .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
             )
             .into_any_element()
