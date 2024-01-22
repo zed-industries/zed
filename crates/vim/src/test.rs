@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use command_palette::CommandPalette;
 use editor::DisplayPoint;
-use gpui::{Action, KeyBinding};
+use gpui::KeyBinding;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
 pub use vim_test_context::*;
@@ -15,7 +15,7 @@ pub use vim_test_context::*;
 use indoc::indoc;
 use search::BufferSearchBar;
 
-use crate::{insert::NormalBefore, motion, normal::InsertLineBelow, state::Mode, ModeIndicator};
+use crate::{insert::NormalBefore, motion, state::Mode, ModeIndicator};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {

@@ -640,8 +640,11 @@ impl<'a> VisualTestContext {
                 .as_ref()
                 .expect("Can't draw to this window without a root view")
                 .entity_id();
-            cx.with_view_id(entity_id, |cx| {
-                f(cx).draw(origin, space, cx);
+
+            cx.with_element_context(|cx| {
+                cx.with_view_id(entity_id, |cx| {
+                    f(cx).draw(origin, space, cx);
+                })
             });
 
             cx.refresh();

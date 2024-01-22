@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Element, ElementId, InteractiveElement, InteractiveElementState, Interactivity,
-    IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled, WindowContext,
+    Bounds, Element, ElementContext, ElementId, InteractiveElement, InteractiveElementState,
+    Interactivity, IntoElement, LayoutId, Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
@@ -32,7 +32,7 @@ impl Element for Svg {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.interactivity.layout(element_state, cx, |style, cx| {
             cx.request_layout(&style, None)
@@ -43,7 +43,7 @@ impl Element for Svg {
         &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) where
         Self: Sized,
     {

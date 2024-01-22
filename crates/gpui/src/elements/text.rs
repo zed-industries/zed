@@ -1,7 +1,8 @@
 use crate::{
-    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, HighlightStyle,
-    IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine, TOOLTIP_DELAY,
+    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementContext, ElementId,
+    HighlightStyle, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, SharedString, Size, TextRun, TextStyle, WhiteSpace, WindowContext, WrappedLine,
+    TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -21,14 +22,14 @@ impl Element for &'static str {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(SharedString::from(*self), None, cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
         state.paint(bounds, self, cx)
     }
 }
@@ -51,14 +52,14 @@ impl Element for SharedString {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.clone(), None, cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut TextState, cx: &mut ElementContext) {
         let text_str: &str = self.as_ref();
         state.paint(bounds, text_str, cx)
     }
@@ -130,14 +131,14 @@ impl Element for StyledText {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut state = TextState::default();
         let layout_id = state.layout(self.text.clone(), self.runs.take(), cx);
         (layout_id, state)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         state.paint(bounds, &self.text, cx)
     }
 }
@@ -174,7 +175,7 @@ impl TextState {
         &mut self,
         text: SharedString,
         runs: Option<Vec<TextRun>>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> LayoutId {
         let text_style = cx.text_style();
         let font_size = text_style.font_size.to_pixels(cx.rem_size());
@@ -249,7 +250,7 @@ impl TextState {
         layout_id
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, text: &str, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, text: &str, cx: &mut ElementContext) {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()
@@ -377,7 +378,7 @@ impl Element for InteractiveText {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         if let Some(InteractiveTextState {
             mouse_down_index,
@@ -406,7 +407,7 @@ impl Element for InteractiveText {
         }
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         if let Some(click_listener) = self.click_listener.take() {
             let mouse_position = cx.mouse_position();
             if let Some(ix) = state.text_state.index_for_position(bounds, mouse_position) {

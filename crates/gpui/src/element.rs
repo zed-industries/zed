@@ -35,12 +35,12 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    util::FluentBuilder, ArenaBox, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId,
+    util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, ElementContext, ElementId, LayoutId,
     Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug};
+use std::{any::Any, fmt::Debug, ops::DerefMut};
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -56,12 +56,12 @@ pub trait Element: 'static + IntoElement {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State);
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext);
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
@@ -95,8 +95,8 @@ pub trait IntoElement: Sized {
         self,
         origin: Point<Pixels>,
         available_space: Size<T>,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&mut <Self::Element as Element>::State, &mut WindowContext) -> R,
+        cx: &mut ElementContext,
+        f: impl FnOnce(&mut <Self::Element as Element>::State, &mut ElementContext) -> R,
     ) -> R
     where
         T: Clone + Default + Debug + Into<AvailableSpace>,
@@ -193,14 +193,19 @@ impl<C: RenderOnce> Element for Component<C> {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.0.take().unwrap().render(cx).into_any_element();
+        let mut element = self
+            .0
+            .take()
+            .unwrap()
+            .render(cx.deref_mut())
+            .into_any_element();
         let layout_id = element.request_layout(cx);
         (layout_id, element)
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
         element.paint(cx)
     }
 }
@@ -224,21 +229,21 @@ pub(crate) struct GlobalElementId(SmallVec<[ElementId; 32]>);
 trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId;
+    fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
-    fn paint(&mut self, cx: &mut WindowContext);
+    fn paint(&mut self, cx: &mut ElementContext);
 
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels>;
 
     fn draw(
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     );
 }
 
@@ -276,7 +281,7 @@ impl<E: Element> DrawableElement<E> {
         self.element.as_ref()?.element_id()
     }
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         let (layout_id, frame_state) = if let Some(id) = self.element.as_ref().unwrap().element_id()
         {
             let layout_id = cx.with_element_state(id, |element_state, cx| {
@@ -298,7 +303,7 @@ impl<E: Element> DrawableElement<E> {
         layout_id
     }
 
-    fn paint(mut self, cx: &mut WindowContext) -> Option<E::State> {
+    fn paint(mut self, cx: &mut ElementContext) -> Option<E::State> {
         match self.phase {
             ElementDrawPhase::LayoutRequested {
                 layout_id,
@@ -343,7 +348,7 @@ impl<E: Element> DrawableElement<E> {
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
             self.request_layout(cx);
@@ -384,7 +389,7 @@ impl<E: Element> DrawableElement<E> {
         mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Option<E::State> {
         self.measure(available_space, cx);
         cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
@@ -400,18 +405,18 @@ where
         self.as_ref().unwrap().element_id()
     }
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         DrawableElement::request_layout(self.as_mut().unwrap(), cx)
     }
 
-    fn paint(&mut self, cx: &mut WindowContext) {
+    fn paint(&mut self, cx: &mut ElementContext) {
         DrawableElement::paint(self.take().unwrap(), cx);
     }
 
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels> {
         DrawableElement::measure(self.as_mut().unwrap(), available_space, cx)
     }
@@ -420,7 +425,7 @@ where
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         DrawableElement::draw(self.take().unwrap(), origin, available_space, cx);
     }
@@ -443,12 +448,12 @@ impl AnyElement {
 
     /// Request the layout ID of the element stored in this `AnyElement`.
     /// Used for laying out child elements in a parent element.
-    pub fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    pub fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         self.0.request_layout(cx)
     }
 
     /// Paints the element stored in this `AnyElement`.
-    pub fn paint(&mut self, cx: &mut WindowContext) {
+    pub fn paint(&mut self, cx: &mut ElementContext) {
         self.0.paint(cx)
     }
 
@@ -456,7 +461,7 @@ impl AnyElement {
     pub fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels> {
         self.0.measure(available_space, cx)
     }
@@ -466,7 +471,7 @@ impl AnyElement {
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         self.0.draw(origin, available_space, cx)
     }
@@ -483,13 +488,13 @@ impl Element for AnyElement {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let layout_id = self.request_layout(cx);
         (layout_id, ())
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut ElementContext) {
         self.paint(cx)
     }
 }
@@ -531,7 +536,7 @@ impl Element for () {
     fn request_layout(
         &mut self,
         _state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         (cx.request_layout(&crate::Style::default(), None), ())
     }
@@ -540,7 +545,7 @@ impl Element for () {
         &mut self,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::State,
-        _cx: &mut WindowContext,
+        _cx: &mut ElementContext,
     ) {
     }
 }

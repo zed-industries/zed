@@ -7,9 +7,9 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    point, px, AnyElement, AvailableSpace, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
-    DispatchPhase, Element, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
-    StyleRefinement, Styled, WindowContext,
+    point, px, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
+    IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -359,7 +359,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _state: Option<Self::State>,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::ElementContext,
     ) -> (crate::LayoutId, Self::State) {
         let mut style = Style::default();
         style.refine(&self.style);
@@ -373,7 +373,7 @@ impl Element for List {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         _state: &mut Self::State,
-        cx: &mut crate::WindowContext,
+        cx: &mut crate::ElementContext,
     ) {
         let state = &mut *self.state.0.borrow_mut();
 

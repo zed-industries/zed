@@ -23,12 +23,11 @@
 //!
 
 use crate::{
-    point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement,
-    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds, ClickEvent,
+    DispatchPhase, Element, ElementContext, ElementId, FocusHandle, IntoElement, IsZero,
+    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
+    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -41,6 +40,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
+    ops::DerefMut,
     rc::Rc,
     time::Duration,
 };
@@ -1052,7 +1052,7 @@ impl Element for Div {
     fn request_layout(
         &mut self,
         element_state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let mut child_layout_ids = SmallVec::new();
         let (layout_id, interactive_state) = self.interactivity.layout(
@@ -1082,7 +1082,7 @@ impl Element for Div {
         &mut self,
         bounds: Bounds<Pixels>,
         element_state: &mut Self::State,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
@@ -1233,8 +1233,8 @@ impl Interactivity {
     pub fn layout(
         &mut self,
         element_state: Option<InteractiveElementState>,
-        cx: &mut WindowContext,
-        f: impl FnOnce(Style, &mut WindowContext) -> LayoutId,
+        cx: &mut ElementContext,
+        f: impl FnOnce(Style, &mut ElementContext) -> LayoutId,
     ) -> (LayoutId, InteractiveElementState) {
         let mut element_state = element_state.unwrap_or_default();
 
@@ -1281,8 +1281,8 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         element_state: &mut InteractiveElementState,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&Style, Point<Pixels>, &mut WindowContext),
+        cx: &mut ElementContext,
+        f: impl FnOnce(&Style, Point<Pixels>, &mut ElementContext),
     ) {
         let style = self.compute_style(Some(bounds), element_state, cx);
         let z_index = style.z_index.unwrap_or(0);
@@ -1295,7 +1295,7 @@ impl Interactivity {
                 .insert(debug_selector.clone(), bounds);
         }
 
-        let paint_hover_group_handler = |cx: &mut WindowContext| {
+        let paint_hover_group_handler = |cx: &mut ElementContext| {
             let hover_group_bounds = self
                 .group_hover_style
                 .as_ref()
@@ -1319,7 +1319,7 @@ impl Interactivity {
         }
 
         cx.with_z_index(z_index, |cx| {
-            style.paint(bounds, cx, |cx| {
+            style.paint(bounds, cx, |cx: &mut ElementContext| {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         #[cfg(debug_assertions)]
@@ -1333,7 +1333,7 @@ impl Interactivity {
                             let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
                             let str_len = element_id.len();
 
-                            let render_debug_text = |cx: &mut WindowContext| {
+                            let render_debug_text = |cx: &mut ElementContext| {
                                 if let Some(text) = cx
                                     .text_system()
                                     .shape_text(
@@ -1540,12 +1540,17 @@ impl Interactivity {
 
                                                     let mut can_drop = true;
                                                     if let Some(predicate) = &can_drop_predicate {
-                                                        can_drop =
-                                                            predicate(drag.value.as_ref(), cx);
+                                                        can_drop = predicate(
+                                                            drag.value.as_ref(),
+                                                            cx.deref_mut(),
+                                                        );
                                                     }
 
                                                     if can_drop {
-                                                        listener(drag.value.as_ref(), cx);
+                                                        listener(
+                                                            drag.value.as_ref(),
+                                                            cx.deref_mut(),
+                                                        );
                                                         cx.refresh();
                                                         cx.stop_propagation();
                                                     }
@@ -1676,7 +1681,7 @@ impl Interactivity {
                                     *was_hovered = is_hovered;
                                     drop(was_hovered);
 
-                                    hover_listener(&is_hovered, cx);
+                                    hover_listener(&is_hovered, cx.deref_mut());
                                 }
                             });
                         }
@@ -1897,7 +1902,7 @@ impl Interactivity {
         &self,
         bounds: Option<Bounds<Pixels>>,
         element_state: &mut InteractiveElementState,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
@@ -1921,7 +1926,9 @@ impl Interactivity {
                 let mouse_position = cx.mouse_position();
                 if !cx.has_active_drag() {
                     if let Some(group_hover) = self.group_hover_style.as_ref() {
-                        if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
+                        if let Some(group_bounds) =
+                            GroupBounds::get(&group_hover.group, cx.deref_mut())
+                        {
                             if group_bounds.contains(&mouse_position)
                                 && cx.was_top_layer(&mouse_position, cx.stacking_order())
                             {
@@ -1944,13 +1951,13 @@ impl Interactivity {
                 if let Some(drag) = cx.active_drag.take() {
                     let mut can_drop = true;
                     if let Some(can_drop_predicate) = &self.can_drop_predicate {
-                        can_drop = can_drop_predicate(drag.value.as_ref(), cx);
+                        can_drop = can_drop_predicate(drag.value.as_ref(), cx.deref_mut());
                     }
 
                     if can_drop {
                         for (state_type, group_drag_style) in &self.group_drag_over_styles {
                             if let Some(group_bounds) =
-                                GroupBounds::get(&group_drag_style.group, cx)
+                                GroupBounds::get(&group_drag_style.group, cx.deref_mut())
                             {
                                 if *state_type == drag.value.as_ref().type_id()
                                     && group_bounds.contains(&mouse_position)
@@ -2096,12 +2103,12 @@ where
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         self.element.paint(bounds, state, cx)
     }
 }
@@ -2171,12 +2178,12 @@ where
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         self.element.request_layout(state, cx)
     }
 
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext) {
         self.element.paint(bounds, state, cx)
     }
 }
