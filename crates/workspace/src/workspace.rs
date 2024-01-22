@@ -1681,6 +1681,18 @@ impl Workspace {
         None
     }
 
+    /// Open the panel of the given type
+    pub fn open_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+                dock.update(cx, |dock, cx| {
+                    dock.activate_panel(panel_index, cx);
+                    dock.set_open(true, cx);
+                });
+            }
+        }
+    }
+
     pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<View<T>> {
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             let dock = dock.read(cx);
@@ -3175,49 +3187,19 @@ impl Workspace {
                 }
 
                 let docks = serialized_workspace.docks;
-                workspace.left_dock.update(cx, |dock, cx| {
-                    dock.set_open(docks.left.visible, cx);
-                    if let Some(active_panel) = docks.left.active_panel {
-                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
-                            dock.activate_panel(ix, cx);
-                        }
-                    }
-                    dock.active_panel()
-                        .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
-                    if docks.left.visible && docks.left.zoom {
-                        cx.focus_self()
-                    }
-                });
-                // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
-                workspace.right_dock.update(cx, |dock, cx| {
-                    dock.set_open(docks.right.visible, cx);
-                    if let Some(active_panel) = docks.right.active_panel {
-                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
-                            dock.activate_panel(ix, cx);
-                        }
-                    }
-                    dock.active_panel()
-                        .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
 
-                    if docks.right.visible && docks.right.zoom {
-                        cx.focus_self()
-                    }
-                });
-                workspace.bottom_dock.update(cx, |dock, cx| {
-                    dock.set_open(docks.bottom.visible, cx);
-                    if let Some(active_panel) = docks.bottom.active_panel {
-                        if let Some(ix) = dock.panel_index_for_persistent_name(&active_panel, cx) {
-                            dock.activate_panel(ix, cx);
-                        }
-                    }
-
-                    dock.active_panel()
-                        .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
-
-                    if docks.bottom.visible && docks.bottom.zoom {
-                        cx.focus_self()
-                    }
-                });
+                let right = docks.right.clone();
+                workspace
+                    .right_dock
+                    .update(cx, |dock, _| dock.serialized_dock = Some(right));
+                let left = docks.left.clone();
+                workspace
+                    .left_dock
+                    .update(cx, |dock, _| dock.serialized_dock = Some(left));
+                let bottom = docks.bottom.clone();
+                workspace
+                    .bottom_dock
+                    .update(cx, |dock, _| dock.serialized_dock = Some(bottom));
 
                 cx.notify();
             })?;
