@@ -4,6 +4,7 @@ pub mod access_tokens;
 pub mod buffers;
 pub mod channels;
 pub mod contacts;
+pub mod contributors;
 pub mod messages;
 pub mod notifications;
 pub mod projects;
