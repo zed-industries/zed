@@ -143,7 +143,7 @@ impl PlatformTextSystem for MacTextSystem {
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         Ok(self.0.read().fonts[font_id.0]
-            .typographic_bounds(glyph_id.into())?
+            .typographic_bounds(glyph_id.0)?
             .into())
     }
 
@@ -221,11 +221,13 @@ impl MacTextSystemState {
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        Ok(self.fonts[font_id.0].advance(glyph_id.into())?.into())
+        Ok(self.fonts[font_id.0].advance(glyph_id.0)?.into())
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.fonts[font_id.0].glyph_for_char(ch).map(Into::into)
+        self.fonts[font_id.0]
+            .glyph_for_char(ch)
+            .map(|glyph_id| GlyphId(glyph_id))
     }
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
@@ -259,7 +261,7 @@ impl MacTextSystemState {
         let scale = Transform2F::from_scale(params.scale_factor);
         Ok(font
             .raster_bounds(
-                params.glyph_id.into(),
+                params.glyph_id.0,
                 params.font_size.into(),
                 scale,
                 HintingOptions::None,
@@ -334,7 +336,7 @@ impl MacTextSystemState {
                 .native_font()
                 .clone_with_font_size(f32::from(params.font_size) as CGFloat)
                 .draw_glyphs(
-                    &[u32::from(params.glyph_id) as CGGlyph],
+                    &[params.glyph_id.0 as CGGlyph],
                     &[CGPoint::new(
                         (subpixel_shift.x / params.scale_factor) as CGFloat,
                         (subpixel_shift.y / params.scale_factor) as CGFloat,
@@ -419,7 +421,7 @@ impl MacTextSystemState {
                 let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
                 ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
                 glyphs.push(ShapedGlyph {
-                    id: (*glyph_id).into(),
+                    id: GlyphId(*glyph_id as u32),
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
                     is_emoji: self.is_emoji(font_id),

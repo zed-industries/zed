@@ -245,10 +245,14 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     }
 
     let gen = quote! {
+        /// A refinable version of [`#ident`], see that documentation for details.
         #[derive(Clone)]
         #derive_stream
         pub struct #refinement_ident #impl_generics {
-            #( #field_visibilities #field_names: #wrapped_types ),*
+            #(
+                #[allow(missing_docs)]
+                #field_visibilities #field_names: #wrapped_types
+            ),*
         }
 
         impl #impl_generics Refineable for #ident #ty_generics
@@ -304,6 +308,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         impl #impl_generics #refinement_ident #ty_generics
             #where_clause
         {
+            /// Returns `true` if all fields are `Some`
             pub fn is_some(&self) -> bool {
                 #(
                     if self.#field_names.is_some() {

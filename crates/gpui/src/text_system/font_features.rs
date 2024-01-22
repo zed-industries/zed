@@ -4,7 +4,9 @@ use schemars::{
 };
 
 macro_rules! create_definitions {
-    ($($(#[$meta:meta])* ($name:ident, $idx:expr)),* $(,)?) => {
+    ($($(#[$meta:meta])* ($name:ident, $idx:expr), ($comment:tt)),* $(,)?) => {
+
+        /// The font features that can be configured for a given font.
         #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
         pub struct FontFeatures {
             enabled: u64,
@@ -13,6 +15,7 @@ macro_rules! create_definitions {
 
         impl FontFeatures {
             $(
+                /// $comment
                 pub fn $name(&self) -> Option<bool> {
                     if (self.enabled & (1 << $idx)) != 0 {
                         Some(true)
@@ -125,7 +128,7 @@ macro_rules! create_definitions {
 }
 
 create_definitions!(
-    (calt, 0),
+    (calt, 0, CALT),
     (case, 1),
     (cpsp, 2),
     (frac, 3),
