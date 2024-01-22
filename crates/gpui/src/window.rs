@@ -1186,7 +1186,7 @@ impl<'a> WindowContext<'a> {
                     currently_pending.bindings.push(binding);
                 }
 
-                // for vim compatibility, we also shoul check "is input handler enabled"
+                // for vim compatibility, we also should check "is input handler enabled"
                 if !currently_pending.text.is_empty() || !currently_pending.bindings.is_empty() {
                     currently_pending.timer = Some(self.spawn(|mut cx| async move {
                         cx.background_executor.timer(Duration::from_secs(1)).await;
