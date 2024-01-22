@@ -31,11 +31,15 @@ impl Axis {
     }
 }
 
+/// A trait for accessing the given unit along a certain axis.
 pub trait Along {
+    /// The unit associated with this type
     type Unit;
 
+    /// Returns the unit along the given axis.
     fn along(&self, axis: Axis) -> Self::Unit;
 
+    /// Applies the given function to the unit along the given axis and returns a new value.
     fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
 }
 
@@ -55,7 +59,9 @@ pub trait Along {
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {
+    /// The x coordinate of the point.
     pub x: T,
+    /// The y coordinate of the point.
     pub y: T,
 }
 
@@ -342,7 +348,9 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Size<T: Clone + Default + Debug> {
+    /// The width component of the size.
     pub width: T,
+    /// The height component of the size.
     pub height: T,
 }
 
@@ -648,7 +656,9 @@ impl Size<Length> {
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Default + Debug> {
+    /// The origin point of this area.
     pub origin: Point<T>,
+    /// The size of the rectangle.
     pub size: Size<T>,
 }
 
@@ -1200,9 +1210,13 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Edges<T: Clone + Default + Debug> {
+    /// The size of the top edge.
     pub top: T,
+    /// The size of the right edge.
     pub right: T,
+    /// The size of the bottom edge.
     pub bottom: T,
+    /// The size of the left edge.
     pub left: T,
 }
 
@@ -1608,9 +1622,13 @@ impl From<f32> for Edges<Pixels> {
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Corners<T: Clone + Default + Debug> {
+    /// The value associated with the top left corner.
     pub top_left: T,
+    /// The value associated with the top right corner.
     pub top_right: T,
+    /// The value associated with the bottom right corner.
     pub bottom_right: T,
+    /// The value associated with the bottom left corner.
     pub bottom_left: T,
 }
 
