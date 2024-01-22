@@ -289,10 +289,10 @@ pub struct Window {
     pub(crate) focus_invalidated: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct PendingInput {
     text: String,
-    actions: SmallVec<[Box<dyn Action>; 1]>,
+    bindings: SmallVec<[KeyBinding; 1]>,
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
 }
@@ -1796,7 +1796,7 @@ impl<'a> WindowContext<'a> {
             .dispatch_path(node_id);
 
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            let KeymatchResult { actions, pending } = self
+            let KeymatchResult { bindings, pending } = self
                 .window
                 .rendered_frame
                 .dispatch_tree
@@ -1812,8 +1812,8 @@ impl<'a> WindowContext<'a> {
                 if let Some(new_text) = &key_down_event.keystroke.ime_key.as_ref() {
                     currently_pending.text += new_text
                 }
-                for action in actions {
-                    currently_pending.actions.push(action);
+                for binding in bindings {
+                    currently_pending.bindings.push(binding);
                 }
 
                 currently_pending.timer = Some(self.spawn(|mut cx| async move {
@@ -1832,20 +1832,30 @@ impl<'a> WindowContext<'a> {
                 self.propagate_event = false;
                 return;
             } else if let Some(currently_pending) = self.window.pending_input.take() {
-                if actions.is_empty() {
+                // if you have bound , to one thing, and ,w to another.
+                // then typing ,i should trigger the comma actions, then the i actions.
+                // in that scenario "binding.keystrokes" is "i" and "pending.keystrokes" is ",".
+                // on the other hand if you type ,, it should not trigger the , action.
+                // in that scenario "binding.keystrokes" is ",w" and "pending.keystrokes" is ",".
+
+                if bindings.iter().all(|binding| {
+                    currently_pending.bindings.iter().all(|pending| {
+                        dbg!(!dbg!(binding.keystrokes()).starts_with(dbg!(&pending.keystrokes)))
+                    })
+                }) {
                     self.replay_pending_input(currently_pending)
                 }
             }
 
-            if !actions.is_empty() {
+            if !bindings.is_empty() {
                 self.clear_pending_keystrokes();
             }
 
             self.propagate_event = true;
-            for action in actions {
-                self.dispatch_action_on_node(node_id, action.boxed_clone());
+            for binding in bindings {
+                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
                 if !self.propagate_event {
-                    self.dispatch_keystroke_observers(event, Some(action));
+                    self.dispatch_keystroke_observers(event, Some(binding.action));
                     return;
                 }
             }
@@ -1903,8 +1913,8 @@ impl<'a> WindowContext<'a> {
         }
 
         self.propagate_event = true;
-        for action in currently_pending.actions {
-            self.dispatch_action_on_node(node_id, action);
+        for binding in currently_pending.bindings {
+            self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
             if !self.propagate_event {
                 return;
             }

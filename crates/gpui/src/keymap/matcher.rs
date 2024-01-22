@@ -1,4 +1,4 @@
-use crate::{Action, KeyContext, Keymap, KeymapVersion, Keystroke};
+use crate::{KeyBinding, KeyContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ pub(crate) struct KeystrokeMatcher {
 }
 
 pub struct KeymatchResult {
-    pub actions: SmallVec<[Box<dyn Action>; 1]>,
+    pub bindings: SmallVec<[KeyBinding; 1]>,
     pub pending: bool,
 }
 
@@ -22,10 +22,6 @@ impl KeystrokeMatcher {
             keymap_version,
             keymap,
         }
-    }
-
-    pub fn clear_pending(&mut self) {
-        self.pending_keystrokes.clear();
     }
 
     pub fn has_pending_keystrokes(&self) -> bool {
@@ -54,7 +50,7 @@ impl KeystrokeMatcher {
         }
 
         let mut pending_key = None;
-        let mut actions = SmallVec::new();
+        let mut bindings = SmallVec::new();
 
         for binding in keymap.bindings().rev() {
             if !keymap.binding_enabled(binding, context_stack) {
@@ -65,7 +61,7 @@ impl KeystrokeMatcher {
                 self.pending_keystrokes.push(candidate.clone());
                 match binding.match_keystrokes(&self.pending_keystrokes) {
                     KeyMatch::Matched => {
-                        actions.push(binding.action.boxed_clone());
+                        bindings.push(binding.clone());
                     }
                     KeyMatch::Pending => {
                         pending_key.get_or_insert(candidate);
@@ -76,6 +72,12 @@ impl KeystrokeMatcher {
             }
         }
 
+        if bindings.len() == 0 && pending_key.is_none() && self.pending_keystrokes.len() > 0 {
+            drop(keymap);
+            self.pending_keystrokes.remove(0);
+            return self.match_keystroke(keystroke, context_stack);
+        }
+
         let pending = if let Some(pending_key) = pending_key {
             self.pending_keystrokes.push(pending_key);
             true
@@ -84,7 +86,7 @@ impl KeystrokeMatcher {
             false
         };
 
-        KeymatchResult { actions, pending }
+        KeymatchResult { bindings, pending }
     }
 }
 
@@ -98,4 +100,3 @@ pub enum KeyMatch {
     Pending,
     Matched,
 }
-

@@ -277,7 +277,7 @@ impl DispatchTree {
         keystroke: &Keystroke,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> KeymatchResult {
-        let mut actions = SmallVec::new();
+        let mut bindings = SmallVec::new();
         let mut pending = false;
 
         let mut context_stack: SmallVec<[KeyContext; 4]> = SmallVec::new();
@@ -297,11 +297,11 @@ impl DispatchTree {
 
             let mut result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
             pending = result.pending || pending;
-            actions.append(&mut result.actions);
+            bindings.append(&mut result.bindings);
             context_stack.pop();
         }
 
-        KeymatchResult { actions, pending }
+        KeymatchResult { bindings, pending }
     }
 
     pub fn has_pending_keystrokes(&self) -> bool {
