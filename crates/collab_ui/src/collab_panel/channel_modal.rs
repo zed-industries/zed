@@ -10,10 +10,11 @@ use gpui::{
     WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use rpc::proto::channel_member;
 use std::sync::Arc;
 use ui::{prelude::*, Avatar, Checkbox, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
-use workspace::ModalView;
+use workspace::{notifications::NotifyTaskExt, ModalView};
 
 actions!(
     channel_modal,
@@ -347,15 +348,13 @@ impl PickerDelegate for ChannelModalDelegate {
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some((selected_user, role)) = self.user_at_index(self.selected_index) {
+        if let Some(selected_user) = self.user_at_index(self.selected_index) {
             if Some(selected_user.id) == self.user_store.read(cx).current_user().map(|user| user.id)
             {
                 return;
             }
             match self.mode {
-                Mode::ManageMembers => {
-                    self.show_context_menu(selected_user, role.unwrap_or(ChannelRole::Member), cx)
-                }
+                Mode::ManageMembers => self.show_context_menu(self.selected_index, cx),
                 Mode::InviteMembers => match self.member_status(selected_user.id, cx) {
                     Some(proto::channel_member::Kind::Invitee) => {
                         self.remove_member(selected_user.id, cx);
@@ -385,7 +384,8 @@ impl PickerDelegate for ChannelModalDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let (user, role) = self.user_at_index(ix)?;
+        let user = self.user_at_index(ix)?;
+        let membership = self.member_at_index(ix);
         let request_status = self.member_status(user.id, cx);
         let is_me = self.user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
 
@@ -402,11 +402,15 @@ impl PickerDelegate for ChannelModalDelegate {
                             .children(
                                 if request_status == Some(proto::channel_member::Kind::Invitee) {
                                     Some(Label::new("Invited"))
+                                } else if membership.map(|m| m.kind)
+                                    == Some(channel_member::Kind::AncestorMember)
+                                {
+                                    Some(Label::new("Parent"))
                                 } else {
                                     None
                                 },
                             )
-                            .children(match role {
+                            .children(match membership.map(|m| m.role) {
                                 Some(ChannelRole::Admin) => Some(Label::new("Admin")),
                                 Some(ChannelRole::Guest) => Some(Label::new("Guest")),
                                 _ => None,
@@ -419,7 +423,7 @@ impl PickerDelegate for ChannelModalDelegate {
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
                                     Some(
                                         overlay()
-                                            .anchor(gpui::AnchorCorner::TopLeft)
+                                            .anchor(gpui::AnchorCorner::TopRight)
                                             .child(menu.clone()),
                                     )
                                 } else {
@@ -458,16 +462,19 @@ impl ChannelModalDelegate {
             })
     }
 
-    fn user_at_index(&self, ix: usize) -> Option<(Arc<User>, Option<ChannelRole>)> {
+    fn member_at_index(&self, ix: usize) -> Option<&ChannelMembership> {
+        self.matching_member_indices
+            .get(ix)
+            .and_then(|ix| self.members.get(*ix))
+    }
+
+    fn user_at_index(&self, ix: usize) -> Option<Arc<User>> {
         match self.mode {
             Mode::ManageMembers => self.matching_member_indices.get(ix).and_then(|ix| {
                 let channel_membership = self.members.get(*ix)?;
-                Some((
-                    channel_membership.user.clone(),
-                    Some(channel_membership.role),
-                ))
+                Some(channel_membership.user.clone())
             }),
-            Mode::InviteMembers => Some((self.matching_users.get(ix).cloned()?, None)),
+            Mode::InviteMembers => self.matching_users.get(ix).cloned(),
         }
     }
 
@@ -491,7 +498,7 @@ impl ChannelModalDelegate {
                 cx.notify();
             })
         })
-        .detach_and_log_err(cx);
+        .detach_and_notify_err(cx);
         Some(())
     }
 
@@ -523,7 +530,7 @@ impl ChannelModalDelegate {
                 cx.notify();
             })
         })
-        .detach_and_log_err(cx);
+        .detach_and_notify_err(cx);
         Some(())
     }
 
@@ -549,19 +556,66 @@ impl ChannelModalDelegate {
                 cx.notify();
             })
         })
-        .detach_and_log_err(cx);
+        .detach_and_notify_err(cx);
     }
 
-    fn show_context_menu(
-        &mut self,
-        user: Arc<User>,
-        role: ChannelRole,
-        cx: &mut ViewContext<Picker<Self>>,
-    ) {
-        let user_id = user.id;
+    fn show_context_menu(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+        let Some(membership) = self.member_at_index(ix) else {
+            return;
+        };
+        if membership.kind == proto::channel_member::Kind::AncestorMember {
+            return;
+        }
+        let user_id = membership.user.id;
         let picker = cx.view().clone();
         let context_menu = ContextMenu::build(cx, |mut menu, _cx| {
-            menu = menu.entry("Remove Member", None, {
+            if membership.kind == channel_member::Kind::AncestorMember {
+                return menu.entry("Inherited membership", None, |_| {});
+            };
+
+            let role = membership.role;
+
+            if role == ChannelRole::Admin || role == ChannelRole::Member {
+                let picker = picker.clone();
+                menu = menu.entry("Demote to Guest", None, move |cx| {
+                    picker.update(cx, |picker, cx| {
+                        picker
+                            .delegate
+                            .set_user_role(user_id, ChannelRole::Guest, cx);
+                    })
+                });
+            }
+
+            if role == ChannelRole::Admin || role == ChannelRole::Guest {
+                let picker = picker.clone();
+                let label = if role == ChannelRole::Guest {
+                    "Promote to Member"
+                } else {
+                    "Demote to Member"
+                };
+
+                menu = menu.entry(label, None, move |cx| {
+                    picker.update(cx, |picker, cx| {
+                        picker
+                            .delegate
+                            .set_user_role(user_id, ChannelRole::Member, cx);
+                    })
+                });
+            }
+
+            if role == ChannelRole::Member || role == ChannelRole::Guest {
+                let picker = picker.clone();
+                menu = menu.entry("Promote to Admin", None, move |cx| {
+                    picker.update(cx, |picker, cx| {
+                        picker
+                            .delegate
+                            .set_user_role(user_id, ChannelRole::Admin, cx);
+                    })
+                });
+            };
+
+            menu = menu.separator();
+            menu = menu.entry("Remove from Channel", None, {
                 let picker = picker.clone();
                 move |cx| {
                     picker.update(cx, |picker, cx| {
@@ -569,30 +623,6 @@ impl ChannelModalDelegate {
                     })
                 }
             });
-
-            let picker = picker.clone();
-            match role {
-                ChannelRole::Admin => {
-                    menu = menu.entry("Revoke Admin", None, move |cx| {
-                        picker.update(cx, |picker, cx| {
-                            picker
-                                .delegate
-                                .set_user_role(user_id, ChannelRole::Member, cx);
-                        })
-                    });
-                }
-                ChannelRole::Member => {
-                    menu = menu.entry("Make Admin", None, move |cx| {
-                        picker.update(cx, |picker, cx| {
-                            picker
-                                .delegate
-                                .set_user_role(user_id, ChannelRole::Admin, cx);
-                        })
-                    });
-                }
-                _ => {}
-            };
-
             menu
         });
         cx.focus_view(&context_menu);
