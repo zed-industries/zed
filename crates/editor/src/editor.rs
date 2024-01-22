@@ -56,9 +56,9 @@ use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
     AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight,
-    HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, ParentElement, Pixels,
-    Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
+    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
+    ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView,
     WhiteSpace, WindowContext,
 };
@@ -414,12 +414,28 @@ pub struct Editor {
 
 pub struct EditorSnapshot {
     pub mode: EditorMode,
-    pub show_gutter: bool,
+    show_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
+}
+
+pub struct GutterDimensions {
+    pub padding: Pixels,
+    pub width: Pixels,
+    pub margin: Pixels,
+}
+
+impl Default for GutterDimensions {
+    fn default() -> Self {
+        Self {
+            padding: Pixels::ZERO,
+            width: Pixels::ZERO,
+            margin: Pixels::ZERO,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -9068,6 +9084,34 @@ impl EditorSnapshot {
 
     pub fn scroll_position(&self) -> gpui::Point<f32> {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
+    }
+
+    pub fn gutter_dimensions(
+        &self,
+        font_id: FontId,
+        font_size: Pixels,
+        em_width: Pixels,
+        max_line_number_width: Pixels,
+        cx: &AppContext,
+    ) -> GutterDimensions {
+        if self.show_gutter {
+            let descent = cx.text_system().descent(font_id, font_size);
+            let gutter_padding_factor = 4.0;
+            let gutter_padding = (em_width * gutter_padding_factor).round();
+            // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
+            let min_width_for_number_on_gutter = em_width * 4.0;
+            let gutter_width =
+                max_line_number_width.max(min_width_for_number_on_gutter) + gutter_padding * 2.0;
+            let gutter_margin = -descent;
+
+            GutterDimensions {
+                padding: gutter_padding,
+                width: gutter_width,
+                margin: gutter_margin,
+            }
+        } else {
+            GutterDimensions::default()
+        }
     }
 }
 
