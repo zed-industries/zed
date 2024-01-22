@@ -96,7 +96,19 @@ impl TestWindow {
         result
     }
 
-    pub fn simulate_keystroke(&mut self, keystroke: Keystroke, is_held: bool) {
+    pub fn simulate_keystroke(&mut self, mut keystroke: Keystroke, is_held: bool) {
+        if keystroke.ime_key.is_none()
+            && !keystroke.modifiers.command
+            && !keystroke.modifiers.control
+            && !keystroke.modifiers.function
+        {
+            keystroke.ime_key = Some(if keystroke.modifiers.shift {
+                keystroke.key.to_ascii_uppercase().clone()
+            } else {
+                keystroke.key.clone()
+            })
+        }
+
         if self.simulate_input(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
             is_held,
@@ -112,8 +124,9 @@ impl TestWindow {
             );
         };
         drop(lock);
-        let text = keystroke.ime_key.unwrap_or(keystroke.key);
-        input_handler.replace_text_in_range(None, &text);
+        if let Some(text) = keystroke.ime_key.as_ref() {
+            input_handler.replace_text_in_range(None, &text);
+        }
 
         self.0.lock().input_handler = Some(input_handler);
     }

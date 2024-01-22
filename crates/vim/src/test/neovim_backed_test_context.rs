@@ -52,7 +52,7 @@ pub struct NeovimBackedTestContext {
     // Lookup for exempted assertions. Keyed by the insertion text, and with a value indicating which
     // bindings are exempted. If None, all bindings are ignored for that insertion text.
     exemptions: HashMap<String, Option<HashSet<String>>>,
-    neovim: NeovimConnection,
+    pub(crate) neovim: NeovimConnection,
 
     last_set_state: Option<String>,
     recent_keystrokes: Vec<String>,

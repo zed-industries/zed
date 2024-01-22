@@ -3,8 +3,11 @@ mod neovim_backed_test_context;
 mod neovim_connection;
 mod vim_test_context;
 
+use std::time::Duration;
+
 use command_palette::CommandPalette;
 use editor::DisplayPoint;
+use gpui::KeyBinding;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
 pub use vim_test_context::*;
@@ -12,7 +15,7 @@ pub use vim_test_context::*;
 use indoc::indoc;
 use search::BufferSearchBar;
 
-use crate::{state::Mode, ModeIndicator};
+use crate::{insert::NormalBefore, motion, state::Mode, ModeIndicator};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -773,4 +776,74 @@ async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
     "},
         Mode::Visual,
     );
+}
+
+#[gpui::test]
+async fn test_jk(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j k",
+            NormalBefore,
+            Some("vim_mode == insert"),
+        )])
+    });
+    cx.neovim.exec("imap jk <esc>").await;
+
+    cx.set_shared_state("ˇhello").await;
+    cx.simulate_shared_keystrokes(["i", "j", "o", "j", "k"])
+        .await;
+    cx.assert_shared_state("jˇohello").await;
+}
+
+#[gpui::test]
+async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j k",
+            NormalBefore,
+            Some("vim_mode == insert"),
+        )])
+    });
+
+    cx.set_state("ˇhello", Mode::Normal);
+    cx.simulate_keystrokes(["i", "j"]);
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.assert_state("ˇhello", Mode::Insert);
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.assert_state("jˇhello", Mode::Insert);
+    cx.simulate_keystrokes(["k", "j", "k"]);
+    cx.assert_state("jˇkhello", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_comma_w(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            ", w",
+            motion::Down {
+                display_lines: false,
+            },
+            Some("vim_mode == normal"),
+        )])
+    });
+    cx.neovim.exec("map ,w j").await;
+
+    cx.set_shared_state("ˇhello hello\nhello hello").await;
+    cx.simulate_shared_keystrokes(["f", "o", ";", ",", "w"])
+        .await;
+    cx.assert_shared_state("hello hello\nhello hellˇo").await;
+
+    cx.set_shared_state("ˇhello hello\nhello hello").await;
+    cx.simulate_shared_keystrokes(["f", "o", ";", ",", "i"])
+        .await;
+    cx.assert_shared_state("hellˇo hello\nhello hello").await;
+    cx.assert_shared_mode(Mode::Insert).await;
 }

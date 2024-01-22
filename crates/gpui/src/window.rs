@@ -2,11 +2,11 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeystrokeEvent, Model,
-    ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
-    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext,
-    WeakView, WindowBounds, WindowOptions,
+    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
+    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
+    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds, WindowOptions,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -33,6 +33,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
+    time::Duration,
 };
 use util::{measure, ResultExt};
 
@@ -273,9 +274,45 @@ pub struct Window {
     activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
+    pending_input: Option<PendingInput>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) focus_invalidated: bool,
+}
+
+#[derive(Default, Debug)]
+struct PendingInput {
+    keystrokes: SmallVec<[Keystroke; 1]>,
+    bindings: SmallVec<[KeyBinding; 1]>,
+    focus: Option<FocusId>,
+    timer: Option<Task<()>>,
+}
+
+impl PendingInput {
+    fn is_noop(&self) -> bool {
+        self.bindings.is_empty() && (self.keystrokes.iter().all(|k| k.ime_key.is_none()))
+    }
+
+    fn input(&self) -> String {
+        self.keystrokes
+            .iter()
+            .flat_map(|k| k.ime_key.clone())
+            .collect::<Vec<String>>()
+            .join("")
+    }
+
+    fn used_by_binding(&self, binding: &KeyBinding) -> bool {
+        if self.keystrokes.is_empty() {
+            return true;
+        }
+        let keystroke = &self.keystrokes[0];
+        for candidate in keystroke.match_candidates() {
+            if binding.match_keystrokes(&[candidate]) == KeyMatch::Pending {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub(crate) struct ElementStateBox {
@@ -379,6 +416,7 @@ impl Window {
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
+            pending_input: None,
 
             #[cfg(any(test, feature = "test-support"))]
             focus_invalidated: false,
@@ -1175,44 +1213,67 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        let mut actions: Vec<Box<dyn Action>> = Vec::new();
+        if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+            let KeymatchResult { bindings, pending } = self
+                .window
+                .rendered_frame
+                .dispatch_tree
+                .dispatch_key(&key_down_event.keystroke, &dispatch_path);
 
-        let mut context_stack: SmallVec<[KeyContext; 16]> = SmallVec::new();
-        for node_id in &dispatch_path {
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-
-            if let Some(context) = node.context.clone() {
-                context_stack.push(context);
-            }
-        }
-
-        for node_id in dispatch_path.iter().rev() {
-            // Match keystrokes
-            let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
-            if node.context.is_some() {
-                if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-                    let mut new_actions = self
-                        .window
-                        .rendered_frame
-                        .dispatch_tree
-                        .dispatch_key(&key_down_event.keystroke, &context_stack);
-                    actions.append(&mut new_actions);
+            if pending {
+                let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
+                if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus
+                {
+                    currently_pending = PendingInput::default();
+                }
+                currently_pending.focus = self.window.focus;
+                currently_pending
+                    .keystrokes
+                    .push(key_down_event.keystroke.clone());
+                for binding in bindings {
+                    currently_pending.bindings.push(binding);
                 }
 
-                context_stack.pop();
-            }
-        }
+                // for vim compatibility, we also should check "is input handler enabled"
+                if !currently_pending.is_noop() {
+                    currently_pending.timer = Some(self.spawn(|mut cx| async move {
+                        cx.background_executor.timer(Duration::from_secs(1)).await;
+                        cx.update(move |cx| {
+                            cx.clear_pending_keystrokes();
+                            let Some(currently_pending) = cx.window.pending_input.take() else {
+                                return;
+                            };
+                            cx.replay_pending_input(currently_pending)
+                        })
+                        .log_err();
+                    }));
+                } else {
+                    currently_pending.timer = None;
+                }
+                self.window.pending_input = Some(currently_pending);
 
-        if !actions.is_empty() {
-            self.clear_pending_keystrokes();
-        }
-
-        self.propagate_event = true;
-        for action in actions {
-            self.dispatch_action_on_node(node_id, action.boxed_clone());
-            if !self.propagate_event {
-                self.dispatch_keystroke_observers(event, Some(action));
+                self.propagate_event = false;
                 return;
+            } else if let Some(currently_pending) = self.window.pending_input.take() {
+                if bindings
+                    .iter()
+                    .all(|binding| !currently_pending.used_by_binding(&binding))
+                {
+                    self.replay_pending_input(currently_pending)
+                }
+            }
+
+            if !bindings.is_empty() {
+                self.clear_pending_keystrokes();
+            }
+
+            self.propagate_event = true;
+            for binding in bindings {
+                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+                if !self.propagate_event {
+                    self.dispatch_keystroke_observers(event, Some(binding.action));
+                    return;
+                }
             }
         }
 
@@ -1253,6 +1314,40 @@ impl<'a> WindowContext<'a> {
             .rendered_frame
             .dispatch_tree
             .has_pending_keystrokes()
+    }
+
+    fn replay_pending_input(&mut self, currently_pending: PendingInput) {
+        let node_id = self
+            .window
+            .focus
+            .and_then(|focus_id| {
+                self.window
+                    .rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
+
+        if self.window.focus != currently_pending.focus {
+            return;
+        }
+
+        let input = currently_pending.input();
+
+        self.propagate_event = true;
+        for binding in currently_pending.bindings {
+            self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+            if !self.propagate_event {
+                return;
+            }
+        }
+
+        if !input.is_empty() {
+            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                input_handler.flush_pending_input(&input, self);
+                self.window.platform_window.set_input_handler(input_handler)
+            }
+        }
     }
 
     fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {

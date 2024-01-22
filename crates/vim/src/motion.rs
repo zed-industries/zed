@@ -73,9 +73,9 @@ pub(crate) struct Up {
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Down {
+pub(crate) struct Down {
     #[serde(default)]
-    display_lines: bool,
+    pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
