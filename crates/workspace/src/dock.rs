@@ -1,3 +1,4 @@
+use crate::persistence::model::DockData;
 use crate::DraggedDock;
 use crate::{status_bar::StatusItemView, Workspace};
 use gpui::{
@@ -141,6 +142,7 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: usize,
     focus_handle: FocusHandle,
+    pub(crate) serialized_dock: Option<DockData>,
     _focus_subscription: Subscription,
 }
 
@@ -201,6 +203,7 @@ impl Dock {
                 is_open: false,
                 focus_handle: focus_handle.clone(),
                 _focus_subscription: focus_subscription,
+                serialized_dock: None,
             }
         });
 
@@ -408,10 +411,26 @@ impl Dock {
             }),
         ];
 
+        let name = panel.persistent_name().to_string();
+
         self.panel_entries.push(PanelEntry {
             panel: Arc::new(panel),
             _subscriptions: subscriptions,
         });
+        if let Some(serialized) = self.serialized_dock.clone() {
+            if serialized.active_panel == Some(name) {
+                self.activate_panel(self.panel_entries.len() - 1, cx);
+                if serialized.visible {
+                    self.set_open(true, cx);
+                }
+                if serialized.zoom {
+                    if let Some(panel) = self.active_panel() {
+                        panel.set_zoomed(true, cx)
+                    };
+                }
+            }
+        }
+
         cx.notify()
     }
 
