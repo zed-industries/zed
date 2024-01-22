@@ -2153,14 +2153,18 @@ impl EditorElement {
                     .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
             );
 
-            let hover = editor.hover_state.render(
+            let hover = if context_menu.is_some() {
+                None
+            } else {
+                editor.hover_state.render(
                 &snapshot,
                 &style,
                 visible_rows,
                 max_size,
                 editor.workspace.as_ref().map(|(w, _)| w.clone()),
                 cx,
-            );
+            )
+            };
 
             let editor_view = cx.view().clone();
             let fold_indicators = cx.with_element_context(|cx| {
