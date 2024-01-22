@@ -1,6 +1,6 @@
 use crate::{
-    black, fill, point, px, size, BorrowWindow, Bounds, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
+    black, fill, point, px, size, Bounds, Hsla, LineLayout, Pixels, Point, Result, SharedString,
+    UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;

@@ -39,7 +39,7 @@ use std::{
         Arc,
     },
 };
-use util::{post_inc, ResultExt};
+use util::ResultExt;
 
 const ACTIVE_DRAG_Z_INDEX: u8 = 1;
 
@@ -50,7 +50,7 @@ pub struct StackingOrder {
     #[deref]
     #[deref_mut]
     context_stack: SmallVec<[u8; 64]>,
-    id: u32,
+    pub(crate) id: u32,
 }
 
 impl std::fmt::Debug for StackingOrder {
@@ -258,8 +258,8 @@ pub struct Window {
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
-    rem_size: Pixels,
-    viewport_size: Size<Pixels>,
+    pub(crate) rem_size: Pixels,
+    pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
@@ -287,13 +287,6 @@ pub struct Window {
     pub(crate) focus_invalidated: bool,
 }
 
-pub(crate) struct ElementStateBox {
-    inner: Box<dyn Any>,
-    parent_view_id: EntityId,
-    #[cfg(debug_assertions)]
-    type_name: &'static str,
-}
-
 struct RequestedInputHandler {
     view_id: EntityId,
     handler: Option<PlatformInputHandler>,
@@ -302,6 +295,13 @@ struct RequestedInputHandler {
 struct TooltipRequest {
     view_id: EntityId,
     tooltip: AnyTooltip,
+}
+
+pub(crate) struct ElementStateBox {
+    pub(crate) inner: Box<dyn Any>,
+    pub(crate) parent_view_id: EntityId,
+    #[cfg(debug_assertions)]
+    pub(crate) type_name: &'static str,
 }
 
 pub(crate) struct Frame {
@@ -314,9 +314,9 @@ pub(crate) struct Frame {
     pub(crate) depth_map: Vec<(StackingOrder, EntityId, Bounds<Pixels>)>,
     pub(crate) z_index_stack: StackingOrder,
     pub(crate) next_stacking_order_id: u32,
-    next_root_z_index: u8,
-    content_mask_stack: Vec<ContentMask<Pixels>>,
-    element_offset_stack: Vec<Point<Pixels>>,
+    pub(crate) next_root_z_index: u8,
+    pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
+    pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     requested_input_handler: Option<RequestedInputHandler>,
     tooltip_request: Option<TooltipRequest>,
     cursor_styles: FxHashMap<EntityId, CursorStyle>,
@@ -2078,108 +2078,6 @@ impl<'a> WindowContext<'a> {
         })
     }
 
-    /// Updates or initializes state for an element with the given id that lives across multiple
-    /// frames. If an element with this ID existed in the rendered frame, its state will be passed
-    /// to the given closure. The state returned by the closure will be stored so it can be referenced
-    /// when drawing the next frame.
-    pub(crate) fn with_element_state<S, R>(
-        &mut self,
-        id: ElementId,
-        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
-    ) -> R
-    where
-        S: 'static,
-    {
-        self.with_element_id(Some(id), |cx| {
-            let global_id = cx.window().element_id_stack.clone();
-
-            if let Some(any) = cx
-                .window_mut()
-                .next_frame
-                .element_states
-                .remove(&global_id)
-                .or_else(|| {
-                    cx.window_mut()
-                        .rendered_frame
-                        .element_states
-                        .remove(&global_id)
-                })
-            {
-                let ElementStateBox {
-                    inner,
-                    parent_view_id,
-                    #[cfg(debug_assertions)]
-                    type_name
-                } = any;
-                // Using the extra inner option to avoid needing to reallocate a new box.
-                let mut state_box = inner
-                    .downcast::<Option<S>>()
-                    .map_err(|_| {
-                        #[cfg(debug_assertions)]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                std::any::type_name::<S>(),
-                                type_name
-                            )
-                        }
-
-                        #[cfg(not(debug_assertions))]
-                        {
-                            anyhow!(
-                                "invalid element state type for id, requested_type {:?}",
-                                std::any::type_name::<S>(),
-                            )
-                        }
-                    })
-                    .unwrap();
-
-                // Actual: Option<AnyElement> <- View
-                // Requested: () <- AnyElement
-                let state = state_box
-                    .take()
-                    .expect("element state is already on the stack");
-                let (result, state) = f(Some(state), cx);
-                state_box.replace(state);
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id, ElementStateBox {
-                        inner: state_box,
-                        parent_view_id,
-                        #[cfg(debug_assertions)]
-                        type_name
-                    });
-                result
-            } else {
-                let (result, state) = f(None, cx);
-                let parent_view_id = cx.parent_view_id();
-                cx.window_mut()
-                    .next_frame
-                    .element_states
-                    .insert(global_id,
-                        ElementStateBox {
-                            inner: Box::new(Some(state)),
-                            parent_view_id,
-                            #[cfg(debug_assertions)]
-                            type_name: std::any::type_name::<S>()
-                        }
-
-                    );
-                result
-            }
-        })
-    }
-
-    fn parent_view_id(&self) -> EntityId {
-        *self
-            .window
-            .next_frame
-            .view_stack
-            .last()
-            .expect("a view should always be on the stack while drawing")
-    }
-
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
     /// platform to receive textual input with proper integration with concerns such
     /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
@@ -2405,149 +2303,6 @@ pub trait BorrowWindow: BorrowMut<Window> + BorrowMut<AppContext> {
     #[doc(hidden)]
     fn window_mut(&mut self) -> &mut Window {
         self.borrow_mut()
-    }
-
-    /// Pushes the given element id onto the global stack and invokes the given closure
-    /// with a `GlobalElementId`, which disambiguates the given id in the context of its ancestor
-    /// ids. Because elements are discarded and recreated on each frame, the `GlobalElementId` is
-    /// used to associate state with identified elements across separate frames.
-    fn with_element_id<R>(
-        &mut self,
-        id: Option<impl Into<ElementId>>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        if let Some(id) = id.map(Into::into) {
-            let window = self.window_mut();
-            window.element_id_stack.push(id);
-            let result = f(self);
-            let window: &mut Window = self.borrow_mut();
-            window.element_id_stack.pop();
-            result
-        } else {
-            f(self)
-        }
-    }
-
-    /// Invoke the given function with the given content mask after intersecting it
-    /// with the current mask.
-    fn with_content_mask<R>(
-        &mut self,
-        mask: Option<ContentMask<Pixels>>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        if let Some(mask) = mask {
-            let mask = mask.intersect(&self.content_mask());
-            self.window_mut().next_frame.content_mask_stack.push(mask);
-            let result = f(self);
-            self.window_mut().next_frame.content_mask_stack.pop();
-            result
-        } else {
-            f(self)
-        }
-    }
-
-    /// Invoke the given function with the content mask reset to that
-    /// of the window.
-    fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let mask = ContentMask {
-            bounds: Bounds {
-                origin: Point::default(),
-                size: self.window().viewport_size,
-            },
-        };
-        let new_stacking_order_id =
-            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
-        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
-        let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
-        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
-        self.window_mut()
-            .next_frame
-            .z_index_stack
-            .push(new_root_z_index);
-        self.window_mut().next_frame.content_mask_stack.push(mask);
-        let result = f(self);
-        self.window_mut().next_frame.content_mask_stack.pop();
-        self.window_mut().next_frame.z_index_stack = old_stacking_order;
-        result
-    }
-
-    /// Called during painting to invoke the given closure in a new stacking context. The given
-    /// z-index is interpreted relative to the previous call to `stack`.
-    fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        let new_stacking_order_id =
-            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
-        let old_stacking_order_id = mem::replace(
-            &mut self.window_mut().next_frame.z_index_stack.id,
-            new_stacking_order_id,
-        );
-        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
-        self.window_mut().next_frame.z_index_stack.push(z_index);
-        let result = f(self);
-        self.window_mut().next_frame.z_index_stack.id = old_stacking_order_id;
-        self.window_mut().next_frame.z_index_stack.pop();
-        result
-    }
-
-    /// Updates the global element offset relative to the current offset. This is used to implement
-    /// scrolling.
-    fn with_element_offset<R>(
-        &mut self,
-        offset: Point<Pixels>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        if offset.is_zero() {
-            return f(self);
-        };
-
-        let abs_offset = self.element_offset() + offset;
-        self.with_absolute_element_offset(abs_offset, f)
-    }
-
-    /// Updates the global element offset based on the given offset. This is used to implement
-    /// drag handles and other manual painting of elements.
-    fn with_absolute_element_offset<R>(
-        &mut self,
-        offset: Point<Pixels>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        self.window_mut()
-            .next_frame
-            .element_offset_stack
-            .push(offset);
-        let result = f(self);
-        self.window_mut().next_frame.element_offset_stack.pop();
-        result
-    }
-
-    /// Obtain the current element offset.
-    fn element_offset(&self) -> Point<Pixels> {
-        self.window()
-            .next_frame
-            .element_offset_stack
-            .last()
-            .copied()
-            .unwrap_or_default()
-    }
-
-    /// Obtain the current content mask.
-    fn content_mask(&self) -> ContentMask<Pixels> {
-        self.window()
-            .next_frame
-            .content_mask_stack
-            .last()
-            .cloned()
-            .unwrap_or_else(|| ContentMask {
-                bounds: Bounds {
-                    origin: Point::default(),
-                    size: self.window().viewport_size,
-                },
-            })
-    }
-
-    /// The size of an em for the base font of the application. Adjusting this value allows the
-    /// UI to scale, just like zooming a web page.
-    fn rem_size(&self) -> Pixels {
-        self.window().rem_size
     }
 }
 

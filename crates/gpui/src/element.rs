@@ -35,12 +35,56 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    util::FluentBuilder, ArenaBox, AvailableSpace, BorrowWindow, Bounds, ElementId, LayoutId,
-    Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
+    util::FluentBuilder, AppContext, ArenaBox, AvailableSpace, BorrowWindow, Bounds, ContentMask,
+    ElementId, ElementStateBox, EntityId, IsZero, LayoutId, Pixels, Point, Size, ViewContext,
+    Window, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug};
+use std::{
+    any::Any,
+    borrow::{Borrow, BorrowMut},
+    fmt::Debug,
+    mem,
+    ops::DerefMut,
+};
+use util::post_inc;
+
+/// This context is used for assisting in the implementation of the element trait
+#[derive(Deref, DerefMut)]
+pub struct ElementContext<'a> {
+    pub(crate) cx: WindowContext<'a>,
+}
+
+impl<'a> WindowContext<'a> {
+    pub(crate) fn into_element_cx(self) -> ElementContext<'a> {
+        ElementContext { cx: self }
+    }
+}
+
+impl<'a> Borrow<AppContext> for ElementContext<'a> {
+    fn borrow(&self) -> &AppContext {
+        self.cx.borrow()
+    }
+}
+
+impl<'a> BorrowMut<AppContext> for ElementContext<'a> {
+    fn borrow_mut(&mut self) -> &mut AppContext {
+        self.cx.borrow_mut()
+    }
+}
+
+impl<'a> Borrow<Window> for ElementContext<'a> {
+    fn borrow(&self) -> &Window {
+        self.cx.borrow()
+    }
+}
+
+impl<'a> BorrowMut<Window> for ElementContext<'a> {
+    fn borrow_mut(&mut self) -> &mut Window {
+        self.cx.borrow_mut()
+    }
+}
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -56,12 +100,12 @@ pub trait Element: 'static + IntoElement {
     fn request_layout(
         &mut self,
         state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State);
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
     /// The state argument is the same state that was returned from [`Element::request_layout()`].
-    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut WindowContext);
+    fn paint(&mut self, bounds: Bounds<Pixels>, state: &mut Self::State, cx: &mut ElementContext);
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
@@ -95,8 +139,8 @@ pub trait IntoElement: Sized {
         self,
         origin: Point<Pixels>,
         available_space: Size<T>,
-        cx: &mut WindowContext,
-        f: impl FnOnce(&mut <Self::Element as Element>::State, &mut WindowContext) -> R,
+        cx: &mut ElementContext,
+        f: impl FnOnce(&mut <Self::Element as Element>::State, &mut ElementContext) -> R,
     ) -> R
     where
         T: Clone + Default + Debug + Into<AvailableSpace>,
@@ -193,14 +237,19 @@ impl<C: RenderOnce> Element for Component<C> {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
-        let mut element = self.0.take().unwrap().render(cx).into_any_element();
+        let mut element = self
+            .0
+            .take()
+            .unwrap()
+            .render(cx.deref_mut())
+            .into_any_element();
         let layout_id = element.request_layout(cx);
         (layout_id, element)
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut Self::State, cx: &mut ElementContext) {
         element.paint(cx)
     }
 }
@@ -224,21 +273,21 @@ pub(crate) struct GlobalElementId(SmallVec<[ElementId; 32]>);
 trait ElementObject {
     fn element_id(&self) -> Option<ElementId>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId;
+    fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
-    fn paint(&mut self, cx: &mut WindowContext);
+    fn paint(&mut self, cx: &mut ElementContext);
 
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels>;
 
     fn draw(
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     );
 }
 
@@ -276,7 +325,7 @@ impl<E: Element> DrawableElement<E> {
         self.element.as_ref()?.element_id()
     }
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         let (layout_id, frame_state) = if let Some(id) = self.element.as_ref().unwrap().element_id()
         {
             let layout_id = cx.with_element_state(id, |element_state, cx| {
@@ -298,7 +347,7 @@ impl<E: Element> DrawableElement<E> {
         layout_id
     }
 
-    fn paint(mut self, cx: &mut WindowContext) -> Option<E::State> {
+    fn paint(mut self, cx: &mut ElementContext) -> Option<E::State> {
         match self.phase {
             ElementDrawPhase::LayoutRequested {
                 layout_id,
@@ -343,7 +392,7 @@ impl<E: Element> DrawableElement<E> {
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
             self.request_layout(cx);
@@ -384,7 +433,7 @@ impl<E: Element> DrawableElement<E> {
         mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Option<E::State> {
         self.measure(available_space, cx);
         cx.with_absolute_element_offset(origin, |cx| self.paint(cx))
@@ -400,18 +449,18 @@ where
         self.as_ref().unwrap().element_id()
     }
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         DrawableElement::request_layout(self.as_mut().unwrap(), cx)
     }
 
-    fn paint(&mut self, cx: &mut WindowContext) {
+    fn paint(&mut self, cx: &mut ElementContext) {
         DrawableElement::paint(self.take().unwrap(), cx);
     }
 
     fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels> {
         DrawableElement::measure(self.as_mut().unwrap(), available_space, cx)
     }
@@ -420,7 +469,7 @@ where
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         DrawableElement::draw(self.take().unwrap(), origin, available_space, cx);
     }
@@ -443,12 +492,12 @@ impl AnyElement {
 
     /// Request the layout ID of the element stored in this `AnyElement`.
     /// Used for laying out child elements in a parent element.
-    pub fn request_layout(&mut self, cx: &mut WindowContext) -> LayoutId {
+    pub fn request_layout(&mut self, cx: &mut ElementContext) -> LayoutId {
         self.0.request_layout(cx)
     }
 
     /// Paints the element stored in this `AnyElement`.
-    pub fn paint(&mut self, cx: &mut WindowContext) {
+    pub fn paint(&mut self, cx: &mut ElementContext) {
         self.0.paint(cx)
     }
 
@@ -456,7 +505,7 @@ impl AnyElement {
     pub fn measure(
         &mut self,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> Size<Pixels> {
         self.0.measure(available_space, cx)
     }
@@ -466,7 +515,7 @@ impl AnyElement {
         &mut self,
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) {
         self.0.draw(origin, available_space, cx)
     }
@@ -483,13 +532,13 @@ impl Element for AnyElement {
     fn request_layout(
         &mut self,
         _: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         let layout_id = self.request_layout(cx);
         (layout_id, ())
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, _: &mut Self::State, cx: &mut ElementContext) {
         self.paint(cx)
     }
 }
@@ -531,7 +580,7 @@ impl Element for () {
     fn request_layout(
         &mut self,
         _state: Option<Self::State>,
-        cx: &mut WindowContext,
+        cx: &mut ElementContext,
     ) -> (LayoutId, Self::State) {
         (cx.request_layout(&crate::Style::default(), None), ())
     }
@@ -540,7 +589,254 @@ impl Element for () {
         &mut self,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::State,
-        _cx: &mut WindowContext,
+        _cx: &mut ElementContext,
     ) {
+    }
+}
+
+impl<'a> ElementContext<'a> {
+    /// Pushes the given element id onto the global stack and invokes the given closure
+    /// with a `GlobalElementId`, which disambiguates the given id in the context of its ancestor
+    /// ids. Because elements are discarded and recreated on each frame, the `GlobalElementId` is
+    /// used to associate state with identified elements across separate frames.
+    fn with_element_id<R>(
+        &mut self,
+        id: Option<impl Into<ElementId>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if let Some(id) = id.map(Into::into) {
+            let window = self.window_mut();
+            window.element_id_stack.push(id);
+            let result = f(self);
+            let window: &mut Window = self.borrow_mut();
+            window.element_id_stack.pop();
+            result
+        } else {
+            f(self)
+        }
+    }
+
+    /// Invoke the given function with the given content mask after intersecting it
+    /// with the current mask.
+    fn with_content_mask<R>(
+        &mut self,
+        mask: Option<ContentMask<Pixels>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if let Some(mask) = mask {
+            let mask = mask.intersect(&self.content_mask());
+            self.window_mut().next_frame.content_mask_stack.push(mask);
+            let result = f(self);
+            self.window_mut().next_frame.content_mask_stack.pop();
+            result
+        } else {
+            f(self)
+        }
+    }
+
+    /// Invoke the given function with the content mask reset to that
+    /// of the window.
+    fn break_content_mask<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mask = ContentMask {
+            bounds: Bounds {
+                origin: Point::default(),
+                size: self.window().viewport_size,
+            },
+        };
+        let new_stacking_order_id =
+            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let new_root_z_index = post_inc(&mut self.window_mut().next_frame.next_root_z_index);
+        let old_stacking_order = mem::take(&mut self.window_mut().next_frame.z_index_stack);
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window_mut()
+            .next_frame
+            .z_index_stack
+            .push(new_root_z_index);
+        self.window_mut().next_frame.content_mask_stack.push(mask);
+        let result = f(self);
+        self.window_mut().next_frame.content_mask_stack.pop();
+        self.window_mut().next_frame.z_index_stack = old_stacking_order;
+        result
+    }
+
+    /// Called during painting to invoke the given closure in a new stacking context. The given
+    /// z-index is interpreted relative to the previous call to `stack`.
+    fn with_z_index<R>(&mut self, z_index: u8, f: impl FnOnce(&mut Self) -> R) -> R {
+        let new_stacking_order_id =
+            post_inc(&mut self.window_mut().next_frame.next_stacking_order_id);
+        let old_stacking_order_id = mem::replace(
+            &mut self.window_mut().next_frame.z_index_stack.id,
+            new_stacking_order_id,
+        );
+        self.window_mut().next_frame.z_index_stack.id = new_stacking_order_id;
+        self.window_mut().next_frame.z_index_stack.push(z_index);
+        let result = f(self);
+        self.window_mut().next_frame.z_index_stack.id = old_stacking_order_id;
+        self.window_mut().next_frame.z_index_stack.pop();
+        result
+    }
+
+    /// Updates the global element offset relative to the current offset. This is used to implement
+    /// scrolling.
+    fn with_element_offset<R>(
+        &mut self,
+        offset: Point<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if offset.is_zero() {
+            return f(self);
+        };
+
+        let abs_offset = self.element_offset() + offset;
+        self.with_absolute_element_offset(abs_offset, f)
+    }
+
+    /// Updates the global element offset based on the given offset. This is used to implement
+    /// drag handles and other manual painting of elements.
+    fn with_absolute_element_offset<R>(
+        &mut self,
+        offset: Point<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.window_mut()
+            .next_frame
+            .element_offset_stack
+            .push(offset);
+        let result = f(self);
+        self.window_mut().next_frame.element_offset_stack.pop();
+        result
+    }
+
+    /// Obtain the current element offset.
+    fn element_offset(&self) -> Point<Pixels> {
+        self.window()
+            .next_frame
+            .element_offset_stack
+            .last()
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Obtain the current content mask.
+    fn content_mask(&self) -> ContentMask<Pixels> {
+        self.window()
+            .next_frame
+            .content_mask_stack
+            .last()
+            .cloned()
+            .unwrap_or_else(|| ContentMask {
+                bounds: Bounds {
+                    origin: Point::default(),
+                    size: self.window().viewport_size,
+                },
+            })
+    }
+
+    /// The size of an em for the base font of the application. Adjusting this value allows the
+    /// UI to scale, just like zooming a web page.
+    fn rem_size(&self) -> Pixels {
+        self.window().rem_size
+    }
+
+    fn parent_view_id(&self) -> EntityId {
+        *self
+            .window
+            .next_frame
+            .view_stack
+            .last()
+            .expect("a view should always be on the stack while drawing")
+    }
+
+    /// Updates or initializes state for an element with the given id that lives across multiple
+    /// frames. If an element with this ID existed in the rendered frame, its state will be passed
+    /// to the given closure. The state returned by the closure will be stored so it can be referenced
+    /// when drawing the next frame.
+    pub(crate) fn with_element_state<S, R>(
+        &mut self,
+        id: ElementId,
+        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    ) -> R
+    where
+        S: 'static,
+    {
+        self.with_element_id(Some(id), |cx| {
+            let global_id = cx.window().element_id_stack.clone();
+
+            if let Some(any) = cx
+                .window_mut()
+                .next_frame
+                .element_states
+                .remove(&global_id)
+                .or_else(|| {
+                    cx.window_mut()
+                        .rendered_frame
+                        .element_states
+                        .remove(&global_id)
+                })
+            {
+                let ElementStateBox {
+                    inner,
+                    parent_view_id,
+                    #[cfg(debug_assertions)]
+                    type_name
+                } = any;
+                // Using the extra inner option to avoid needing to reallocate a new box.
+                let mut state_box = inner
+                    .downcast::<Option<S>>()
+                    .map_err(|_| {
+                        #[cfg(debug_assertions)]
+                        {
+                            anyhow::anyhow!(
+                                "invalid element state type for id, requested_type {:?}, actual type: {:?}",
+                                std::any::type_name::<S>(),
+                                type_name
+                            )
+                        }
+
+                        #[cfg(not(debug_assertions))]
+                        {
+                            anyhow::anyhow!(
+                                "invalid element state type for id, requested_type {:?}",
+                                std::any::type_name::<S>(),
+                            )
+                        }
+                    })
+                    .unwrap();
+
+                // Actual: Option<AnyElement> <- View
+                // Requested: () <- AnyElement
+                let state = state_box
+                    .take()
+                    .expect("element state is already on the stack");
+                let (result, state) = f(Some(state), cx);
+                state_box.replace(state);
+                cx.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_id, ElementStateBox {
+                        inner: state_box,
+                        parent_view_id,
+                        #[cfg(debug_assertions)]
+                        type_name
+                    });
+                result
+            } else {
+                let (result, state) = f(None, cx);
+                let parent_view_id = cx.parent_view_id();
+                cx.window_mut()
+                    .next_frame
+                    .element_states
+                    .insert(global_id,
+                        ElementStateBox {
+                            inner: Box::new(Some(state)),
+                            parent_view_id,
+                            #[cfg(debug_assertions)]
+                            type_name: std::any::type_name::<S>()
+                        }
+
+                    );
+                result
+            }
+        })
     }
 }

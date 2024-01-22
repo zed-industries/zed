@@ -24,11 +24,10 @@
 
 use crate::{
     point, px, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, BorrowAppContext,
-    BorrowWindow, Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement,
-    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility,
-    WindowContext,
+    Bounds, ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, IntoElement, IsZero,
+    KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
+    StackingOrder, Style, StyleRefinement, Styled, Task, View, Visibility, WindowContext,
 };
 
 use collections::HashMap;
@@ -41,6 +40,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
+    ops::DerefMut,
     rc::Rc,
     time::Duration,
 };
@@ -1540,12 +1540,17 @@ impl Interactivity {
 
                                                     let mut can_drop = true;
                                                     if let Some(predicate) = &can_drop_predicate {
-                                                        can_drop =
-                                                            predicate(drag.value.as_ref(), cx);
+                                                        can_drop = predicate(
+                                                            drag.value.as_ref(),
+                                                            cx.deref_mut(),
+                                                        );
                                                     }
 
                                                     if can_drop {
-                                                        listener(drag.value.as_ref(), cx);
+                                                        listener(
+                                                            drag.value.as_ref(),
+                                                            cx.deref_mut(),
+                                                        );
                                                         cx.refresh();
                                                         cx.stop_propagation();
                                                     }
@@ -1676,7 +1681,7 @@ impl Interactivity {
                                     *was_hovered = is_hovered;
                                     drop(was_hovered);
 
-                                    hover_listener(&is_hovered, cx);
+                                    hover_listener(&is_hovered, cx.deref_mut());
                                 }
                             });
                         }
@@ -1921,7 +1926,9 @@ impl Interactivity {
                 let mouse_position = cx.mouse_position();
                 if !cx.has_active_drag() {
                     if let Some(group_hover) = self.group_hover_style.as_ref() {
-                        if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
+                        if let Some(group_bounds) =
+                            GroupBounds::get(&group_hover.group, cx.deref_mut())
+                        {
                             if group_bounds.contains(&mouse_position)
                                 && cx.was_top_layer(&mouse_position, cx.stacking_order())
                             {
@@ -1944,13 +1951,13 @@ impl Interactivity {
                 if let Some(drag) = cx.active_drag.take() {
                     let mut can_drop = true;
                     if let Some(can_drop_predicate) = &self.can_drop_predicate {
-                        can_drop = can_drop_predicate(drag.value.as_ref(), cx);
+                        can_drop = can_drop_predicate(drag.value.as_ref(), cx.deref_mut());
                     }
 
                     if can_drop {
                         for (state_type, group_drag_style) in &self.group_drag_over_styles {
                             if let Some(group_bounds) =
-                                GroupBounds::get(&group_drag_style.group, cx)
+                                GroupBounds::get(&group_drag_style.group, cx.deref_mut())
                             {
                                 if *state_type == drag.value.as_ref().type_id()
                                     && group_bounds.contains(&mouse_position)

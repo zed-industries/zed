@@ -5,9 +5,9 @@
 //! elements with uniform height.
 
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, BorrowWindow, Bounds, ContentMask, Element,
-    ElementId, InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId,
-    Pixels, Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
+    InteractiveElement, InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels,
+    Render, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
