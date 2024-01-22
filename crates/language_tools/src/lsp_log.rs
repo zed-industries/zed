@@ -45,7 +45,7 @@ struct LanguageServerRpcState {
 
 pub struct LspLogView {
     pub(crate) editor: View<Editor>,
-    editor_subscription: Subscription,
+    editor_subscriptions: Vec<Subscription>,
     log_store: Model<LogStore>,
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
@@ -419,7 +419,7 @@ impl LspLogView {
                 }
             }
         });
-        let (editor, editor_subscription) = Self::editor_for_logs(String::new(), cx);
+        let (editor, editor_subscriptions) = Self::editor_for_logs(String::new(), cx);
 
         let focus_handle = cx.focus_handle();
         let focus_subscription = cx.on_focus(&focus_handle, |log_view, cx| {
@@ -429,7 +429,7 @@ impl LspLogView {
         let mut this = Self {
             focus_handle,
             editor,
-            editor_subscription,
+            editor_subscriptions,
             project,
             log_store,
             current_server_id: None,
@@ -449,7 +449,7 @@ impl LspLogView {
     fn editor_for_logs(
         log_contents: String,
         cx: &mut ViewContext<Self>,
-    ) -> (View<Editor>, Subscription) {
+    ) -> (View<Editor>, Vec<Subscription>) {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::multi_line(cx);
             editor.set_text(log_contents, cx);
@@ -464,7 +464,13 @@ impl LspLogView {
                 cx.emit(event.clone())
             },
         );
-        (editor, editor_subscription)
+        let search_subscription = cx.subscribe(
+            &editor,
+            |_, _, event: &SearchEvent, cx: &mut ViewContext<'_, LspLogView>| {
+                cx.emit(event.clone())
+            },
+        );
+        (editor, vec![editor_subscription, search_subscription])
     }
 
     pub(crate) fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
@@ -521,9 +527,9 @@ impl LspLogView {
         if let Some(log_contents) = log_contents {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = false;
-            let (editor, editor_subscription) = Self::editor_for_logs(log_contents, cx);
+            let (editor, editor_subscriptions) = Self::editor_for_logs(log_contents, cx);
             self.editor = editor;
-            self.editor_subscription = editor_subscription;
+            self.editor_subscriptions = editor_subscriptions;
             cx.notify();
         }
         cx.focus(&self.focus_handle);
@@ -542,7 +548,7 @@ impl LspLogView {
         if let Some(rpc_log) = rpc_log {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = true;
-            let (editor, editor_subscription) = Self::editor_for_logs(rpc_log, cx);
+            let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
                 .read(cx)
@@ -564,7 +570,7 @@ impl LspLogView {
                 });
 
             self.editor = editor;
-            self.editor_subscription = editor_subscription;
+            self.editor_subscriptions = editor_subscriptions;
             cx.notify();
         }
 

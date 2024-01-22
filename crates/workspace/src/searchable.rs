@@ -11,7 +11,7 @@ use crate::{
     ItemHandle,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,
