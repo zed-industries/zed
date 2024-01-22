@@ -1209,9 +1209,10 @@ impl<'a> WindowContext<'a> {
                 // in that scenario "binding.keystrokes" is ",w" and "pending.keystrokes" is ",".
 
                 if bindings.iter().all(|binding| {
-                    currently_pending.bindings.iter().all(|pending| {
-                        dbg!(!dbg!(binding.keystrokes()).starts_with(dbg!(&pending.keystrokes)))
-                    })
+                    currently_pending
+                        .bindings
+                        .iter()
+                        .all(|pending| binding.keystrokes().starts_with(&pending.keystrokes))
                 }) {
                     self.replay_pending_input(currently_pending)
                 }
