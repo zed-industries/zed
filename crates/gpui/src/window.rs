@@ -34,7 +34,7 @@ use std::{
         Arc,
     },
 };
-use util::ResultExt;
+use util::{measure, ResultExt};
 
 mod element_cx;
 pub use element_cx::*;
@@ -310,7 +310,9 @@ impl Window {
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             move || {
-                handle.update(&mut cx, |_, cx| cx.draw()).log_err();
+                measure("frame duration", || {
+                    handle.update(&mut cx, |_, cx| cx.draw()).log_err();
+                })
             }
         }));
         platform_window.on_resize(Box::new({
