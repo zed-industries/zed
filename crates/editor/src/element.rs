@@ -531,8 +531,7 @@ impl EditorElement {
             SelectPhase::Update {
                 position: point_for_position.previous_valid,
                 goal_column: point_for_position.exact_unclipped.column(),
-                scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                    .clamp(&gpui::Point::default(), &position_map.scroll_max),
+                scroll_delta,
             },
             cx,
         );

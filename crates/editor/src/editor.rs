@@ -281,7 +281,7 @@ pub enum SelectPhase {
     Update {
         position: DisplayPoint,
         goal_column: u32,
-        scroll_position: gpui::Point<f32>,
+        scroll_delta: gpui::Point<f32>,
     },
     End,
 }
@@ -1928,8 +1928,8 @@ impl Editor {
             SelectPhase::Update {
                 position,
                 goal_column,
-                scroll_position,
-            } => self.update_selection(position, goal_column, scroll_position, cx),
+                scroll_delta,
+            } => self.update_selection(position, goal_column, scroll_delta, cx),
             SelectPhase::End => self.end_selection(cx),
         }
     }
@@ -2063,7 +2063,7 @@ impl Editor {
         &mut self,
         position: DisplayPoint,
         goal_column: u32,
-        scroll_position: gpui::Point<f32>,
+        scroll_delta: gpui::Point<f32>,
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -2152,7 +2152,7 @@ impl Editor {
             return;
         }
 
-        self.set_scroll_position(scroll_position, cx);
+        self.apply_scroll_delta(scroll_delta, cx);
         cx.notify();
     }
 
