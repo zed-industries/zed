@@ -39,6 +39,7 @@ impl From<ViewId> for EntityId {
 
 #[derive(Default)]
 pub(crate) struct Scene {
+    last_layer: Option<(StackingOrder, LayerId)>,
     layers_by_order: BTreeMap<StackingOrder, LayerId>,
     orders_by_layer: BTreeMap<LayerId, StackingOrder>,
     pub(crate) shadows: Vec<Shadow>,
@@ -52,6 +53,7 @@ pub(crate) struct Scene {
 
 impl Scene {
     pub fn clear(&mut self) {
+        self.last_layer = None;
         self.layers_by_order.clear();
         self.orders_by_layer.clear();
         self.shadows.clear();
@@ -139,14 +141,22 @@ impl Scene {
     }
 
     fn layer_id_for_order(&mut self, order: &StackingOrder) -> LayerId {
-        if let Some(layer_id) = self.layers_by_order.get(order) {
+        if let Some((last_order, last_layer_id)) = self.last_layer.as_ref() {
+            if order == last_order {
+                return *last_layer_id;
+            }
+        }
+
+        let layer_id = if let Some(layer_id) = self.layers_by_order.get(order) {
             *layer_id
         } else {
             let next_id = self.layers_by_order.len() as LayerId;
             self.layers_by_order.insert(order.clone(), next_id);
             self.orders_by_layer.insert(next_id, order.clone());
             next_id
-        }
+        };
+        self.last_layer = Some((order.clone(), layer_id));
+        layer_id
     }
 
     pub fn reuse_views(&mut self, views: &FxHashSet<EntityId>, prev_scene: &mut Self) {
