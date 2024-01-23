@@ -877,14 +877,27 @@ impl<'a> WindowContext<'a> {
     pub(crate) fn was_top_layer_under_active_drag(
         &self,
         point: &Point<Pixels>,
-        level: &StackingOrder,
+        layer: &StackingOrder,
     ) -> bool {
-        for (opaque_level, _, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if level >= opaque_level {
-                break;
+        // Precondition: the depth map is ordered from topmost to bottomost.
+
+        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+            if layer >= opaque_layer {
+                // The queried layer is either above or is the same as the this opaque layer.
+                // Anything after this point is guaranteed to be below the queried layer.
+                return true;
             }
 
-            if opaque_level
+            if !bounds.contains(point) {
+                // This opaque layer is above the queried layer but it doesn't contain
+                // the given position, so we can ignore it even if it's above.
+                continue;
+            }
+
+            // All normal content is rendered with a base z-index of 0, we know that if the root of this opaque layer
+            // equals `ACTIVE_DRAG_Z_INDEX` then it must be the drag layer and we can ignore it as we are
+            // looking to see if the queried layer was the topmost underneath the drag layer.
+            if opaque_layer
                 .first()
                 .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
                 .unwrap_or(false)
@@ -892,10 +905,21 @@ impl<'a> WindowContext<'a> {
                 continue;
             }
 
-            if bounds.contains(point) {
+            // At this point, we've established that this opaque layer is on top of the queried layer
+            // and contains the position:
+            // - If the opaque layer is an extension of the queried layer, we don't want
+            // to consider the opaque layer to be on top and so we ignore it.
+            // - Else, we will bail early and say that the queried layer wasn't the top one.
+            let opaque_layer_is_extension_of_queried_layer = opaque_layer.len() >= layer.len()
+                && opaque_layer
+                    .iter()
+                    .zip(layer.iter())
+                    .all(|(a, b)| a.z_index == b.z_index);
+            if !opaque_layer_is_extension_of_queried_layer {
                 return false;
             }
         }
+
         true
     }
 
