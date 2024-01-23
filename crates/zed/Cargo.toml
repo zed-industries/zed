@@ -4,6 +4,8 @@ edition = "2021"
 name = "zed"
 version = "0.120.0"
 publish = false
+license = "AGPL-3.0-only"
+license-file = "../../LICENSE-AGPL"
 
 [lib]
 name = "zed"
