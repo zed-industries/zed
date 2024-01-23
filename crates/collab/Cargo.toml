@@ -5,7 +5,7 @@ edition = "2021"
 name = "collab"
 version = "0.40.1"
 publish = false
-license = "AGPL-3.0-only"
+license = "GPL-3.0-only"
 
 
 [[bin]]
