@@ -746,9 +746,9 @@ impl TestClient {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
         let view = window.root_view(cx).unwrap();
-        let cx = Box::new(VisualTestContext::from_window(*window.deref(), cx));
+        let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
         // it might be nice to try and cleanup these at the end of each test.
-        (view, Box::leak(cx))
+        (view, cx)
     }
 }
 
