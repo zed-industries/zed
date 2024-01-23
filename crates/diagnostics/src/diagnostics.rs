@@ -1603,6 +1603,7 @@ mod tests {
                                         gutter_width: px(0.),
                                         line_height: px(0.),
                                         em_width: px(0.),
+                                        max_width: px(0.),
                                         block_id: ix,
                                         view: editor_view,
                                         editor_style: &editor::EditorStyle::default(),
