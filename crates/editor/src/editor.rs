@@ -848,7 +848,7 @@ impl CompletionsMenu {
                     .flex_1()
                     .px_1p5()
                     .py_1()
-                    .min_w(px(260.))
+                    .min_w(px(160.))
                     .max_w(px(640.))
                     .w(px(500.))
                     .overflow_y_scroll()
@@ -910,7 +910,7 @@ impl CompletionsMenu {
                                 None
                             };
 
-                        div().min_w(px(220.)).max_w(px(540.)).child(
+                        h_flex().flex_grow().min_w(px(120.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
                                 .selected(item_ix == selected_item)
@@ -925,7 +925,7 @@ impl CompletionsMenu {
                                         )
                                         .map(|task| task.detach_and_log_err(cx));
                                 }))
-                                .child(h_flex().overflow_hidden().child(completion_label))
+                                .child(h_flex().flex_grow().child(completion_label))
                                 .end_slot::<Div>(documentation_label),
                         )
                     })
