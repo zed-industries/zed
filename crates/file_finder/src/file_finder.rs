@@ -115,11 +115,13 @@ impl FileFinder {
 }
 
 impl EventEmitter<DismissEvent> for FileFinder {}
+
 impl FocusableView for FileFinder {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
+
 impl Render for FileFinder {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
@@ -385,6 +387,7 @@ impl FileFinderDelegate {
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
                 .update(&mut cx, |picker, cx| {
+                    picker.delegate.selected_index.take();
                     picker
                         .delegate
                         .set_search_matches(search_id, did_cancel, query, matches, cx)
@@ -623,6 +626,7 @@ impl PickerDelegate for FileFinderDelegate {
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
+            self.selected_index.take();
             self.matches = Matches {
                 history: self
                     .history_items
