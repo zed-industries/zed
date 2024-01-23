@@ -7,7 +7,7 @@ CREATE TABLE "users" (
     "invite_count" INTEGER NOT NULL DEFAULT 0,
     "inviter_id" INTEGER REFERENCES users (id),
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
-    "created_at" TIMESTAMP NOT NULL DEFAULT now,
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
     "github_user_id" INTEGER
 );
