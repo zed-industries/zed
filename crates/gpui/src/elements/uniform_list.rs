@@ -56,6 +56,8 @@ where
             ..Default::default()
         },
         scroll_handle: None,
+        use_max_width: false,
+        use_max_height: false,
     }
 }
 
@@ -64,6 +66,8 @@ pub struct UniformList {
     id: ElementId,
     item_count: usize,
     item_to_measure_index: usize,
+    use_max_width: bool,
+    use_max_height: bool,
     render_items:
         Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
     interactivity: Interactivity,
@@ -280,19 +284,40 @@ impl UniformList {
         self
     }
 
+    /// Forces the list to use the `AvailableSpace::MaxContent` for its items width during laying out.
+    pub fn use_max_width(mut self) -> Self {
+        self.use_max_width = true;
+        self
+    }
+
+    /// Forces the list to use the `AvailableSpace::MaxContent` for its items' height during laying out.
+    pub fn use_max_height(mut self) -> Self {
+        self.use_max_height = true;
+        self
+    }
+
     fn measure_item(&self, list_width: Option<Pixels>, cx: &mut ElementContext) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();
         }
 
+        let width_default = if self.use_max_width {
+            AvailableSpace::MaxContent
+        } else {
+            AvailableSpace::MinContent
+        };
+        let height_default = if self.use_max_height {
+            AvailableSpace::MaxContent
+        } else {
+            AvailableSpace::MinContent
+        };
+
         let item_ix = cmp::min(self.item_to_measure_index, self.item_count - 1);
         let mut items = (self.render_items)(item_ix..item_ix + 1, cx);
         let mut item_to_measure = items.pop().unwrap();
         let available_space = size(
-            list_width.map_or(AvailableSpace::MinContent, |width| {
-                AvailableSpace::Definite(width)
-            }),
-            AvailableSpace::MinContent,
+            list_width.map_or(width_default, AvailableSpace::Definite),
+            height_default,
         );
         item_to_measure.measure(available_space, cx)
     }
