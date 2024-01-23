@@ -15,6 +15,7 @@ runs:
       # will have more fixes & suppression for the standard lint set
       run: |
         cargo clippy --workspace --all-features --all-targets -- -A clippy::all -D clippy::dbg_macro -D clippy::todo
+        cargo clippy -p gpui
 
     - name: Find modified migrations
       shell: bash -euxo pipefail {0}

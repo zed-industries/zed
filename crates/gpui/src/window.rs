@@ -1257,7 +1257,7 @@ impl<'a> WindowContext<'a> {
             } else if let Some(currently_pending) = self.window.pending_input.take() {
                 if bindings
                     .iter()
-                    .all(|binding| !currently_pending.used_by_binding(&binding))
+                    .all(|binding| !currently_pending.used_by_binding(binding))
                 {
                     self.replay_pending_input(currently_pending)
                 }

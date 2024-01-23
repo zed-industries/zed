@@ -2,6 +2,7 @@ use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
+/// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
     platform_text_system: Arc<dyn PlatformTextSystem>,
     pub(crate) font_id: FontId,
@@ -11,6 +12,7 @@ pub struct LineWrapper {
 }
 
 impl LineWrapper {
+    /// The maximum indent that can be applied to a line.
     pub const MAX_INDENT: u32 = 256;
 
     pub(crate) fn new(
@@ -27,6 +29,7 @@ impl LineWrapper {
         }
     }
 
+    /// Wrap a line of text to the given width with this wrapper's font and font size.
     pub fn wrap_line<'a>(
         &'a mut self,
         line: &'a str,
@@ -122,9 +125,12 @@ impl LineWrapper {
     }
 }
 
+/// A boundary between two lines of text.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Boundary {
+    /// The index of the last character in a line
     pub ix: usize,
+    /// The indent of the next line.
     pub next_indent: u32,
 }
 

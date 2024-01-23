@@ -8,7 +8,7 @@
 //! The other main interface is the `paint_*` family of methods, which push basic drawing commands
 //! to the GPU. Everything in a GPUI app is drawn with these methods.
 //!
-//! There are also several internal methds that GPUI uses, such as [`ElementContext::with_element_state`]
+//! There are also several internal methods that GPUI uses, such as [`ElementContext::with_element_state`]
 //! to call the paint and layout methods on elements. These have been included as they're often useful
 //! for taking manual control of the layouting or painting of specialized elements.
 
@@ -733,6 +733,8 @@ impl<'a> ElementContext<'a> {
 
     /// Paint a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
     /// The y component of the origin is the baseline of the glyph.
+    /// You should generally prefer to use the [`ShapedLine::paint`] or [`WrappedLine::paint`] methods in the [`text_system`].
+    /// This method is only useful if you need to paint a single glyph that has already been shaped.
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
@@ -790,6 +792,8 @@ impl<'a> ElementContext<'a> {
 
     /// Paint an emoji glyph into the scene for the next frame at the current z-index.
     /// The y component of the origin is the baseline of the glyph.
+    /// You should generally prefer to use the [`ShapedLine::paint`] or [`WrappedLine::paint`] methods in the [`text_system`].
+    /// This method is only useful if you need to paint a single emoji that has already been shaped.
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,
@@ -1058,7 +1062,7 @@ impl<'a> ElementContext<'a> {
         let text_system = self.text_system().clone();
         text_system.with_view(view_id, || {
             if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                return f(self);
+                f(self)
             } else {
                 self.window.next_frame.view_stack.push(view_id);
                 let result = f(self);
@@ -1074,7 +1078,7 @@ impl<'a> ElementContext<'a> {
         let text_system = self.text_system().clone();
         text_system.with_view(view_id, || {
             if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                return f(self);
+                f(self)
             } else {
                 self.window.next_frame.view_stack.push(view_id);
                 self.window

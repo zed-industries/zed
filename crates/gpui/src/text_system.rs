@@ -172,7 +172,7 @@ impl TextSystem {
         self.read_metrics(font_id, |metrics| metrics.units_per_em)
     }
 
-    /// Get the height of a captial letter in the given font and size.
+    /// Get the height of a capital letter in the given font and size.
     pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.read_metrics(font_id, |metrics| metrics.cap_height(font_size))
     }

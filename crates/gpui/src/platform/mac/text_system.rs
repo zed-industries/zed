@@ -225,9 +225,7 @@ impl MacTextSystemState {
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.fonts[font_id.0]
-            .glyph_for_char(ch)
-            .map(|glyph_id| GlyphId(glyph_id))
+        self.fonts[font_id.0].glyph_for_char(ch).map(GlyphId)
     }
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {

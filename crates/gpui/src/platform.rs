@@ -397,7 +397,7 @@ impl PlatformInputHandler {
         let Some(range) = self.handler.selected_text_range(cx) else {
             return;
         };
-        self.handler.replace_text_in_range(Some(range), &input, cx);
+        self.handler.replace_text_in_range(Some(range), input, cx);
     }
 }
 

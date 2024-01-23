@@ -72,7 +72,7 @@ impl KeystrokeMatcher {
             }
         }
 
-        if bindings.len() == 0 && pending_key.is_none() && self.pending_keystrokes.len() > 0 {
+        if bindings.is_empty() && pending_key.is_none() && !self.pending_keystrokes.is_empty() {
             drop(keymap);
             self.pending_keystrokes.remove(0);
             return self.match_keystroke(keystroke, context_stack);
