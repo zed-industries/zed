@@ -910,7 +910,7 @@ impl CompletionsMenu {
                                 None
                             };
 
-                        h_flex().flex_grow().min_w(px(120.)).child(
+                        h_flex().flex_grow().w_full().min_w(px(120.)).child(
                             ListItem::new(mat.candidate_id)
                                 .inset(true)
                                 .selected(item_ix == selected_item)
@@ -1078,6 +1078,7 @@ impl CodeActionsMenu {
                         let colors = cx.theme().colors();
                         h_flex()
                             .flex_grow()
+                            .w_full()
                             .px_2()
                             .min_w(px(120.))
                             .text_color(colors.text)

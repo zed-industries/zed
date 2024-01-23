@@ -149,6 +149,7 @@ impl ParentElement for ListItem {
 impl RenderOnce for ListItem {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
+            .flex_grow()
             .id(self.id)
             .w_full()
             .relative()
