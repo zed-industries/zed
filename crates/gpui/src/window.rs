@@ -551,7 +551,7 @@ impl<'a> WindowContext<'a> {
     pub(crate) fn dispatch_keystroke_observers(
         &mut self,
         event: &dyn Any,
-        action: Option<Box<dyn Action>>,
+        action: Option<&dyn Action>,
     ) {
         let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
             return;
@@ -563,7 +563,7 @@ impl<'a> WindowContext<'a> {
                 (callback)(
                     &KeystrokeEvent {
                         keystroke: key_down_event.keystroke.clone(),
-                        action: action.as_ref().map(|action| action.boxed_clone()),
+                        action: action.map(|action| action.boxed_clone()),
                     },
                     self,
                 );
@@ -1220,6 +1220,16 @@ impl<'a> WindowContext<'a> {
                 .dispatch_tree
                 .dispatch_key(&key_down_event.keystroke, &dispatch_path);
 
+            self.propagate_event = true;
+            for binding in bindings.iter() {
+                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+                if !self.propagate_event {
+                    self.dispatch_keystroke_observers(event, Some(&*binding.action));
+                    self.clear_pending_keystrokes();
+                    return;
+                }
+            }
+
             if pending {
                 let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
                 if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus
@@ -1260,19 +1270,6 @@ impl<'a> WindowContext<'a> {
                     .all(|binding| !currently_pending.used_by_binding(binding))
                 {
                     self.replay_pending_input(currently_pending)
-                }
-            }
-
-            if !bindings.is_empty() {
-                self.clear_pending_keystrokes();
-            }
-
-            self.propagate_event = true;
-            for binding in bindings {
-                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
-                if !self.propagate_event {
-                    self.dispatch_keystroke_observers(event, Some(binding.action));
-                    return;
                 }
             }
         }
