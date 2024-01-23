@@ -651,7 +651,7 @@ mod lenient_font_attributes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{font, px, FontRun, MacTextSystem, PlatformTextSystem};
+    use crate::{font, px, FontRun, GlyphId, MacTextSystem, PlatformTextSystem};
 
     #[test]
     fn test_wrap_line() {
@@ -690,8 +690,8 @@ mod tests {
         assert_eq!(layout.len, line.len());
         assert_eq!(layout.runs.len(), 1);
         assert_eq!(layout.runs[0].glyphs.len(), 2);
-        assert_eq!(layout.runs[0].glyphs[0].id, 68u32.into()); // a
-                                                               // There's no glyph for \u{feff}
-        assert_eq!(layout.runs[0].glyphs[1].id, 69u32.into()); // b
+        assert_eq!(layout.runs[0].glyphs[0].id, GlyphId(68u32)); // a
+                                                                 // There's no glyph for \u{feff}
+        assert_eq!(layout.runs[0].glyphs[1].id, GlyphId(69u32)); // b
     }
 }
