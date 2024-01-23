@@ -493,7 +493,6 @@ struct Panic {
 #[derive(Serialize)]
 struct PanicRequest {
     panic: Panic,
-    token: String,
 }
 
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -657,11 +656,7 @@ async fn upload_previous_panics(
                 });
 
             if let Some(panic) = panic {
-                let body = serde_json::to_string(&PanicRequest {
-                    panic,
-                    token: client::ZED_SECRET_CLIENT_TOKEN.into(),
-                })
-                .unwrap();
+                let body = serde_json::to_string(&PanicRequest { panic }).unwrap();
 
                 let request = Request::post(&panic_report_url)
                     .redirect_policy(isahc::config::RedirectPolicy::Follow)
@@ -727,10 +722,6 @@ async fn upload_previous_crashes(
             let request = Request::post(&crash_report_url)
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
                 .header("Content-Type", "text/plain")
-                .header(
-                    "Authorization",
-                    format!("token {}", client::ZED_SECRET_CLIENT_TOKEN),
-                )
                 .body(body.into())?;
 
             let response = http.send(request).await.context("error sending crash")?;

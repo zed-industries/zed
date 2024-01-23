@@ -1,6 +1,6 @@
 mod event_coalescer;
 
-use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use crate::{TelemetrySettings, ZED_SERVER_URL};
 use chrono::{DateTime, Utc};
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
@@ -51,7 +51,6 @@ lazy_static! {
 
 #[derive(Serialize, Debug)]
 struct EventRequestBody {
-    token: &'static str,
     installation_id: Option<Arc<str>>,
     session_id: Option<Arc<str>>,
     is_staff: Option<bool>,
@@ -527,7 +526,6 @@ impl Telemetry {
                     {
                         let state = this.state.lock();
                         let request_body = EventRequestBody {
-                            token: ZED_SECRET_CLIENT_TOKEN,
                             installation_id: state.installation_id.clone(),
                             session_id: state.session_id.clone(),
                             is_staff: state.is_staff.clone(),
