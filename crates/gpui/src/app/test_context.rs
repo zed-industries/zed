@@ -705,10 +705,8 @@ impl<'a> VisualTestContext {
         }
     }
 
-    // This returns a mutable reference to the test context (which is usually
-    // what you want when testing).
-    // A side-effect of calling this method is that the context will be retained until the
-    // end of the test (which is usually not a problem).
+    /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).
+    /// This method internally retains the VisualTestContext until the end of the test.
     pub fn as_mut(self) -> &'static mut Self {
         let ptr = Box::into_raw(Box::new(self));
         // safety: on_quit will be called after the test has finished.
