@@ -42,14 +42,19 @@ impl Database {
                 }
             };
 
-            let Some(user) = user::Entity::find().filter(condition).one(&*tx).await? else {
-                return Ok(None);
-            };
-            let Some(contributor) = contributor::Entity::find_by_id(user.id).one(&*tx).await?
-            else {
-                return Ok(None);
-            };
-            Ok(Some(contributor.signed_at))
+            if let Some(user) = user::Entity::find().filter(condition).one(&*tx).await? {
+                if user.admin {
+                    return Ok(Some(user.created_at));
+                }
+
+                if let Some(contributor) =
+                    contributor::Entity::find_by_id(user.id).one(&*tx).await?
+                {
+                    return Ok(Some(contributor.signed_at));
+                }
+            }
+
+            Ok(None)
         })
         .await
     }

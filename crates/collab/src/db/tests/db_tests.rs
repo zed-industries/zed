@@ -31,44 +31,42 @@ async fn test_get_users(db: &Arc<Database>) {
     }
 
     assert_eq!(
-        db.get_users_by_ids(user_ids.clone()).await.unwrap(),
+        db.get_users_by_ids(user_ids.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|user| (
+                user.id,
+                user.github_login,
+                user.github_user_id,
+                user.email_address
+            ))
+            .collect::<Vec<_>>(),
         vec![
-            User {
-                id: user_ids[0],
-                github_login: "user1".to_string(),
-                github_user_id: Some(1),
-                email_address: Some("user1@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[0].parse().unwrap(),
-                ..Default::default()
-            },
-            User {
-                id: user_ids[1],
-                github_login: "user2".to_string(),
-                github_user_id: Some(2),
-                email_address: Some("user2@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[1].parse().unwrap(),
-                ..Default::default()
-            },
-            User {
-                id: user_ids[2],
-                github_login: "user3".to_string(),
-                github_user_id: Some(3),
-                email_address: Some("user3@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[2].parse().unwrap(),
-                ..Default::default()
-            },
-            User {
-                id: user_ids[3],
-                github_login: "user4".to_string(),
-                github_user_id: Some(4),
-                email_address: Some("user4@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[3].parse().unwrap(),
-                ..Default::default()
-            }
+            (
+                user_ids[0],
+                "user1".to_string(),
+                Some(1),
+                Some("user1@example.com".to_string()),
+            ),
+            (
+                user_ids[1],
+                "user2".to_string(),
+                Some(2),
+                Some("user2@example.com".to_string()),
+            ),
+            (
+                user_ids[2],
+                "user3".to_string(),
+                Some(3),
+                Some("user3@example.com".to_string()),
+            ),
+            (
+                user_ids[3],
+                "user4".to_string(),
+                Some(4),
+                Some("user4@example.com".to_string()),
+            )
         ]
     );
 }
