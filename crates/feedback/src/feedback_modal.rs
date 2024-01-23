@@ -2,7 +2,7 @@ use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
 use bitflags::bitflags;
-use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use client::{Client, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
@@ -46,7 +46,6 @@ struct FeedbackRequestBody<'a> {
     installation_id: Option<Arc<str>>,
     system_specs: SystemSpecs,
     is_staff: bool,
-    token: &'a str,
 }
 
 bitflags! {
@@ -305,7 +304,6 @@ impl FeedbackModal {
             installation_id,
             system_specs,
             is_staff: is_staff.unwrap_or(false),
-            token: ZED_SECRET_CLIENT_TOKEN,
         };
         let json_bytes = serde_json::to_vec(&request)?;
         let request = Request::post(feedback_endpoint)
