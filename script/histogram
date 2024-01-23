@@ -28,7 +28,7 @@ def parse_log_file(file_path):
     data = {'measurement': [], 'time': [], 'unit': [], 'log_file': []}
     with open(file_path, 'r') as file:
         for line in file:
-            if ':' not in line:
+            if 'duration:' not in line:
                 continue
 
             parts = line.strip().split(': ')
