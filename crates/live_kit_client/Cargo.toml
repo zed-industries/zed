@@ -5,7 +5,7 @@ edition = "2021"
 description = "Bindings to LiveKit Swift client SDK"
 publish = false
 license = "AGPL-3.0-only"
-license-file = "../../LICENSE-AGPL"
+
 
 [lib]
 path = "src/live_kit_client.rs"
