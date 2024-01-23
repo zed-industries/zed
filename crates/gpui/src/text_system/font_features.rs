@@ -4,9 +4,9 @@ use schemars::{
 };
 
 macro_rules! create_definitions {
-    ($($(#[$meta:meta])* ($name:ident, $idx:expr), ($comment:tt)),* $(,)?) => {
+    ($($(#[$meta:meta])* ($name:ident, $idx:expr)),* $(,)?) => {
 
-        /// The font features that can be configured for a given font.
+        /// The OpenType features that can be configured for a given font.
         #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
         pub struct FontFeatures {
             enabled: u64,
@@ -15,7 +15,7 @@ macro_rules! create_definitions {
 
         impl FontFeatures {
             $(
-                /// $comment
+                /// Get the current value of the corresponding OpenType feature
                 pub fn $name(&self) -> Option<bool> {
                     if (self.enabled & (1 << $idx)) != 0 {
                         Some(true)
@@ -128,7 +128,7 @@ macro_rules! create_definitions {
 }
 
 create_definitions!(
-    (calt, 0, CALT),
+    (calt, 0),
     (case, 1),
     (cpsp, 2),
     (frac, 3),
