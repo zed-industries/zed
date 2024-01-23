@@ -1,4 +1,4 @@
-use crate::tests::TestServer;
+use crate::{db::ChannelId, tests::TestServer};
 use call::ActiveCall;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
@@ -158,4 +158,104 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
         .update(cx_b, |room, cx| room.share_microphone(cx))
         .await
         .is_err());
+}
+
+#[gpui::test]
+async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+
+    server
+        .app_state
+        .db
+        .get_or_create_user_by_github_account("user_b", Some(100), None)
+        .await
+        .unwrap();
+
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // Create a parent channel that requires the Zed CLA
+    let parent_channel_id = server
+        .make_channel("the-channel", None, (&client_a, cx_a), &mut [])
+        .await;
+    server
+        .app_state
+        .db
+        .set_channel_requires_zed_cla(ChannelId::from_proto(parent_channel_id), true)
+        .await
+        .unwrap();
+
+    // Create a public channel that is a child of the parent channel.
+    let channel_id = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| {
+            store.create_channel("the-sub-channel", Some(parent_channel_id), cx)
+        })
+        .await
+        .unwrap();
+    client_a
+        .channel_store()
+        .update(cx_a, |store, cx| {
+            store.set_channel_visibility(channel_id, proto::ChannelVisibility::Public, cx)
+        })
+        .await
+        .unwrap();
+
+    // Users A and B join the channel. B is a guest.
+    active_call_a
+        .update(cx_a, |call, cx| call.join_channel(channel_id, cx))
+        .await
+        .unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_id, cx))
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+    let room_b = cx_b
+        .read(ActiveCall::global)
+        .update(cx_b, |call, _| call.room().unwrap().clone());
+    assert!(room_b.read_with(cx_b, |room, _| room.read_only()));
+
+    // A tries to grant write access to B, but cannot because B has not
+    // yet signed the zed CLA.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_participant_role(
+                    client_b.user_id().unwrap(),
+                    proto::ChannelRole::Member,
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap_err();
+    cx_a.run_until_parked();
+    assert!(room_b.read_with(cx_b, |room, _| room.read_only()));
+
+    // User B signs the zed CLA.
+    server
+        .app_state
+        .db
+        .add_contributor("user_b", Some(100), None)
+        .await
+        .unwrap();
+
+    // A can now grant write access to B.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_participant_role(
+                    client_b.user_id().unwrap(),
+                    proto::ChannelRole::Member,
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+    assert!(room_b.read_with(cx_b, |room, _| !room.read_only()));
 }

@@ -58,7 +58,7 @@ impl Database {
     pub async fn add_contributor(
         &self,
         github_login: &str,
-        github_user_id: i32,
+        github_user_id: Option<i32>,
         github_email: Option<&str>,
     ) -> Result<()> {
         self.transaction(|tx| async move {

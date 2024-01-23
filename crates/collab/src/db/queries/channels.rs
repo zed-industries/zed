@@ -67,6 +67,7 @@ impl Database {
                         .as_ref()
                         .map_or(String::new(), |parent| parent.path()),
                 ),
+                requires_zed_cla: ActiveValue::NotSet,
             }
             .insert(&*tx)
             .await?;
@@ -257,6 +258,22 @@ impl Database {
                 participants_to_remove,
                 channels_to_remove,
             })
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub async fn set_channel_requires_zed_cla(
+        &self,
+        channel_id: ChannelId,
+        requires_zed_cla: bool,
+    ) -> Result<()> {
+        self.transaction(move |tx| async move {
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            let mut model = channel.into_active_model();
+            model.requires_zed_cla = ActiveValue::Set(requires_zed_cla);
+            model.update(&*tx).await?;
+            Ok(())
         })
         .await
     }

@@ -43,6 +43,7 @@ pub struct TestServer {
     pub app_state: Arc<AppState>,
     pub test_live_kit_server: Arc<live_kit_client::TestServer>,
     server: Arc<Server>,
+    next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
     forbid_connections: Arc<AtomicBool>,
     _test_db: TestDb,
@@ -108,6 +109,7 @@ impl TestServer {
             server,
             connection_killers: Default::default(),
             forbid_connections: Default::default(),
+            next_github_user_id: 0,
             _test_db: test_db,
             test_live_kit_server: live_kit_server,
         }
@@ -157,6 +159,8 @@ impl TestServer {
         {
             user.id
         } else {
+            let github_user_id = self.next_github_user_id;
+            self.next_github_user_id += 1;
             self.app_state
                 .db
                 .create_user(
@@ -164,7 +168,7 @@ impl TestServer {
                     false,
                     NewUserParams {
                         github_login: name.into(),
-                        github_user_id: 0,
+                        github_user_id,
                     },
                 )
                 .await
