@@ -146,7 +146,13 @@ impl UserStore {
             }),
             _maintain_current_user: cx.spawn(|this, mut cx| async move {
                 let mut status = client.status();
+                let weak = Arc::downgrade(&client);
+                drop(client);
                 while let Some(status) = status.next().await {
+                    // if the client is dropped, the app is shutting down.
+                    let Some(client) = weak.upgrade() else {
+                        return Ok(());
+                    };
                     match status {
                         Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {

@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt};
-use std::{future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -24,6 +24,7 @@ pub struct TestAppContext {
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
+    on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
 }
 
 impl Context for TestAppContext {
@@ -101,6 +102,7 @@ impl TestAppContext {
             test_platform: platform,
             text_system,
             fn_name,
+            on_quit: Rc::new(RefCell::new(Vec::default())),
         }
     }
 
@@ -119,9 +121,16 @@ impl TestAppContext {
         Self::new(self.dispatcher.clone(), self.fn_name)
     }
 
-    /// Simulates quitting the app.
+    /// Called by the test helper to end the test.
+    /// public so the macro can call it.
     pub fn quit(&self) {
+        self.on_quit.borrow_mut().drain(..).for_each(|f| f());
         self.app.borrow_mut().shutdown();
+    }
+
+    /// Register cleanup to run when the test ends.
+    pub fn on_quit(&mut self, f: impl FnOnce() + 'static) {
+        self.on_quit.borrow_mut().push(Box::new(f));
     }
 
     /// Schedules all windows to be redrawn on the next effect cycle.
@@ -169,10 +178,9 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
         let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(|_| ()));
         drop(cx);
-        let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
+        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();
-        // it might be nice to try and cleanup these at the end of each test.
-        Box::leak(cx)
+        cx
     }
 
     /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
@@ -187,10 +195,11 @@ impl TestAppContext {
         let window = cx.open_window(WindowOptions::default(), |cx| cx.new_view(build_window));
         drop(cx);
         let view = window.root_view(self).unwrap();
-        let cx = Box::new(VisualTestContext::from_window(*window.deref(), self));
+        let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();
+
         // it might be nice to try and cleanup these at the end of each test.
-        (view, Box::leak(cx))
+        (view, cx)
     }
 
     /// returns the TextSystem
@@ -694,6 +703,20 @@ impl<'a> VisualTestContext {
         } else {
             false
         }
+    }
+
+    /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).
+    /// This method internally retains the VisualTestContext until the end of the test.
+    pub fn as_mut(self) -> &'static mut Self {
+        let ptr = Box::into_raw(Box::new(self));
+        // safety: on_quit will be called after the test has finished.
+        // the executor will ensure that all tasks related to the test have stopped.
+        // so there is no way for cx to be accessed after on_quit is called.
+        let cx = Box::leak(unsafe { Box::from_raw(ptr) });
+        cx.on_quit(move || unsafe {
+            drop(Box::from_raw(ptr));
+        });
+        cx
     }
 }
 
