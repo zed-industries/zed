@@ -1352,6 +1352,8 @@ impl ProjectPanel {
             })
             .unwrap_or(if is_selected {
                 Color::Default
+            } else if details.is_ignored {
+                Color::Disabled
             } else {
                 Color::Muted
             });
