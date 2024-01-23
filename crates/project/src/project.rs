@@ -632,7 +632,7 @@ impl Project {
             let copilot_lsp_subscription =
                 Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             Self {
-                worktrees: Default::default(),
+                worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
                 next_buffer_id: 0,
@@ -973,7 +973,7 @@ impl Project {
         }
 
         // Start all the newly-enabled language servers.
-        for (worktree, language) in language_servers_to_start {
+        for (worktree, language) in dbg!(language_servers_to_start) {
             let worktree_path = worktree.read(cx).abs_path();
             self.start_language_servers(&worktree, worktree_path, language, cx);
         }
@@ -6370,6 +6370,55 @@ impl Project {
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+        let mut servers_to_remove = HashMap::default();
+        let mut servers_to_preserve = HashSet::default();
+        for ((worktree_id, server_name), &server_id) in &self.language_server_ids {
+            if worktree_id == &id_to_remove {
+                servers_to_remove.insert(server_id, server_name.clone());
+            } else {
+                servers_to_preserve.insert(server_id);
+            }
+        }
+        servers_to_remove.retain(|server_id, _| !servers_to_preserve.contains(server_id));
+        for (server_id_to_remove, server_name) in servers_to_remove {
+            self.language_server_ids
+                .remove(&(id_to_remove, server_name));
+            self.language_server_statuses.remove(&server_id_to_remove);
+            self.last_workspace_edits_by_language_server
+                .remove(&server_id_to_remove);
+            self.language_servers.remove(&server_id_to_remove);
+            cx.emit(Event::LanguageServerRemoved(server_id_to_remove));
+        }
+
+        let mut prettier_instances_to_clean = FuturesUnordered::new();
+        if let Some(prettier_paths) = self.prettiers_per_worktree.remove(&id_to_remove) {
+            for path in prettier_paths.iter().flatten() {
+                if let Some(prettier_instance) = self.prettier_instances.remove(path) {
+                    prettier_instances_to_clean.push(async move {
+                        prettier_instance
+                            .server()
+                            .await
+                            .map(|server| server.server_id())
+                    });
+                }
+            }
+        }
+        cx.spawn(|project, mut cx| async move {
+            while let Some(prettier_server_id) = prettier_instances_to_clean.next().await {
+                if let Some(prettier_server_id) = prettier_server_id {
+                    project
+                        .update(&mut cx, |project, cx| {
+                            project
+                                .supplementary_language_servers
+                                .remove(&prettier_server_id);
+                            cx.emit(Event::LanguageServerRemoved(prettier_server_id));
+                        })
+                        .ok();
+                }
+            }
+        })
+        .detach();
+
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 let id = worktree.read(cx).id();

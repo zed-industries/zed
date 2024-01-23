@@ -70,6 +70,10 @@ impl TextSystem {
 
     /// Get a list of all available font names from the operating system.
     pub fn all_font_names(&self) -> Vec<String> {
+        eprintln!(
+            "~~~~~~~~~~~~~ all_font_names called {}",
+            std::backtrace::Backtrace::capture()
+        );
         let mut names: BTreeSet<_> = self
             .platform_text_system
             .all_font_names()
