@@ -396,8 +396,8 @@ impl ToolbarItemView for BufferSearchBar {
         {
             let this = cx.view().downgrade();
 
-            searchable_item_handle
-                .subscribe_to_search_events(
+            self.active_searchable_item_subscription =
+                Some(searchable_item_handle.subscribe_to_search_events(
                     cx,
                     Box::new(move |search_event, cx| {
                         if let Some(this) = this.upgrade() {
@@ -406,8 +406,7 @@ impl ToolbarItemView for BufferSearchBar {
                             });
                         }
                     }),
-                )
-                .detach();
+                ));
 
             self.active_searchable_item = Some(searchable_item_handle);
             let _ = self.update_matches(cx);
