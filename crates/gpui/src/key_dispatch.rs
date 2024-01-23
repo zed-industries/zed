@@ -63,6 +63,16 @@ use std::{
     sync::Arc,
 };
 
+/// KeymatchMode controls how keybindings are resolved in the case of conflicting pending keystrokes.
+/// When `Sequenced`, gpui will wait for 1s for sequences to complete.
+/// When `Immediate`, gpui will immediately resolve the keybinding.
+#[derive(Default, PartialEq)]
+pub enum KeymatchMode {
+    #[default]
+    Sequenced,
+    Immediate,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
 
@@ -75,6 +85,7 @@ pub(crate) struct DispatchTree {
     keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Arc<Mutex<Keymap>>,
     action_registry: Rc<ActionRegistry>,
+    pub(crate) keymatch_mode: KeymatchMode,
 }
 
 #[derive(Default)]
@@ -106,6 +117,7 @@ impl DispatchTree {
             keystroke_matchers: FxHashMap::default(),
             keymap,
             action_registry,
+            keymatch_mode: KeymatchMode::Sequenced,
         }
     }
 
@@ -116,6 +128,7 @@ impl DispatchTree {
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
         self.keystroke_matchers.clear();
+        self.keymatch_mode = KeymatchMode::Sequenced;
     }
 
     pub fn push_node(
