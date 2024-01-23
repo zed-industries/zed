@@ -4,7 +4,7 @@ version = "2.0.2"
 license = "MIT"
 edition = "2021"
 publish = false
-license-file = "../../LICENSE-AGPL"
+
 
 [lib]
 path = "src/fsevent.rs"

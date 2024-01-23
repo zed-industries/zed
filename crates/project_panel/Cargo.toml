@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 license = "AGPL-3.0-only"
-license-file = "../../LICENSE-AGPL"
+
 
 [lib]
 path = "src/project_panel.rs"
