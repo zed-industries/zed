@@ -173,6 +173,14 @@ impl ChannelRole {
             Banned => false,
         }
     }
+
+    pub fn requires_cla(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member => true,
+            Banned | Guest => false,
+        }
+    }
 }
 
 impl From<proto::ChannelRole> for ChannelRole {

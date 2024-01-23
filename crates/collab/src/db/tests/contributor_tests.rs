@@ -23,13 +23,13 @@ async fn test_contributors(db: &Arc<Database>) {
 
     assert_eq!(db.get_contributors().await.unwrap(), Vec::<String>::new());
 
-    db.add_contributor("user1", 1, None).await.unwrap();
+    db.add_contributor("user1", Some(1), None).await.unwrap();
     assert_eq!(
         db.get_contributors().await.unwrap(),
         vec!["user1".to_string()]
     );
 
-    db.add_contributor("user2", 2, None).await.unwrap();
+    db.add_contributor("user2", Some(2), None).await.unwrap();
     assert_eq!(
         db.get_contributors().await.unwrap(),
         vec!["user1".to_string(), "user2".to_string()]

@@ -105,7 +105,7 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
         .user_id;
 
     let user = db
-        .get_or_create_user_by_github_account("the-new-login2", 102, None)
+        .get_or_create_user_by_github_account("the-new-login2", Some(102), None)
         .await
         .unwrap();
     assert_eq!(user.id, user_id2);
@@ -113,7 +113,7 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
     assert_eq!(user.github_user_id, Some(102));
 
     let user = db
-        .get_or_create_user_by_github_account("login3", 103, Some("user3@example.com"))
+        .get_or_create_user_by_github_account("login3", Some(103), Some("user3@example.com"))
         .await
         .unwrap();
     assert_eq!(&user.github_login, "login3");

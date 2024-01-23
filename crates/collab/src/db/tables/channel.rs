@@ -9,6 +9,7 @@ pub struct Model {
     pub name: String,
     pub visibility: ChannelVisibility,
     pub parent_path: String,
+    pub requires_zed_cla: bool,
 }
 
 impl Model {

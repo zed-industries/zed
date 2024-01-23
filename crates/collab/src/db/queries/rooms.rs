@@ -1029,6 +1029,11 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("only admins can set participant role"))?;
 
+            if role.requires_cla() {
+                self.check_user_has_signed_cla(user_id, room_id, &*tx)
+                    .await?;
+            }
+
             let result = room_participant::Entity::update_many()
                 .filter(
                     Condition::all()
@@ -1048,6 +1053,45 @@ impl Database {
             Ok(self.get_room(room_id, &tx).await?)
         })
         .await
+    }
+
+    async fn check_user_has_signed_cla(
+        &self,
+        user_id: UserId,
+        room_id: RoomId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        let channel = room::Entity::find_by_id(room_id)
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!("could not find room"))?
+            .find_related(channel::Entity)
+            .one(&*tx)
+            .await?;
+
+        if let Some(channel) = channel {
+            let requires_zed_cla = channel.requires_zed_cla
+                || channel::Entity::find()
+                    .filter(
+                        channel::Column::Id
+                            .is_in(channel.ancestors())
+                            .and(channel::Column::RequiresZedCla.eq(true)),
+                    )
+                    .count(&*tx)
+                    .await?
+                    > 0;
+            if requires_zed_cla {
+                if contributor::Entity::find()
+                    .filter(contributor::Column::UserId.eq(user_id))
+                    .one(&*tx)
+                    .await?
+                    .is_none()
+                {
+                    Err(anyhow!("user has not signed the Zed CLA"))?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn connection_lost(&self, connection: ConnectionId) -> Result<()> {

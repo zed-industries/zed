@@ -196,7 +196,8 @@ CREATE TABLE "channels" (
     "name" VARCHAR NOT NULL,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "visibility" VARCHAR NOT NULL,
-    "parent_path" TEXT
+    "parent_path" TEXT,
+    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE INDEX "index_channels_on_parent_path" ON "channels" ("parent_path");
