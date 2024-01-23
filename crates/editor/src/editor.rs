@@ -934,7 +934,9 @@ impl CompletionsMenu {
         )
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
-        .with_width_from_item(widest_completion_ix);
+        .with_width_from_item(widest_completion_ix)
+        .use_max_height()
+        .use_max_width();
 
         Popover::new()
             .child(list)
@@ -1124,6 +1126,8 @@ impl CodeActionsMenu {
                 .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
                 .map(|(ix, _)| ix),
         )
+        .use_max_width()
+        .use_max_height()
         .into_any_element();
 
         if self.deployed_from_indicator {
