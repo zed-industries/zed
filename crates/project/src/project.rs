@@ -973,7 +973,7 @@ impl Project {
         }
 
         // Start all the newly-enabled language servers.
-        for (worktree, language) in dbg!(language_servers_to_start) {
+        for (worktree, language) in language_servers_to_start {
             let worktree_path = worktree.read(cx).abs_path();
             self.start_language_servers(&worktree, worktree_path, language, cx);
         }

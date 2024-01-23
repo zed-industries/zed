@@ -1355,7 +1355,7 @@ impl Workspace {
                     Some(visible) => match this
                         .update(&mut cx, |this, cx| {
                             Workspace::project_path_for_path(
-                                dbg!(this.project.clone()),
+                                this.project.clone(),
                                 abs_path,
                                 visible,
                                 cx,
@@ -1368,7 +1368,6 @@ impl Workspace {
                     },
                     None => None,
                 };
-                dbg!(&project_path);
 
                 let this = this.clone();
                 let abs_path = abs_path.clone();
