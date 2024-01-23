@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::{
     channel::{mpsc, oneshot},
-    future::{BoxFuture, Shared},
+    future::Shared,
     FutureExt, TryFutureExt as _,
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
@@ -216,11 +216,7 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(
-        &self,
-        workspace_root: &Path,
-        cx: &mut AppContext,
-    ) -> BoxFuture<'static, Value> {
+    pub fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
         self.adapter.workspace_configuration(workspace_root, cx)
     }
 
@@ -345,8 +341,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn workspace_configuration(&self, _: &Path, _: &mut AppContext) -> BoxFuture<'static, Value> {
-        futures::future::ready(serde_json::json!({})).boxed()
+    fn workspace_configuration(&self, _: &Path, _: &mut AppContext) -> Value {
+        serde_json::json!({})
     }
 
     /// Returns a list of code actions supported by a given LspAdapter

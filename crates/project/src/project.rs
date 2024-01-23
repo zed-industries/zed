@@ -664,7 +664,7 @@ impl Project {
                 next_diagnostic_group_id: Default::default(),
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
-                language_server_ids: Default::default(),
+                language_server_ids: HashMap::default(),
                 language_server_statuses: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 buffers_being_formatted: Default::default(),
@@ -752,7 +752,7 @@ impl Project {
                 },
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
-                language_server_ids: Default::default(),
+                language_server_ids: HashMap::default(),
                 language_server_statuses: response
                     .payload
                     .language_servers
@@ -2700,7 +2700,7 @@ impl Project {
         });
 
         cx.spawn(move |this, mut cx| async move {
-            while let Some(_) = settings_changed_rx.next().await {
+            while let Some(()) = settings_changed_rx.next().await {
                 let servers: Vec<_> = this.update(&mut cx, |this, _| {
                     this.language_servers
                         .values()
@@ -2714,9 +2714,8 @@ impl Project {
                 })?;
 
                 for (adapter, server) in servers {
-                    let workspace_config = cx
-                        .update(|cx| adapter.workspace_configuration(server.root_path(), cx))?
-                        .await;
+                    let workspace_config =
+                        cx.update(|cx| adapter.workspace_configuration(server.root_path(), cx))?;
                     server
                         .notify::<lsp::notification::DidChangeConfiguration>(
                             lsp::DidChangeConfigurationParams {
@@ -3020,9 +3019,8 @@ impl Project {
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
-        let workspace_config = cx
-            .update(|cx| adapter.workspace_configuration(worktree_path, cx))?
-            .await;
+        let workspace_config =
+            cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
         let language_server = pending_server.task.await?;
 
         language_server
@@ -3056,9 +3054,8 @@ impl Project {
                     let adapter = adapter.clone();
                     let worktree_path = worktree_path.clone();
                     async move {
-                        let workspace_config = cx
-                            .update(|cx| adapter.workspace_configuration(&worktree_path, cx))?
-                            .await;
+                        let workspace_config =
+                            cx.update(|cx| adapter.workspace_configuration(&worktree_path, cx))?;
                         Ok(params
                             .items
                             .into_iter()
