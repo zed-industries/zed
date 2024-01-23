@@ -1,10 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{
-    future::{self, BoxFuture},
-    FutureExt, StreamExt,
-};
+use futures::StreamExt;
 use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
@@ -107,17 +104,12 @@ impl LspAdapter for TailwindLspAdapter {
         }))
     }
 
-    fn workspace_configuration(
-        &self,
-        _workspace_root: &Path,
-        _: &mut AppContext,
-    ) -> BoxFuture<'static, Value> {
-        future::ready(json!({
+    fn workspace_configuration(&self, _workspace_root: &Path, _: &mut AppContext) -> Value {
+        json!({
             "tailwindCSS": {
                 "emmetCompletions": true,
             }
-        }))
-        .boxed()
+        })
     }
 
     async fn language_ids(&self) -> HashMap<String, String> {

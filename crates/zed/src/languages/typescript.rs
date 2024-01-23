@@ -3,7 +3,6 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{future::BoxFuture, FutureExt};
 use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
@@ -13,7 +12,6 @@ use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
     ffi::OsString,
-    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -212,12 +210,8 @@ impl EsLintLspAdapter {
 
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(
-        &self,
-        workspace_root: &Path,
-        _: &mut AppContext,
-    ) -> BoxFuture<'static, Value> {
-        future::ready(json!({
+    fn workspace_configuration(&self, workspace_root: &Path, _: &mut AppContext) -> Value {
+        json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
@@ -230,8 +224,7 @@ impl LspAdapter for EsLintLspAdapter {
                         .unwrap_or_else(|| workspace_root.as_os_str()),
                 },
             }
-        }))
-        .boxed()
+        })
     }
 
     async fn name(&self) -> LanguageServerName {

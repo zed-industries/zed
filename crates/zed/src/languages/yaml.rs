@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::StreamExt;
 use gpui::AppContext;
 use language::{
     language_settings::all_language_settings, LanguageServerName, LspAdapter, LspAdapterDelegate,
@@ -12,7 +12,6 @@ use smol::fs;
 use std::{
     any::Any,
     ffi::OsString,
-    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -93,24 +92,17 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
     }
-    fn workspace_configuration(
-        &self,
-        _workspace_root: &Path,
-        cx: &mut AppContext,
-    ) -> BoxFuture<'static, Value> {
-        let tab_size = all_language_settings(None, cx)
-            .language(Some("YAML"))
-            .tab_size;
-
-        future::ready(serde_json::json!({
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        serde_json::json!({
             "yaml": {
                 "keyOrdering": false
             },
             "[yaml]": {
-                "editor.tabSize": tab_size,
+                "editor.tabSize": all_language_settings(None, cx)
+                    .language(Some("YAML"))
+                    .tab_size,
             }
-        }))
-        .boxed()
+        })
     }
 }
 
