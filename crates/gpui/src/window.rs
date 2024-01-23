@@ -1257,7 +1257,7 @@ impl<'a> WindowContext<'a> {
             } else if let Some(currently_pending) = self.window.pending_input.take() {
                 if bindings
                     .iter()
-                    .all(|binding| !currently_pending.used_by_binding(&binding))
+                    .all(|binding| !currently_pending.used_by_binding(binding))
                 {
                     self.replay_pending_input(currently_pending)
                 }
@@ -2560,7 +2560,7 @@ impl Display for ElementId {
             ElementId::View(entity_id) => write!(f, "view-{}", entity_id)?,
             ElementId::Integer(ix) => write!(f, "{}", ix)?,
             ElementId::Name(name) => write!(f, "{}", name)?,
-            ElementId::FocusHandle(__) => write!(f, "FocusHandle")?,
+            ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
         }
 

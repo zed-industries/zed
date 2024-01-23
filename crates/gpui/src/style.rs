@@ -7,7 +7,7 @@ use crate::{
     SizeRefinement, Styled, TextRun,
 };
 use collections::HashSet;
-use refineable::{Cascade, Refineable};
+use refineable::Refineable;
 use smallvec::SmallVec;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
@@ -15,10 +15,12 @@ pub use taffy::style::{
 };
 
 #[cfg(debug_assertions)]
+/// Use this struct for interfacing with the 'debug_below' styling from your own elements.
+/// If a parent element has this style set on it, then this struct will be set as a global in
+/// GPUI.
 pub struct DebugBelow;
 
-pub type StyleCascade = Cascade<Style>;
-
+/// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
 #[refineable(Debug)]
 pub struct Style {
@@ -104,16 +106,20 @@ pub struct Style {
     /// Box Shadow of the element
     pub box_shadow: SmallVec<[BoxShadow; 2]>,
 
-    /// TEXT
+    /// The text style of this element
     pub text: TextStyleRefinement,
 
     /// The mouse cursor style shown when the mouse pointer is over an element.
     pub mouse_cursor: Option<CursorStyle>,
 
+    /// The z-index to set for this element
     pub z_index: Option<u16>,
 
+    /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
     pub debug: bool,
+
+    /// Whether to draw a red debugging outline around this element and all of it's conforming children
     #[cfg(debug_assertions)]
     pub debug_below: bool,
 }
@@ -124,40 +130,71 @@ impl Styled for StyleRefinement {
     }
 }
 
+/// The value of the visibility property, similar to the CSS property `visibility`
 #[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Visibility {
+    /// The element should be drawn as normal.
     #[default]
     Visible,
+    /// The element should not be drawn, but should still take up space in the layout.
     Hidden,
 }
 
+/// The possible values of the box-shadow property
 #[derive(Clone, Debug)]
 pub struct BoxShadow {
+    /// What color should the shadow have?
     pub color: Hsla,
+    /// How should it be offset from it's element?
     pub offset: Point<Pixels>,
+    /// How much should the shadow be blurred?
     pub blur_radius: Pixels,
+    /// How much should the shadow spread?
     pub spread_radius: Pixels,
 }
 
+/// How to handle whitespace in text
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WhiteSpace {
+    /// Normal line wrapping when text overflows the width of the element
     #[default]
     Normal,
+    /// No line wrapping, text will overflow the width of the element
     Nowrap,
 }
 
+/// The properties that can be used to style text in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug)]
 pub struct TextStyle {
+    /// The color of the text
     pub color: Hsla,
+
+    /// The font family to use
     pub font_family: SharedString,
+
+    /// The font features to use
     pub font_features: FontFeatures,
+
+    /// The font size to use, in pixels or rems.
     pub font_size: AbsoluteLength,
+
+    /// The line height to use, in pixels or fractions
     pub line_height: DefiniteLength,
+
+    /// The font weight, e.g. bold
     pub font_weight: FontWeight,
+
+    /// The font style, e.g. italic
     pub font_style: FontStyle,
+
+    /// The background color of the text
     pub background_color: Option<Hsla>,
+
+    /// The underline style of the text
     pub underline: Option<UnderlineStyle>,
+
+    /// How to handle whitespace in the text
     pub white_space: WhiteSpace,
 }
 
@@ -180,6 +217,7 @@ impl Default for TextStyle {
 }
 
 impl TextStyle {
+    /// Create a new text style with the given highlighting applied.
     pub fn highlight(mut self, style: impl Into<HighlightStyle>) -> Self {
         let style = style.into();
         if let Some(weight) = style.font_weight {
@@ -208,6 +246,7 @@ impl TextStyle {
         self
     }
 
+    /// Get the font configured for this text style.
     pub fn font(&self) -> Font {
         Font {
             family: self.font_family.clone(),
@@ -222,6 +261,7 @@ impl TextStyle {
         self.line_height.to_pixels(self.font_size, rem_size).round()
     }
 
+    /// Convert this text style into a [`TextRun`], for the given length of the text.
     pub fn to_run(&self, len: usize) -> TextRun {
         TextRun {
             len,
@@ -238,19 +278,33 @@ impl TextStyle {
     }
 }
 
+/// A highlight style to apply, similar to a `TextStyle` except
+/// for a single font, uniformly sized and spaced text.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct HighlightStyle {
+    /// The color of the text
     pub color: Option<Hsla>,
+
+    /// The font weight, e.g. bold
     pub font_weight: Option<FontWeight>,
+
+    /// The font style, e.g. italic
     pub font_style: Option<FontStyle>,
+
+    /// The background color of the text
     pub background_color: Option<Hsla>,
+
+    /// The underline style of the text
     pub underline: Option<UnderlineStyle>,
+
+    /// Similar to the CSS `opacity` property, this will cause the text to be less vibrant.
     pub fade_out: Option<f32>,
 }
 
 impl Eq for HighlightStyle {}
 
 impl Style {
+    /// Get the text style in this element style.
     pub fn text_style(&self) -> Option<&TextStyleRefinement> {
         if self.text.is_some() {
             Some(&self.text)
@@ -259,6 +313,8 @@ impl Style {
         }
     }
 
+    /// Get the content mask for this element style, based on the given bounds.
+    /// If the element does not hide it's overflow, this will return `None`.
     pub fn overflow_mask(
         &self,
         bounds: Bounds<Pixels>,
@@ -480,20 +536,29 @@ impl Default for Style {
     }
 }
 
+/// The properties that can be applied to an underline.
 #[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq)]
 #[refineable(Debug)]
 pub struct UnderlineStyle {
+    /// The thickness of the underline.
     pub thickness: Pixels,
+
+    /// The color of the underline.
     pub color: Option<Hsla>,
+
+    /// Whether the underline should be wavy, like in a spell checker.
     pub wavy: bool,
 }
 
+/// The kinds of fill that can be applied to a shape.
 #[derive(Clone, Debug)]
 pub enum Fill {
+    /// A solid color fill.
     Color(Hsla),
 }
 
 impl Fill {
+    /// Unwrap this fill into a solid color, if it is one.
     pub fn color(&self) -> Option<Hsla> {
         match self {
             Fill::Color(color) => Some(*color),
@@ -539,6 +604,8 @@ impl From<&TextStyle> for HighlightStyle {
 }
 
 impl HighlightStyle {
+    /// Blend this highlight style with another.
+    /// Non-continuous properties, like font_weight and font_style, are overwritten.
     pub fn highlight(&mut self, other: HighlightStyle) {
         match (self.color, other.color) {
             (Some(self_color), Some(other_color)) => {
@@ -612,6 +679,7 @@ impl From<Rgba> for HighlightStyle {
     }
 }
 
+/// Combine and merge the highlights and ranges in the two iterators.
 pub fn combine_highlights(
     a: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
     b: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,

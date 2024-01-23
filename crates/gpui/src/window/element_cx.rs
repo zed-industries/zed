@@ -1,3 +1,17 @@
+//! The element context is the main interface for interacting with the frame during a paint.
+//!
+//! Elements are hierarchical and with a few exceptions the context accumulates state in a stack
+//! as it processes all of the elements in the frame. The methods that interact with this stack
+//! are generally marked with `with_*`, and take a callback to denote the region of code that
+//! should be executed with that state.
+//!
+//! The other main interface is the `paint_*` family of methods, which push basic drawing commands
+//! to the GPU. Everything in a GPUI app is drawn with these methods.
+//!
+//! There are also several internal methods that GPUI uses, such as [`ElementContext::with_element_state`]
+//! to call the paint and layout methods on elements. These have been included as they're often useful
+//! for taking manual control of the layouting or painting of specialized elements.
+
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
@@ -153,6 +167,9 @@ pub struct ElementContext<'a> {
 }
 
 impl<'a> WindowContext<'a> {
+    /// Convert this window context into an ElementContext in this callback.
+    /// If you need to use this method, you're probably intermixing the imperative
+    /// and declarative APIs, which is not recommended.
     pub fn with_element_context<R>(&mut self, f: impl FnOnce(&mut ElementContext) -> R) -> R {
         f(&mut ElementContext {
             cx: WindowContext::new(self.app, self.window),
@@ -338,6 +355,8 @@ impl<'a> ElementContext<'a> {
         self.window.next_frame.next_stacking_order_id = next_stacking_order_id;
     }
 
+    /// Push a text style onto the stack, and call a function with that style active.
+    /// Use [`AppContext::text_style`] to get the current, combined text style.
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -714,6 +733,8 @@ impl<'a> ElementContext<'a> {
 
     /// Paint a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
     /// The y component of the origin is the baseline of the glyph.
+    /// You should generally prefer to use the [`ShapedLine::paint`] or [`WrappedLine::paint`] methods in the [`text_system`].
+    /// This method is only useful if you need to paint a single glyph that has already been shaped.
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
@@ -771,6 +792,8 @@ impl<'a> ElementContext<'a> {
 
     /// Paint an emoji glyph into the scene for the next frame at the current z-index.
     /// The y component of the origin is the baseline of the glyph.
+    /// You should generally prefer to use the [`ShapedLine::paint`] or [`WrappedLine::paint`] methods in the [`text_system`].
+    /// This method is only useful if you need to paint a single emoji that has already been shaped.
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,
@@ -979,9 +1002,8 @@ impl<'a> ElementContext<'a> {
         self.window.layout_engine = Some(layout_engine);
     }
 
-    /// Obtain the bounds computed for the given LayoutId relative to the window. This method should not
-    /// be invoked until the paint phase begins, and will usually be invoked by GPUI itself automatically
-    /// in order to pass your element its `Bounds` automatically.
+    /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
+    /// GPUI itself automatically in order to pass your element its `Bounds` automatically.
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         let mut bounds = self
             .window
@@ -1040,7 +1062,7 @@ impl<'a> ElementContext<'a> {
         let text_system = self.text_system().clone();
         text_system.with_view(view_id, || {
             if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                return f(self);
+                f(self)
             } else {
                 self.window.next_frame.view_stack.push(view_id);
                 let result = f(self);
@@ -1056,7 +1078,7 @@ impl<'a> ElementContext<'a> {
         let text_system = self.text_system().clone();
         text_system.with_view(view_id, || {
             if self.window.next_frame.view_stack.last() == Some(&view_id) {
-                return f(self);
+                f(self)
             } else {
                 self.window.next_frame.view_stack.push(view_id);
                 self.window
