@@ -1076,8 +1076,10 @@ impl CodeActionsMenu {
                         let item_ix = range.start + ix;
                         let selected = selected_item == item_ix;
                         let colors = cx.theme().colors();
-                        div()
+                        h_flex()
+                            .flex_grow()
                             .px_2()
+                            .min_w(px(120.))
                             .text_color(colors.text)
                             .when(selected, |style| {
                                 style
