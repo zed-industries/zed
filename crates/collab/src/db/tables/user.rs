@@ -17,6 +17,7 @@ pub struct Model {
     pub inviter_id: Option<UserId>,
     pub connected_once: bool,
     pub metrics_id: Uuid,
+    pub created_at: DateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
