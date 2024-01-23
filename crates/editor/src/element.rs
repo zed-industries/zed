@@ -2074,6 +2074,7 @@ impl EditorElement {
                     &snapshot,
                     bounds.size.width,
                     scroll_width,
+                    text_width,
                     gutter_dimensions.padding,
                     gutter_dimensions.width,
                     em_width,
@@ -2260,6 +2261,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         editor_width: Pixels,
         scroll_width: Pixels,
+        text_width: Pixels,
         gutter_padding: Pixels,
         gutter_width: Pixels,
         em_width: Pixels,
@@ -2309,6 +2311,7 @@ impl EditorElement {
                         gutter_width,
                         em_width,
                         block_id,
+                        max_width: scroll_width.max(text_width),
                         view: editor_view.clone(),
                         editor_style: &self.style,
                     })

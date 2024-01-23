@@ -84,6 +84,7 @@ pub struct BlockContext<'a, 'b> {
     pub context: &'b mut ElementContext<'a>,
     pub view: View<Editor>,
     pub anchor_x: Pixels,
+    pub max_width: Pixels,
     pub gutter_width: Pixels,
     pub gutter_padding: Pixels,
     pub em_width: Pixels,

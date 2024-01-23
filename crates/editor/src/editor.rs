@@ -9600,31 +9600,33 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
     let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
 
     Arc::new(move |cx: &mut BlockContext| {
-        let color = Some(cx.theme().colors().text_accent);
         let group_id: SharedString = cx.block_id.to_string().into();
-        // TODO: Nate: We should tint the background of the block with the severity color
-        // We need to extend the theme before we can do this
+
+        let mut text_style = cx.text_style().clone();
+        text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
+
         h_flex()
             .id(cx.block_id)
             .group(group_id.clone())
             .relative()
-            .pl(cx.anchor_x)
             .size_full()
-            .gap_2()
-            .child(
+            .pl(cx.gutter_width)
+            .w(cx.max_width + cx.gutter_width)
+            .child(div().flex().w(cx.anchor_x - cx.gutter_width).flex_shrink())
+            .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
-                    &cx.text_style(),
+                    &text_style,
                     code_ranges.iter().map(|range| {
                         (
                             range.clone(),
                             HighlightStyle {
-                                color,
+                                font_weight: Some(FontWeight::BOLD),
                                 ..Default::default()
                             },
                         )
                     }),
                 ),
-            )
+            ))
             .child(
                 IconButton::new(("copy-block", cx.block_id), IconName::Copy)
                     .icon_color(Color::Muted)
