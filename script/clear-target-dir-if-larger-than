@@ -7,6 +7,11 @@ if [[ $# < 1 ]]; then
     exit 1
 fi
 
+if ! [[ -d target ]]; then
+    echo "target directory does not exist yet"
+    exit 0
+fi
+
 max_size_gb=$1
 
 current_size=$(du -s target | cut -f1)
