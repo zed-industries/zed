@@ -1,6 +1,6 @@
 use anyhow::Result;
 use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
-use client::{User, UserId};
+use client::UserId;
 use collections::{HashMap, HashSet};
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::StringMatchCandidate;
