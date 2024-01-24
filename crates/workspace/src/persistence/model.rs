@@ -233,34 +233,34 @@ impl SerializedPane {
         workspace: WeakView<Workspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
-        let mut items = Vec::new();
+        let mut item_tasks = Vec::new();
         let mut active_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
-            let item_handle = pane
-                .update(cx, |_, cx| {
-                    if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
-                        deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
-                    } else {
-                        Task::ready(Err(anyhow::anyhow!(
-                            "Deserializer does not exist for item kind: {}",
-                            item.kind
-                        )))
-                    }
-                })?
-                .await
-                .log_err();
+            item_tasks.push(pane.update(cx, |_, cx| {
+                if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
+                    deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
+                } else {
+                    Task::ready(Err(anyhow::anyhow!(
+                        "Deserializer does not exist for item kind: {}",
+                        item.kind
+                    )))
+                }
+            })?);
+            if item.active {
+                active_item_index = Some(index);
+            }
+        }
 
+        let mut items = Vec::new();
+        for item_handle in futures::future::join_all(item_tasks).await {
+            let item_handle = item_handle.log_err();
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
                 pane.update(cx, |pane, cx| {
                     pane.add_item(item_handle.clone(), true, true, None, cx);
                 })?;
-            }
-
-            if item.active {
-                active_item_index = Some(index);
             }
         }
 

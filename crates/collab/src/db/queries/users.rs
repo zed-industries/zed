@@ -74,49 +74,66 @@ impl Database {
         github_login: &str,
         github_user_id: Option<i32>,
         github_email: Option<&str>,
-    ) -> Result<Option<User>> {
+    ) -> Result<User> {
         self.transaction(|tx| async move {
-            let tx = &*tx;
-            if let Some(github_user_id) = github_user_id {
-                if let Some(user_by_github_user_id) = user::Entity::find()
-                    .filter(user::Column::GithubUserId.eq(github_user_id))
-                    .one(tx)
-                    .await?
-                {
-                    let mut user_by_github_user_id = user_by_github_user_id.into_active_model();
-                    user_by_github_user_id.github_login = ActiveValue::set(github_login.into());
-                    Ok(Some(user_by_github_user_id.update(tx).await?))
-                } else if let Some(user_by_github_login) = user::Entity::find()
-                    .filter(user::Column::GithubLogin.eq(github_login))
-                    .one(tx)
-                    .await?
-                {
-                    let mut user_by_github_login = user_by_github_login.into_active_model();
-                    user_by_github_login.github_user_id = ActiveValue::set(Some(github_user_id));
-                    Ok(Some(user_by_github_login.update(tx).await?))
-                } else {
-                    let user = user::Entity::insert(user::ActiveModel {
-                        email_address: ActiveValue::set(github_email.map(|email| email.into())),
-                        github_login: ActiveValue::set(github_login.into()),
-                        github_user_id: ActiveValue::set(Some(github_user_id)),
-                        admin: ActiveValue::set(false),
-                        invite_count: ActiveValue::set(0),
-                        invite_code: ActiveValue::set(None),
-                        metrics_id: ActiveValue::set(Uuid::new_v4()),
-                        ..Default::default()
-                    })
-                    .exec_with_returning(&*tx)
-                    .await?;
-                    Ok(Some(user))
-                }
-            } else {
-                Ok(user::Entity::find()
-                    .filter(user::Column::GithubLogin.eq(github_login))
-                    .one(tx)
-                    .await?)
-            }
+            self.get_or_create_user_by_github_account_tx(
+                github_login,
+                github_user_id,
+                github_email,
+                &*tx,
+            )
+            .await
         })
         .await
+    }
+
+    pub async fn get_or_create_user_by_github_account_tx(
+        &self,
+        github_login: &str,
+        github_user_id: Option<i32>,
+        github_email: Option<&str>,
+        tx: &DatabaseTransaction,
+    ) -> Result<User> {
+        if let Some(github_user_id) = github_user_id {
+            if let Some(user_by_github_user_id) = user::Entity::find()
+                .filter(user::Column::GithubUserId.eq(github_user_id))
+                .one(tx)
+                .await?
+            {
+                let mut user_by_github_user_id = user_by_github_user_id.into_active_model();
+                user_by_github_user_id.github_login = ActiveValue::set(github_login.into());
+                Ok(user_by_github_user_id.update(tx).await?)
+            } else if let Some(user_by_github_login) = user::Entity::find()
+                .filter(user::Column::GithubLogin.eq(github_login))
+                .one(tx)
+                .await?
+            {
+                let mut user_by_github_login = user_by_github_login.into_active_model();
+                user_by_github_login.github_user_id = ActiveValue::set(Some(github_user_id));
+                Ok(user_by_github_login.update(tx).await?)
+            } else {
+                let user = user::Entity::insert(user::ActiveModel {
+                    email_address: ActiveValue::set(github_email.map(|email| email.into())),
+                    github_login: ActiveValue::set(github_login.into()),
+                    github_user_id: ActiveValue::set(Some(github_user_id)),
+                    admin: ActiveValue::set(false),
+                    invite_count: ActiveValue::set(0),
+                    invite_code: ActiveValue::set(None),
+                    metrics_id: ActiveValue::set(Uuid::new_v4()),
+                    ..Default::default()
+                })
+                .exec_with_returning(&*tx)
+                .await?;
+                Ok(user)
+            }
+        } else {
+            let user = user::Entity::find()
+                .filter(user::Column::GithubLogin.eq(github_login))
+                .one(tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such user {}", github_login))?;
+            Ok(user)
+        }
     }
 
     /// get_all_users returns the next page of users. To get more call again with

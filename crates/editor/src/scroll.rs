@@ -202,7 +202,7 @@ impl ScrollManager {
                 ScrollAnchor {
                     anchor: top_anchor,
                     offset: point(
-                        scroll_position.x,
+                        scroll_position.x.max(0.),
                         scroll_position.y - top_anchor.to_display_point(&map).row() as f32,
                     ),
                 },
@@ -327,6 +327,16 @@ impl Editor {
         }
     }
 
+    pub fn apply_scroll_delta(
+        &mut self,
+        scroll_delta: gpui::Point<f32>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let position = self.scroll_manager.anchor.scroll_position(&display_map) + scroll_delta;
+        self.set_scroll_position_taking_display_map(position, true, false, display_map, cx);
+    }
+
     pub fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -343,12 +353,22 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        self.set_scroll_position_taking_display_map(scroll_position, local, autoscroll, map, cx);
+    }
 
+    fn set_scroll_position_taking_display_map(
+        &mut self,
+        scroll_position: gpui::Point<f32>,
+        local: bool,
+        autoscroll: bool,
+        display_map: DisplaySnapshot,
+        cx: &mut ViewContext<Self>,
+    ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
         self.scroll_manager.set_scroll_position(
             scroll_position,
-            &map,
+            &display_map,
             local,
             autoscroll,
             workspace_id,

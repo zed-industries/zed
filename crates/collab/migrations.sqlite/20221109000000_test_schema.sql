@@ -7,7 +7,7 @@ CREATE TABLE "users" (
     "invite_count" INTEGER NOT NULL DEFAULT 0,
     "inviter_id" INTEGER REFERENCES users (id),
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
-    "created_at" TIMESTAMP NOT NULL DEFAULT now,
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
     "github_user_id" INTEGER
 );
@@ -196,7 +196,8 @@ CREATE TABLE "channels" (
     "name" VARCHAR NOT NULL,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "visibility" VARCHAR NOT NULL,
-    "parent_path" TEXT
+    "parent_path" TEXT,
+    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE INDEX "index_channels_on_parent_path" ON "channels" ("parent_path");
@@ -344,3 +345,9 @@ CREATE INDEX
     "index_notifications_on_recipient_id_is_read_kind_entity_id"
     ON "notifications"
     ("recipient_id", "is_read", "kind", "entity_id");
+
+CREATE TABLE contributors (
+    user_id INTEGER REFERENCES users(id),
+    signed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id)
+);

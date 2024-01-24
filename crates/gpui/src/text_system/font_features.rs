@@ -5,6 +5,8 @@ use schemars::{
 
 macro_rules! create_definitions {
     ($($(#[$meta:meta])* ($name:ident, $idx:expr)),* $(,)?) => {
+
+        /// The OpenType features that can be configured for a given font.
         #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
         pub struct FontFeatures {
             enabled: u64,
@@ -13,6 +15,7 @@ macro_rules! create_definitions {
 
         impl FontFeatures {
             $(
+                /// Get the current value of the corresponding OpenType feature
                 pub fn $name(&self) -> Option<bool> {
                     if (self.enabled & (1 << $idx)) != 0 {
                         Some(true)

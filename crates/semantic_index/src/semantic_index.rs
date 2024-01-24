@@ -90,13 +90,12 @@ pub fn init(
     .detach();
 
     cx.spawn(move |cx| async move {
+        let embedding_provider =
+            OpenAIEmbeddingProvider::new(http_client, cx.background_executor().clone()).await;
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
-            Arc::new(OpenAIEmbeddingProvider::new(
-                http_client,
-                cx.background_executor().clone(),
-            )),
+            Arc::new(embedding_provider),
             language_registry,
             cx.clone(),
         )
@@ -279,14 +278,22 @@ impl SemanticIndex {
             .map(|semantic_index| semantic_index.clone())
     }
 
-    pub fn authenticate(&mut self, cx: &mut AppContext) -> bool {
+    pub fn authenticate(&mut self, cx: &mut AppContext) -> Task<bool> {
         if !self.embedding_provider.has_credentials() {
-            self.embedding_provider.retrieve_credentials(cx);
-        } else {
-            return true;
-        }
+            let embedding_provider = self.embedding_provider.clone();
+            cx.spawn(|cx| async move {
+                if let Some(retrieve_credentials) = cx
+                    .update(|cx| embedding_provider.retrieve_credentials(cx))
+                    .log_err()
+                {
+                    retrieve_credentials.await;
+                }
 
-        self.embedding_provider.has_credentials()
+                embedding_provider.has_credentials()
+            })
+        } else {
+            Task::ready(true)
+        }
     }
 
     pub fn is_authenticated(&self) -> bool {
@@ -1006,12 +1013,26 @@ impl SemanticIndex {
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        if !self.is_authenticated() {
-            if !self.authenticate(cx) {
-                return Task::ready(Err(anyhow!("user is not authenticated")));
-            }
+        if self.is_authenticated() {
+            self.index_project_internal(project, cx)
+        } else {
+            let authenticate = self.authenticate(cx);
+            cx.spawn(|this, mut cx| async move {
+                if authenticate.await {
+                    this.update(&mut cx, |this, cx| this.index_project_internal(project, cx))?
+                        .await
+                } else {
+                    Err(anyhow!("user is not authenticated"))
+                }
+            })
         }
+    }
 
+    fn index_project_internal(
+        &mut self,
+        project: Model<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         if !self.projects.contains_key(&project.downgrade()) {
             let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {

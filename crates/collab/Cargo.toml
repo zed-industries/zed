@@ -3,8 +3,10 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
-version = "0.38.0"
+version = "0.40.1"
 publish = false
+license = "AGPL-3.0-only"
+
 
 [[bin]]
 name = "collab"
@@ -27,6 +29,7 @@ axum = { version = "0.5", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.3", features = ["erased-json"] }
 base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
+chrono.workspace = true
 dashmap = "5.4"
 envy = "0.4.2"
 futures.workspace = true

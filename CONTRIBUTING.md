@@ -1,25 +1,44 @@
-# CONTRIBUTING
+# Contributing to Zed
 
 Thanks for your interest in contributing to Zed, the collaborative platform that is also a code editor!
 
-We want to ensure that no one ends up spending time on a pull request that may not be accepted, so we ask that you discuss your ideas with the team and community before starting on a contribution.
+We want to avoid anyone spending time on a pull request that may not be accepted, so we suggest you discuss your ideas with the team and community before starting on major changes. Bug fixes, however, are almost always welcome.
 
-All activity in Zed communities is subject to our [Code of Conduct](https://docs.zed.dev/community/code-of-conduct). Contributors to Zed must sign our Contributor License Agreement (link coming soon) before their contributions can be merged.
+All activity in Zed forums is subject to our [Code of Conduct](https://docs.zed.dev/community/code-of-conduct). Additionally, contributors must sign our [Contributor License Agreement](https://zed.dev/cla) before their contributions can be merged.
 
 ## Contribution ideas
 
-If you already have an idea of what you'd like to contribute, you can skip this section, otherwise, here are a few resources to help you find something to work on:
+If you're looking for ideas about what to work on, check out:
 
-- Our public roadmap (link coming soon!) details what features we plan to add to Zed.
-- Our [Top-Ranking Issues issue](https://github.com/zed-industries/community/issues/52) shows the most popular feature requests and issues, as voted on by the community.
+- Our public roadmap (link coming soon!) contains a rough outline of our near-term priorities for Zed.
+- Our [top-ranking issues](https://github.com/zed-industries/community/issues/52) based on votes by the community.
 
-At the moment, we are generally not looking to extend Zed's language or theme support by directly adding these features to Zed - we really want to build a plugin system to handle making the editor extensible going forward.
+Outside of a handful of extremely popular languages and themes, we are generally not looking to extend Zed's language or theme support by directly building them into Zed. We really want to build a plugin system to handle making the editor extensible going forward. If you are passionate about shipping new languages or themes we suggest contributing to the extension system to help us get there faster.
 
-If you are passionate about shipping new languages or themes we suggest contributing to the extension system to help us get there faster.
+## Proposing changes
 
-## Resources
+The best way to propose a change is to [start a discussion on our GitHub repository](https://github.com/zed-industries/zed/discussions).
 
-### Bird-eye's view of Zed
+First, write a short **problem statement**, which *clearly* and *briefly* describes the problem you want to solve independently from any specific solution. It doesn't need to be long or formal, but it's difficult to consider a solution in absence of a clear understanding of the problem.
+
+Next, write a short **solution proposal**. How can the problem (or set of problems) you have stated above be addressed? What are the pros and cons of your approach? Again, keep it brief and informal. This isn't a specification, but rather a starting point for a conversation.
+
+By effectively engaging with the Zed team and community early in your process, we're better positioned to give you feedback and understand your pull request once you open it. If the first thing we see from you is a big changeset, we're much less likely to respond to it in a timely manner.
+
+## Pair programming
+
+We plan to set aside time each week to pair program with contributors on promising pull requests in Zed. This will be an experiment. We tend to prefer pairing over async code review on our team, and we'd like to see how well it works in an open source setting. If we're finding it difficult to get on the same page with async review, we may ask you to pair with us if you're open to it. The closer a contribution is to the goals outlined in our roadmap, the more likely we'll be to spend time pairing on it.
+
+## Tips to improve the chances of your PR getting reviewed and merged
+
+- Discuss your plans ahead of time with the team
+- Small, focused, incremental pull requests are much easier to review
+- Spend time explaining your changes in the pull request body
+- Add test coverage and documentation
+- Choose tasks that align with our roadmap
+- Pair with us and watch us code to learn the codebase
+
+## Bird-eye's view of Zed
 
 Zed is made up of several smaller crates - let's go over those you're most likely to interact with:
 
@@ -34,24 +53,3 @@ Zed is made up of several smaller crates - let's go over those you're most likel
 - [rpc](/crates/rpc) defines messages to be exchanged with collaboration server.
 - [theme](/crates/theme) defines the theme system and provides a default theme.
 - [ui](/crates/ui) is a collection of UI components and common patterns used throughout Zed.
-
-### Proposal & Discussion
-
-Before starting on a contribution, we ask that you look to see if there is any existing PRs, or in-Zed discussions about the thing you want to implement. If there is no existing work, find a public channel that is relevant to your contribution, check the channel notes to see which Zed team members typically work in that channel, and post a message in the chat. If you're not sure which channel is best, you can start a discussion, ask a team member or another contributor.
-
-*Please remember contributions not discussed with the team ahead of time likely have a lower chance of being merged or looked at in a timely manner.*
-
-## Implementation & Help
-
-When you start working on your contribution if you find you are struggling with something specific feel free to reach out to the team for help.
-
-Remember the team is more likely to be available to help if you have already discussed your contribution or are working on something that is higher priority, like something on the roadmap or a top-ranking issue.
-
-We're happy to pair with you to help you learn the codebase and get your contribution merged.
-
-**Zed makes heavy use of unit and integration testing, it is highly likely that contributions without any unit tests will be rejected**
-
-Reviewing code in a pull request, after the fact, is hard and tedious - the team generally likes to build trust and review code through pair programming.
-We'd prefer have conversations about the code, through Zed, while it is being written, so decisions can be made in real-time and less time is spent on fixing things after the fact. Ideally, GitHub is only used to merge code that has already been discussed and reviewed in Zed.
-
-Remember that smaller, incremental PRs are easier to review and merge than large PRs.

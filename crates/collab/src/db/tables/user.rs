@@ -17,6 +17,7 @@ pub struct Model {
     pub inviter_id: Option<UserId>,
     pub connected_once: bool,
     pub metrics_id: Uuid,
+    pub created_at: DateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -31,6 +32,8 @@ pub enum Relation {
     ChannelMemberships,
     #[sea_orm(has_many = "super::user_feature::Entity")]
     UserFeatures,
+    #[sea_orm(has_one = "super::contributor::Entity")]
+    Contributor,
 }
 
 impl Related<super::access_token::Entity> for Entity {

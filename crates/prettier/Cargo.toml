@@ -3,6 +3,8 @@ name = "prettier"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "GPL-3.0-only"
+
 
 [lib]
 path = "src/prettier.rs"

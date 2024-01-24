@@ -41,7 +41,8 @@ def parse_log_file(file_path):
             elif 'µs' in time_with_unit:
                 time, unit = time_with_unit[:-2], 'µs'
             else:
-                raise ValueError(f"Invalid time unit in line: {line.strip()}")
+                # Print an error message if we can't parse the line and then continue with rest.
+                print(f'Error: Invalid time unit in line "{line.strip()}". Skipping.', file=sys.stderr)
                 continue
 
             data['measurement'].append(measurement)

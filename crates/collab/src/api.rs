@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{User, UserId},
+    db::{ContributorSelector, User, UserId},
     rpc, AppState, Error, Result,
 };
 use anyhow::anyhow;
@@ -14,6 +14,7 @@ use axum::{
     Extension, Json, Router,
 };
 use axum_extra::response::ErasedJson;
+use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -25,6 +26,8 @@ pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/panic", post(trace_panic))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
+        .route("/contributors", get(get_contributors).post(add_contributor))
+        .route("/contributor", get(check_is_contributor))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -88,8 +91,7 @@ async fn get_authenticated_user(
             params.github_user_id,
             params.github_email.as_deref(),
         )
-        .await?
-        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "user not found".into()))?;
+        .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
     return Ok(Json(AuthenticatedUserResponse { user, metrics_id }));
 }
@@ -131,6 +133,65 @@ async fn get_rpc_server_snapshot(
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<ErasedJson> {
     Ok(ErasedJson::pretty(rpc_server.snapshot().await))
+}
+
+async fn get_contributors(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<String>>> {
+    Ok(Json(app.db.get_contributors().await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckIsContributorParams {
+    github_user_id: Option<i32>,
+    github_login: Option<String>,
+}
+
+impl CheckIsContributorParams {
+    fn as_contributor_selector(self) -> Result<ContributorSelector> {
+        if let Some(github_user_id) = self.github_user_id {
+            return Ok(ContributorSelector::GitHubUserId { github_user_id });
+        }
+
+        if let Some(github_login) = self.github_login {
+            return Ok(ContributorSelector::GitHubLogin { github_login });
+        }
+
+        Err(anyhow!(
+            "must be one of `github_user_id` or `github_login`."
+        ))?
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct CheckIsContributorResponse {
+    signed_at: Option<String>,
+}
+
+async fn check_is_contributor(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<CheckIsContributorParams>,
+) -> Result<Json<CheckIsContributorResponse>> {
+    let params = params.as_contributor_selector()?;
+    Ok(Json(CheckIsContributorResponse {
+        signed_at: app
+            .db
+            .get_contributor_sign_timestamp(&params)
+            .await?
+            .map(|ts| ts.and_utc().to_rfc3339_opts(SecondsFormat::Millis, true)),
+    }))
+}
+
+async fn add_contributor(
+    Json(params): Json<AuthenticatedUserParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    Ok(app
+        .db
+        .add_contributor(
+            &params.github_login,
+            params.github_user_id,
+            params.github_email.as_deref(),
+        )
+        .await?)
 }
 
 #[derive(Deserialize)]

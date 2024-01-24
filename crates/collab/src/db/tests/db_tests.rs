@@ -31,44 +31,42 @@ async fn test_get_users(db: &Arc<Database>) {
     }
 
     assert_eq!(
-        db.get_users_by_ids(user_ids.clone()).await.unwrap(),
+        db.get_users_by_ids(user_ids.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|user| (
+                user.id,
+                user.github_login,
+                user.github_user_id,
+                user.email_address
+            ))
+            .collect::<Vec<_>>(),
         vec![
-            User {
-                id: user_ids[0],
-                github_login: "user1".to_string(),
-                github_user_id: Some(1),
-                email_address: Some("user1@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[0].parse().unwrap(),
-                ..Default::default()
-            },
-            User {
-                id: user_ids[1],
-                github_login: "user2".to_string(),
-                github_user_id: Some(2),
-                email_address: Some("user2@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[1].parse().unwrap(),
-                ..Default::default()
-            },
-            User {
-                id: user_ids[2],
-                github_login: "user3".to_string(),
-                github_user_id: Some(3),
-                email_address: Some("user3@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[2].parse().unwrap(),
-                ..Default::default()
-            },
-            User {
-                id: user_ids[3],
-                github_login: "user4".to_string(),
-                github_user_id: Some(4),
-                email_address: Some("user4@example.com".to_string()),
-                admin: false,
-                metrics_id: user_metric_ids[3].parse().unwrap(),
-                ..Default::default()
-            }
+            (
+                user_ids[0],
+                "user1".to_string(),
+                Some(1),
+                Some("user1@example.com".to_string()),
+            ),
+            (
+                user_ids[1],
+                "user2".to_string(),
+                Some(2),
+                Some("user2@example.com".to_string()),
+            ),
+            (
+                user_ids[2],
+                "user3".to_string(),
+                Some(3),
+                Some("user3@example.com".to_string()),
+            ),
+            (
+                user_ids[3],
+                "user4".to_string(),
+                Some(4),
+                Some("user4@example.com".to_string()),
+            )
         ]
     );
 }
@@ -80,18 +78,17 @@ test_both_dbs!(
 );
 
 async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
-    let user_id1 = db
-        .create_user(
-            "user1@example.com",
-            false,
-            NewUserParams {
-                github_login: "login1".into(),
-                github_user_id: 101,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    db.create_user(
+        "user1@example.com",
+        false,
+        NewUserParams {
+            github_login: "login1".into(),
+            github_user_id: 101,
+        },
+    )
+    .await
+    .unwrap()
+    .user_id;
     let user_id2 = db
         .create_user(
             "user2@example.com",
@@ -106,24 +103,8 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
         .user_id;
 
     let user = db
-        .get_or_create_user_by_github_account("login1", None, None)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(user.id, user_id1);
-    assert_eq!(&user.github_login, "login1");
-    assert_eq!(user.github_user_id, Some(101));
-
-    assert!(db
-        .get_or_create_user_by_github_account("non-existent-login", None, None)
-        .await
-        .unwrap()
-        .is_none());
-
-    let user = db
         .get_or_create_user_by_github_account("the-new-login2", Some(102), None)
         .await
-        .unwrap()
         .unwrap();
     assert_eq!(user.id, user_id2);
     assert_eq!(&user.github_login, "the-new-login2");
@@ -132,7 +113,6 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
     let user = db
         .get_or_create_user_by_github_account("login3", Some(103), Some("user3@example.com"))
         .await
-        .unwrap()
         .unwrap();
     assert_eq!(&user.github_login, "login3");
     assert_eq!(user.github_user_id, Some(103));

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Bindings to LiveKit Swift client SDK"
 publish = false
+license = "GPL-3.0-only"
+
 
 [lib]
 path = "src/live_kit_client.rs"

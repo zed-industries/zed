@@ -25,13 +25,12 @@ use crate::{
 use anyhow::{anyhow, Result};
 use collections::{FxHashMap, FxHashSet, VecDeque};
 use futures::{channel::oneshot, future::LocalBoxFuture, Future};
-use parking_lot::Mutex;
+
 use slotmap::SlotMap;
 use std::{
     any::{type_name, TypeId},
     cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
-    mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -109,6 +108,7 @@ pub struct App(Rc<AppCell>);
 /// configured, you'll start the app with `App::run`.
 impl App {
     /// Builds an app with the given asset source.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self(AppContext::new(
             current_platform(),
@@ -224,7 +224,7 @@ pub struct AppContext {
     pub(crate) entities: EntityMap,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
-    pub(crate) keymap: Arc<Mutex<Keymap>>,
+    pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -242,6 +242,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
@@ -285,7 +286,7 @@ impl AppContext {
                 entities,
                 new_view_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
-                keymap: Arc::new(Mutex::new(Keymap::default())),
+                keymap: Rc::new(RefCell::new(Keymap::default())),
                 global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: FxHashSet::default(),
@@ -522,17 +523,22 @@ impl AppContext {
     }
 
     /// Writes credentials to the platform keychain.
-    pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
+    pub fn write_credentials(
+        &self,
+        url: &str,
+        username: &str,
+        password: &[u8],
+    ) -> Task<Result<()>> {
         self.platform.write_credentials(url, username, password)
     }
 
     /// Reads credentials from the platform keychain.
-    pub fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
+    pub fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         self.platform.read_credentials(url)
     }
 
     /// Deletes credentials from the platform keychain.
-    pub fn delete_credentials(&self, url: &str) -> Result<()> {
+    pub fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         self.platform.delete_credentials(url)
     }
 
@@ -763,7 +769,7 @@ impl AppContext {
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext {
-            app: unsafe { mem::transmute(self.this.clone()) },
+            app: self.this.clone(),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
@@ -996,13 +1002,13 @@ impl AppContext {
 
     /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
-        self.keymap.lock().add_bindings(bindings);
+        self.keymap.borrow_mut().add_bindings(bindings);
         self.pending_effects.push_back(Effect::Refresh);
     }
 
     /// Clear all key bindings in the app.
     pub fn clear_key_bindings(&mut self) {
-        self.keymap.lock().clear();
+        self.keymap.borrow_mut().clear();
         self.pending_effects.push_back(Effect::Refresh);
     }
 
@@ -1106,7 +1112,7 @@ impl AppContext {
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        self.platform.set_menus(menus, &self.keymap.lock());
+        self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
     /// Dispatch an action to the currently active window or global action handler

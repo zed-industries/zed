@@ -54,14 +54,23 @@ use crate::{
     KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, WindowContext,
 };
 use collections::FxHashMap;
-use parking_lot::Mutex;
 use smallvec::{smallvec, SmallVec};
 use std::{
     any::{Any, TypeId},
+    cell::RefCell,
     mem,
     rc::Rc,
-    sync::Arc,
 };
+
+/// KeymatchMode controls how keybindings are resolved in the case of conflicting pending keystrokes.
+/// When `Sequenced`, gpui will wait for 1s for sequences to complete.
+/// When `Immediate`, gpui will immediately resolve the keybinding.
+#[derive(Default, PartialEq)]
+pub enum KeymatchMode {
+    #[default]
+    Sequenced,
+    Immediate,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
@@ -73,8 +82,9 @@ pub(crate) struct DispatchTree {
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
     keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
-    keymap: Arc<Mutex<Keymap>>,
+    keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
+    pub(crate) keymatch_mode: KeymatchMode,
 }
 
 #[derive(Default)]
@@ -96,7 +106,7 @@ pub(crate) struct DispatchActionListener {
 }
 
 impl DispatchTree {
-    pub fn new(keymap: Arc<Mutex<Keymap>>, action_registry: Rc<ActionRegistry>) -> Self {
+    pub fn new(keymap: Rc<RefCell<Keymap>>, action_registry: Rc<ActionRegistry>) -> Self {
         Self {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
@@ -106,6 +116,7 @@ impl DispatchTree {
             keystroke_matchers: FxHashMap::default(),
             keymap,
             action_registry,
+            keymatch_mode: KeymatchMode::Sequenced,
         }
     }
 
@@ -116,6 +127,7 @@ impl DispatchTree {
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
         self.keystroke_matchers.clear();
+        self.keymatch_mode = KeymatchMode::Sequenced;
     }
 
     pub fn push_node(
@@ -307,7 +319,7 @@ impl DispatchTree {
         action: &dyn Action,
         context_stack: &Vec<KeyContext>,
     ) -> Vec<KeyBinding> {
-        let keymap = self.keymap.lock();
+        let keymap = self.keymap.borrow();
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
@@ -440,9 +452,7 @@ impl DispatchTree {
 
 #[cfg(test)]
 mod tests {
-    use std::{rc::Rc, sync::Arc};
-
-    use parking_lot::Mutex;
+    use std::{cell::RefCell, rc::Rc};
 
     use crate::{Action, ActionRegistry, DispatchTree, KeyBinding, KeyContext, Keymap};
 
@@ -496,7 +506,7 @@ mod tests {
 
         registry.load_action::<TestAction>();
 
-        let keymap = Arc::new(Mutex::new(keymap));
+        let keymap = Rc::new(RefCell::new(keymap));
 
         let tree = DispatchTree::new(keymap, Rc::new(registry));
 

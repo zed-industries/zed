@@ -20,9 +20,10 @@ use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
+use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{initial_local_settings_content, KeymapFile, Settings, SettingsStore};
-use std::{borrow::Cow, ops::Deref, sync::Arc};
+use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -256,16 +257,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )
             .register_action(
                 move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-                    create_and_open_local_file(&paths::KEYMAP, cx, Default::default)
-                        .detach_and_log_err(cx);
+                    open_settings_file(&paths::KEYMAP, Rope::default, cx);
                 },
             )
             .register_action(
                 move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-                    create_and_open_local_file(&paths::SETTINGS, cx, || {
-                        settings::initial_user_settings_content().as_ref().into()
-                    })
-                    .detach_and_log_err(cx);
+                    open_settings_file(
+                        &paths::SETTINGS,
+                        || settings::initial_user_settings_content().as_ref().into(),
+                        cx,
+                    );
                 },
             )
             .register_action(open_local_settings_file)
@@ -719,6 +720,30 @@ fn open_bundled_file(
                 })
             })?
             .await
+    })
+    .detach_and_log_err(cx);
+}
+
+fn open_settings_file(
+    abs_path: &'static Path,
+    default_content: impl FnOnce() -> Rope + Send + 'static,
+    cx: &mut ViewContext<Workspace>,
+) {
+    cx.spawn(|workspace, mut cx| async move {
+        let (worktree_creation_task, settings_open_task) =
+            workspace.update(&mut cx, |workspace, cx| {
+                let worktree_creation_task = workspace.project().update(cx, |project, cx| {
+                    // Set up a dedicated worktree for settings, since otherwise we're dropping and re-starting LSP servers for each file inside on every settings file close/open
+                    // TODO: Do note that all other external files (e.g. drag and drop from OS) still have their worktrees released on file close, causing LSP servers' restarts.
+                    project.find_or_create_local_worktree(paths::CONFIG_DIR.as_path(), false, cx)
+                });
+                let settings_open_task = create_and_open_local_file(&abs_path, cx, default_content);
+                (worktree_creation_task, settings_open_task)
+            })?;
+
+        let _ = worktree_creation_task.await?;
+        let _ = settings_open_task.await?;
+        anyhow::Ok(())
     })
     .detach_and_log_err(cx);
 }
@@ -2677,11 +2702,6 @@ mod tests {
                     .into(),
                 Assets
                     .load("fonts/zed-mono/zed-mono-extended.ttf")
-                    .unwrap()
-                    .to_vec()
-                    .into(),
-                Assets
-                    .load("fonts/plex/IBMPlexSans-Regular.ttf")
                     .unwrap()
                     .to_vec()
                     .into(),

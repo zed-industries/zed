@@ -277,7 +277,7 @@ impl FollowableItem for Editor {
                         .extend(ids.iter().map(ExcerptId::to_proto));
                     true
                 }
-                EditorEvent::ScrollPositionChanged { .. } => {
+                EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
                     let scroll_anchor = self.scroll_manager.anchor();
                     update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
                     update.scroll_x = scroll_anchor.offset.x;

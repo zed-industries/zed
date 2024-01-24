@@ -3,6 +3,8 @@ name = "assistant"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "GPL-3.0-only"
+
 
 [lib]
 path = "src/assistant.rs"
@@ -30,7 +32,7 @@ workspace = { path = "../workspace" }
 uuid.workspace = true
 log.workspace = true
 anyhow.workspace = true
-chrono = { version = "0.4", features = ["serde"] }
+chrono.workspace = true
 futures.workspace = true
 indoc.workspace = true
 isahc.workspace = true

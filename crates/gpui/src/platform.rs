@@ -9,7 +9,7 @@ use crate::{
     Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlobalPixels, GlyphId, Keymap, LineLayout,
     Pixels, PlatformInput, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result,
-    Scene, SharedString, Size, TaskLabel, WindowContext,
+    Scene, SharedString, Size, Task, TaskLabel, WindowContext,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -108,9 +108,9 @@ pub(crate) trait Platform: 'static {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()>;
-    fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
-    fn delete_credentials(&self, url: &str) -> Result<()>;
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
+    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
+    fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -397,7 +397,7 @@ impl PlatformInputHandler {
         let Some(range) = self.handler.selected_text_range(cx) else {
             return;
         };
-        self.handler.replace_text_in_range(Some(range), &input, cx);
+        self.handler.replace_text_in_range(Some(range), input, cx);
     }
 }
 

@@ -632,7 +632,7 @@ impl Project {
             let copilot_lsp_subscription =
                 Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             Self {
-                worktrees: Default::default(),
+                worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
                 next_buffer_id: 0,
@@ -664,7 +664,7 @@ impl Project {
                 next_diagnostic_group_id: Default::default(),
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
-                language_server_ids: Default::default(),
+                language_server_ids: HashMap::default(),
                 language_server_statuses: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 buffers_being_formatted: Default::default(),
@@ -752,7 +752,7 @@ impl Project {
                 },
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
-                language_server_ids: Default::default(),
+                language_server_ids: HashMap::default(),
                 language_server_statuses: response
                     .payload
                     .language_servers
@@ -2700,7 +2700,7 @@ impl Project {
         });
 
         cx.spawn(move |this, mut cx| async move {
-            while let Some(_) = settings_changed_rx.next().await {
+            while let Some(()) = settings_changed_rx.next().await {
                 let servers: Vec<_> = this.update(&mut cx, |this, _| {
                     this.language_servers
                         .values()
@@ -2714,9 +2714,8 @@ impl Project {
                 })?;
 
                 for (adapter, server) in servers {
-                    let workspace_config = cx
-                        .update(|cx| adapter.workspace_configuration(server.root_path(), cx))?
-                        .await;
+                    let workspace_config =
+                        cx.update(|cx| adapter.workspace_configuration(server.root_path(), cx))?;
                     server
                         .notify::<lsp::notification::DidChangeConfiguration>(
                             lsp::DidChangeConfigurationParams {
@@ -3020,9 +3019,8 @@ impl Project {
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
-        let workspace_config = cx
-            .update(|cx| adapter.workspace_configuration(worktree_path, cx))?
-            .await;
+        let workspace_config =
+            cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
         let language_server = pending_server.task.await?;
 
         language_server
@@ -3056,9 +3054,8 @@ impl Project {
                     let adapter = adapter.clone();
                     let worktree_path = worktree_path.clone();
                     async move {
-                        let workspace_config = cx
-                            .update(|cx| adapter.workspace_configuration(&worktree_path, cx))?
-                            .await;
+                        let workspace_config =
+                            cx.update(|cx| adapter.workspace_configuration(&worktree_path, cx))?;
                         Ok(params
                             .items
                             .into_iter()
@@ -3906,7 +3903,7 @@ impl Project {
                         source: diagnostic.source.clone(),
                         code: code.clone(),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                        message: diagnostic.message.clone(),
+                        message: diagnostic.message.trim().to_string(),
                         group_id,
                         is_primary: true,
                         is_disk_based,
@@ -3923,7 +3920,7 @@ impl Project {
                                     source: diagnostic.source.clone(),
                                     code: code.clone(),
                                     severity: DiagnosticSeverity::INFORMATION,
-                                    message: info.message.clone(),
+                                    message: info.message.trim().to_string(),
                                     group_id,
                                     is_primary: false,
                                     is_disk_based,
@@ -6370,6 +6367,55 @@ impl Project {
     }
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+        let mut servers_to_remove = HashMap::default();
+        let mut servers_to_preserve = HashSet::default();
+        for ((worktree_id, server_name), &server_id) in &self.language_server_ids {
+            if worktree_id == &id_to_remove {
+                servers_to_remove.insert(server_id, server_name.clone());
+            } else {
+                servers_to_preserve.insert(server_id);
+            }
+        }
+        servers_to_remove.retain(|server_id, _| !servers_to_preserve.contains(server_id));
+        for (server_id_to_remove, server_name) in servers_to_remove {
+            self.language_server_ids
+                .remove(&(id_to_remove, server_name));
+            self.language_server_statuses.remove(&server_id_to_remove);
+            self.last_workspace_edits_by_language_server
+                .remove(&server_id_to_remove);
+            self.language_servers.remove(&server_id_to_remove);
+            cx.emit(Event::LanguageServerRemoved(server_id_to_remove));
+        }
+
+        let mut prettier_instances_to_clean = FuturesUnordered::new();
+        if let Some(prettier_paths) = self.prettiers_per_worktree.remove(&id_to_remove) {
+            for path in prettier_paths.iter().flatten() {
+                if let Some(prettier_instance) = self.prettier_instances.remove(path) {
+                    prettier_instances_to_clean.push(async move {
+                        prettier_instance
+                            .server()
+                            .await
+                            .map(|server| server.server_id())
+                    });
+                }
+            }
+        }
+        cx.spawn(|project, mut cx| async move {
+            while let Some(prettier_server_id) = prettier_instances_to_clean.next().await {
+                if let Some(prettier_server_id) = prettier_server_id {
+                    project
+                        .update(&mut cx, |project, cx| {
+                            project
+                                .supplementary_language_servers
+                                .remove(&prettier_server_id);
+                            cx.emit(Event::LanguageServerRemoved(prettier_server_id));
+                        })
+                        .ok();
+                }
+            }
+        })
+        .detach();
+
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 let id = worktree.read(cx).id();

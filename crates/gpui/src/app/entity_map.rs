@@ -242,7 +242,7 @@ impl Clone for AnyModel {
             assert_ne!(prev_count, 0, "Detected over-release of a model.");
         }
 
-        let this = Self {
+        Self {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
@@ -254,8 +254,7 @@ impl Clone for AnyModel {
                 .write()
                 .leak_detector
                 .handle_created(self.entity_id),
-        };
-        this
+        }
     }
 }
 

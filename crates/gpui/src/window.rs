@@ -2,11 +2,12 @@ use crate::{
     px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
     AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds, WindowOptions,
+    GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchMode,
+    KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
+    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds,
+    WindowOptions,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -93,6 +94,7 @@ type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
+#[derive(Debug)]
 struct FocusEvent {
     previous_focus_path: SmallVec<[FocusId; 8]>,
     current_focus_path: SmallVec<[FocusId; 8]>,
@@ -104,7 +106,7 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(4 * 1024 * 1024));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(8 * 1024 * 1024));
 }
 
 impl FocusId {
@@ -877,14 +879,27 @@ impl<'a> WindowContext<'a> {
     pub(crate) fn was_top_layer_under_active_drag(
         &self,
         point: &Point<Pixels>,
-        level: &StackingOrder,
+        layer: &StackingOrder,
     ) -> bool {
-        for (opaque_level, _, bounds) in self.window.rendered_frame.depth_map.iter() {
-            if level >= opaque_level {
-                break;
+        // Precondition: the depth map is ordered from topmost to bottomost.
+
+        for (opaque_layer, _, bounds) in self.window.rendered_frame.depth_map.iter() {
+            if layer >= opaque_layer {
+                // The queried layer is either above or is the same as the this opaque layer.
+                // Anything after this point is guaranteed to be below the queried layer.
+                return true;
             }
 
-            if opaque_level
+            if !bounds.contains(point) {
+                // This opaque layer is above the queried layer but it doesn't contain
+                // the given position, so we can ignore it even if it's above.
+                continue;
+            }
+
+            // All normal content is rendered with a base z-index of 0, we know that if the root of this opaque layer
+            // equals `ACTIVE_DRAG_Z_INDEX` then it must be the drag layer and we can ignore it as we are
+            // looking to see if the queried layer was the topmost underneath the drag layer.
+            if opaque_layer
                 .first()
                 .map(|c| c.z_index == ACTIVE_DRAG_Z_INDEX)
                 .unwrap_or(false)
@@ -892,10 +907,21 @@ impl<'a> WindowContext<'a> {
                 continue;
             }
 
-            if bounds.contains(point) {
+            // At this point, we've established that this opaque layer is on top of the queried layer
+            // and contains the position:
+            // - If the opaque layer is an extension of the queried layer, we don't want
+            // to consider the opaque layer to be on top and so we ignore it.
+            // - Else, we will bail early and say that the queried layer wasn't the top one.
+            let opaque_layer_is_extension_of_queried_layer = opaque_layer.len() >= layer.len()
+                && opaque_layer
+                    .iter()
+                    .zip(layer.iter())
+                    .all(|(a, b)| a.z_index == b.z_index);
+            if !opaque_layer_is_extension_of_queried_layer {
                 return false;
             }
         }
+
         true
     }
 
@@ -1005,7 +1031,13 @@ impl<'a> WindowContext<'a> {
         self.window
             .next_frame
             .finish(&mut self.window.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
+            if percentage >= 80. {
+                log::warn!("elevated element arena occupation: {}.", percentage);
+            }
+            element_arena.clear();
+        });
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;
@@ -1214,11 +1246,20 @@ impl<'a> WindowContext<'a> {
             .dispatch_path(node_id);
 
         if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            let KeymatchResult { bindings, pending } = self
+            let KeymatchResult {
+                bindings,
+                mut pending,
+            } = self
                 .window
                 .rendered_frame
                 .dispatch_tree
                 .dispatch_key(&key_down_event.keystroke, &dispatch_path);
+
+            if self.window.rendered_frame.dispatch_tree.keymatch_mode == KeymatchMode::Immediate
+                && !bindings.is_empty()
+            {
+                pending = false;
+            }
 
             if pending {
                 let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
@@ -1257,7 +1298,7 @@ impl<'a> WindowContext<'a> {
             } else if let Some(currently_pending) = self.window.pending_input.take() {
                 if bindings
                     .iter()
-                    .all(|binding| !currently_pending.used_by_binding(&binding))
+                    .all(|binding| !currently_pending.used_by_binding(binding))
                 {
                     self.replay_pending_input(currently_pending)
                 }
@@ -1981,11 +2022,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             }
         }
 
+        // Always emit a notify effect, so that handlers fire correctly
+        self.window_cx.app.push_effect(Effect::Notify {
+            emitter: self.view.model.entity_id,
+        });
         if !self.window.drawing {
             self.window_cx.window.dirty = true;
-            self.window_cx.app.push_effect(Effect::Notify {
-                emitter: self.view.model.entity_id,
-            });
         }
     }
 
@@ -2560,7 +2602,7 @@ impl Display for ElementId {
             ElementId::View(entity_id) => write!(f, "view-{}", entity_id)?,
             ElementId::Integer(ix) => write!(f, "{}", ix)?,
             ElementId::Name(name) => write!(f, "{}", name)?,
-            ElementId::FocusHandle(__) => write!(f, "FocusHandle")?,
+            ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
         }
 
@@ -2635,7 +2677,7 @@ impl From<(&'static str, u64)> for ElementId {
 }
 
 /// A rectangle to be rendered in the window at the given position and size.
-/// Passed as an argument [`WindowContext::paint_quad`].
+/// Passed as an argument [`ElementContext::paint_quad`].
 #[derive(Clone)]
 pub struct PaintQuad {
     bounds: Bounds<Pixels>,
@@ -2715,5 +2757,61 @@ pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>)
         background: transparent_black(),
         border_widths: (1.).into(),
         border_color: border_color.into(),
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use std::{cell::RefCell, rc::Rc};
+
+    use crate::{
+        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, Render, TestAppContext,
+        ViewContext, VisualContext,
+    };
+
+    #[gpui::test]
+    fn test_notify_on_focus(cx: &mut TestAppContext) {
+        struct TestFocusView {
+            handle: FocusHandle,
+        }
+
+        impl Render for TestFocusView {
+            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+                div().id("test").track_focus(&self.handle)
+            }
+        }
+
+        let notify_counter = Rc::new(RefCell::new(0));
+
+        let (notify_producer, cx) = cx.add_window_view(|cx| {
+            cx.activate_window();
+            let handle = cx.focus_handle();
+
+            cx.on_focus(&handle, |_, cx| {
+                cx.notify();
+            })
+            .detach();
+
+            TestFocusView { handle }
+        });
+
+        let focus_handle = cx.update(|cx| notify_producer.read(cx).handle.clone());
+
+        let _notify_consumer = cx.new_view({
+            |cx| {
+                let notify_counter = notify_counter.clone();
+                cx.observe(&notify_producer, move |_, _, _| {
+                    *notify_counter.borrow_mut() += 1;
+                })
+                .detach();
+            }
+        });
+
+        cx.update(|cx| {
+            cx.focus(&focus_handle);
+        });
+
+        assert_eq!(*notify_counter.borrow(), 1);
     }
 }

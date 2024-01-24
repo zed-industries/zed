@@ -16,7 +16,7 @@ use language::{
     language_settings::{Formatter, LanguageSettings},
     Buffer, Language, LanguageServerName, LocalFile,
 };
-use lsp::LanguageServerId;
+use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use prettier::Prettier;
 use util::{paths::DEFAULT_PRETTIER_DIR, ResultExt, TryFutureExt};
@@ -211,6 +211,10 @@ impl PrettierInstance {
                 }
             },
         })
+    }
+
+    pub async fn server(&self) -> Option<Arc<LanguageServer>> {
+        self.prettier.clone()?.await.ok()?.server().cloned()
     }
 }
 

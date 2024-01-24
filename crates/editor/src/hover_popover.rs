@@ -394,6 +394,26 @@ async fn parse_blocks(
         }
     }
 
+    let leading_space = text.chars().take_while(|c| c.is_whitespace()).count();
+    if leading_space > 0 {
+        highlights = highlights
+            .into_iter()
+            .map(|(range, style)| {
+                (
+                    range.start.saturating_sub(leading_space)
+                        ..range.end.saturating_sub(leading_space),
+                    style,
+                )
+            })
+            .collect();
+        region_ranges = region_ranges
+            .into_iter()
+            .map(|range| {
+                range.start.saturating_sub(leading_space)..range.end.saturating_sub(leading_space)
+            })
+            .collect();
+    }
+
     ParsedMarkdown {
         text: text.trim().to_string(),
         highlights,

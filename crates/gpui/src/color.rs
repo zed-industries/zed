@@ -3,11 +3,11 @@ use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 
 /// Convert an RGB hex color code number to a color type
-pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
+pub fn rgb(hex: u32) -> Rgba {
     let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
     let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
     let b = (hex & 0xFF) as f32 / 255.0;
-    Rgba { r, g, b, a: 1.0 }.into()
+    Rgba { r, g, b, a: 1.0 }
 }
 
 /// Convert an RGBA hex color code number to [`Rgba`]
@@ -40,7 +40,6 @@ impl fmt::Debug for Rgba {
 
 impl Rgba {
     /// Create a new [`Rgba`] color by blending this and another color together
-    /// TODO!(docs): find the source for this algorithm
     pub fn blend(&self, other: Rgba) -> Self {
         if other.a >= 1.0 {
             other
@@ -203,20 +202,16 @@ impl PartialEq for Hsla {
 
 impl PartialOrd for Hsla {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        // SAFETY: The total ordering relies on this always being Some()
-        Some(
-            self.h
-                .total_cmp(&other.h)
-                .then(self.s.total_cmp(&other.s))
-                .then(self.l.total_cmp(&other.l).then(self.a.total_cmp(&other.a))),
-        )
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Hsla {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // SAFETY: The partial comparison is a total comparison
-        unsafe { self.partial_cmp(other).unwrap_unchecked() }
+        self.h
+            .total_cmp(&other.h)
+            .then(self.s.total_cmp(&other.s))
+            .then(self.l.total_cmp(&other.l).then(self.a.total_cmp(&other.a)))
     }
 }
 

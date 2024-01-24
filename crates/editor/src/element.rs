@@ -531,8 +531,7 @@ impl EditorElement {
             SelectPhase::Update {
                 position: point_for_position.previous_valid,
                 goal_column: point_for_position.exact_unclipped.column(),
-                scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                    .clamp(&gpui::Point::default(), &position_map.scroll_max),
+                scroll_delta,
             },
             cx,
         );
@@ -2075,6 +2074,7 @@ impl EditorElement {
                     &snapshot,
                     bounds.size.width,
                     scroll_width,
+                    text_width,
                     gutter_dimensions.padding,
                     gutter_dimensions.width,
                     em_width,
@@ -2153,14 +2153,18 @@ impl EditorElement {
                     .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
             );
 
-            let hover = editor.hover_state.render(
+            let hover = if context_menu.is_some() {
+                None
+            } else {
+                editor.hover_state.render(
                 &snapshot,
                 &style,
                 visible_rows,
                 max_size,
                 editor.workspace.as_ref().map(|(w, _)| w.clone()),
                 cx,
-            );
+            )
+            };
 
             let editor_view = cx.view().clone();
             let fold_indicators = cx.with_element_context(|cx| {
@@ -2257,6 +2261,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         editor_width: Pixels,
         scroll_width: Pixels,
+        text_width: Pixels,
         gutter_padding: Pixels,
         gutter_width: Pixels,
         em_width: Pixels,
@@ -2306,6 +2311,7 @@ impl EditorElement {
                         gutter_width,
                         em_width,
                         block_id,
+                        max_width: scroll_width.max(text_width),
                         view: editor_view.clone(),
                         editor_style: &self.style,
                     })

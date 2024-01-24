@@ -68,7 +68,6 @@ lazy_static! {
         std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| e.len() > 0);
 }
 
-pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -701,8 +700,8 @@ impl Client {
         }
     }
 
-    pub fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
-        read_credentials_from_keychain(cx).is_some()
+    pub async fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
+        read_credentials_from_keychain(cx).await.is_some()
     }
 
     #[async_recursion(?Send)]
@@ -733,7 +732,7 @@ impl Client {
         let mut read_from_keychain = false;
         let mut credentials = self.state.read().credentials.clone();
         if credentials.is_none() && try_keychain {
-            credentials = read_credentials_from_keychain(cx);
+            credentials = read_credentials_from_keychain(cx).await;
             read_from_keychain = credentials.is_some();
         }
         if credentials.is_none() {
@@ -771,7 +770,7 @@ impl Client {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
                         if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
-                            write_credentials_to_keychain(credentials, cx).log_err();
+                            write_credentials_to_keychain(credentials, cx).await.log_err();
                         }
 
                         futures::select_biased! {
@@ -785,7 +784,7 @@ impl Client {
                     Err(EstablishConnectionError::Unauthorized) => {
                         self.state.write().credentials.take();
                         if read_from_keychain {
-                            delete_credentials_from_keychain(cx).log_err();
+                            delete_credentials_from_keychain(cx).await.log_err();
                             self.set_status(Status::SignedOut, cx);
                             self.authenticate_and_connect(false, cx).await
                         } else {
@@ -1351,14 +1350,16 @@ impl Client {
     }
 }
 
-fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
+async fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
     if IMPERSONATE_LOGIN.is_some() {
         return None;
     }
 
     let (user_id, access_token) = cx
-        .update(|cx| cx.read_credentials(&ZED_SERVER_URL).log_err().flatten())
-        .ok()??;
+        .update(|cx| cx.read_credentials(&ZED_SERVER_URL))
+        .log_err()?
+        .await
+        .log_err()??;
 
     Some(Credentials {
         user_id: user_id.parse().ok()?,
@@ -1366,7 +1367,10 @@ fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
     })
 }
 
-fn write_credentials_to_keychain(credentials: Credentials, cx: &AsyncAppContext) -> Result<()> {
+async fn write_credentials_to_keychain(
+    credentials: Credentials,
+    cx: &AsyncAppContext,
+) -> Result<()> {
     cx.update(move |cx| {
         cx.write_credentials(
             &ZED_SERVER_URL,
@@ -1374,10 +1378,12 @@ fn write_credentials_to_keychain(credentials: Credentials, cx: &AsyncAppContext)
             credentials.access_token.as_bytes(),
         )
     })?
+    .await
 }
 
-fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
+async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
     cx.update(move |cx| cx.delete_credentials(&ZED_SERVER_URL))?
+        .await
 }
 
 const WORKTREE_URL_PREFIX: &str = "zed://worktrees/";

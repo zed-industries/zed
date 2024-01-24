@@ -6,29 +6,41 @@ use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
+/// Set the text decoration for a run of text.
 #[derive(Debug, Clone)]
 pub struct DecorationRun {
+    /// The length of the run in utf-8 bytes.
     pub len: u32,
+
+    /// The color for this run
     pub color: Hsla,
+
+    /// The background color for this run
     pub background_color: Option<Hsla>,
+
+    /// The underline style for this run
     pub underline: Option<UnderlineStyle>,
 }
 
+/// A line of text that has been shaped and decorated.
 #[derive(Clone, Default, Debug, Deref, DerefMut)]
 pub struct ShapedLine {
     #[deref]
     #[deref_mut]
     pub(crate) layout: Arc<LineLayout>,
+    /// The text that was shaped for this line.
     pub text: SharedString,
     pub(crate) decoration_runs: SmallVec<[DecorationRun; 32]>,
 }
 
 impl ShapedLine {
     /// The length of the line in utf-8 bytes.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.layout.len
     }
 
+    /// Paint the line of text to the window.
     pub fn paint(
         &self,
         origin: Point<Pixels>,
@@ -48,20 +60,25 @@ impl ShapedLine {
     }
 }
 
+/// A line of text that has been shaped, decorated, and wrapped by the text layout system.
 #[derive(Clone, Default, Debug, Deref, DerefMut)]
 pub struct WrappedLine {
     #[deref]
     #[deref_mut]
     pub(crate) layout: Arc<WrappedLineLayout>,
+    /// The text that was shaped for this line.
     pub text: SharedString,
     pub(crate) decoration_runs: SmallVec<[DecorationRun; 32]>,
 }
 
 impl WrappedLine {
+    /// The length of the underlying, unwrapped layout, in utf-8 bytes.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.layout.len()
     }
 
+    /// Paint this line of text to the window.
     pub fn paint(
         &self,
         origin: Point<Pixels>,

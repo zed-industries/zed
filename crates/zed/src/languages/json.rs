@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::StreamExt;
 use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
@@ -13,7 +13,6 @@ use smol::fs;
 use std::{
     any::Any,
     ffi::OsString,
-    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -107,7 +106,7 @@ impl LspAdapter for JsonLspAdapter {
         &self,
         _workspace_root: &Path,
         cx: &mut AppContext,
-    ) -> BoxFuture<'static, serde_json::Value> {
+    ) -> serde_json::Value {
         let action_names = cx.all_action_names();
         let staff_mode = cx.is_staff();
         let language_names = &self.languages.language_names();
@@ -119,7 +118,7 @@ impl LspAdapter for JsonLspAdapter {
             cx,
         );
 
-        future::ready(serde_json::json!({
+        serde_json::json!({
             "json": {
                 "format": {
                     "enable": true,
@@ -138,8 +137,7 @@ impl LspAdapter for JsonLspAdapter {
                     }
                 ]
             }
-        }))
-        .boxed()
+        })
     }
 
     async fn language_ids(&self) -> HashMap<String, String> {

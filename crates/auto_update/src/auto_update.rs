@@ -1,7 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{Client, TelemetrySettings, ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{Client, TelemetrySettings, ZED_APP_PATH, ZED_APP_VERSION};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
@@ -248,9 +248,7 @@ impl AutoUpdater {
             )
         })?;
 
-        let mut url_string = format!(
-            "{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg"
-        );
+        let mut url_string = format!("{server_url}/api/releases/latest?asset=Zed.dmg");
         cx.update(|cx| {
             if let Some(param) = cx
                 .try_global::<ReleaseChannel>()

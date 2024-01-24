@@ -5,6 +5,7 @@ license = "MIT"
 edition = "2021"
 publish = false
 
+
 [lib]
 path = "src/fsevent.rs"
 doctest = false
