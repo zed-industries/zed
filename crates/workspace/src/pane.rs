@@ -342,7 +342,18 @@ impl Pane {
     }
 
     pub fn has_focus(&self, cx: &WindowContext) -> bool {
+        // In addition to checking our own focus handle,
+        // we need to account for a brief moment (when active item is being switched)
+        // where we don't have focus.
+        // We not only check whether our focus handle contains focus, but also
+        // whether the active_item might have focus, because we might have just activated an item
+        // but that hasn't rendered yet. So before the next render, we might have transfered focus
+        // to the item and `focus_handle.contains_focus` returns false because the `active_item`
+        // is not hooked up to us in the dispatch tree.
         self.focus_handle.contains_focused(cx)
+            || self
+                .active_item()
+                .map_or(false, |item| item.focus_handle(cx).contains_focused(cx))
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
