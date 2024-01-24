@@ -9662,7 +9662,6 @@ dependencies = [
  "client",
  "collab_ui",
  "collections",
- "color",
  "command_palette",
  "copilot",
  "copilot_ui",
