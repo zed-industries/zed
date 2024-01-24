@@ -5,7 +5,7 @@ use gpui::{
     View, ViewContext, WindowContext,
 };
 use std::sync::Arc;
-use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, ListSeparator};
+use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
 use workspace::ModalView;
 
 pub struct Picker<D: PickerDelegate> {
@@ -296,7 +296,12 @@ impl<D: PickerDelegate> Render for Picker<D> {
                                                         ix,
                                                         ix == selected_index,
                                                         cx,
-                                                    )).when(separators_after_indices.contains(&ix), |picker| picker.child(ListSeparator))
+                                                    )).when(separators_after_indices.contains(&ix), |picker| {
+                                                        picker
+                                                            .border_color(cx.theme().colors().border_variant)
+                                                            .border_b_1()
+                                                            .pb(px(-1.0))
+                                                    })
                                             })
                                             .collect()
                                     }
