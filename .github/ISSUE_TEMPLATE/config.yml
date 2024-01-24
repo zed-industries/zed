@@ -1,10 +1,10 @@
 contact_links:
     - name: Top-Ranking Issues
-      url: https://github.com/zed-industries/community/issues/52
+      url: https://github.com/zed-industries/zed/issues/5393
       about: See an overview of the most popular Zed issues
     - name: Platform Support
-      url: https://github.com/zed-industries/community/issues/174
+      url: https://github.com/zed-industries/zed/issues/5391
       about: A quick note on platform support
     - name: Postive Feedback
-      url: https://github.com/zed-industries/community/discussions/2337
+      url: https://github.com/zed-industries/zed/discussions/5397
       about: A central location for kind words about Zed

@@ -146,7 +146,7 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes(["shift-g"]);
     cx.assert_editor_state("aa\nbb\ncˇc");
 
-    // can go to line 1 (https://github.com/zed-industries/community/issues/710)
+    // can go to line 1 (https://github.com/zed-industries/zed/issues/5812)
     cx.simulate_keystrokes(["1", "shift-g"]);
     cx.assert_editor_state("aˇa\nbb\ncc");
 }
