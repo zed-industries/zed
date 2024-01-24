@@ -1,17 +1,12 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use serde_json::json;
 use smol::{fs, fs::File};
-use std::{
-    any::Any,
-    env::consts,
-    ffi::OsString,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
 use util::{fs::remove_matching, github::latest_github_release};
 use util::{github::GitHubLspBinaryVersion, ResultExt};
 
@@ -107,14 +102,14 @@ impl LspAdapter for DenoLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_deno_server_binary(container_dir).await
+        get_cached_server_binary(container_dir).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_deno_server_binary(container_dir).await
+        get_cached_server_binary(container_dir).await
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -170,21 +165,28 @@ impl LspAdapter for DenoLspAdapter {
     }
 }
 
-async fn get_cached_deno_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     (|| async move {
-        // TODO(lino-levan): Don't do this
-        let deno_path = Path::new("/Users/linolevan/.deno/bin/deno");
-        if deno_path.exists() {
-            Ok(LanguageServerBinary {
-                path: deno_path.to_path_buf(),
-                arguments: deno_server_binary_arguments(),
-            })
-        } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                container_dir
-            ))
+        let mut last = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            last = Some(entry?.path());
         }
+
+        match last {
+            Some(path) if path.is_dir() => {
+                let binary = path.join("deno");
+                if fs::metadata(&binary).await.is_ok() {
+                    return Ok(LanguageServerBinary {
+                        path: binary,
+                        arguments: deno_server_binary_arguments(),
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        Err(anyhow!("no cached binary"))
     })()
     .await
     .log_err()
