@@ -42,18 +42,18 @@ pub fn init(cx: &mut AppContext) {
                     cx.write_to_clipboard(item);
                 })
             .register_action(|_, _: &RequestFeature, cx| {
-                let url = "https://github.com/zed-industries/community/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
+                let url = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
                 cx.open_url(url);
             })
             .register_action(move |_, _: &FileBugReport, cx| {
                 let url = format!(
-                    "https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}",
+                    "https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}",
                     urlencoding::encode(&SystemSpecs::new(&cx).to_string())
                 );
                 cx.open_url(&url);
             })
             .register_action(move |_, _: &OpenZedCommunityRepo, cx| {
-                let url = "https://github.com/zed-industries/community";
+                let url = "https://github.com/zed-industries/zed";
                 cx.open_url(&url);
         });
     })
