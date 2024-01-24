@@ -136,25 +136,6 @@ impl Render for () {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {}
 }
 
-/// A quick way to create a [`Render`]able view without having to define a new type.
-#[cfg(any(test, feature = "test-support"))]
-pub struct TestView(Box<dyn FnMut(&mut ViewContext<TestView>) -> AnyElement>);
-
-#[cfg(any(test, feature = "test-support"))]
-impl TestView {
-    /// Construct a TestView from a render closure.
-    pub fn new<F: FnMut(&mut ViewContext<TestView>) -> AnyElement + 'static>(f: F) -> Self {
-        Self(Box::new(f))
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Render for TestView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        (self.0)(cx)
-    }
-}
-
 /// You can derive [`IntoElement`] on any type that implements this trait.
 /// It is used to construct reusable `components` out of plain data. Think of
 /// components as a recipe for a certain pattern of elements. RenderOnce allows
