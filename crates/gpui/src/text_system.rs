@@ -41,7 +41,7 @@ pub(crate) const SUBPIXEL_VARIANTS: u8 = 4;
 pub struct TextSystem {
     line_layout_cache: Arc<LineLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
-    font_ids_by_font: RwLock<FxHashMap<Font, FontId>>,
+    font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
@@ -91,13 +91,26 @@ impl TextSystem {
 
     /// Get the FontId for the configure font family and style.
     pub fn font_id(&self, font: &Font) -> Result<FontId> {
-        let font_id = self.font_ids_by_font.read().get(font).copied();
+        fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
+            match font_id {
+                Ok(font_id) => Ok(*font_id),
+                Err(err) => Err(anyhow!("{}", err)),
+            }
+        }
+
+        let font_id = self
+            .font_ids_by_font
+            .read()
+            .get(font)
+            .map(clone_font_id_result);
         if let Some(font_id) = font_id {
-            Ok(font_id)
+            font_id
         } else {
-            let font_id = self.platform_text_system.font_id(font)?;
-            self.font_ids_by_font.write().insert(font.clone(), font_id);
-            Ok(font_id)
+            let font_id = self.platform_text_system.font_id(font);
+            self.font_ids_by_font
+                .write()
+                .insert(font.clone(), clone_font_id_result(&font_id));
+            font_id
         }
     }
 
