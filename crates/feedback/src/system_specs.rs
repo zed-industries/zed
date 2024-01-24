@@ -3,7 +3,7 @@ use gpui::AppContext;
 use human_bytes::human_bytes;
 use serde::Serialize;
 use std::{env, fmt::Display};
-use sysinfo::{System, SystemExt};
+use sysinfo::{RefreshKind, System, SystemExt};
 use util::channel::ReleaseChannel;
 
 #[derive(Clone, Debug, Serialize)]
@@ -23,7 +23,7 @@ impl SystemSpecs {
             .map(|v| v.to_string());
         let release_channel = cx.global::<ReleaseChannel>().display_name();
         let os_name = cx.app_metadata().os_name;
-        let system = System::new_all();
+        let system = System::new_with_specifics(RefreshKind::new().with_memory());
         let memory = system.total_memory();
         let architecture = env::consts::ARCH;
         let os_version = cx
