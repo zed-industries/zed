@@ -16,6 +16,7 @@ SQUAWK_BIN="./target/squawk-$SQUAWK_VERSION"
 SQUAWK_ARGS="--assume-in-transaction --config script/lib/squawk.toml"
 
 if  [ ! -f "$SQUAWK_BIN" ]; then
+  pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto || /usr/sbin/softwareupdate --install-rosetta --agree-to-license
   curl -L -o "$SQUAWK_BIN" "https://github.com/sbdchd/squawk/releases/download/v$SQUAWK_VERSION/squawk-darwin-x86_64"
   chmod +x "$SQUAWK_BIN"
 fi
