@@ -1031,7 +1031,13 @@ impl<'a> WindowContext<'a> {
         self.window
             .next_frame
             .finish(&mut self.window.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
+            if percentage >= 80. {
+                log::warn!("elevated element arena occupation: {}.", percentage);
+            }
+            element_arena.clear();
+        });
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;

@@ -44,6 +44,14 @@ impl Arena {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.offset as usize - self.start as usize
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.end as usize - self.start as usize
+    }
+
     pub fn clear(&mut self) {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
