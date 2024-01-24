@@ -38,6 +38,9 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn is_zoomed(&self, _cx: &WindowContext) -> bool {
         false
     }
+    fn starts_open(&self, _cx: &WindowContext) -> bool {
+        false
+    }
     fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
     fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
 }
@@ -414,7 +417,7 @@ impl Dock {
         let name = panel.persistent_name().to_string();
 
         self.panel_entries.push(PanelEntry {
-            panel: Arc::new(panel),
+            panel: Arc::new(panel.clone()),
             _subscriptions: subscriptions,
         });
         if let Some(serialized) = self.serialized_dock.clone() {
@@ -429,6 +432,9 @@ impl Dock {
                     };
                 }
             }
+        } else if panel.read(cx).starts_open(cx) {
+            self.activate_panel(self.panel_entries.len() - 1, cx);
+            self.set_open(true, cx);
         }
 
         cx.notify()
