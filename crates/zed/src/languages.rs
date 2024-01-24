@@ -13,6 +13,7 @@ mod c;
 mod css;
 mod elixir;
 mod go;
+mod haskell;
 mod html;
 mod json;
 #[cfg(feature = "plugin_runtime")]
@@ -160,6 +161,7 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
+    language("haskell", tree_sitter_haskell::language(), vec![]);
     language(
         "html",
         tree_sitter_html::language(),

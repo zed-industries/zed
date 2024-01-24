@@ -1,0 +1,12 @@
+name = "Haskell"
+path_suffixes = ["hs"]
+autoclose_before = ",=)}]"
+line_comment = "-- "
+block_comment = ["{- ", " -}"]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = false, newline = false },
+    { start = "'", end = "'", close = false, newline = false },
+]
