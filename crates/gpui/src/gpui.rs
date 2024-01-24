@@ -56,7 +56,7 @@
 //!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`app::test_context`]
 //!   and [`test`] modules for more details.
 //!
-//! Currently, the best way to learn about these APIs is to read the Zed source code or to ask us about it at a fireside hack.
+//! Currently, the best way to learn about these APIs is to read the Zed source code or to ask us about it at a fireside hack or in the [Zed Discord](https://discord.gg/U4qhCEhMXP).
 //! We're working on improving the documentation, creating more examples, and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
 
 #![deny(missing_docs)]
