@@ -104,7 +104,7 @@ impl Element for Img {
                 cx.with_z_index(1, |cx| {
                     match source {
                         ImageSource::Uri(uri) => {
-                            let image_future = cx.image_cache.get(uri.clone());
+                            let image_future = cx.image_cache.get(uri.clone(), cx);
                             if let Some(data) = image_future
                                 .clone()
                                 .now_or_never()
