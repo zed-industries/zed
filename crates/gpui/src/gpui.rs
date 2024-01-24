@@ -6,9 +6,12 @@
 //! ## Getting Started
 //!
 //! GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io.
-//! You'll also need to use the latest version of stable rust. Add the following to your Cargo.toml:
+//! You'll also need to use the latest version of stable rust and be on macOS. Add the following to your
+//! Cargo.toml:
 //!
+//! ```
 //! gpui = { git = "https://github.com/zed-industries/zed" }
+//! ```
 //!
 //! Everything in GPUI starts with an [`App`]. You can create one with [`App::new`], and
 //! kick off your application by passing a callback to [`App::run`]. Inside this callback,
@@ -28,8 +31,8 @@
 //!   a model that can be rendered, via the [`Render`] trait. At the start of each frame, GPUI
 //!   will call this render method on the root view of a given window. Views build a tree of
 //!   `elements`, lay them out and style them with a tailwind-style API, and then give them to
-//!   GPUI to turn into pixels. See the [`div`] element for an all purpose swiss-army knife of
-//!   rendering.
+//!   GPUI to turn into pixels. See the [`elements::Div`] element for an all purpose swiss-army
+//!   knife for UI.
 //!
 //! - Low level, imperative UI with Elements. Elements are the building blocks of UI in GPUI, and they
 //!   provide a nice wrapper around an imperative API that provides as much flexibility and control as
