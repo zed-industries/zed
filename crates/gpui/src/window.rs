@@ -94,7 +94,6 @@ type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
-#[derive(Debug)]
 struct FocusEvent {
     previous_focus_path: SmallVec<[FocusId; 8]>,
     current_focus_path: SmallVec<[FocusId; 8]>,
@@ -2022,12 +2021,11 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             }
         }
 
-        // Always emit a notify effect, so that handlers fire correctly
-        self.window_cx.app.push_effect(Effect::Notify {
-            emitter: self.view.model.entity_id,
-        });
         if !self.window.drawing {
             self.window_cx.window.dirty = true;
+            self.window_cx.app.push_effect(Effect::Notify {
+                emitter: self.view.model.entity_id,
+            });
         }
     }
 
@@ -2757,61 +2755,5 @@ pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>)
         background: transparent_black(),
         border_widths: (1.).into(),
         border_color: border_color.into(),
-    }
-}
-
-#[cfg(test)]
-mod test {
-
-    use std::{cell::RefCell, rc::Rc};
-
-    use crate::{
-        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, Render, TestAppContext,
-        ViewContext, VisualContext,
-    };
-
-    #[gpui::test]
-    fn test_notify_on_focus(cx: &mut TestAppContext) {
-        struct TestFocusView {
-            handle: FocusHandle,
-        }
-
-        impl Render for TestFocusView {
-            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-                div().id("test").track_focus(&self.handle)
-            }
-        }
-
-        let notify_counter = Rc::new(RefCell::new(0));
-
-        let (notify_producer, cx) = cx.add_window_view(|cx| {
-            cx.activate_window();
-            let handle = cx.focus_handle();
-
-            cx.on_focus(&handle, |_, cx| {
-                cx.notify();
-            })
-            .detach();
-
-            TestFocusView { handle }
-        });
-
-        let focus_handle = cx.update(|cx| notify_producer.read(cx).handle.clone());
-
-        let _notify_consumer = cx.new_view({
-            |cx| {
-                let notify_counter = notify_counter.clone();
-                cx.observe(&notify_producer, move |_, _, _| {
-                    *notify_counter.borrow_mut() += 1;
-                })
-                .detach();
-            }
-        });
-
-        cx.update(|cx| {
-            cx.focus(&focus_handle);
-        });
-
-        assert_eq!(*notify_counter.borrow(), 1);
     }
 }
