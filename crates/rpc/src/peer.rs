@@ -1,4 +1,4 @@
-use crate::{ErrorCode, ErrorCodeExt, ErrorExt, RPCError};
+use crate::{ErrorCode, ErrorCodeExt, ErrorExt, RpcError};
 
 use super::{
     proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, RequestMessage},
@@ -425,7 +425,7 @@ impl Peer {
             let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
 
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                Err(RPCError::from_proto(&error, T::NAME))
+                Err(RpcError::from_proto(&error, T::NAME))
             } else {
                 Ok(TypedEnvelope {
                     message_id: response.id,

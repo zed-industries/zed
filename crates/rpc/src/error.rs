@@ -39,18 +39,18 @@ pub use proto::ErrorCode;
 /// The primary implementation is on the proto::ErrorCode to easily convert
 /// that into an anyhow::Error, which we use pervasively.
 ///
-/// The RPCError struct provides support for further metadata if needed.
+/// The RpcError struct provides support for further metadata if needed.
 pub trait ErrorCodeExt {
     /// Return an anyhow::Error containing this.
     /// (useful in places where .into() doesn't have enough type information)
     fn anyhow(self) -> anyhow::Error;
 
     /// Add a message to the error (by default the error code is used)
-    fn message(self, msg: String) -> RPCError;
+    fn message(self, msg: String) -> RpcError;
 
     /// Add a tag to the error. Tags are key value pairs that can be used
     /// to send semi-structured data along with the error.
-    fn with_tag(self, k: &str, v: &str) -> RPCError;
+    fn with_tag(self, k: &str, v: &str) -> RpcError;
 }
 
 impl ErrorCodeExt for proto::ErrorCode {
@@ -58,13 +58,13 @@ impl ErrorCodeExt for proto::ErrorCode {
         self.into()
     }
 
-    fn message(self, msg: String) -> RPCError {
-        let err: RPCError = self.into();
+    fn message(self, msg: String) -> RpcError {
+        let err: RpcError = self.into();
         err.message(msg)
     }
 
-    fn with_tag(self, k: &str, v: &str) -> RPCError {
-        let err: RPCError = self.into();
+    fn with_tag(self, k: &str, v: &str) -> RpcError {
+        let err: RpcError = self.into();
         err.with_tag(k, v)
     }
 }
@@ -78,13 +78,13 @@ pub trait ErrorExt {
     fn error_code(&self) -> proto::ErrorCode;
     /// error_tag() returns the value of the tag with the given key, if any.
     fn error_tag(&self, k: &str) -> Option<&str>;
-    /// to_proto() convers the error into a proto::Error
+    /// to_proto() converts the error into a proto::Error
     fn to_proto(&self) -> proto::Error;
 }
 
 impl ErrorExt for anyhow::Error {
     fn error_code(&self) -> proto::ErrorCode {
-        if let Some(rpc_error) = self.downcast_ref::<RPCError>() {
+        if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.code
         } else {
             proto::ErrorCode::Internal
@@ -92,7 +92,7 @@ impl ErrorExt for anyhow::Error {
     }
 
     fn error_tag(&self, k: &str) -> Option<&str> {
-        if let Some(rpc_error) = self.downcast_ref::<RPCError>() {
+        if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.error_tag(k)
         } else {
             None
@@ -100,7 +100,7 @@ impl ErrorExt for anyhow::Error {
     }
 
     fn to_proto(&self) -> proto::Error {
-        if let Some(rpc_error) = self.downcast_ref::<RPCError>() {
+        if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.to_proto()
         } else {
             ErrorCode::Internal.message(format!("{}", self)).to_proto()
@@ -110,7 +110,7 @@ impl ErrorExt for anyhow::Error {
 
 impl From<proto::ErrorCode> for anyhow::Error {
     fn from(value: proto::ErrorCode) -> Self {
-        RPCError {
+        RpcError {
             request: None,
             code: value,
             msg: format!("{:?}", value).to_string(),
@@ -121,25 +121,25 @@ impl From<proto::ErrorCode> for anyhow::Error {
 }
 
 #[derive(Clone, Debug)]
-pub struct RPCError {
+pub struct RpcError {
     request: Option<String>,
     msg: String,
     code: proto::ErrorCode,
     tags: Vec<String>,
 }
 
-/// RPCError is a structured error type that is returned by the collab server.
+/// RpcError is a structured error type that is returned by the collab server.
 /// In addition to a message, it lets you set a specific ErrorCode, and attach
 /// small amounts of metadata to help the client handle the error appropriately.
 ///
 /// This struct is not typically used directly, as we pass anyhow::Error around
 /// in the app; however it is useful for chaining .message() and .with_tag() on
 /// ErrorCode.
-impl RPCError {
+impl RpcError {
     /// from_proto converts a proto::Error into an anyhow::Error containing
-    /// an RPCError.
+    /// an RpcError.
     pub fn from_proto(error: &proto::Error, request: &str) -> anyhow::Error {
-        RPCError {
+        RpcError {
             request: Some(request.to_string()),
             code: error.code(),
             msg: error.message.clone(),
@@ -149,13 +149,13 @@ impl RPCError {
     }
 }
 
-impl ErrorCodeExt for RPCError {
-    fn message(mut self, msg: String) -> RPCError {
+impl ErrorCodeExt for RpcError {
+    fn message(mut self, msg: String) -> RpcError {
         self.msg = msg;
         self
     }
 
-    fn with_tag(mut self, k: &str, v: &str) -> RPCError {
+    fn with_tag(mut self, k: &str, v: &str) -> RpcError {
         self.tags.push(format!("{}={}", k, v));
         self
     }
@@ -165,7 +165,7 @@ impl ErrorCodeExt for RPCError {
     }
 }
 
-impl ErrorExt for RPCError {
+impl ErrorExt for RpcError {
     fn error_tag(&self, k: &str) -> Option<&str> {
         for tag in &self.tags {
             let mut parts = tag.split('=');
@@ -191,13 +191,13 @@ impl ErrorExt for RPCError {
     }
 }
 
-impl std::error::Error for RPCError {
+impl std::error::Error for RpcError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         None
     }
 }
 
-impl std::fmt::Display for RPCError {
+impl std::fmt::Display for RpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if let Some(request) = &self.request {
             write!(f, "RPC request {} failed: {}", request, self.msg)?
@@ -211,9 +211,9 @@ impl std::fmt::Display for RPCError {
     }
 }
 
-impl From<proto::ErrorCode> for RPCError {
+impl From<proto::ErrorCode> for RpcError {
     fn from(code: proto::ErrorCode) -> Self {
-        RPCError {
+        RpcError {
             request: None,
             code,
             msg: format!("{:?}", code).to_string(),
