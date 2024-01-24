@@ -3,11 +3,11 @@ use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 
 /// Convert an RGB hex color code number to a color type
-pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
+pub fn rgb(hex: u32) -> Rgba {
     let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
     let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
     let b = (hex & 0xFF) as f32 / 255.0;
-    Rgba { r, g, b, a: 1.0 }.into()
+    Rgba { r, g, b, a: 1.0 }
 }
 
 /// Convert an RGBA hex color code number to [`Rgba`]
@@ -40,7 +40,6 @@ impl fmt::Debug for Rgba {
 
 impl Rgba {
     /// Create a new [`Rgba`] color by blending this and another color together
-    /// TODO!(docs): find the source for this algorithm
     pub fn blend(&self, other: Rgba) -> Self {
         if other.a >= 1.0 {
             other

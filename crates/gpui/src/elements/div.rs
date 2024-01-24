@@ -14,13 +14,6 @@
 //! as several associated traits. Together, these provide the full suite of Dom-like events
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
-//!
-//! # Capturing and bubbling
-//!
-//! Note that while event dispatch in GPUI uses similar names and concepts to the web
-//! even API, the details are very different. See the documentation in [TODO!(docs)
-//! DOCUMENT EVENT DISPATCH SOMEWHERE IN WINDOW CONTEXT] for more details
-//!
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
