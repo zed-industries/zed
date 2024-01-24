@@ -46,6 +46,18 @@ impl IntoElement for &'static str {
     }
 }
 
+impl IntoElement for String {
+    type Element = SharedString;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn into_element(self) -> Self::Element {
+        self.into()
+    }
+}
+
 impl Element for SharedString {
     type State = TextState;
 
