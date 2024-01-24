@@ -1939,7 +1939,6 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let panel = ProjectPanel::new(workspace, cx);
                 workspace.add_panel(panel.clone(), cx);
-                workspace.toggle_dock(panel.read(cx).position(cx), cx);
                 panel
             })
             .unwrap();
@@ -2297,7 +2296,6 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let panel = ProjectPanel::new(workspace, cx);
                 workspace.add_panel(panel.clone(), cx);
-                workspace.toggle_dock(panel.read(cx).position(cx), cx);
                 panel
             })
             .unwrap();
@@ -2573,7 +2571,6 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let panel = ProjectPanel::new(workspace, cx);
                 workspace.add_panel(panel.clone(), cx);
-                workspace.toggle_dock(panel.read(cx).position(cx), cx);
                 panel
             })
             .unwrap();
