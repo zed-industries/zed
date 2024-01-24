@@ -24,9 +24,9 @@ rpc = { path = "../rpc" }
 util = { path = "../util" }
 
 anyhow.workspace = true
-async-tungstenite = "0.16"
-axum = { version = "0.5", features = ["json", "headers", "ws"] }
-axum-extra = { version = "0.3", features = ["erased-json"] }
+async-tungstenite = "0.23"
+axum = { version = "0.6", features = ["json", "headers", "ws"] }
+axum-extra = { version = "0.4", features = ["erased-json"] }
 base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
 chrono.workspace = true
@@ -53,7 +53,7 @@ sha-1 = "0.9"
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 time.workspace = true
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.17"
+tokio-tungstenite = "0.20.1"
 tonic = "0.6"
 tower = "0.4"
 toml.workspace = true

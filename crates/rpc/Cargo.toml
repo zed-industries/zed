@@ -21,7 +21,7 @@ gpui = { path = "../gpui", optional = true }
 util = { path = "../util" }
 anyhow.workspace = true
 async-lock = "2.4"
-async-tungstenite = "0.16"
+async-tungstenite = "0.23"
 base64 = "0.13"
 futures.workspace = true
 parking_lot.workspace = true
