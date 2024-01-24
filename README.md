@@ -9,11 +9,11 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 - [Building Zed](./docs/src/developing_zed__building_zed.md)
 - [Running Collaboration Locally](./docs/src/developing_zed__local_collaboration.md)
 
-### Contributing
+## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
 
-### Licensing
+## Licensing
 
 License information for third party dependencies must be correctly provided for CI to pass.
 
