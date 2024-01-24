@@ -221,7 +221,7 @@ impl MessageEditor {
         let start_offset = end_offset - query.len();
         let start_anchor = buffer.read(cx).anchor_before(start_offset);
 
-        let mut names = HashSet::new();
+        let mut names = HashSet::default();
         for (github_login, _) in self.channel_members.iter() {
             names.insert(github_login.clone());
         }
