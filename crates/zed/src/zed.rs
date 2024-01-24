@@ -2705,11 +2705,6 @@ mod tests {
                     .unwrap()
                     .to_vec()
                     .into(),
-                Assets
-                    .load("fonts/plex/IBMPlexSans-Regular.ttf")
-                    .unwrap()
-                    .to_vec()
-                    .into(),
             ])
             .unwrap();
         let themes = ThemeRegistry::default();
