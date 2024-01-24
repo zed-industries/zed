@@ -11,6 +11,7 @@ use self::elixir::ElixirSettings;
 
 mod c;
 mod css;
+mod deno;
 mod elixir;
 mod go;
 mod html;
@@ -138,26 +139,21 @@ pub fn init(
         "tsx",
         tree_sitter_typescript::language_tsx(),
         vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+            Arc::new(deno::DenoLspAdapter::new()),
         ],
     );
     language(
         "typescript",
         tree_sitter_typescript::language_typescript(),
         vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            Arc::new(deno::DenoLspAdapter::new()),
         ],
     );
     language(
         "javascript",
         tree_sitter_typescript::language_tsx(),
         vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+            Arc::new(deno::DenoLspAdapter::new()),
         ],
     );
     language(
