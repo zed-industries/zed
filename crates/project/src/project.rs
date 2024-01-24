@@ -3176,7 +3176,7 @@ impl Project {
                 }
             })
             .detach();
-        let mut initialization_options = adapter.adapter.initialization_options().await;
+        let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
                 merge_json_value_into(override_options, initialization_options);

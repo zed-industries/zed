@@ -34,7 +34,7 @@ impl TailwindLspAdapter {
 
 #[async_trait]
 impl LspAdapter for TailwindLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("tailwindcss-language-server".into())
     }
 
@@ -92,7 +92,7 @@ impl LspAdapter for TailwindLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true,
             "userLanguages": {
@@ -112,7 +112,7 @@ impl LspAdapter for TailwindLspAdapter {
         })
     }
 
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([
             ("HTML".to_string(), "html".to_string()),
             ("CSS".to_string(), "css".to_string()),

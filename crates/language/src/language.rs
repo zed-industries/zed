@@ -139,12 +139,11 @@ pub struct CachedLspAdapter {
 
 impl CachedLspAdapter {
     pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
-        let name = adapter.name().await;
+        let name = adapter.name();
         let short_name = adapter.short_name();
-        let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
-        let disk_based_diagnostics_progress_token =
-            adapter.disk_based_diagnostics_progress_token().await;
-        let language_ids = adapter.language_ids().await;
+        let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
+        let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
+        let language_ids = adapter.language_ids();
 
         Arc::new(CachedLspAdapter {
             name,
@@ -261,7 +260,7 @@ pub trait LspAdapterDelegate: Send + Sync {
 
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
-    async fn name(&self) -> LanguageServerName;
+    fn name(&self) -> LanguageServerName;
 
     fn short_name(&self) -> &'static str;
 
@@ -337,7 +336,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp_types::InitializeParams`]
-    async fn initialization_options(&self) -> Option<Value> {
+    fn initialization_options(&self) -> Option<Value> {
         None
     }
 
@@ -356,15 +355,15 @@ pub trait LspAdapter: 'static + Send + Sync {
         ])
     }
 
-    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+    fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         Default::default()
     }
 
-    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+    fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         None
     }
 
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
     }
 
@@ -1881,7 +1880,7 @@ impl Default for FakeLspAdapter {
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl LspAdapter for Arc<FakeLspAdapter> {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
     }
 
@@ -1919,15 +1918,15 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+    fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()
     }
 
-    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+    fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         self.disk_based_diagnostics_progress_token.clone()
     }
 
-    async fn initialization_options(&self) -> Option<Value> {
+    fn initialization_options(&self) -> Option<Value> {
         self.initialization_options.clone()
     }
 
