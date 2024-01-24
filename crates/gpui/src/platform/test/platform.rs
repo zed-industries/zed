@@ -1,6 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    Keymap, Platform, PlatformDisplay, PlatformTextSystem, TestDisplay, TestWindow, WindowOptions,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
+    WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -280,16 +281,16 @@ impl Platform for TestPlatform {
         self.current_clipboard_item.lock().clone()
     }
 
-    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Result<()> {
-        Ok(())
+    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 
-    fn read_credentials(&self, _url: &str) -> Result<Option<(String, Vec<u8>)>> {
-        Ok(None)
+    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        Task::ready(Ok(None))
     }
 
-    fn delete_credentials(&self, _url: &str) -> Result<()> {
-        Ok(())
+    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 
     fn double_click_interval(&self) -> std::time::Duration {

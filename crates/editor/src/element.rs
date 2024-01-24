@@ -17,8 +17,8 @@ use crate::{
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase,
-    Selection, SoftWrap, ToPoint, MAX_LINE_LEN,
+    HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
+    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -612,13 +612,24 @@ impl EditorElement {
                 .anchor_at(range.end.to_point(&snapshot.display_snapshot), Bias::Right);
 
         let Some(selection) = snapshot.remote_selections_in_range(&range, hub, cx).next() else {
-            editor.hovered_cursor.take();
             return;
         };
-        editor.hovered_cursor.replace(crate::HoveredCursor {
+        let key = crate::HoveredCursor {
             replica_id: selection.replica_id,
             selection_id: selection.selection.id,
-        });
+        };
+        editor.hovered_cursors.insert(
+            key.clone(),
+            cx.spawn(|editor, mut cx| async move {
+                cx.background_executor().timer(CURSORS_VISIBLE_FOR).await;
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        editor.hovered_cursors.remove(&key);
+                        cx.notify();
+                    })
+                    .ok();
+            }),
+        );
         cx.notify()
     }
 
@@ -1986,7 +1997,9 @@ impl EditorElement {
                     if Some(selection.peer_id) == editor.leader_peer_id {
                         continue;
                     }
-                    let is_shown = editor.show_cursor_names || editor.hovered_cursor.as_ref().is_some_and(|c| c.replica_id == selection.replica_id && c.selection_id == selection.selection.id);
+                    let key = HoveredCursor{replica_id: selection.replica_id, selection_id: selection.selection.id};
+
+                    let is_shown = editor.show_cursor_names || editor.hovered_cursors.contains_key(&key);
 
                     remote_selections
                         .entry(selection.replica_id)

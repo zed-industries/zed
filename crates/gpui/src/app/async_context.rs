@@ -154,6 +154,7 @@ impl AsyncAppContext {
     }
 
     /// Reads the global state of the specified type, passing it to the given callback.
+    ///
     /// Panics if no global state of the specified type has been assigned.
     /// Returns an error if the `AppContext` has been dropped.
     pub fn read_global<G: 'static, R>(&self, read: impl FnOnce(&G, &AppContext) -> R) -> Result<R> {
@@ -166,7 +167,10 @@ impl AsyncAppContext {
     }
 
     /// Reads the global state of the specified type, passing it to the given callback.
-    /// Similar to [read_global], but returns an error instead of panicking if no state of the specified type has been assigned.
+    ///
+    /// Similar to [`AsyncAppContext::read_global`], but returns an error instead of panicking
+    /// if no state of the specified type has been assigned.
+    ///
     /// Returns an error if no state of the specified type has been assigned the `AppContext` has been dropped.
     pub fn try_read_global<G: 'static, R>(
         &self,
@@ -212,12 +216,12 @@ impl AsyncWindowContext {
         self.window
     }
 
-    /// A convenience method for [WindowContext::update()]
+    /// A convenience method for [`AppContext::update_window`].
     pub fn update<R>(&mut self, update: impl FnOnce(&mut WindowContext) -> R) -> Result<R> {
         self.app.update_window(self.window, |_, cx| update(cx))
     }
 
-    /// A convenience method for [WindowContext::update()]
+    /// A convenience method for [`AppContext::update_window`].
     pub fn update_root<R>(
         &mut self,
         update: impl FnOnce(AnyView, &mut WindowContext) -> R,
@@ -225,12 +229,12 @@ impl AsyncWindowContext {
         self.app.update_window(self.window, update)
     }
 
-    /// A convenience method for [WindowContext::on_next_frame()]
+    /// A convenience method for [`WindowContext::on_next_frame`].
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + 'static) {
         self.window.update(self, |_, cx| cx.on_next_frame(f)).ok();
     }
 
-    /// A convenience method for [AppContext::global()]
+    /// A convenience method for [`AppContext::global`].
     pub fn read_global<G: 'static, R>(
         &mut self,
         read: impl FnOnce(&G, &WindowContext) -> R,
@@ -238,7 +242,7 @@ impl AsyncWindowContext {
         self.window.update(self, |_, cx| read(cx.global(), cx))
     }
 
-    /// A convenience method for [AppContext::update_global()]
+    /// A convenience method for [`AppContext::update_global`].
     /// for updating the global state of the specified type.
     pub fn update_global<G, R>(
         &mut self,

@@ -261,7 +261,7 @@ mod tests {
     fn override_a_single_theme_color() {
         let mut colors = ThemeColors::light();
 
-        let magenta: Hsla = gpui::rgb(0xff00ff);
+        let magenta: Hsla = gpui::rgb(0xff00ff).into();
 
         assert_ne!(colors.text, magenta);
 
@@ -279,8 +279,8 @@ mod tests {
     fn override_multiple_theme_colors() {
         let mut colors = ThemeColors::light();
 
-        let magenta: Hsla = gpui::rgb(0xff00ff);
-        let green: Hsla = gpui::rgb(0x00ff00);
+        let magenta: Hsla = gpui::rgb(0xff00ff).into();
+        let green: Hsla = gpui::rgb(0x00ff00).into();
 
         assert_ne!(colors.text, magenta);
         assert_ne!(colors.background, green);
@@ -305,7 +305,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(colors.background, Some(gpui::rgb(0xff00ff)));
-        assert_eq!(colors.text, Some(gpui::rgb(0xff0000)));
+        assert_eq!(colors.background, Some(gpui::rgb(0xff00ff).into()));
+        assert_eq!(colors.text, Some(gpui::rgb(0xff0000).into()));
     }
 }

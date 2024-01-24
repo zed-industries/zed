@@ -376,7 +376,7 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
         if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, &cx).await?;
         }
-    } else if client.has_keychain_credentials(&cx) {
+    } else if client.has_keychain_credentials(&cx).await {
         client.authenticate_and_connect(true, &cx).await?;
     }
     Ok::<_, anyhow::Error>(())

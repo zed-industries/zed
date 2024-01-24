@@ -94,6 +94,7 @@ type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
+#[derive(Debug)]
 struct FocusEvent {
     previous_focus_path: SmallVec<[FocusId; 8]>,
     current_focus_path: SmallVec<[FocusId; 8]>,
@@ -105,7 +106,7 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(4 * 1024 * 1024));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(8 * 1024 * 1024));
 }
 
 impl FocusId {
@@ -1030,7 +1031,13 @@ impl<'a> WindowContext<'a> {
         self.window
             .next_frame
             .finish(&mut self.window.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| element_arena.clear());
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
+            if percentage >= 80. {
+                log::warn!("elevated element arena occupation: {}.", percentage);
+            }
+            element_arena.clear();
+        });
 
         let previous_focus_path = self.window.rendered_frame.focus_path();
         let previous_window_active = self.window.rendered_frame.window_active;
@@ -2015,11 +2022,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
             }
         }
 
+        // Always emit a notify effect, so that handlers fire correctly
+        self.window_cx.app.push_effect(Effect::Notify {
+            emitter: self.view.model.entity_id,
+        });
         if !self.window.drawing {
             self.window_cx.window.dirty = true;
-            self.window_cx.app.push_effect(Effect::Notify {
-                emitter: self.view.model.entity_id,
-            });
         }
     }
 
@@ -2669,7 +2677,7 @@ impl From<(&'static str, u64)> for ElementId {
 }
 
 /// A rectangle to be rendered in the window at the given position and size.
-/// Passed as an argument [`WindowContext::paint_quad`].
+/// Passed as an argument [`ElementContext::paint_quad`].
 #[derive(Clone)]
 pub struct PaintQuad {
     bounds: Bounds<Pixels>,
@@ -2749,5 +2757,61 @@ pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>)
         background: transparent_black(),
         border_widths: (1.).into(),
         border_color: border_color.into(),
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use std::{cell::RefCell, rc::Rc};
+
+    use crate::{
+        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, Render, TestAppContext,
+        ViewContext, VisualContext,
+    };
+
+    #[gpui::test]
+    fn test_notify_on_focus(cx: &mut TestAppContext) {
+        struct TestFocusView {
+            handle: FocusHandle,
+        }
+
+        impl Render for TestFocusView {
+            fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+                div().id("test").track_focus(&self.handle)
+            }
+        }
+
+        let notify_counter = Rc::new(RefCell::new(0));
+
+        let (notify_producer, cx) = cx.add_window_view(|cx| {
+            cx.activate_window();
+            let handle = cx.focus_handle();
+
+            cx.on_focus(&handle, |_, cx| {
+                cx.notify();
+            })
+            .detach();
+
+            TestFocusView { handle }
+        });
+
+        let focus_handle = cx.update(|cx| notify_producer.read(cx).handle.clone());
+
+        let _notify_consumer = cx.new_view({
+            |cx| {
+                let notify_counter = notify_counter.clone();
+                cx.observe(&notify_producer, move |_, _, _| {
+                    *notify_counter.borrow_mut() += 1;
+                })
+                .detach();
+            }
+        });
+
+        cx.update(|cx| {
+            cx.focus(&focus_handle);
+        });
+
+        assert_eq!(*notify_counter.borrow(), 1);
     }
 }

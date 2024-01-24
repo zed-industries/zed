@@ -1,0 +1,13 @@
+contact_links:
+    - name: Open Source Checklist
+      url: https://github.com/zed-industries/community/issues/2197
+      about: An issue tracking our progress towards open sourcing Zed
+    - name: Top-Ranking Issues
+      url: https://github.com/zed-industries/community/issues/52
+      about: See an overview of the most popular Zed issues
+    - name: Platform Support
+      url: https://github.com/zed-industries/community/issues/174
+      about: A quick note on platform support
+    - name: Postive Feedback
+      url: https://github.com/zed-industries/community/discussions/2337
+      about: A central location for kind words about Zed
