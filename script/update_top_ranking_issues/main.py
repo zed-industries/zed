@@ -276,8 +276,8 @@ def get_erroneous_issues_lines(
         ) in error_message_to_erroneous_issue_data.items():
             erroneous_issues_lines.append(f"\n#### {error_message}\n")
 
-            for errorneous_issue_data in erroneous_issue_data:
-                erroneous_issues_lines.append(f"- {errorneous_issue_data.url}")
+            for erroneous_issue_data in erroneous_issue_data:
+                erroneous_issues_lines.append(f"- {erroneous_issue_data.url}")
 
     return erroneous_issues_lines
 
