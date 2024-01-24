@@ -1,7 +1,7 @@
 use anyhow::Result;
 use channel::{ChannelId, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -30,7 +30,7 @@ lazy_static! {
 pub struct MessageEditor {
     pub editor: View<Editor>,
     channel_store: Model<ChannelStore>,
-    users: HashMap<String, UserId>,
+    channel_members: HashMap<String, UserId>,
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
     channel_id: Option<ChannelId>,
@@ -108,7 +108,7 @@ impl MessageEditor {
         Self {
             editor,
             channel_store,
-            users: HashMap::default(),
+            channel_members: HashMap::default(),
             channel_id: None,
             mentions: Vec::new(),
             mentions_task: None,
@@ -147,8 +147,8 @@ impl MessageEditor {
     }
 
     pub fn set_members(&mut self, members: Vec<ChannelMembership>, _: &mut ViewContext<Self>) {
-        self.users.clear();
-        self.users.extend(
+        self.channel_members.clear();
+        self.channel_members.extend(
             members
                 .into_iter()
                 .map(|member| (member.user.github_login.clone(), member.user.id)),
@@ -221,9 +221,18 @@ impl MessageEditor {
         let start_offset = end_offset - query.len();
         let start_anchor = buffer.read(cx).anchor_before(start_offset);
 
-        let candidates = self
-            .users
-            .keys()
+        let mut names = HashSet::default();
+        for (github_login, _) in self.channel_members.iter() {
+            names.insert(github_login.clone());
+        }
+        if let Some(channel_id) = self.channel_id {
+            for participant in self.channel_store.read(cx).channel_participants(channel_id) {
+                names.insert(participant.github_login.clone());
+            }
+        }
+
+        let candidates = names
+            .into_iter()
             .map(|user| StringMatchCandidate {
                 id: 0,
                 string: user.clone(),
@@ -283,7 +292,7 @@ impl MessageEditor {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
                     if let Some(username) = text.strip_prefix("@") {
-                        if let Some(user_id) = this.users.get(username) {
+                        if let Some(user_id) = this.channel_members.get(username) {
                             let start = multi_buffer.anchor_after(range.start);
                             let end = multi_buffer.anchor_after(range.end);
 
