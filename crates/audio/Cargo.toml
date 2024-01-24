@@ -16,7 +16,7 @@ collections = { path = "../collections" }
 util = { path = "../util" }
 
 
-rodio = { version = "0.17.1", default-features=false }
+rodio = { version = "0.17.1", default-features=false, features = ["wav"] }
 
 log.workspace = true
 futures.workspace = true
