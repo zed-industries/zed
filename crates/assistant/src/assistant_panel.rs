@@ -6,14 +6,12 @@ use crate::{
     NewConversation, QuoteSelection, ResetKey, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage, Split, ToggleFocus, ToggleIncludeConversation, ToggleRetrieveContext,
 };
-
+use ai::prompts::repository_context::PromptCodeSnippet;
 use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
     providers::open_ai::{OpenAICompletionProvider, OpenAIRequest, RequestMessage},
 };
-
-use ai::prompts::repository_context::PromptCodeSnippet;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use client::telemetry::AssistantKind;
@@ -220,23 +218,9 @@ impl AssistantPanel {
         _: &InlineAssist,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let this = if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
-            if this.update(cx, |assistant, cx| {
-                if !assistant.has_credentials() {
-                    assistant.load_credentials(cx);
-                };
-
-                assistant.has_credentials()
-            }) {
-                this
-            } else {
-                workspace.focus_panel::<AssistantPanel>(cx);
-                return;
-            }
-        } else {
+        let Some(assistant) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
-
         let active_editor = if let Some(active_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
@@ -245,12 +229,32 @@ impl AssistantPanel {
         } else {
             return;
         };
+        let project = workspace.project().clone();
 
-        let project = workspace.project();
+        if assistant.update(cx, |assistant, _| assistant.has_credentials()) {
+            assistant.update(cx, |assistant, cx| {
+                assistant.new_inline_assist(&active_editor, cx, &project)
+            });
+        } else {
+            let assistant = assistant.downgrade();
+            cx.spawn(|workspace, mut cx| async move {
+                assistant
+                    .update(&mut cx, |assistant, cx| assistant.load_credentials(cx))?
+                    .await;
+                if assistant.update(&mut cx, |assistant, _| assistant.has_credentials())? {
+                    assistant.update(&mut cx, |assistant, cx| {
+                        assistant.new_inline_assist(&active_editor, cx, &project)
+                    })?;
+                } else {
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.focus_panel::<AssistantPanel>(cx)
+                    })?;
+                }
 
-        this.update(cx, |assistant, cx| {
-            assistant.new_inline_assist(&active_editor, cx, project)
-        });
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
+        }
     }
 
     fn new_inline_assist(
@@ -289,9 +293,6 @@ impl AssistantPanel {
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let provider = self.completion_provider.clone();
-
-        // Retrieve Credentials Authenticates the Provider
-        provider.retrieve_credentials(cx);
 
         let codegen = cx.new_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
@@ -845,11 +846,18 @@ impl AssistantPanel {
                     api_key: api_key.clone(),
                 };
 
-                self.completion_provider.save_credentials(cx, credential);
+                let completion_provider = self.completion_provider.clone();
+                cx.spawn(|this, mut cx| async move {
+                    cx.update(|cx| completion_provider.save_credentials(cx, credential))?
+                        .await;
 
-                self.api_key_editor.take();
-                self.focus_handle.focus(cx);
-                cx.notify();
+                    this.update(&mut cx, |this, cx| {
+                        this.api_key_editor.take();
+                        this.focus_handle.focus(cx);
+                        cx.notify();
+                    })
+                })
+                .detach_and_log_err(cx);
             }
         } else {
             cx.propagate();
@@ -857,10 +865,17 @@ impl AssistantPanel {
     }
 
     fn reset_credentials(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
-        self.completion_provider.delete_credentials(cx);
-        self.api_key_editor = Some(build_api_key_editor(cx));
-        self.focus_handle.focus(cx);
-        cx.notify();
+        let completion_provider = self.completion_provider.clone();
+        cx.spawn(|this, mut cx| async move {
+            cx.update(|cx| completion_provider.delete_credentials(cx))?
+                .await;
+            this.update(&mut cx, |this, cx| {
+                this.api_key_editor = Some(build_api_key_editor(cx));
+                this.focus_handle.focus(cx);
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn toggle_zoom(&mut self, _: &workspace::ToggleZoom, cx: &mut ViewContext<Self>) {
@@ -1107,8 +1122,16 @@ impl AssistantPanel {
         self.completion_provider.has_credentials()
     }
 
-    fn load_credentials(&mut self, cx: &mut ViewContext<Self>) {
-        self.completion_provider.retrieve_credentials(cx);
+    fn load_credentials(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        let completion_provider = self.completion_provider.clone();
+        cx.spawn(|_, mut cx| async move {
+            if let Some(retrieve_credentials) = cx
+                .update(|cx| completion_provider.retrieve_credentials(cx))
+                .log_err()
+            {
+                retrieve_credentials.await;
+            }
+        })
     }
 }
 
@@ -1314,11 +1337,16 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
-            self.load_credentials(cx);
-
-            if self.editors.is_empty() {
-                self.new_conversation(cx);
-            }
+            let load_credentials = self.load_credentials(cx);
+            cx.spawn(|this, mut cx| async move {
+                load_credentials.await;
+                this.update(&mut cx, |this, cx| {
+                    if this.editors.is_empty() {
+                        this.new_conversation(cx);
+                    }
+                })
+            })
+            .detach_and_log_err(cx);
         }
     }
 

@@ -523,17 +523,22 @@ impl AppContext {
     }
 
     /// Writes credentials to the platform keychain.
-    pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
+    pub fn write_credentials(
+        &self,
+        url: &str,
+        username: &str,
+        password: &[u8],
+    ) -> Task<Result<()>> {
         self.platform.write_credentials(url, username, password)
     }
 
     /// Reads credentials from the platform keychain.
-    pub fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
+    pub fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         self.platform.read_credentials(url)
     }
 
     /// Deletes credentials from the platform keychain.
-    pub fn delete_credentials(&self, url: &str) -> Result<()> {
+    pub fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         self.platform.delete_credentials(url)
     }
 

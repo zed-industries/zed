@@ -3,7 +3,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
     MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, WindowOptions,
+    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -856,104 +856,115 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
-        let url = CFString::from(url);
-        let username = CFString::from(username);
-        let password = CFData::from_buffer(password);
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            unsafe {
+                use security::*;
 
-        unsafe {
-            use security::*;
+                let url = CFString::from(url.as_str());
+                let username = CFString::from(username.as_str());
+                let password = CFData::from_buffer(&password);
 
-            // First, check if there are already credentials for the given server. If so, then
-            // update the username and password.
-            let mut verb = "updating";
-            let mut query_attrs = CFMutableDictionary::with_capacity(2);
-            query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-            query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+                // First, check if there are already credentials for the given server. If so, then
+                // update the username and password.
+                let mut verb = "updating";
+                let mut query_attrs = CFMutableDictionary::with_capacity(2);
+                query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+                query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
 
-            let mut attrs = CFMutableDictionary::with_capacity(4);
-            attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-            attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-            attrs.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
-            attrs.set(kSecValueData as *const _, password.as_CFTypeRef());
+                let mut attrs = CFMutableDictionary::with_capacity(4);
+                attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+                attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+                attrs.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
+                attrs.set(kSecValueData as *const _, password.as_CFTypeRef());
 
-            let mut status = SecItemUpdate(
-                query_attrs.as_concrete_TypeRef(),
-                attrs.as_concrete_TypeRef(),
-            );
+                let mut status = SecItemUpdate(
+                    query_attrs.as_concrete_TypeRef(),
+                    attrs.as_concrete_TypeRef(),
+                );
 
-            // If there were no existing credentials for the given server, then create them.
-            if status == errSecItemNotFound {
-                verb = "creating";
-                status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
+                // If there were no existing credentials for the given server, then create them.
+                if status == errSecItemNotFound {
+                    verb = "creating";
+                    status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
+                }
+
+                if status != errSecSuccess {
+                    return Err(anyhow!("{} password failed: {}", verb, status));
+                }
             }
-
-            if status != errSecSuccess {
-                return Err(anyhow!("{} password failed: {}", verb, status));
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
-    fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
-        let url = CFString::from(url);
-        let cf_true = CFBoolean::true_value().as_CFTypeRef();
+    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        let url = url.to_string();
+        self.background_executor().spawn(async move {
+            let url = CFString::from(url.as_str());
+            let cf_true = CFBoolean::true_value().as_CFTypeRef();
 
-        unsafe {
-            use security::*;
+            unsafe {
+                use security::*;
 
-            // Find any credentials for the given server URL.
-            let mut attrs = CFMutableDictionary::with_capacity(5);
-            attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-            attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
-            attrs.set(kSecReturnAttributes as *const _, cf_true);
-            attrs.set(kSecReturnData as *const _, cf_true);
+                // Find any credentials for the given server URL.
+                let mut attrs = CFMutableDictionary::with_capacity(5);
+                attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+                attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+                attrs.set(kSecReturnAttributes as *const _, cf_true);
+                attrs.set(kSecReturnData as *const _, cf_true);
 
-            let mut result = CFTypeRef::from(ptr::null());
-            let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
-            match status {
-                security::errSecSuccess => {}
-                security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
-                _ => return Err(anyhow!("reading password failed: {}", status)),
+                let mut result = CFTypeRef::from(ptr::null());
+                let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
+                match status {
+                    security::errSecSuccess => {}
+                    security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
+                    _ => return Err(anyhow!("reading password failed: {}", status)),
+                }
+
+                let result = CFType::wrap_under_create_rule(result)
+                    .downcast::<CFDictionary>()
+                    .ok_or_else(|| anyhow!("keychain item was not a dictionary"))?;
+                let username = result
+                    .find(kSecAttrAccount as *const _)
+                    .ok_or_else(|| anyhow!("account was missing from keychain item"))?;
+                let username = CFType::wrap_under_get_rule(*username)
+                    .downcast::<CFString>()
+                    .ok_or_else(|| anyhow!("account was not a string"))?;
+                let password = result
+                    .find(kSecValueData as *const _)
+                    .ok_or_else(|| anyhow!("password was missing from keychain item"))?;
+                let password = CFType::wrap_under_get_rule(*password)
+                    .downcast::<CFData>()
+                    .ok_or_else(|| anyhow!("password was not a string"))?;
+
+                Ok(Some((username.to_string(), password.bytes().to_vec())))
             }
-
-            let result = CFType::wrap_under_create_rule(result)
-                .downcast::<CFDictionary>()
-                .ok_or_else(|| anyhow!("keychain item was not a dictionary"))?;
-            let username = result
-                .find(kSecAttrAccount as *const _)
-                .ok_or_else(|| anyhow!("account was missing from keychain item"))?;
-            let username = CFType::wrap_under_get_rule(*username)
-                .downcast::<CFString>()
-                .ok_or_else(|| anyhow!("account was not a string"))?;
-            let password = result
-                .find(kSecValueData as *const _)
-                .ok_or_else(|| anyhow!("password was missing from keychain item"))?;
-            let password = CFType::wrap_under_get_rule(*password)
-                .downcast::<CFData>()
-                .ok_or_else(|| anyhow!("password was not a string"))?;
-
-            Ok(Some((username.to_string(), password.bytes().to_vec())))
-        }
+        })
     }
 
-    fn delete_credentials(&self, url: &str) -> Result<()> {
-        let url = CFString::from(url);
+    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+        let url = url.to_string();
 
-        unsafe {
-            use security::*;
+        self.background_executor().spawn(async move {
+            unsafe {
+                use security::*;
 
-            let mut query_attrs = CFMutableDictionary::with_capacity(2);
-            query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
-            query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+                let url = CFString::from(url.as_str());
+                let mut query_attrs = CFMutableDictionary::with_capacity(2);
+                query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+                query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
 
-            let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
+                let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
 
-            if status != errSecSuccess {
-                return Err(anyhow!("delete password failed: {}", status));
+                if status != errSecSuccess {
+                    return Err(anyhow!("delete password failed: {}", status));
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 

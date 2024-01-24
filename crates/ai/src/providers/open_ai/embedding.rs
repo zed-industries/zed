@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use futures::AsyncReadExt;
+use futures::FutureExt;
 use gpui::AppContext;
 use gpui::BackgroundExecutor;
 use isahc::http::StatusCode;
@@ -157,46 +159,71 @@ impl CredentialProvider for OpenAIEmbeddingProvider {
             _ => false,
         }
     }
-    fn retrieve_credentials(&self, cx: &mut AppContext) -> ProviderCredential {
-        let existing_credential = self.credential.read().clone();
 
+    fn retrieve_credentials(&self, cx: &mut AppContext) -> BoxFuture<ProviderCredential> {
+        let existing_credential = self.credential.read().clone();
         let retrieved_credential = match existing_credential {
-            ProviderCredential::Credentials { .. } => existing_credential.clone(),
+            ProviderCredential::Credentials { .. } => {
+                return async move { existing_credential }.boxed()
+            }
             _ => {
                 if let Some(api_key) = env::var("OPENAI_API_KEY").log_err() {
-                    ProviderCredential::Credentials { api_key }
-                } else if let Some(Some((_, api_key))) =
-                    cx.read_credentials(OPENAI_API_URL).log_err()
-                {
-                    if let Some(api_key) = String::from_utf8(api_key).log_err() {
-                        ProviderCredential::Credentials { api_key }
-                    } else {
-                        ProviderCredential::NoCredentials
-                    }
+                    async move { ProviderCredential::Credentials { api_key } }.boxed()
                 } else {
-                    ProviderCredential::NoCredentials
+                    let credentials = cx.read_credentials(OPENAI_API_URL);
+                    async move {
+                        if let Some(Some((_, api_key))) = credentials.await.log_err() {
+                            if let Some(api_key) = String::from_utf8(api_key).log_err() {
+                                ProviderCredential::Credentials { api_key }
+                            } else {
+                                ProviderCredential::NoCredentials
+                            }
+                        } else {
+                            ProviderCredential::NoCredentials
+                        }
+                    }
+                    .boxed()
                 }
             }
         };
 
-        *self.credential.write() = retrieved_credential.clone();
-        retrieved_credential
-    }
-
-    fn save_credentials(&self, cx: &mut AppContext, credential: ProviderCredential) {
-        *self.credential.write() = credential.clone();
-        match credential {
-            ProviderCredential::Credentials { api_key } => {
-                cx.write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes())
-                    .log_err();
-            }
-            _ => {}
+        async move {
+            let retrieved_credential = retrieved_credential.await;
+            *self.credential.write() = retrieved_credential.clone();
+            retrieved_credential
         }
+        .boxed()
     }
 
-    fn delete_credentials(&self, cx: &mut AppContext) {
-        cx.delete_credentials(OPENAI_API_URL).log_err();
+    fn save_credentials(
+        &self,
+        cx: &mut AppContext,
+        credential: ProviderCredential,
+    ) -> BoxFuture<()> {
+        *self.credential.write() = credential.clone();
+        let credential = credential.clone();
+        let write_credentials = match credential {
+            ProviderCredential::Credentials { api_key } => {
+                Some(cx.write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes()))
+            }
+            _ => None,
+        };
+
+        async move {
+            if let Some(write_credentials) = write_credentials {
+                write_credentials.await.log_err();
+            }
+        }
+        .boxed()
+    }
+
+    fn delete_credentials(&self, cx: &mut AppContext) -> BoxFuture<()> {
         *self.credential.write() = ProviderCredential::NoCredentials;
+        let delete_credentials = cx.delete_credentials(OPENAI_API_URL);
+        async move {
+            delete_credentials.await.log_err();
+        }
+        .boxed()
     }
 }
 
