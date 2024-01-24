@@ -155,14 +155,6 @@ impl MessageEditor {
         );
     }
 
-    pub fn update_users(&mut self, users: &Vec<Arc<User>>, cx: &mut ViewContext<Self>) {
-        self.channel_members.extend(
-            users
-                .into_iter()
-                .map(|user| (user.github_login.clone(), user.id)),
-        );
-    }
-
     pub fn take_message(&mut self, cx: &mut ViewContext<Self>) -> MessageParams {
         self.editor.update(cx, |editor, cx| {
             let highlights = editor.text_highlights::<Self>(cx);
@@ -229,11 +221,11 @@ impl MessageEditor {
         let start_offset = end_offset - query.len();
         let start_anchor = buffer.read(cx).anchor_before(start_offset);
 
-        let names = HashSet::new();
-        for (github_login, _) in self.channel_members {
+        let mut names = HashSet::new();
+        for (github_login, _) in self.channel_members.iter() {
             names.insert(github_login.clone());
         }
-        if let Some(channel_id) = channel_id {
+        if let Some(channel_id) = self.channel_id {
             for participant in self.channel_store.read(cx).channel_participants(channel_id) {
                 names.insert(participant.github_login.clone());
             }
