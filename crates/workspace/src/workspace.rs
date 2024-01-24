@@ -2076,7 +2076,20 @@ impl Workspace {
         cx: &mut WindowContext,
     ) {
         if let Some(pane) = self.find_pane_in_direction(direction, cx) {
-            cx.focus_view(pane);
+            cx.focus_view(&pane);
+        } else {
+            match direction {
+                SplitDirection::Left if self.left_dock.read(cx).is_open() => {
+                    cx.focus_view(&self.left_dock)
+                }
+                SplitDirection::Right if self.right_dock.read(cx).is_open() => {
+                    cx.focus_view(&self.right_dock)
+                }
+                SplitDirection::Down if self.bottom_dock.read(cx).is_open() => {
+                    cx.focus_view(&self.bottom_dock)
+                }
+                _ => {}
+            };
         }
     }
 
@@ -2097,8 +2110,16 @@ impl Workspace {
     fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
-        cx: &AppContext,
-    ) -> Option<&View<Pane>> {
+        cx: &WindowContext,
+    ) -> Option<View<Pane>> {
+        if self.should_focus_last_active_pane(direction, cx) {
+            return self
+                .last_active_center_pane
+                .as_ref()
+                .map(|p| p.upgrade())
+                .flatten();
+        }
+
         let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
             return None;
         };
@@ -2124,7 +2145,28 @@ impl Workspace {
                 Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
             }
         };
-        self.center.pane_at_pixel_position(target)
+        self.center.pane_at_pixel_position(target).cloned()
+    }
+
+    fn should_focus_last_active_pane(
+        &self,
+        direction: SplitDirection,
+        cx: &WindowContext<'_>,
+    ) -> bool {
+        for (possible_direction, dock) in [
+            (SplitDirection::Right, &self.left_dock),
+            (SplitDirection::Up, &self.bottom_dock),
+            (SplitDirection::Left, &self.right_dock),
+        ] {
+            if possible_direction != direction {
+                continue;
+            }
+            let dock = dock.read(cx);
+            if dock.is_open() && dock.focus_handle(cx).contains_focused(cx) {
+                return true;
+            }
+        }
+        return false;
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
