@@ -140,21 +140,18 @@ pub fn init(
         tree_sitter_typescript::language_tsx(),
         vec![
             Arc::new(deno::DenoLspAdapter::new()),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
     language(
         "typescript",
         tree_sitter_typescript::language_typescript(),
-        vec![
-            Arc::new(deno::DenoLspAdapter::new()),
-        ],
+        vec![Arc::new(deno::DenoLspAdapter::new())],
     );
     language(
         "javascript",
         tree_sitter_typescript::language_tsx(),
-        vec![
-            Arc::new(deno::DenoLspAdapter::new()),
-        ],
+        vec![Arc::new(deno::DenoLspAdapter::new())],
     );
     language(
         "html",

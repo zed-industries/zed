@@ -7,6 +7,7 @@ use serde_json::json;
 use smol::{fs, fs::File};
 use std::{
     any::Any,
+    env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -26,7 +27,6 @@ impl DenoLspAdapter {
     }
 }
 
-
 #[async_trait]
 impl LspAdapter for DenoLspAdapter {
     async fn name(&self) -> LanguageServerName {
@@ -42,8 +42,7 @@ impl LspAdapter for DenoLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release("denoland/deno", false, delegate.http_client()).await?;
-        // TODO(lino-levan): Download the correct binary depending on aarch64/intel
-        let asset_name = "deno-aarch64-apple-darwin.zip".to_string();
+        let asset_name = format!("deno-{}-apple-darwin.zip", consts::ARCH);
         let asset = release
             .assets
             .iter()
@@ -65,7 +64,7 @@ impl LspAdapter for DenoLspAdapter {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let zip_path = container_dir.join(format!("deno_{}.zip", version.name));
         let version_dir = container_dir.join(format!("deno_{}", version.name));
-        let binary_path = version_dir.join("bin/deno");
+        let binary_path = version_dir.join("deno");
 
         if fs::metadata(&binary_path).await.is_err() {
             let mut response = delegate
@@ -85,11 +84,13 @@ impl LspAdapter for DenoLspAdapter {
             let unzip_status = smol::process::Command::new("unzip")
                 .current_dir(&container_dir)
                 .arg(&zip_path)
+                .arg("-d")
+                .arg(&version_dir)
                 .output()
                 .await?
                 .status;
             if !unzip_status.success() {
-                Err(anyhow!("failed to unzip clangd archive"))?;
+                Err(anyhow!("failed to unzip deno archive"))?;
             }
 
             remove_matching(&container_dir, |entry| entry != version_dir).await;
@@ -97,7 +98,7 @@ impl LspAdapter for DenoLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
-            arguments: vec![],
+            arguments: deno_server_binary_arguments(),
         })
     }
 
@@ -169,9 +170,7 @@ impl LspAdapter for DenoLspAdapter {
     }
 }
 
-async fn get_cached_deno_server_binary(
-    container_dir: PathBuf,
-) -> Option<LanguageServerBinary> {
+async fn get_cached_deno_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     (|| async move {
         // TODO(lino-levan): Don't do this
         let deno_path = Path::new("/Users/linolevan/.deno/bin/deno");
