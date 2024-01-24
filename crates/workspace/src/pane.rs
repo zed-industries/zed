@@ -1470,7 +1470,7 @@ impl Pane {
                         ),
                 )
             })
-            .when(self.was_focused || self.has_focus(cx), |tab_bar| {
+            .when(self.has_focus(cx), |tab_bar| {
                 tab_bar.end_child({
                     let render_tab_buttons = self.render_tab_bar_buttons.clone();
                     render_tab_buttons(self, cx)
