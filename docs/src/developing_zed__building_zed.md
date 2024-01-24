@@ -5,8 +5,7 @@
 After cloning the repository, ensure all git submodules are initialized:
 
 ```shell
-git submodule init
-git submodule update
+git submodule update --init --recursive
 ```
 
 ## Dependencies
