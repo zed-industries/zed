@@ -118,6 +118,7 @@ pub struct MembershipSortKey<'a> {
 pub enum ChannelEvent {
     ChannelCreated(ChannelId),
     ChannelRenamed(ChannelId),
+    ChannelParticipantsChanged(ChannelId),
 }
 
 impl EventEmitter<ChannelEvent> for ChannelStore {}
