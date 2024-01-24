@@ -1513,10 +1513,10 @@ mod tests {
             .as_fake()
             .insert_file("/root/a.txt", "changed".to_string())
             .await;
-        editor
-            .condition::<EditorEvent>(cx, |editor, cx| editor.has_conflict(cx))
-            .await;
+
+        cx.run_until_parked();
         cx.read(|cx| assert!(editor.is_dirty(cx)));
+        cx.read(|cx| assert!(editor.has_conflict(cx)));
 
         let save_task = window
             .update(cx, |workspace, cx| {
