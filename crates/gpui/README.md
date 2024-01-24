@@ -15,7 +15,7 @@ Everything in GPUI starts with an `App`. You can create one with `App::new()`, a
 
 ## The Big Picture
 
-GPUI offers three different registers(https://en.wikipedia.org/wiki/Register_(sociolinguistics)) depending on your needs:
+GPUI offers three different [registers](https://en.wikipedia.org/wiki/Register_(sociolinguistics)) depending on your needs:
 
 - State management and communication with Models. Whenever you need to store application state that communicates between different parts of your application, you'll want to use GPUI's models. Models are owned by GPUI and are only accessible through an owned smart pointer similar to an `Rc`. See the `app::model_context` module for more information.
 
