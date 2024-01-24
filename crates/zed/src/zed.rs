@@ -737,7 +737,7 @@ fn open_settings_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{scroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
+    use editor::{scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
         VisualTestContext, WindowHandle,
