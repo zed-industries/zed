@@ -11,7 +11,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["tempdir", "git2"]
+test-support = ["tempfile", "git2"]
 
 [dependencies]
 anyhow.workspace = true
@@ -25,7 +25,7 @@ smol.workspace = true
 url = "2.2"
 rand.workspace = true
 rust-embed.workspace = true
-tempdir = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 git2 = { workspace = true, optional = true }
@@ -33,5 +33,5 @@ dirs = "3.0"
 take-until = "0.2.0"
 
 [dev-dependencies]
-tempdir.workspace = true
+tempfile.workspace = true
 git2.workspace = true

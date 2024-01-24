@@ -56,7 +56,7 @@ node_runtime = { path = "../node_runtime"}
 pretty_assertions.workspace = true
 rand.workspace = true
 unindent.workspace = true
-tempdir.workspace = true
+tempfile.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 

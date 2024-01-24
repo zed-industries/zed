@@ -6,13 +6,13 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 pub use assertions::*;
 pub use marked_text::*;
 
 pub fn temp_tree(tree: serde_json::Value) -> TempDir {
-    let dir = TempDir::new("").unwrap();
+    let dir = TempDir::new().unwrap();
     write_tree(dir.path(), tree);
     dir
 }

@@ -63,7 +63,9 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     languages.add(rust_language);
     languages.add(toml_language);
 
-    let db_dir = tempdir::TempDir::new("vector-store").unwrap();
+    let db_dir = tempfile::Builder::new()
+                            .prefix("vector-store")
+                            .tempdir();
     let db_path = db_dir.path().join("db.sqlite");
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());

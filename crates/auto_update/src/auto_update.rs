@@ -291,7 +291,9 @@ impl AutoUpdater {
             cx.notify();
         })?;
 
-        let temp_dir = tempdir::TempDir::new("zed-auto-update")?;
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-auto-update")
+            .tempdir()?;
         let dmg_path = temp_dir.path().join("Zed.dmg");
         let mount_path = temp_dir.path().join("Zed");
         let running_app_path = ZED_APP_PATH
