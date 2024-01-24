@@ -1,5 +1,14 @@
 # Building Zed
 
+## Repository
+
+After cloning the repository, ensure all git submodules are initialized:
+
+```shell
+git submodule init
+git submodule update
+```
+
 ## Dependencies
 
 - Install [Rust](https://www.rust-lang.org/tools/install)
