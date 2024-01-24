@@ -179,27 +179,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let was_deserialized = project_panel.read(cx).was_deserialized();
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
-
-                if !was_deserialized
-                    && workspace
-                        .project()
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .any(|tree| {
-                            tree.read(cx)
-                                .root_entry()
-                                .map_or(false, |entry| entry.is_dir())
-                        })
-                {
-                    workspace.open_panel::<ProjectPanel>(cx);
-                }
                 cx.focus_self();
             })
         })

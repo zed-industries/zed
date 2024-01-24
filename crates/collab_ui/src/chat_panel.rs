@@ -132,14 +132,6 @@ impl ChatPanel {
             {
                 this.select_channel(channel_id, None, cx)
                     .detach_and_log_err(cx);
-
-                if ActiveCall::global(cx)
-                    .read(cx)
-                    .room()
-                    .is_some_and(|room| room.read(cx).contains_guests())
-                {
-                    cx.emit(PanelEvent::Activate)
-                }
             }
 
             this.subscriptions.push(cx.subscribe(
@@ -664,6 +656,13 @@ impl Panel for ChatPanel {
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
         Box::new(ToggleFocus)
+    }
+
+    fn starts_open(&self, cx: &WindowContext) -> bool {
+        ActiveCall::global(cx)
+            .read(cx)
+            .room()
+            .is_some_and(|room| room.read(cx).contains_guests())
     }
 }
 
