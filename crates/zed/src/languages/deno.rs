@@ -4,11 +4,41 @@ use collections::HashMap;
 use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
+use schemars::JsonSchema;
+use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
+use settings::Settings;
 use smol::{fs, fs::File};
 use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
 use util::{fs::remove_matching, github::latest_github_release};
 use util::{github::GitHubLspBinaryVersion, ResultExt};
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DenoSettings {
+    pub enable: bool,
+}
+
+#[derive(Clone, Serialize, Default, Deserialize, JsonSchema)]
+pub struct DenoSettingsContent {
+    enable: Option<bool>,
+}
+
+impl Settings for DenoSettings {
+    const KEY: Option<&'static str> = Some("deno");
+
+    type FileContent = DenoSettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &mut gpui::AppContext,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Self::load_via_json_merge(default_value, user_values)
+    }
+}
 
 fn deno_server_binary_arguments() -> Vec<OsString> {
     vec!["lsp".into()]
