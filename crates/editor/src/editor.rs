@@ -126,6 +126,7 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 #[doc(hidden)]
@@ -369,7 +370,7 @@ pub struct Editor {
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Model<BlinkManager>,
     show_cursor_names: bool,
-    hovered_cursor: Option<HoveredCursor>,
+    hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
     show_gutter: bool,
@@ -463,6 +464,7 @@ enum SelectionHistoryMode {
     Redoing,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct HoveredCursor {
     replica_id: u16,
     selection_id: usize,
@@ -1440,7 +1442,7 @@ impl Editor {
             gutter_width: Default::default(),
             style: None,
             show_cursor_names: false,
-            hovered_cursor: Default::default(),
+            hovered_cursors: Default::default(),
             editor_actions: Default::default(),
             show_copilot_suggestions: mode == EditorMode::Full,
             _subscriptions: vec![
@@ -3741,7 +3743,7 @@ impl Editor {
         self.show_cursor_names = true;
         cx.notify();
         cx.spawn(|this, mut cx| async move {
-            cx.background_executor().timer(Duration::from_secs(3)).await;
+            cx.background_executor().timer(CURSORS_VISIBLE_FOR).await;
             this.update(&mut cx, |this, cx| {
                 this.show_cursor_names = false;
                 cx.notify()
