@@ -338,7 +338,7 @@ dependencies = [
  "tiktoken-rs",
  "ui",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "workspace",
 ]
 
@@ -1228,7 +1228,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -1402,7 +1402,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -1522,7 +1522,7 @@ dependencies = [
  "tracing-subscriber",
  "unindent",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "workspace",
 ]
 
@@ -1601,7 +1601,7 @@ dependencies = [
  "story",
  "toml 0.5.11",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -1755,7 +1755,6 @@ source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2f
 dependencies = [
  "core-foundation-sys 0.8.3",
  "libc",
- "uuid 0.5.1",
 ]
 
 [[package]]
@@ -3108,7 +3107,7 @@ dependencies = [
  "tiny-skia",
  "usvg",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "waker-fn",
 ]
 
@@ -3282,12 +3281,6 @@ checksum = "5444c27eef6923071f7ebcc33e3444508466a76f7a2b93da00ed6e19f30c1ddb"
 dependencies = [
  "windows-sys 0.48.0",
 ]
-
-[[package]]
-name = "hound"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d13cdbd5dbb29f9c88095bbdc2590c9cba0d0a1269b983fef6b2cdd7e9f4db1"
 
 [[package]]
 name = "http"
@@ -3552,7 +3545,7 @@ dependencies = [
  "rand 0.7.3",
  "serde",
  "tempfile",
- "uuid 1.4.1",
+ "uuid",
  "winapi 0.3.9",
 ]
 
@@ -6125,7 +6118,7 @@ dependencies = [
  "rkyv_derive",
  "seahash",
  "tinyvec",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -6167,7 +6160,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdf1d4dea18dff2e9eb6dca123724f8b60ef44ad74a9ad283cdfe025df7e73fa"
 dependencies = [
  "cpal",
- "hound",
 ]
 
 [[package]]
@@ -6600,7 +6592,7 @@ dependencies = [
  "time",
  "tracing",
  "url",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -6631,7 +6623,7 @@ dependencies = [
  "rust_decimal",
  "serde_json",
  "time",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -6647,7 +6639,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "time",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -7227,7 +7219,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "smol",
  "thread_local",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -7310,7 +7302,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
- "uuid 1.4.1",
+ "uuid",
  "webpki-roots 0.24.0",
 ]
 
@@ -7396,7 +7388,7 @@ dependencies = [
  "thiserror",
  "time",
  "tracing",
- "uuid 1.4.1",
+ "uuid",
  "whoami",
 ]
 
@@ -7441,7 +7433,7 @@ dependencies = [
  "thiserror",
  "time",
  "tracing",
- "uuid 1.4.1",
+ "uuid",
  "whoami",
 ]
 
@@ -7467,7 +7459,7 @@ dependencies = [
  "time",
  "tracing",
  "url",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -7880,7 +7872,7 @@ dependencies = [
  "story",
  "toml 0.5.11",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -7904,7 +7896,7 @@ dependencies = [
  "simplelog",
  "strum",
  "theme",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -8915,12 +8907,6 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcc7e3b898aa6f6c08e5295b6c89258d1331e9ac578cc992fb818759951bdc22"
-
-[[package]]
-name = "uuid"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
@@ -9568,7 +9554,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "uuid 1.4.1",
+ "uuid",
 ]
 
 [[package]]
@@ -9662,7 +9648,6 @@ dependencies = [
  "client",
  "collab_ui",
  "collections",
- "color",
  "command_palette",
  "copilot",
  "copilot_ui",
@@ -9763,7 +9748,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
- "uuid 1.4.1",
+ "uuid",
  "vim",
  "welcome",
  "workspace",

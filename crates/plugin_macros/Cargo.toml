@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 proc-macro = true
 
 [dependencies]
-syn = { version = "1.0", features = ["full",  "extra-traits"] }
+syn = { version = "1.0", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0"
 serde.workspace = true
