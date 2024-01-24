@@ -201,8 +201,10 @@ pub struct OpenAICompletionProvider {
 }
 
 impl OpenAICompletionProvider {
-    pub fn new(model_name: &str, executor: BackgroundExecutor) -> Self {
-        let model = OpenAILanguageModel::load(model_name);
+    pub async fn new(model_name: String, executor: BackgroundExecutor) -> Self {
+        let model = executor
+            .spawn(async move { OpenAILanguageModel::load(&model_name) })
+            .await;
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
         Self {
             model,

@@ -90,13 +90,12 @@ pub fn init(
     .detach();
 
     cx.spawn(move |cx| async move {
+        let embedding_provider =
+            OpenAIEmbeddingProvider::new(http_client, cx.background_executor().clone()).await;
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
-            Arc::new(OpenAIEmbeddingProvider::new(
-                http_client,
-                cx.background_executor().clone(),
-            )),
+            Arc::new(embedding_provider),
             language_registry,
             cx.clone(),
         )

@@ -67,11 +67,14 @@ struct OpenAIEmbeddingUsage {
 }
 
 impl OpenAIEmbeddingProvider {
-    pub fn new(client: Arc<dyn HttpClient>, executor: BackgroundExecutor) -> Self {
+    pub async fn new(client: Arc<dyn HttpClient>, executor: BackgroundExecutor) -> Self {
         let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with(None);
         let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
 
-        let model = OpenAILanguageModel::load("text-embedding-ada-002");
+        // Loading the model is expensive, so ensure this runs off the main thread.
+        let model = executor
+            .spawn(async move { OpenAILanguageModel::load("text-embedding-ada-002") })
+            .await;
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
 
         OpenAIEmbeddingProvider {
