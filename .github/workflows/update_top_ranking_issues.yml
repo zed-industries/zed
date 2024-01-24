@@ -1,17 +1,17 @@
 on:
-  schedule:
-    - cron: "0 */12 * * *"
-  workflow_dispatch:
+    schedule:
+        - cron: "0 */12 * * *"
+    workflow_dispatch:
 
 jobs:
-  update_top_ranking_issues:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: "3.10.5"
-          architecture: "x64"
-          cache: "pip"
-      - run: pip install -r scripts/update_top_ranking_issues/requirements.txt
-      - run: python scripts/update_top_ranking_issues/main.py --github-token ${{ secrets.GITHUB_TOKEN }} --prod
+    update_top_ranking_issues:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v3
+            - uses: actions/setup-python@v4
+              with:
+                  python-version: "3.10.5"
+                  architecture: "x64"
+                  cache: "pip"
+            - run: pip install -r scripts/update_top_ranking_issues/requirements.txt
+            - run: python script/update_top_ranking_issues/main.py --github-token ${{ secrets.GITHUB_TOKEN }} --prod
