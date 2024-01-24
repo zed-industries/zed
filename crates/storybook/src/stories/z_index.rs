@@ -1,4 +1,4 @@
-use gpui::{px, rgb, Div, Hsla, IntoElement, Render, RenderOnce};
+use gpui::{px, rgb, Div, IntoElement, Render, RenderOnce};
 use story::Story;
 use ui::prelude::*;
 
@@ -51,22 +51,22 @@ trait Styles: Styled + Sized {
         self.absolute()
             .w(px(150.))
             .h(px(50.))
-            .text_color(rgb::<Hsla>(0x000000))
+            .text_color(rgb(0x000000))
     }
 
     fn blue(self) -> Self {
-        self.bg(rgb::<Hsla>(0xe5e8fc))
+        self.bg(rgb(0xe5e8fc))
             .border_5()
-            .border_color(rgb::<Hsla>(0x112382))
+            .border_color(rgb(0x112382))
             .line_height(px(55.))
             // HACK: Simulate `text-align: center`.
             .pl(px(24.))
     }
 
     fn red(self) -> Self {
-        self.bg(rgb::<Hsla>(0xfce5e7))
+        self.bg(rgb(0xfce5e7))
             .border_5()
-            .border_color(rgb::<Hsla>(0xe3a1a7))
+            .border_color(rgb(0xe3a1a7))
             // HACK: Simulate `text-align: center`.
             .pl(px(8.))
     }
@@ -92,10 +92,10 @@ impl RenderOnce for ZIndexExample {
                     .left(px(15.))
                     .w(px(180.))
                     .h(px(230.))
-                    .bg(rgb::<Hsla>(0xfcfbe5))
-                    .text_color(rgb::<Hsla>(0x000000))
+                    .bg(rgb(0xfcfbe5))
+                    .text_color(rgb(0x000000))
                     .border_5()
-                    .border_color(rgb::<Hsla>(0xe3e0a1))
+                    .border_color(rgb(0xe3e0a1))
                     .line_height(px(215.))
                     // HACK: Simulate `text-align: center`.
                     .pl(px(24.))
