@@ -42,7 +42,8 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         self.model_state.clone()
     }
 
-    /// Arranges for the given function to be called whenever [ModelContext::notify] or [ViewContext::notify] is called with the given model or view.
+    /// Arranges for the given function to be called whenever [`ModelContext::notify`] or
+    /// [`ViewContext::notify`](crate::ViewContext::notify) is called with the given model or view.
     pub fn observe<W, E>(
         &mut self,
         entity: &E,
@@ -150,7 +151,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Arrange for the given function to be invoked whenever the application is quit.
-    /// The future returned from this callback will be polled for up to [gpui::SHUTDOWN_TIMEOUT] until the app fully quits.
+    /// The future returned from this callback will be polled for up to [crate::SHUTDOWN_TIMEOUT] until the app fully quits.
     pub fn on_app_quit<Fut>(
         &mut self,
         mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + 'static,

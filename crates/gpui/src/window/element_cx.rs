@@ -656,7 +656,7 @@ impl<'a> ElementContext<'a> {
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
+    /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
@@ -731,9 +731,11 @@ impl<'a> ElementContext<'a> {
         );
     }
 
-    /// Paint a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
+    /// Paints a monochrome (non-emoji) glyph into the scene for the next frame at the current z-index.
+    ///
     /// The y component of the origin is the baseline of the glyph.
-    /// You should generally prefer to use the [`ShapedLine::paint`] or [`WrappedLine::paint`] methods in the [`text_system`].
+    /// You should generally prefer to use the [`ShapedLine::paint`](crate::ShapedLine::paint) or
+    /// [`WrappedLine::paint`](crate::WrappedLine::paint) methods in the [`TextSystem`](crate::TextSystem).
     /// This method is only useful if you need to paint a single glyph that has already been shaped.
     pub fn paint_glyph(
         &mut self,
@@ -790,9 +792,11 @@ impl<'a> ElementContext<'a> {
         Ok(())
     }
 
-    /// Paint an emoji glyph into the scene for the next frame at the current z-index.
+    /// Paints an emoji glyph into the scene for the next frame at the current z-index.
+    ///
     /// The y component of the origin is the baseline of the glyph.
-    /// You should generally prefer to use the [`ShapedLine::paint`] or [`WrappedLine::paint`] methods in the [`text_system`].
+    /// You should generally prefer to use the [`ShapedLine::paint`](crate::ShapedLine::paint) or
+    /// [`WrappedLine::paint`](crate::WrappedLine::paint) methods in the [`TextSystem`](crate::TextSystem).
     /// This method is only useful if you need to paint a single emoji that has already been shaped.
     pub fn paint_emoji(
         &mut self,
