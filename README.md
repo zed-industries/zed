@@ -1,10 +1,3 @@
-# 🚧 TODO 🚧
-
-- [ ] Add intro
-- [ ] Add link to contributing guide
-- [ ] Add barebones running zed from source instructions
-- [ ] Link out to further dev docs
-
 # Zed
 
 [![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
@@ -15,6 +8,10 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 - [Building Zed](./docs/src/developing_zed__building_zed.md)
 - [Running Collaboration Locally](./docs/src/developing_zed__local_collaboration.md)
+
+### Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
 
 ### Licensing
 
