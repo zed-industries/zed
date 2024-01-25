@@ -143,3 +143,26 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
         }
     }
 }
+
+pub struct WithResults<A>(pub(super) SearchBarActionCallback<A>);
+impl<A> Clone for WithResults<A> {
+    fn clone(&self) -> Self {
+        Self(self.0)
+    }
+}
+
+impl<A: Action> ActionExecutor<A> for WithResults<A> {
+    fn execute(
+        &self,
+        search_bar: &mut BufferSearchBar,
+        action: &A,
+        cx: &mut ViewContext<BufferSearchBar>,
+    ) -> DidHandleAction {
+        if search_bar.active_match_index.is_some() {
+            self.0(search_bar, action, cx);
+            true
+        } else {
+            false
+        }
+    }
+}

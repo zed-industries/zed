@@ -32,7 +32,7 @@ use workspace::{
 };
 
 pub use registrar::DivRegistrar;
-use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar};
+use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
@@ -459,10 +459,10 @@ impl BufferSearchBar {
                 this.cycle_mode(action, cx)
             }
         }));
-        registrar.register_handler(ForDeployed(|this, action: &SelectNextMatch, cx| {
+        registrar.register_handler(WithResults(|this, action: &SelectNextMatch, cx| {
             this.select_next_match(action, cx);
         }));
-        registrar.register_handler(ForDeployed(|this, action: &SelectPrevMatch, cx| {
+        registrar.register_handler(WithResults(|this, action: &SelectPrevMatch, cx| {
             this.select_prev_match(action, cx);
         }));
         registrar.register_handler(ForDeployed(|this, action: &SelectAllMatches, cx| {
