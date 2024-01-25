@@ -197,10 +197,11 @@
   {
     "context": "ConversationEditor > Editor",
     "bindings": {
+      "enter": "assistant::Assist",
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
-      "shift-enter": "assistant::Split",
+      "shift-enter": "editor::NewLine",
       "ctrl-r": "assistant::CycleMessageRole"
     }
   },
