@@ -173,7 +173,6 @@ core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev
 core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
 
 [profile.dev]
-split-debuginfo = "unpacked"
 debug = "limited"
 
 [profile.dev.package.taffy]
