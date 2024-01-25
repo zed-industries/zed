@@ -19,11 +19,7 @@ impl Database {
 
     #[cfg(test)]
     pub async fn create_root_channel(&self, name: &str, creator_id: UserId) -> Result<ChannelId> {
-        Ok(self
-            .create_channel(name, None, creator_id)
-            .await?
-            .channel
-            .id)
+        Ok(self.create_channel(name, None, creator_id).await?.id)
     }
 
     #[cfg(test)]
@@ -36,7 +32,6 @@ impl Database {
         Ok(self
             .create_channel(name, Some(parent), creator_id)
             .await?
-            .channel
             .id)
     }
 
@@ -46,7 +41,7 @@ impl Database {
         name: &str,
         parent_channel_id: Option<ChannelId>,
         admin_id: UserId,
-    ) -> Result<CreateChannelResult> {
+    ) -> Result<Channel> {
         let name = Self::sanitize_channel_name(name)?;
         self.transaction(move |tx| async move {
             let mut parent = None;
@@ -72,14 +67,7 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            let participants_to_update;
-            if let Some(parent) = &parent {
-                participants_to_update = self
-                    .participants_to_notify_for_channel_change(parent, &*tx)
-                    .await?;
-            } else {
-                participants_to_update = vec![];
-
+            if parent.is_none() {
                 channel_member::ActiveModel {
                     id: ActiveValue::NotSet,
                     channel_id: ActiveValue::Set(channel.id),
@@ -89,12 +77,9 @@ impl Database {
                 }
                 .insert(&*tx)
                 .await?;
-            };
+            }
 
-            Ok(CreateChannelResult {
-                channel: Channel::from_model(channel, ChannelRole::Admin),
-                participants_to_update,
-            })
+            Ok(Channel::from_model(channel, ChannelRole::Admin))
         })
         .await
     }
@@ -718,6 +703,19 @@ impl Database {
         })
     }
 
+    pub async fn new_participants_to_notify(
+        &self,
+        parent_channel_id: ChannelId,
+    ) -> Result<Vec<(UserId, ChannelsForUser)>> {
+        self.weak_transaction(|tx| async move {
+            let parent_channel = self.get_channel_internal(parent_channel_id, &*tx).await?;
+            self.participants_to_notify_for_channel_change(&parent_channel, &*tx)
+                .await
+        })
+        .await
+    }
+
+    // TODO: this is very expensive, and we should rethink
     async fn participants_to_notify_for_channel_change(
         &self,
         new_parent: &channel::Model,
@@ -1287,7 +1285,7 @@ impl Database {
 
             let mut model = channel.into_active_model();
             model.parent_path = ActiveValue::Set(new_parent_path);
-            let channel = model.update(&*tx).await?;
+            model.update(&*tx).await?;
 
             if new_parent_channel.is_none() {
                 channel_member::ActiveModel {
@@ -1314,34 +1312,9 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            let participants_to_update: HashMap<_, _> = self
-                .participants_to_notify_for_channel_change(
-                    new_parent_channel.as_ref().unwrap_or(&channel),
-                    &*tx,
-                )
-                .await?
-                .into_iter()
-                .collect();
-
-            let mut moved_channels: HashSet<ChannelId> = HashSet::default();
-            for id in descendent_ids {
-                moved_channels.insert(id);
-            }
-            moved_channels.insert(channel_id);
-
-            let mut participants_to_remove: HashSet<UserId> = HashSet::default();
-            for participant in previous_participants {
-                if participant.kind == proto::channel_member::Kind::AncestorMember {
-                    if !participants_to_update.contains_key(&participant.user_id) {
-                        participants_to_remove.insert(participant.user_id);
-                    }
-                }
-            }
-
             Ok(Some(MoveChannelResult {
-                participants_to_remove,
-                participants_to_update,
-                moved_channels,
+                previous_participants,
+                descendent_ids,
             }))
         })
         .await

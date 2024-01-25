@@ -169,6 +169,30 @@ impl Database {
         self.run(body).await
     }
 
+    pub async fn weak_transaction<F, Fut, T>(&self, f: F) -> Result<T>
+    where
+        F: Send + Fn(TransactionHandle) -> Fut,
+        Fut: Send + Future<Output = Result<T>>,
+    {
+        let body = async {
+            let (tx, result) = self.with_weak_transaction(&f).await?;
+            match result {
+                Ok(result) => match tx.commit().await.map_err(Into::into) {
+                    Ok(()) => return Ok(result),
+                    Err(error) => {
+                        return Err(error);
+                    }
+                },
+                Err(error) => {
+                    tx.rollback().await?;
+                    return Err(error);
+                }
+            }
+        };
+
+        self.run(body).await
+    }
+
     /// The same as room_transaction, but if you need to only optionally return a Room.
     async fn optional_room_transaction<F, Fut, T>(&self, f: F) -> Result<Option<RoomGuard<T>>>
     where
@@ -284,6 +308,30 @@ impl Database {
         Ok((tx, result))
     }
 
+    async fn with_weak_transaction<F, Fut, T>(
+        &self,
+        f: &F,
+    ) -> Result<(DatabaseTransaction, Result<T>)>
+    where
+        F: Send + Fn(TransactionHandle) -> Fut,
+        Fut: Send + Future<Output = Result<T>>,
+    {
+        let tx = self
+            .pool
+            .begin_with_config(Some(IsolationLevel::ReadCommitted), None)
+            .await?;
+
+        let mut tx = Arc::new(Some(tx));
+        let result = f(TransactionHandle(tx.clone())).await;
+        let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
+            return Err(anyhow!(
+                "couldn't complete transaction because it's still in use"
+            ))?;
+        };
+
+        Ok((tx, result))
+    }
+
     async fn run<F, T>(&self, future: F) -> Result<T>
     where
         F: Future<Output = Result<T>>,
@@ -303,13 +351,14 @@ impl Database {
         }
     }
 
-    async fn retry_on_serialization_error(&self, error: &Error, prev_attempt_count: u32) -> bool {
+    async fn retry_on_serialization_error(&self, error: &Error, prev_attempt_count: usize) -> bool {
         // If the error is due to a failure to serialize concurrent transactions, then retry
         // this transaction after a delay. With each subsequent retry, double the delay duration.
         // Also vary the delay randomly in order to ensure different database connections retry
         // at different times.
-        if is_serialization_error(error) {
-            let base_delay = 4_u64 << prev_attempt_count.min(16);
+        const SLEEPS: [f32; 10] = [10., 20., 40., 80., 160., 320., 640., 1280., 2560., 5120.];
+        if is_serialization_error(error) && prev_attempt_count < SLEEPS.len() {
+            let base_delay = SLEEPS[prev_attempt_count];
             let randomized_delay = base_delay as f32 * self.rng.lock().await.gen_range(0.5..=2.0);
             log::info!(
                 "retrying transaction after serialization error. delay: {} ms.",
@@ -456,9 +505,8 @@ pub struct NewUserResult {
 /// The result of moving a channel.
 #[derive(Debug)]
 pub struct MoveChannelResult {
-    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
-    pub participants_to_remove: HashSet<UserId>,
-    pub moved_channels: HashSet<ChannelId>,
+    pub previous_participants: Vec<ChannelMember>,
+    pub descendent_ids: Vec<ChannelId>,
 }
 
 /// The result of renaming a channel.
