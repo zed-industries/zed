@@ -149,6 +149,7 @@ tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", re
 tree-sitter-rust = "0.20.3"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-php = "0.21.1"
+tree-sitter-proto = {git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52"}
 tree-sitter-purescript = { git = "https://github.com/ivanmoreau/tree-sitter-purescript", rev = "a37140f0c7034977b90faa73c94fcb8a5e45ed08" }
 tree-sitter-python = "0.20.2"
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
