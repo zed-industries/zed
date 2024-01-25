@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
@@ -12,6 +13,10 @@ use lsp::LanguageServerBinary;
 use smol::fs;
 use util::github::{latest_github_release, GitHubLspBinaryVersion};
 use util::ResultExt;
+
+fn server_binary_arguments() -> Vec<OsString> {
+    vec!["lsp".into()]
+}
 
 pub struct GleamLspAdapter;
 
@@ -57,7 +62,6 @@ impl LspAdapter for GleamLspAdapter {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let binary_path = container_dir.join("gleam");
 
-        println!("{:?}", &binary_path);
         if fs::metadata(&binary_path).await.is_err() {
             let mut response = delegate
                 .http_client()
@@ -71,7 +75,7 @@ impl LspAdapter for GleamLspAdapter {
 
         Ok(LanguageServerBinary {
             path: binary_path,
-            arguments: vec!["lsp".into()],
+            arguments: server_binary_arguments(),
         })
     }
 
@@ -106,7 +110,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
         anyhow::Ok(LanguageServerBinary {
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
-            arguments: Default::default(),
+            arguments: server_binary_arguments(),
         })
     })()
     .await
