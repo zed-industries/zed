@@ -114,7 +114,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         .await;
     picker.update(cx, |picker, _| {
         assert_eq!(
-            collect_search_results(picker),
+            collect_search_matches(picker).search_only(),
             vec![PathBuf::from("a/b/file2.txt")],
             "Matching abs path should be the only match"
         )
@@ -136,7 +136,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         .await;
     picker.update(cx, |picker, _| {
         assert_eq!(
-            collect_search_results(picker),
+            collect_search_matches(picker).search_only(),
             Vec::<PathBuf>::new(),
             "Mismatching abs path should produce no matches"
         )
@@ -169,7 +169,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 1);
         assert_eq!(
-            collect_search_results(picker),
+            collect_search_matches(picker).search_only(),
             vec![PathBuf::from("其他/S数据表格/task.xlsx")],
         )
     });
@@ -486,7 +486,7 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
         assert_eq!(matches.len(), 1);
 
         let (file_name, file_name_positions, full_path, full_path_positions) =
-            delegate.labels_for_path_match(&matches[0]);
+            delegate.labels_for_path_match(&matches[0].0);
         assert_eq!(file_name, "the-file");
         assert_eq!(file_name_positions, &[0, 1, 4]);
         assert_eq!(full_path, "the-file");
@@ -556,9 +556,9 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
             delegate.matches.history.is_empty(),
             "Search matches expected"
         );
-        let matches = delegate.matches.search.clone();
-        assert_eq!(matches[0].path.as_ref(), Path::new("dir2/a.txt"));
-        assert_eq!(matches[1].path.as_ref(), Path::new("dir1/a.txt"));
+        let matches = &delegate.matches.search;
+        assert_eq!(matches[0].0.path.as_ref(), Path::new("dir2/a.txt"));
+        assert_eq!(matches[1].0.path.as_ref(), Path::new("dir1/a.txt"));
     });
 }
 
@@ -957,7 +957,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
                 Some(PathBuf::from("/src/test/first.rs"))
             ));
             assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
-            assert_eq!(delegate.matches.search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
+            assert_eq!(delegate.matches.search.first().unwrap().0.path.as_ref(), Path::new("test/fourth.rs"));
         });
 
     let second_query = "fsdasdsa";
@@ -1002,8 +1002,63 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
                 Some(PathBuf::from("/src/test/first.rs"))
             ));
             assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
-            assert_eq!(delegate.matches.search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
+            assert_eq!(delegate.matches.search.first().unwrap().0.path.as_ref(), Path::new("test/fourth.rs"));
         });
+}
+
+#[gpui::test]
+async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "test": {
+                    "1_qw": "// First file that matches the query",
+                    "2_second": "// Second file",
+                    "3_third": "// Third file",
+                    "4_fourth": "// Fourth file",
+                    "5_qwqwqw": "// A file with 3 more matches than the first one",
+                    "6_qwqwqw": "// Same query matches as above, but closer to the end of the list due to the name",
+                    "7_qwqwqw": "// One more, same amount of query matches as above",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+    // generate some history to select from
+    open_close_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
+    open_close_queried_buffer("2", 1, "2_second", &workspace, cx).await;
+    open_close_queried_buffer("3", 1, "3_third", &workspace, cx).await;
+    open_close_queried_buffer("2", 1, "2_second", &workspace, cx).await;
+    open_close_queried_buffer("6", 1, "6_qwqwqw", &workspace, cx).await;
+
+    let finder = open_file_picker(&workspace, cx);
+    let query = "qw";
+    finder
+        .update(cx, |finder, cx| {
+            finder.delegate.update_matches(query.to_string(), cx)
+        })
+        .await;
+    finder.update(cx, |finder, _| {
+        let search_matches = collect_search_matches(finder);
+        assert_eq!(
+            search_matches.history,
+            vec![PathBuf::from("test/1_qw"), PathBuf::from("test/6_qwqwqw"),],
+        );
+        assert_eq!(
+            search_matches.search,
+            vec![
+                PathBuf::from("test/5_qwqwqw"),
+                PathBuf::from("test/7_qwqwqw"),
+            ],
+        );
+    });
 }
 
 #[gpui::test]
@@ -1048,14 +1103,14 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
                 .matches
                 .search
                 .iter()
-                .map(|path_match| path_match.path.to_path_buf())
+                .map(|path_match| path_match.0.path.to_path_buf())
                 .collect::<Vec<_>>();
             assert_eq!(
                 search_entries,
                 vec![
                     PathBuf::from("collab_ui/collab_ui.rs"),
-                    PathBuf::from("collab_ui/third.rs"),
                     PathBuf::from("collab_ui/first.rs"),
+                    PathBuf::from("collab_ui/third.rs"),
                     PathBuf::from("collab_ui/second.rs"),
                 ],
                 "Despite all search results having the same directory name, the most matching one should be on top"
@@ -1097,7 +1152,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
                 .matches
                 .history
                 .iter()
-                .map(|(_, path_match)| path_match.as_ref().expect("should have a path match").path.to_path_buf())
+                .map(|(_, path_match)| path_match.as_ref().expect("should have a path match").0.path.to_path_buf())
                 .collect::<Vec<_>>();
             assert_eq!(
                 history_entries,
@@ -1124,7 +1179,8 @@ async fn open_close_queried_buffer(
         assert_eq!(
             finder.delegate.matches.len(),
             expected_matches,
-            "Unexpected number of matches found for query {input}"
+            "Unexpected number of matches found for query `{input}`, matches: {:?}",
+            finder.delegate.matches
         );
         finder.delegate.history_items.clone()
     });
@@ -1137,7 +1193,7 @@ async fn open_close_queried_buffer(
         let active_editor_title = active_editor.read(cx).title(cx);
         assert_eq!(
             expected_editor_title, active_editor_title,
-            "Unexpected editor title for query {input}"
+            "Unexpected editor title for query `{input}`"
         );
     });
 
@@ -1210,18 +1266,49 @@ fn active_file_picker(
     })
 }
 
-fn collect_search_results(picker: &Picker<FileFinderDelegate>) -> Vec<PathBuf> {
+#[derive(Debug)]
+struct SearchEntries {
+    history: Vec<PathBuf>,
+    search: Vec<PathBuf>,
+}
+
+impl SearchEntries {
+    #[track_caller]
+    fn search_only(self) -> Vec<PathBuf> {
+        assert!(
+            self.history.is_empty(),
+            "Should have no history matches, but got: {:?}",
+            self.history
+        );
+        self.search
+    }
+}
+
+fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries {
     let matches = &picker.delegate.matches;
-    assert!(
-        matches.history.is_empty(),
-        "Should have no history matches, but got: {:?}",
-        matches.history
-    );
-    let mut results = matches
-        .search
-        .iter()
-        .map(|path_match| Path::new(path_match.path_prefix.as_ref()).join(&path_match.path))
-        .collect::<Vec<_>>();
-    results.sort();
-    results
+    SearchEntries {
+        history: matches
+            .history
+            .iter()
+            .map(|(history_path, path_match)| {
+                path_match
+                    .as_ref()
+                    .map(|path_match| {
+                        Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
+                    })
+                    .unwrap_or_else(|| {
+                        history_path
+                            .absolute
+                            .as_deref()
+                            .unwrap_or_else(|| &history_path.project.path)
+                            .to_path_buf()
+                    })
+            })
+            .collect(),
+        search: matches
+            .search
+            .iter()
+            .map(|path_match| Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path))
+            .collect(),
+    }
 }
