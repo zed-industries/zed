@@ -542,7 +542,9 @@ impl CollabTitlebarItem {
                                     })?
                                     .clone();
 
-                                Some(Avatar::new(follower.avatar_uri.clone()))
+                                Some(div().mt(-px(4.)).child(
+                                    Avatar::new(follower.avatar_uri.clone()).size(rems(0.75)),
+                                ))
                             },
                         ))
                         .children(if extra_count > 0 {
