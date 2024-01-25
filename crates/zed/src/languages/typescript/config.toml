@@ -1,6 +1,6 @@
 name = "TypeScript"
 path_suffixes = ["ts", "cts", "d.cts", "d.mts", "mts"]
-line_comment = "// "
+line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

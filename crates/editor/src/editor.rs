@@ -2502,34 +2502,43 @@ impl Editor {
                                         )
                                 });
                             // Comment extension on newline is allowed only for cursor selections
-                            let comment_delimiter = language.line_comment_prefix().filter(|_| {
+                            let comment_delimiter = language.line_comment_prefixes().filter(|_| {
                                 let is_comment_extension_enabled =
                                     multi_buffer.settings_at(0, cx).extend_comment_on_newline;
                                 is_cursor && is_comment_extension_enabled
                             });
-                            let comment_delimiter = if let Some(delimiter) = comment_delimiter {
-                                buffer
-                                    .buffer_line_for_row(start_point.row)
-                                    .is_some_and(|(snapshot, range)| {
-                                        let mut index_of_first_non_whitespace = 0;
-                                        let line_starts_with_comment = snapshot
-                                            .chars_for_range(range)
-                                            .skip_while(|c| {
-                                                let should_skip = c.is_whitespace();
-                                                if should_skip {
-                                                    index_of_first_non_whitespace += 1;
-                                                }
-                                                should_skip
-                                            })
-                                            .take(delimiter.len())
-                                            .eq(delimiter.chars());
-                                        let cursor_is_placed_after_comment_marker =
-                                            index_of_first_non_whitespace + delimiter.len()
-                                                <= start_point.column as usize;
-                                        line_starts_with_comment
-                                            && cursor_is_placed_after_comment_marker
+                            let get_comment_delimiter = |delimiters: &[Arc<str>]| {
+                                let max_len_of_delimiter =
+                                    delimiters.iter().map(|delimiter| delimiter.len()).max()?;
+                                let (snapshot, range) =
+                                    buffer.buffer_line_for_row(start_point.row)?;
+
+                                let mut index_of_first_non_whitespace = 0;
+                                let comment_candidate = snapshot
+                                    .chars_for_range(range)
+                                    .skip_while(|c| {
+                                        let should_skip = c.is_whitespace();
+                                        if should_skip {
+                                            index_of_first_non_whitespace += 1;
+                                        }
+                                        should_skip
                                     })
-                                    .then(|| delimiter.clone())
+                                    .take(max_len_of_delimiter)
+                                    .collect::<String>();
+                                let comment_prefix = delimiters.iter().find(|comment_prefix| {
+                                    comment_candidate.starts_with(comment_prefix.as_ref())
+                                })?;
+                                let cursor_is_placed_after_comment_marker =
+                                    index_of_first_non_whitespace + comment_prefix.len()
+                                        <= start_point.column as usize;
+                                if cursor_is_placed_after_comment_marker {
+                                    Some(comment_prefix.clone())
+                                } else {
+                                    None
+                                }
+                            };
+                            let comment_delimiter = if let Some(delimiters) = comment_delimiter {
+                                get_comment_delimiter(delimiters)
                             } else {
                                 None
                             };
@@ -6561,7 +6570,10 @@ impl Editor {
                 }
 
                 // If the language has line comments, toggle those.
-                if let Some(full_comment_prefix) = language.line_comment_prefix() {
+                if let Some(full_comment_prefix) = language
+                    .line_comment_prefixes()
+                    .and_then(|prefixes| prefixes.first())
+                {
                     // Split the comment prefix's trailing whitespace into a separate string,
                     // as that portion won't be used for detecting if a line is a comment.
                     let comment_prefix = full_comment_prefix.trim_end_matches(' ');
@@ -6569,7 +6581,7 @@ impl Editor {
                     let mut all_selection_lines_are_comments = true;
 
                     for row in start_row..=end_row {
-                        if snapshot.is_line_blank(row) && start_row < end_row {
+                        if start_row < end_row && snapshot.is_line_blank(row) {
                             continue;
                         }
 

@@ -416,8 +416,10 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub collapsed_placeholder: String,
     /// A line comment string that is inserted in e.g. `toggle comments` action.
+    /// A language can have multiple flavours of line comments. All of the provided line comments are
+    /// used for comment continuations on the next line, but only the first one is used for Editor::ToggleComments.
     #[serde(default)]
-    pub line_comment: Option<Arc<str>>,
+    pub line_comments: Vec<Arc<str>>,
     /// Starting and closing characters of a block comment.
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
@@ -460,7 +462,7 @@ pub struct LanguageScope {
 #[derive(Clone, Deserialize, Default, Debug)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
-    pub line_comment: Override<Arc<str>>,
+    pub line_comments: Override<Vec<Arc<str>>>,
     #[serde(default)]
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
     #[serde(skip_deserializing)]
@@ -506,7 +508,7 @@ impl Default for LanguageConfig {
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
-            line_comment: Default::default(),
+            line_comments: Default::default(),
             block_comment: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
@@ -1710,10 +1712,10 @@ impl LanguageScope {
 
     /// Returns line prefix that is inserted in e.g. line continuations or
     /// in `toggle comments` action.
-    pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
+    pub fn line_comment_prefixes(&self) -> Option<&Vec<Arc<str>>> {
         Override::as_option(
-            self.config_override().map(|o| &o.line_comment),
-            self.language.config.line_comment.as_ref(),
+            self.config_override().map(|o| &o.line_comments),
+            Some(&self.language.config.line_comments),
         )
     }
 
