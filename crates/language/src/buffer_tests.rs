@@ -1889,7 +1889,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
 
         let snapshot = buffer.snapshot();
         let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
-        assert_eq!(html_config.line_comment_prefixes(), None);
+        assert_eq!(html_config.line_comment_prefixes(), Some([]));
         assert_eq!(
             html_config.block_comment_delimiters(),
             Some((&"<!--".into(), &"-->".into()))
