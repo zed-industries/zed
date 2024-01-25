@@ -22,7 +22,10 @@ use gpui::{
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
-use rpc::proto::{self, PeerId};
+use rpc::{
+    proto::{self, PeerId},
+    ErrorCode, ErrorExt,
+};
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -35,7 +38,7 @@ use ui::{
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{NotifyResultExt, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
     Workspace,
 };
 
@@ -879,7 +882,7 @@ impl CollabPanel {
                     .update(cx, |workspace, cx| {
                         let app_state = workspace.app_state().clone();
                         workspace::join_remote_project(project_id, host_user_id, app_state, cx)
-                            .detach_and_log_err(cx);
+                            .detach_and_prompt_err("Failed to join project", cx, |_, _| None);
                     })
                     .ok();
             }))
@@ -1017,7 +1020,12 @@ impl CollabPanel {
                                     )
                                 })
                             })
-                            .detach_and_notify_err(cx)
+                            .detach_and_prompt_err("Failed to grant write access", cx, |e, _| {
+                                match e.error_code() {
+                                    ErrorCode::NeedsCla => Some("This user has not yet signed the CLA at https://zed.dev/cla.".into()),
+                                    _ => None,
+                                }
+                            })
                     }),
                 )
             } else if role == proto::ChannelRole::Member {
@@ -1038,7 +1046,7 @@ impl CollabPanel {
                                     )
                                 })
                             })
-                            .detach_and_notify_err(cx)
+                            .detach_and_prompt_err("Failed to revoke write access", cx, |_, _| None)
                     }),
                 )
             } else {
@@ -1258,7 +1266,11 @@ impl CollabPanel {
                                 app_state,
                                 cx,
                             )
-                            .detach_and_log_err(cx);
+                            .detach_and_prompt_err(
+                                "Failed to join project",
+                                cx,
+                                |_, _| None,
+                            );
                         }
                     }
                     ListEntry::ParticipantScreen { peer_id, .. } => {
@@ -1432,7 +1444,7 @@ impl CollabPanel {
     fn leave_call(cx: &mut WindowContext) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| call.hang_up(cx))
-            .detach_and_log_err(cx);
+            .detach_and_prompt_err("Failed to hang up", cx, |_, _| None);
     }
 
     fn toggle_contact_finder(&mut self, cx: &mut ViewContext<Self>) {
@@ -1534,11 +1546,11 @@ impl CollabPanel {
         cx: &mut ViewContext<CollabPanel>,
     ) {
         if let Some(clipboard) = self.channel_clipboard.take() {
-            self.channel_store.update(cx, |channel_store, cx| {
-                channel_store
-                    .move_channel(clipboard.channel_id, Some(to_channel_id), cx)
-                    .detach_and_log_err(cx)
-            })
+            self.channel_store
+                .update(cx, |channel_store, cx| {
+                    channel_store.move_channel(clipboard.channel_id, Some(to_channel_id), cx)
+                })
+                .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
         }
     }
 
@@ -1610,7 +1622,12 @@ impl CollabPanel {
                 "Are you sure you want to remove the channel \"{}\"?",
                 channel.name
             );
-            let answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
+            let answer = cx.prompt(
+                PromptLevel::Warning,
+                &prompt_message,
+                None,
+                &["Remove", "Cancel"],
+            );
             cx.spawn(|this, mut cx| async move {
                 if answer.await? == 0 {
                     channel_store
@@ -1631,7 +1648,12 @@ impl CollabPanel {
             "Are you sure you want to remove \"{}\" from your contacts?",
             github_login
         );
-        let answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
+        let answer = cx.prompt(
+            PromptLevel::Warning,
+            &prompt_message,
+            None,
+            &["Remove", "Cancel"],
+        );
         cx.spawn(|_, mut cx| async move {
             if answer.await? == 0 {
                 user_store
@@ -1641,7 +1663,7 @@ impl CollabPanel {
             }
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach_and_prompt_err("Failed to remove contact", cx, |_, _| None);
     }
 
     fn respond_to_contact_request(
@@ -1654,7 +1676,7 @@ impl CollabPanel {
             .update(cx, |store, cx| {
                 store.respond_to_contact_request(user_id, accept, cx)
             })
-            .detach_and_log_err(cx);
+            .detach_and_prompt_err("Failed to respond to contact request", cx, |_, _| None);
     }
 
     fn respond_to_channel_invite(
@@ -1675,7 +1697,7 @@ impl CollabPanel {
             .update(cx, |call, cx| {
                 call.invite(recipient_user_id, Some(self.project.clone()), cx)
             })
-            .detach_and_log_err(cx);
+            .detach_and_prompt_err("Call failed", cx, |_, _| None);
     }
 
     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
@@ -1691,7 +1713,7 @@ impl CollabPanel {
             Some(handle),
             cx,
         )
-        .detach_and_log_err(cx)
+        .detach_and_prompt_err("Failed to join channel", cx, |_, _| None)
     }
 
     fn join_channel_chat(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
@@ -1704,7 +1726,7 @@ impl CollabPanel {
                     panel.update(cx, |panel, cx| {
                         panel
                             .select_channel(channel_id, None, cx)
-                            .detach_and_log_err(cx);
+                            .detach_and_notify_err(cx);
                     });
                 }
             });
@@ -1981,7 +2003,7 @@ impl CollabPanel {
                             .update(cx, |channel_store, cx| {
                                 channel_store.move_channel(dragged_channel.id, None, cx)
                             })
-                            .detach_and_log_err(cx)
+                            .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
                     }))
             })
     }
@@ -2256,7 +2278,7 @@ impl CollabPanel {
                     .update(cx, |channel_store, cx| {
                         channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
                     })
-                    .detach_and_log_err(cx)
+                    .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
             }))
             .child(
                 ListItem::new(channel_id as usize)

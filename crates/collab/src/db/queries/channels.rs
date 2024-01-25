@@ -1,5 +1,5 @@
 use super::*;
-use rpc::proto::channel_member::Kind;
+use rpc::{proto::channel_member::Kind, ErrorCode, ErrorCodeExt};
 use sea_orm::TryGetableMany;
 
 impl Database {
@@ -166,7 +166,7 @@ impl Database {
             }
 
             if role.is_none() || role == Some(ChannelRole::Banned) {
-                Err(anyhow!("not allowed"))?
+                Err(ErrorCode::Forbidden.anyhow())?
             }
             let role = role.unwrap();
 
@@ -1201,7 +1201,7 @@ impl Database {
         Ok(channel::Entity::find_by_id(channel_id)
             .one(&*tx)
             .await?
-            .ok_or_else(|| anyhow!("no such channel"))?)
+            .ok_or_else(|| proto::ErrorCode::NoSuchChannel.anyhow())?)
     }
 
     pub(crate) async fn get_or_create_channel_room(
@@ -1219,7 +1219,9 @@ impl Database {
         let room_id = if let Some(room) = room {
             if let Some(env) = room.environment {
                 if &env != environment {
-                    Err(anyhow!("must join using the {} release", env))?;
+                    Err(ErrorCode::WrongReleaseChannel
+                        .with_tag("required", &env)
+                        .anyhow())?;
                 }
             }
             room.id

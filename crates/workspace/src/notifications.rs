@@ -1,8 +1,8 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter, Render,
-    Task, View, ViewContext, VisualContext, WindowContext,
+    AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter,
+    PromptLevel, Render, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use std::{any::TypeId, ops::DerefMut};
 
@@ -299,11 +299,47 @@ pub trait NotifyTaskExt {
 
 impl<R, E> NotifyTaskExt for Task<Result<R, E>>
 where
-    E: std::fmt::Debug + 'static,
+    E: std::fmt::Debug + Sized + 'static,
     R: 'static,
 {
     fn detach_and_notify_err(self, cx: &mut WindowContext) {
         cx.spawn(|mut cx| async move { self.await.notify_async_err(&mut cx) })
             .detach();
+    }
+}
+
+pub trait DetachAndPromptErr {
+    fn detach_and_prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    );
+}
+
+impl<R> DetachAndPromptErr for Task<anyhow::Result<R>>
+where
+    R: 'static,
+{
+    fn detach_and_prompt_err(
+        self,
+        msg: &str,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
+    ) {
+        let msg = msg.to_owned();
+        cx.spawn(|mut cx| async move {
+            if let Err(err) = self.await {
+                log::error!("{err:?}");
+                if let Ok(prompt) = cx.update(|cx| {
+                    let detail = f(&err, cx)
+                        .unwrap_or_else(|| format!("{err:?}. Please try again.", err = err));
+                    cx.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"])
+                }) {
+                    prompt.await.ok();
+                }
+            }
+        })
+        .detach();
     }
 }

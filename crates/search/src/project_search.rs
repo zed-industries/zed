@@ -746,6 +746,7 @@ impl ProjectSearchView {
                             cx.prompt(
                                 PromptLevel::Info,
                                 prompt_text.as_str(),
+                                None,
                                 &["Continue", "Cancel"],
                             )
                         })?;
