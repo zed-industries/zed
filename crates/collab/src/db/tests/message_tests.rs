@@ -96,7 +96,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    // As user A, create messages that re-use the same nonces. The requests
+    // As user A, create messages that reuse the same nonces. The requests
     // succeed, but return the same ids.
     let id1 = db
         .create_channel_message(
