@@ -165,13 +165,6 @@ tree-sitter-uiua = {git = "https://github.com/shnarazk/tree-sitter-uiua", rev = 
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "31c40449749c4263a91a43593831b82229049a4c" }
 # wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", rev = "v16.0.0" }
 
-# TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
-cocoa = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
-cocoa-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
-core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
-core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
-core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
-
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
