@@ -18,7 +18,7 @@ pub struct LuaLspAdapter;
 
 #[async_trait]
 impl super::LspAdapter for LuaLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("lua-language-server".into())
     }
 

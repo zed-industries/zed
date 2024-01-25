@@ -67,7 +67,7 @@ pub struct ElixirLspAdapter;
 
 #[async_trait]
 impl LspAdapter for ElixirLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("elixir-ls".into())
     }
 
@@ -301,7 +301,7 @@ pub struct NextLspAdapter;
 
 #[async_trait]
 impl LspAdapter for NextLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("next-ls".into())
     }
 
@@ -452,7 +452,7 @@ pub struct LocalLspAdapter {
 
 #[async_trait]
 impl LspAdapter for LocalLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("local-ls".into())
     }
 

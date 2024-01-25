@@ -33,7 +33,7 @@ lazy_static! {
 
 #[async_trait]
 impl super::LspAdapter for GoLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("gopls".into())
     }
 

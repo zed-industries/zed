@@ -46,7 +46,7 @@ struct TypeScriptVersions {
 
 #[async_trait]
 impl LspAdapter for TypeScriptLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("typescript-language-server".into())
     }
 
@@ -150,7 +150,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         })
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true,
             "tsserver": {
@@ -159,7 +159,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         }))
     }
 
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([
             ("TypeScript".into(), "typescript".into()),
             ("JavaScript".into(), "javascript".into()),
@@ -227,7 +227,7 @@ impl LspAdapter for EsLintLspAdapter {
         })
     }
 
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("eslint".into())
     }
 
@@ -315,7 +315,7 @@ impl LspAdapter for EsLintLspAdapter {
         None
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         None
     }
 }

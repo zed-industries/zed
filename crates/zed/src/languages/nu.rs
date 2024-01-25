@@ -8,7 +8,7 @@ pub struct NuLanguageServer;
 
 #[async_trait]
 impl LspAdapter for NuLanguageServer {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("nu".into())
     }
 

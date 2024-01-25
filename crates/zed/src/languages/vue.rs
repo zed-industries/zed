@@ -40,7 +40,7 @@ impl VueLspAdapter {
 }
 #[async_trait]
 impl super::LspAdapter for VueLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("vue-language-server".into())
     }
 
@@ -60,7 +60,7 @@ impl super::LspAdapter for VueLspAdapter {
             ts_version: self.node.npm_package_latest_version("typescript").await?,
         }) as Box<_>)
     }
-    async fn initialization_options(&self) -> Option<Value> {
+    fn initialization_options(&self) -> Option<Value> {
         let typescript_sdk_path = self.typescript_install_path.lock();
         let typescript_sdk_path = typescript_sdk_path
             .as_ref()
