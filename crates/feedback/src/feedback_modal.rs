@@ -19,7 +19,7 @@ use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
 use workspace::{ModalView, Toast, Workspace};
 
-use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedCommunityRepo};
+use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
 
 // For UI testing purposes
 const SEND_SUCCESS_IN_DEV_MODE: bool = true;
@@ -417,8 +417,7 @@ impl Render for FeedbackModal {
             "Submit"
         };
 
-        let open_community_repo =
-            cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedCommunityRepo)));
+        let open_zed_repo = cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedRepo)));
 
         v_flex()
             .elevation_3(cx)
@@ -485,12 +484,12 @@ impl Render for FeedbackModal {
                     .justify_between()
                     .gap_1()
                     .child(
-                        Button::new("community_repository", "Community Repository")
+                        Button::new("zed_repository", "Zed Repository")
                             .style(ButtonStyle::Transparent)
                             .icon(IconName::ExternalLink)
                             .icon_position(IconPosition::End)
                             .icon_size(IconSize::Small)
-                            .on_click(open_community_repo),
+                            .on_click(open_zed_repo),
                     )
                     .child(
                         h_flex()

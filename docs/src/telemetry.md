@@ -144,4 +144,4 @@ The telemetry settings can also be configured via the `welcome` screen, which ca
 
 ### Concerns and Questions
 
-If you have concerns about telemetry, please feel free to open issues in our [community repository](https://github.com/zed-industries/zed/issues/new/choose).
+If you have concerns about telemetry, please feel free to open issues in our [Zed repository](https://github.com/zed-industries/zed/issues/new/choose).
