@@ -1,6 +1,6 @@
 name = "Nu"
 path_suffixes = ["nu"]
-line_comment = "# "
+line_comments = ["# "]
 autoclose_before = ";:.,=}])>` \n\t\""
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

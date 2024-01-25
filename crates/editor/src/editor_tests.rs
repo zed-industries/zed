@@ -1942,7 +1942,7 @@ async fn test_newline_comments(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig {
-            line_comment: Some("//".into()),
+            line_comments: Some(vec!["//".into()]),
             ..LanguageConfig::default()
         },
         None,
@@ -5724,7 +5724,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig {
-            line_comment: Some("// ".into()),
+            line_comments: Some(vec!["// ".into()]),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5826,7 +5826,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
 
     let language = Arc::new(Language::new(
         LanguageConfig {
-            line_comment: Some("// ".into()),
+            line_comments: Some(vec!["// ".into()]),
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -5981,7 +5981,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
     let javascript_language = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            line_comment: Some("// ".into()),
+            line_comments: Some(vec!["// ".into()]),
             ..Default::default()
         },
         Some(tree_sitter_typescript::language_tsx()),
