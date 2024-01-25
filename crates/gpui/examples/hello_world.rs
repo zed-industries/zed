@@ -1,9 +1,9 @@
 use gpui::*;
- 
+
 struct HelloWorld {
     text: SharedString,
 }
- 
+
 impl Render for HelloWorld {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
@@ -17,7 +17,7 @@ impl Render for HelloWorld {
             .child(format!("Hello, {}!", &self.text))
     }
 }
- 
+
 fn main() {
     App::new().run(|cx: &mut AppContext| {
         cx.open_window(WindowOptions::default(), |cx| {
