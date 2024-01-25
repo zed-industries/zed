@@ -13,11 +13,11 @@ use gpui::{
 };
 use language::Capability;
 use rpc::{
-    proto::{self, ChannelVisibility},
+    proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
 use std::{mem, sync::Arc, time::Duration};
-use util::{async_maybe, ResultExt};
+use util::{async_maybe, maybe, ResultExt};
 
 pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let channel_store =
@@ -58,7 +58,6 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: SharedString,
     pub visibility: proto::ChannelVisibility,
-    pub role: proto::ChannelRole,
     pub parent_path: Vec<u64>,
 }
 
@@ -68,6 +67,7 @@ pub struct ChannelState {
     latest_notes_versions: Option<NotesVersion>,
     observed_chat_message: Option<u64>,
     observed_notes_versions: Option<NotesVersion>,
+    role: Option<ChannelRole>,
 }
 
 impl Channel {
@@ -90,11 +90,12 @@ impl Channel {
     }
 
     pub fn channel_buffer_capability(&self) -> Capability {
-        if self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin {
-            Capability::ReadWrite
-        } else {
-            Capability::ReadOnly
-        }
+        todo!() // go ask the channel store
+                // if self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin {
+                //     Capability::ReadWrite
+                // } else {
+                //     Capability::ReadOnly
+                // }
     }
 }
 
@@ -114,8 +115,7 @@ impl ChannelMembership {
             },
             kind_order: match self.kind {
                 proto::channel_member::Kind::Member => 0,
-                proto::channel_member::Kind::AncestorMember => 1,
-                proto::channel_member::Kind::Invitee => 2,
+                proto::channel_member::Kind::Invitee => 1,
             },
             username_order: self.user.github_login.as_str(),
         }
@@ -479,10 +479,25 @@ impl ChannelStore {
     }
 
     pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
-        let Some(channel) = self.channel_for_id(channel_id) else {
-            return false;
-        };
-        channel.role == proto::ChannelRole::Admin
+        self.channel_role(channel_id) == proto::ChannelRole::Admin
+    }
+
+    pub fn channel_capability(&self, channel_id: ChannelId) -> Capability {
+        match self.channel_role(channel_id) {
+            ChannelRole::Admin | ChannelRole::Member => Capability::ReadWrite,
+            _ => Capability::ReadOnly,
+        }
+    }
+
+    pub fn channel_role(&self, channel_id: ChannelId) -> proto::ChannelRole {
+        maybe!({
+            let channel = self.channel_for_id(channel_id)?;
+            let root_channel_id = channel.parent_path.first()?;
+            let root_channel_state = self.channel_states.get(&root_channel_id);
+            debug_assert!(root_channel_state.is_some());
+            root_channel_state?.role
+        })
+        .unwrap_or(proto::ChannelRole::Guest)
     }
 
     pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
@@ -533,7 +548,7 @@ impl ChannelStore {
     pub fn move_channel(
         &mut self,
         channel_id: ChannelId,
-        to: Option<ChannelId>,
+        to: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
@@ -791,6 +806,14 @@ impl ChannelStore {
             for message_id in message.payload.observed_channel_message_id {
                 this.acknowledge_message_id(message_id.channel_id, message_id.message_id, cx);
             }
+            for membership in message.payload.channel_memberships {
+                if let Some(role) = ChannelRole::from_i32(membership.role) {
+                    this.channel_states
+                        .entry(membership.channel_id)
+                        .or_insert_with(|| ChannelState::default())
+                        .set_role(role)
+                }
+            }
         })
     }
 
@@ -956,7 +979,6 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         visibility: channel.visibility(),
-                        role: channel.role(),
                         name: channel.name.into(),
                         parent_path: channel.parent_path,
                     }),
@@ -1071,6 +1093,10 @@ impl ChannelStore {
 }
 
 impl ChannelState {
+    fn set_role(&mut self, role: ChannelRole) {
+        self.role = Some(role);
+    }
+
     fn has_channel_buffer_changed(&self) -> bool {
         if let Some(latest_version) = &self.latest_notes_versions {
             if let Some(observed_version) = &self.observed_notes_versions {

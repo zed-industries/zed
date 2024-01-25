@@ -212,6 +212,7 @@ enum ErrorCode {
     Forbidden = 5;
     WrongReleaseChannel = 6;
     NeedsCla = 7;
+    NotARootChannel = 8;
 }
 
 message Test {
@@ -1001,6 +1002,12 @@ message UpdateChannels {
 message UpdateUserChannels {
     repeated ChannelMessageId observed_channel_message_id = 1;
     repeated ChannelBufferVersion observed_channel_buffer_version = 2;
+    repeated ChannelMembership channel_memberships = 3;
+}
+
+message ChannelMembership {
+    uint64 channel_id = 1;
+    ChannelRole role = 2;
 }
 
 message ChannelMessageId {
@@ -1042,7 +1049,6 @@ message ChannelMember {
     enum Kind {
         Member = 0;
         Invitee = 1;
-        AncestorMember = 2;
     }
 }
 
@@ -1149,7 +1155,7 @@ message GetChannelMessagesById {
 
 message MoveChannel {
     uint64 channel_id = 1;
-    optional uint64 to = 2;
+    uint64 to = 2;
 }
 
 message JoinChannelBuffer {
@@ -1587,7 +1593,6 @@ message Channel {
     uint64 id = 1;
     string name = 2;
     ChannelVisibility visibility = 3;
-    ChannelRole role = 4;
     repeated uint64 parent_path = 5;
 }
 

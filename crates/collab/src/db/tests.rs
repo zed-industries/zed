@@ -150,14 +150,13 @@ impl Drop for TestDb {
     }
 }
 
-fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str, ChannelRole)]) -> Vec<Channel> {
+fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str)]) -> Vec<Channel> {
     channels
         .iter()
-        .map(|(id, parent_path, name, role)| Channel {
+        .map(|(id, parent_path, name)| Channel {
             id: *id,
             name: name.to_string(),
             visibility: ChannelVisibility::Members,
-            role: *role,
             parent_path: parent_path.to_vec(),
         })
         .collect()

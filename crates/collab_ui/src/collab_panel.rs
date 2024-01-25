@@ -1548,7 +1548,7 @@ impl CollabPanel {
         if let Some(clipboard) = self.channel_clipboard.take() {
             self.channel_store
                 .update(cx, |channel_store, cx| {
-                    channel_store.move_channel(clipboard.channel_id, Some(to_channel_id), cx)
+                    channel_store.move_channel(clipboard.channel_id, to_channel_id, cx)
                 })
                 .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
         }
@@ -1980,32 +1980,19 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        h_flex()
-            .w_full()
-            .group("section-header")
-            .child(
-                ListHeader::new(text)
-                    .when(can_collapse, |header| {
-                        header.toggle(Some(!is_collapsed)).on_toggle(cx.listener(
-                            move |this, _, cx| {
-                                this.toggle_section_expanded(section, cx);
-                            },
-                        ))
-                    })
-                    .inset(true)
-                    .end_slot::<AnyElement>(button)
-                    .selected(is_selected),
-            )
-            .when(section == Section::Channels, |el| {
-                el.drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                    .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
-                        this.channel_store
-                            .update(cx, |channel_store, cx| {
-                                channel_store.move_channel(dragged_channel.id, None, cx)
-                            })
-                            .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
-                    }))
-            })
+        h_flex().w_full().group("section-header").child(
+            ListHeader::new(text)
+                .when(can_collapse, |header| {
+                    header
+                        .toggle(Some(!is_collapsed))
+                        .on_toggle(cx.listener(move |this, _, cx| {
+                            this.toggle_section_expanded(section, cx);
+                        }))
+                })
+                .inset(true)
+                .end_slot::<AnyElement>(button)
+                .selected(is_selected),
+        )
     }
 
     fn render_contact(
@@ -2276,7 +2263,7 @@ impl CollabPanel {
             .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
                 this.channel_store
                     .update(cx, |channel_store, cx| {
-                        channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
+                        channel_store.move_channel(dragged_channel.id, channel_id, cx)
                     })
                     .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
             }))

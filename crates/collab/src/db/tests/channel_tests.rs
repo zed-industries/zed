@@ -62,23 +62,13 @@ async fn test_channels(db: &Arc<Database>) {
     assert_eq!(
         result.channels,
         channel_tree(&[
-            (zed_id, &[], "zed", ChannelRole::Admin),
-            (crdb_id, &[zed_id], "crdb", ChannelRole::Admin),
-            (
-                livestreaming_id,
-                &[zed_id],
-                "livestreaming",
-                ChannelRole::Admin
-            ),
-            (replace_id, &[zed_id], "replace", ChannelRole::Admin),
-            (rust_id, &[], "rust", ChannelRole::Admin),
-            (cargo_id, &[rust_id], "cargo", ChannelRole::Admin),
-            (
-                cargo_ra_id,
-                &[rust_id, cargo_id],
-                "cargo-ra",
-                ChannelRole::Admin
-            )
+            (zed_id, &[], "zed"),
+            (crdb_id, &[zed_id], "crdb"),
+            (livestreaming_id, &[zed_id], "livestreaming",),
+            (replace_id, &[zed_id], "replace"),
+            (rust_id, &[], "rust"),
+            (cargo_id, &[rust_id], "cargo"),
+            (cargo_ra_id, &[rust_id, cargo_id], "cargo-ra",)
         ],)
     );
 
@@ -86,15 +76,10 @@ async fn test_channels(db: &Arc<Database>) {
     assert_eq!(
         result.channels,
         channel_tree(&[
-            (zed_id, &[], "zed", ChannelRole::Member),
-            (crdb_id, &[zed_id], "crdb", ChannelRole::Member),
-            (
-                livestreaming_id,
-                &[zed_id],
-                "livestreaming",
-                ChannelRole::Member
-            ),
-            (replace_id, &[zed_id], "replace", ChannelRole::Member)
+            (zed_id, &[], "zed"),
+            (crdb_id, &[zed_id], "crdb"),
+            (livestreaming_id, &[zed_id], "livestreaming",),
+            (replace_id, &[zed_id], "replace")
         ],)
     );
 
@@ -112,15 +97,10 @@ async fn test_channels(db: &Arc<Database>) {
     assert_eq!(
         result.channels,
         channel_tree(&[
-            (zed_id, &[], "zed", ChannelRole::Admin),
-            (crdb_id, &[zed_id], "crdb", ChannelRole::Admin),
-            (
-                livestreaming_id,
-                &[zed_id],
-                "livestreaming",
-                ChannelRole::Admin
-            ),
-            (replace_id, &[zed_id], "replace", ChannelRole::Admin)
+            (zed_id, &[], "zed"),
+            (crdb_id, &[zed_id], "crdb"),
+            (livestreaming_id, &[zed_id], "livestreaming",),
+            (replace_id, &[zed_id], "replace")
         ],)
     );
 
@@ -271,13 +251,18 @@ async fn test_channel_invites(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: user_1.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
                 user_id: user_2.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Member.into(),
+            },
+            proto::ChannelMember {
+                user_id: user_3.to_proto(),
+                kind: proto::channel_member::Kind::Invitee.into(),
+                role: proto::ChannelRole::Admin.into(),
             },
         ]
     );
@@ -420,13 +405,6 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    // Move to same parent should be a no-op
-    assert!(db
-        .move_channel(projects_id, Some(zed_id), user_id)
-        .await
-        .unwrap()
-        .is_none());
-
     let result = db.get_channels_for_user(user_id).await.unwrap();
     assert_channel_tree(
         result.channels,
@@ -437,20 +415,8 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
         ],
     );
 
-    // Move the project channel to the root
-    db.move_channel(projects_id, None, user_id).await.unwrap();
-    let result = db.get_channels_for_user(user_id).await.unwrap();
-    assert_channel_tree(
-        result.channels,
-        &[
-            (zed_id, &[]),
-            (projects_id, &[]),
-            (livestreaming_id, &[projects_id]),
-        ],
-    );
-
     // Can't move a channel into its ancestor
-    db.move_channel(projects_id, Some(livestreaming_id), user_id)
+    db.move_channel(projects_id, livestreaming_id, user_id)
         .await
         .unwrap_err();
     let result = db.get_channels_for_user(user_id).await.unwrap();
@@ -458,8 +424,8 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
         result.channels,
         &[
             (zed_id, &[]),
-            (projects_id, &[]),
-            (livestreaming_id, &[projects_id]),
+            (projects_id, &[zed_id]),
+            (livestreaming_id, &[zed_id, projects_id]),
         ],
     );
 }
@@ -476,32 +442,39 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     let guest = new_test_user(db, "guest@example.com").await;
 
     let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
-    let active_channel_id = db
+    let internal_channel_id = db
         .create_sub_channel("active", zed_channel, admin)
         .await
         .unwrap();
-    let vim_channel_id = db
-        .create_sub_channel("vim", active_channel_id, admin)
+    let public_channel_id = db
+        .create_sub_channel("vim", zed_channel, admin)
         .await
         .unwrap();
 
-    db.set_channel_visibility(vim_channel_id, crate::db::ChannelVisibility::Public, admin)
+    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
         .await
         .unwrap();
-    db.invite_channel_member(active_channel_id, member, admin, ChannelRole::Member)
+    db.set_channel_visibility(
+        public_channel_id,
+        crate::db::ChannelVisibility::Public,
+        admin,
+    )
+    .await
+    .unwrap();
+    db.invite_channel_member(zed_channel, member, admin, ChannelRole::Member)
         .await
         .unwrap();
-    db.invite_channel_member(vim_channel_id, guest, admin, ChannelRole::Guest)
+    db.invite_channel_member(zed_channel, guest, admin, ChannelRole::Guest)
         .await
         .unwrap();
 
-    db.respond_to_channel_invite(active_channel_id, member, true)
+    db.respond_to_channel_invite(zed_channel, member, true)
         .await
         .unwrap();
 
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(vim_channel_id, &*tx).await?,
+            &db.get_channel_internal(public_channel_id, &*tx).await?,
             admin,
             &*tx,
         )
@@ -511,7 +484,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .unwrap();
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(vim_channel_id, &*tx).await?,
+            &db.get_channel_internal(public_channel_id, &*tx).await?,
             member,
             &*tx,
         )
@@ -521,7 +494,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .unwrap();
 
     let mut members = db
-        .get_channel_participant_details(vim_channel_id, admin)
+        .get_channel_participant_details(public_channel_id, admin)
         .await
         .unwrap();
 
@@ -532,12 +505,12 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
                 user_id: member.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Member.into(),
             },
             proto::ChannelMember {
@@ -548,13 +521,13 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         ]
     );
 
-    db.respond_to_channel_invite(vim_channel_id, guest, true)
+    db.respond_to_channel_invite(zed_channel, guest, true)
         .await
         .unwrap();
 
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(vim_channel_id, &*tx).await?,
+            &db.get_channel_internal(public_channel_id, &*tx).await?,
             guest,
             &*tx,
         )
@@ -564,23 +537,29 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .unwrap();
 
     let channels = db.get_channels_for_user(guest).await.unwrap().channels;
-    assert_channel_tree(channels, &[(vim_channel_id, &[])]);
+    assert_channel_tree(
+        channels,
+        &[(zed_channel, &[]), (public_channel_id, &[zed_channel])],
+    );
     let channels = db.get_channels_for_user(member).await.unwrap().channels;
     assert_channel_tree(
         channels,
         &[
-            (active_channel_id, &[]),
-            (vim_channel_id, &[active_channel_id]),
+            (zed_channel, &[]),
+            (internal_channel_id, &[zed_channel]),
+            (public_channel_id, &[zed_channel]),
         ],
     );
 
-    db.set_channel_member_role(vim_channel_id, admin, guest, ChannelRole::Banned)
+    db.set_channel_member_role(zed_channel, admin, guest, ChannelRole::Banned)
         .await
         .unwrap();
     assert!(db
         .transaction(|tx| async move {
             db.check_user_is_channel_participant(
-                &db.get_channel_internal(vim_channel_id, &*tx).await.unwrap(),
+                &db.get_channel_internal(public_channel_id, &*tx)
+                    .await
+                    .unwrap(),
                 guest,
                 &*tx,
             )
@@ -590,7 +569,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .is_err());
 
     let mut members = db
-        .get_channel_participant_details(vim_channel_id, admin)
+        .get_channel_participant_details(public_channel_id, admin)
         .await
         .unwrap();
 
@@ -601,12 +580,12 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
                 user_id: member.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Member.into(),
             },
             proto::ChannelMember {
@@ -617,11 +596,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         ]
     );
 
-    db.remove_channel_member(vim_channel_id, guest, admin)
-        .await
-        .unwrap();
-
-    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
+    db.remove_channel_member(zed_channel, guest, admin)
         .await
         .unwrap();
 
@@ -631,7 +606,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     // currently people invited to parent channels are not shown here
     let mut members = db
-        .get_channel_participant_details(vim_channel_id, admin)
+        .get_channel_participant_details(public_channel_id, admin)
         .await
         .unwrap();
 
@@ -642,13 +617,18 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
                 user_id: member.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Member.into(),
+            },
+            proto::ChannelMember {
+                user_id: guest.to_proto(),
+                kind: proto::channel_member::Kind::Invitee.into(),
+                role: proto::ChannelRole::Guest.into(),
             },
         ]
     );
@@ -670,7 +650,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     assert!(db
         .transaction(|tx| async move {
             db.check_user_is_channel_participant(
-                &db.get_channel_internal(active_channel_id, &*tx)
+                &db.get_channel_internal(internal_channel_id, &*tx)
                     .await
                     .unwrap(),
                 guest,
@@ -683,7 +663,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     db.transaction(|tx| async move {
         db.check_user_is_channel_participant(
-            &db.get_channel_internal(vim_channel_id, &*tx).await.unwrap(),
+            &db.get_channel_internal(public_channel_id, &*tx)
+                .await
+                .unwrap(),
             guest,
             &*tx,
         )
@@ -693,7 +675,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .unwrap();
 
     let mut members = db
-        .get_channel_participant_details(vim_channel_id, admin)
+        .get_channel_participant_details(public_channel_id, admin)
         .await
         .unwrap();
 
@@ -704,17 +686,17 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
                 user_id: member.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Member.into(),
             },
             proto::ChannelMember {
                 user_id: guest.to_proto(),
-                kind: proto::channel_member::Kind::AncestorMember.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Guest.into(),
             },
         ]
@@ -723,65 +705,8 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     let channels = db.get_channels_for_user(guest).await.unwrap().channels;
     assert_channel_tree(
         channels,
-        &[(zed_channel, &[]), (vim_channel_id, &[zed_channel])],
+        &[(zed_channel, &[]), (public_channel_id, &[zed_channel])],
     )
-}
-
-test_both_dbs!(
-    test_user_joins_correct_channel,
-    test_user_joins_correct_channel_postgres,
-    test_user_joins_correct_channel_sqlite
-);
-
-async fn test_user_joins_correct_channel(db: &Arc<Database>) {
-    let admin = new_test_user(db, "admin@example.com").await;
-
-    let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
-
-    let active_channel = db
-        .create_sub_channel("active", zed_channel, admin)
-        .await
-        .unwrap();
-
-    let vim_channel = db
-        .create_sub_channel("vim", active_channel, admin)
-        .await
-        .unwrap();
-
-    let vim2_channel = db
-        .create_sub_channel("vim2", vim_channel, admin)
-        .await
-        .unwrap();
-
-    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
-        .await
-        .unwrap();
-
-    db.set_channel_visibility(vim_channel, crate::db::ChannelVisibility::Public, admin)
-        .await
-        .unwrap();
-
-    db.set_channel_visibility(vim2_channel, crate::db::ChannelVisibility::Public, admin)
-        .await
-        .unwrap();
-
-    let most_public = db
-        .transaction(|tx| async move {
-            Ok(db
-                .public_ancestors_including_self(
-                    &db.get_channel_internal(vim_channel, &*tx).await.unwrap(),
-                    &tx,
-                )
-                .await?
-                .first()
-                .cloned())
-        })
-        .await
-        .unwrap()
-        .unwrap()
-        .id;
-
-    assert_eq!(most_public, zed_channel)
 }
 
 test_both_dbs!(

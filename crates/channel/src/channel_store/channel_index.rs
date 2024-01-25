@@ -54,19 +54,18 @@ impl<'a> ChannelPathsInsertGuard<'a> {
             let existing_channel = Arc::make_mut(existing_channel);
 
             ret = existing_channel.visibility != channel_proto.visibility()
-                || existing_channel.role != channel_proto.role()
-                || existing_channel.name != channel_proto.name;
+                || existing_channel.name != channel_proto.name
+                || existing_channel.parent_path != channel_proto.parent_path;
 
             existing_channel.visibility = channel_proto.visibility();
-            existing_channel.role = channel_proto.role();
             existing_channel.name = channel_proto.name.into();
+            existing_channel.parent_path = channel_proto.parent_path.into();
         } else {
             self.channels_by_id.insert(
                 channel_proto.id,
                 Arc::new(Channel {
                     id: channel_proto.id,
                     visibility: channel_proto.visibility(),
-                    role: channel_proto.role(),
                     name: channel_proto.name.into(),
                     parent_path: channel_proto.parent_path,
                 }),
