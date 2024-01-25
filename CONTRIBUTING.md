@@ -37,6 +37,7 @@ We plan to set aside time each week to pair program with contributors on promisi
 - Add test coverage and documentation
 - Choose tasks that align with our roadmap
 - Pair with us and watch us code to learn the codebase
+- Low effort PRs, such as those that just re-arrange syntax, won't be merged without a compelling justification
 
 ## Bird-eye's view of Zed
 
