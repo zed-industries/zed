@@ -19,10 +19,7 @@ impl Database {
 
     #[cfg(test)]
     pub async fn create_root_channel(&self, name: &str, creator_id: UserId) -> Result<ChannelId> {
-        Ok(self
-            .create_channel(name, None, creator_id)
-            .await?
-            .id)
+        Ok(self.create_channel(name, None, creator_id).await?.id)
     }
 
     #[cfg(test)]

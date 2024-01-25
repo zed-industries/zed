@@ -18,13 +18,9 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
     let channel = db.create_channel("channel", None, user).await.unwrap();
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
-    db.join_channel_chat(
-        channel.id,
-        rpc::ConnectionId { owner_id, id: 0 },
-        user,
-    )
-    .await
-    .unwrap();
+    db.join_channel_chat(channel.id, rpc::ConnectionId { owner_id, id: 0 }, user)
+        .await
+        .unwrap();
 
     let mut all_messages = Vec::new();
     for i in 0..10 {
@@ -366,11 +362,7 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
     let user_b = new_test_user(db, "user_b@example.com").await;
     let user_c = new_test_user(db, "user_c@example.com").await;
 
-    let channel = db
-        .create_channel("channel", None, user_a)
-        .await
-        .unwrap()
-        .id;
+    let channel = db.create_channel("channel", None, user_a).await.unwrap().id;
     db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
         .await
         .unwrap();

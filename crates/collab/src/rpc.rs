@@ -3,11 +3,10 @@ mod connection_pool;
 use crate::{
     auth::{self, Impersonator},
     db::{
-        self, BufferId, ChannelId, ChannelRole, ChannelsForUser,
-        CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, ProjectId, RemoveChannelMemberResult,
-        RenameChannelResult, RespondToChannelInvite, RoomId, ServerId, SetChannelVisibilityResult,
-        User, UserId,
+        self, BufferId, ChannelId, ChannelRole, ChannelsForUser, CreatedChannelMessage, Database,
+        InviteMemberResult, MembershipUpdated, MessageId, NotificationId, ProjectId,
+        RemoveChannelMemberResult, RenameChannelResult, RespondToChannelInvite, RoomId, ServerId,
+        SetChannelVisibilityResult, User, UserId,
     },
     executor::Executor,
     AppState, Error, Result,
@@ -2570,53 +2569,57 @@ async fn move_channel(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let to = request.to.map(ChannelId::from_proto);
 
-    let result = session.db().await.move_channel(channel_id, to, session.user_id).await?;
+    let result = session
+        .db()
+        .await
+        .move_channel(channel_id, to, session.user_id)
+        .await?;
 
     if let Some(result) = result {
-                let participants_to_update: HashMap<_, _> = session.db().await
-                    .new_participants_to_notify(
-                        to.unwrap_or(channel_id)
-                    )
-                    .await?
-                    .into_iter()
-                    .collect();
+        let participants_to_update: HashMap<_, _> = session
+            .db()
+            .await
+            .new_participants_to_notify(to.unwrap_or(channel_id))
+            .await?
+            .into_iter()
+            .collect();
 
-                let mut moved_channels: HashSet<ChannelId> = HashSet::default();
-                for id in result.descendent_ids {
-                    moved_channels.insert(id);
-                }
-                moved_channels.insert(channel_id);
-
-                let mut participants_to_remove: HashSet<UserId> = HashSet::default();
-                for participant in result.previous_participants {
-                    if participant.kind == proto::channel_member::Kind::AncestorMember {
-                        if !participants_to_update.contains_key(&participant.user_id) {
-                            participants_to_remove.insert(participant.user_id);
-                        }
-                    }
-                }
-
-                let moved_channels: Vec<u64> = moved_channels.iter().map(|id| id.to_proto()).collect();
-
-                let connection_pool = session.connection_pool().await;
-                for (user_id, channels) in participants_to_update {
-                    let mut update = build_channels_update(channels, vec![]);
-                    update.delete_channels = moved_channels.clone();
-                    for connection_id in connection_pool.user_connection_ids(user_id) {
-                        session.peer.send(connection_id, update.clone())?;
-                    }
-                }
-
-                for user_id in participants_to_remove {
-                    let update = proto::UpdateChannels {
-                        delete_channels: moved_channels.clone(),
-                        ..Default::default()
-                    };
-                    for connection_id in connection_pool.user_connection_ids(user_id) {
-                        session.peer.send(connection_id, update.clone())?;
-                    }
-                }
+        let mut moved_channels: HashSet<ChannelId> = HashSet::default();
+        for id in result.descendent_ids {
+            moved_channels.insert(id);
         }
+        moved_channels.insert(channel_id);
+
+        let mut participants_to_remove: HashSet<UserId> = HashSet::default();
+        for participant in result.previous_participants {
+            if participant.kind == proto::channel_member::Kind::AncestorMember {
+                if !participants_to_update.contains_key(&participant.user_id) {
+                    participants_to_remove.insert(participant.user_id);
+                }
+            }
+        }
+
+        let moved_channels: Vec<u64> = moved_channels.iter().map(|id| id.to_proto()).collect();
+
+        let connection_pool = session.connection_pool().await;
+        for (user_id, channels) in participants_to_update {
+            let mut update = build_channels_update(channels, vec![]);
+            update.delete_channels = moved_channels.clone();
+            for connection_id in connection_pool.user_connection_ids(user_id) {
+                session.peer.send(connection_id, update.clone())?;
+            }
+        }
+
+        for user_id in participants_to_remove {
+            let update = proto::UpdateChannels {
+                delete_channels: moved_channels.clone(),
+                ..Default::default()
+            };
+            for connection_id in connection_pool.user_connection_ids(user_id) {
+                session.peer.send(connection_id, update.clone())?;
+            }
+        }
+    }
 
     response.send(Ack {})?;
     Ok(())
