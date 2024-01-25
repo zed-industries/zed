@@ -534,67 +534,77 @@ impl Platform for MacPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        unsafe {
-            let panel = NSOpenPanel::openPanel(nil);
-            panel.setCanChooseDirectories_(options.directories.to_objc());
-            panel.setCanChooseFiles_(options.files.to_objc());
-            panel.setAllowsMultipleSelection_(options.multiple.to_objc());
-            panel.setResolvesAliases_(false.to_objc());
-            let (done_tx, done_rx) = oneshot::channel();
-            let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                let result = if response == NSModalResponse::NSModalResponseOk {
-                    let mut result = Vec::new();
-                    let urls = panel.URLs();
-                    for i in 0..urls.count() {
-                        let url = urls.objectAtIndex(i);
-                        if url.isFileURL() == YES {
-                            if let Ok(path) = ns_url_to_path(url) {
-                                result.push(path)
+        let (done_tx, done_rx) = oneshot::channel();
+        self.foreground_executor()
+            .spawn(async move {
+                unsafe {
+                    let panel = NSOpenPanel::openPanel(nil);
+                    panel.setCanChooseDirectories_(options.directories.to_objc());
+                    panel.setCanChooseFiles_(options.files.to_objc());
+                    panel.setAllowsMultipleSelection_(options.multiple.to_objc());
+                    panel.setResolvesAliases_(false.to_objc());
+                    let done_tx = Cell::new(Some(done_tx));
+                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
+                        let result = if response == NSModalResponse::NSModalResponseOk {
+                            let mut result = Vec::new();
+                            let urls = panel.URLs();
+                            for i in 0..urls.count() {
+                                let url = urls.objectAtIndex(i);
+                                if url.isFileURL() == YES {
+                                    if let Ok(path) = ns_url_to_path(url) {
+                                        result.push(path)
+                                    }
+                                }
                             }
-                        }
-                    }
-                    Some(result)
-                } else {
-                    None
-                };
+                            Some(result)
+                        } else {
+                            None
+                        };
 
-                if let Some(done_tx) = done_tx.take() {
-                    let _ = done_tx.send(result);
+                        if let Some(done_tx) = done_tx.take() {
+                            let _ = done_tx.send(result);
+                        }
+                    });
+                    let block = block.copy();
+                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
                 }
-            });
-            let block = block.copy();
-            let _: () = msg_send![panel, beginWithCompletionHandler: block];
-            done_rx
-        }
+            })
+            .detach();
+        done_rx
     }
 
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
-        unsafe {
-            let panel = NSSavePanel::savePanel(nil);
-            let path = ns_string(directory.to_string_lossy().as_ref());
-            let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
-            panel.setDirectoryURL(url);
+        let directory = directory.to_owned();
+        let (done_tx, done_rx) = oneshot::channel();
+        self.foreground_executor()
+            .spawn(async move {
+                unsafe {
+                    let panel = NSSavePanel::savePanel(nil);
+                    let path = ns_string(directory.to_string_lossy().as_ref());
+                    let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
+                    panel.setDirectoryURL(url);
 
-            let (done_tx, done_rx) = oneshot::channel();
-            let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                let mut result = None;
-                if response == NSModalResponse::NSModalResponseOk {
-                    let url = panel.URL();
-                    if url.isFileURL() == YES {
-                        result = ns_url_to_path(panel.URL()).ok()
-                    }
-                }
+                    let done_tx = Cell::new(Some(done_tx));
+                    let block = ConcreteBlock::new(move |response: NSModalResponse| {
+                        let mut result = None;
+                        if response == NSModalResponse::NSModalResponseOk {
+                            let url = panel.URL();
+                            if url.isFileURL() == YES {
+                                result = ns_url_to_path(panel.URL()).ok()
+                            }
+                        }
 
-                if let Some(done_tx) = done_tx.take() {
-                    let _ = done_tx.send(result);
+                        if let Some(done_tx) = done_tx.take() {
+                            let _ = done_tx.send(result);
+                        }
+                    });
+                    let block = block.copy();
+                    let _: () = msg_send![panel, beginWithCompletionHandler: block];
                 }
-            });
-            let block = block.copy();
-            let _: () = msg_send![panel, beginWithCompletionHandler: block];
-            done_rx
-        }
+            })
+            .detach();
+
+        done_rx
     }
 
     fn reveal_path(&self, path: &Path) {
