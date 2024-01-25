@@ -12,6 +12,7 @@ use self::elixir::ElixirSettings;
 mod c;
 mod css;
 mod elixir;
+mod gleam;
 mod go;
 mod html;
 mod json;
@@ -99,6 +100,7 @@ pub fn init(
         ),
     }
 
+    language("gleam", tree_sitter_gleam::language(), vec![]);
     language(
         "go",
         tree_sitter_go::language(),
