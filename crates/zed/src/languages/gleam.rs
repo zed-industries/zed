@@ -12,7 +12,7 @@ use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
 use util::github::{latest_github_release, GitHubLspBinaryVersion};
-use util::ResultExt;
+use util::{async_maybe, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["lsp".into()]
@@ -101,7 +101,7 @@ impl LspAdapter for GleamLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -112,7 +112,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
             arguments: server_binary_arguments(),
         })
-    })()
+    })
     .await
     .log_err()
 }
