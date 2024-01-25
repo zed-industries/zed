@@ -2815,6 +2815,15 @@ impl Project {
             return;
         }
 
+        if let Some(required_project_files) = &adapter.required_project_files {
+            if !required_project_files
+                .iter()
+                .any(|required_path| worktree.entry_for_path(required_path).is_some())
+            {
+                return;
+            }
+        }
+
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),

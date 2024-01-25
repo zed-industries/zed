@@ -133,6 +133,8 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
+    pub required_project_files: Option<Vec<PathBuf>>,
+    pub replaces_language_server: Option<LanguageServerName>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
 }
@@ -144,6 +146,8 @@ impl CachedLspAdapter {
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
         let language_ids = adapter.language_ids();
+        let required_project_files = adapter.required_project_files();
+        let replaces_language_server = adapter.replaces_language_server();
 
         Arc::new(CachedLspAdapter {
             name,
@@ -151,6 +155,8 @@ impl CachedLspAdapter {
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
+            required_project_files,
+            replaces_language_server,
             adapter,
             reinstall_attempt_count: AtomicU64::new(0),
         })
@@ -369,6 +375,14 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn prettier_plugins(&self) -> &[&'static str] {
         &[]
+    }
+
+    fn required_project_files(&self) -> Option<Vec<PathBuf>> {
+        None
+    }
+
+    fn replaces_language_server(&self) -> Option<LanguageServerName> {
+        None
     }
 }
 
