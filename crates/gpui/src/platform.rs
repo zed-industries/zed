@@ -150,7 +150,13 @@ pub(crate) trait PlatformWindow {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
-    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
+    fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
