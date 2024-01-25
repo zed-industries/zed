@@ -567,7 +567,7 @@ impl EditorElement {
                         cx,
                     );
                     hover_at(editor, Some(point), cx);
-                    Self::update_visible_cursor(editor, point, cx);
+                    Self::update_visible_cursor(editor, point, position_map, cx);
                 }
                 None => {
                     update_inlay_link_and_hover_points(
@@ -592,9 +592,10 @@ impl EditorElement {
     fn update_visible_cursor(
         editor: &mut Editor,
         point: DisplayPoint,
+        position_map: &PositionMap,
         cx: &mut ViewContext<Editor>,
     ) {
-        let snapshot = editor.snapshot(cx);
+        let snapshot = &position_map.snapshot;
         let Some(hub) = editor.collaboration_hub() else {
             return;
         };
