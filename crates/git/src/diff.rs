@@ -187,25 +187,20 @@ impl BufferDiff {
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
-        let mut options = GitOptions::default();
-        options.context_lines(0);
-
-        let patch = GitPatch::from_buffers(
+        GitPatch::from_buffers(
             head.as_bytes(),
             None,
             current.as_bytes(),
             None,
-            Some(&mut options),
-        );
-
-        match patch {
-            Ok(patch) => Some(patch),
-
-            Err(err) => {
+            Some(&mut GitOptions::default().context_lines(0)),
+        )
+        .map_or_else(
+            |err| {
                 log::error!("`GitPatch::from_buffers` failed: {}", err);
                 None
-            }
-        }
+            },
+            Some,
+        )
     }
 
     fn process_patch_hunk<'a>(
