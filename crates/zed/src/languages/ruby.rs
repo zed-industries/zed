@@ -8,7 +8,7 @@ pub struct RubyLanguageServer;
 
 #[async_trait]
 impl LspAdapter for RubyLanguageServer {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("solargraph".into())
     }
 

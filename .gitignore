@@ -25,3 +25,5 @@ DerivedData/
 .netrc
 .swiftpm
 **/*.db
+.pytest_cache
+.venv

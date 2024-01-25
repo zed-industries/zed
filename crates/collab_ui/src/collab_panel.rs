@@ -2240,6 +2240,7 @@ impl CollabPanel {
         let width = self.width.unwrap_or(px(240.));
 
         div()
+            .h_6()
             .id(channel_id as usize)
             .group("")
             .flex()

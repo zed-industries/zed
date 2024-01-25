@@ -1,5 +1,13 @@
 # Building Zed
 
+## Repository
+
+After cloning the repository, ensure all git submodules are initialized:
+
+```shell
+git submodule update --init --recursive
+```
+
 ## Dependencies
 
 - Install [Rust](https://www.rust-lang.org/tools/install)
@@ -70,4 +78,4 @@ Try `xcode-select --switch /Applications/Xcode.app/Contents/Developer`
 
 ### Cargo errors claiming that a dependency is using unstable features
 
-Try `cargo clean` and `cargo build`,
+Try `cargo clean` and `cargo build`.

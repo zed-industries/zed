@@ -179,27 +179,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                let was_deserialized = project_panel.read(cx).was_deserialized();
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
-
-                if !was_deserialized
-                    && workspace
-                        .project()
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .any(|tree| {
-                            tree.read(cx)
-                                .root_entry()
-                                .map_or(false, |entry| entry.is_dir())
-                        })
-                {
-                    workspace.open_panel::<ProjectPanel>(cx);
-                }
                 cx.focus_self();
             })
         })
@@ -752,7 +737,7 @@ fn open_settings_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{scroll::Autoscroll, DisplayPoint, Editor, EditorEvent};
+    use editor::{scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
         VisualTestContext, WindowHandle,
@@ -1528,10 +1513,10 @@ mod tests {
             .as_fake()
             .insert_file("/root/a.txt", "changed".to_string())
             .await;
-        editor
-            .condition::<EditorEvent>(cx, |editor, cx| editor.has_conflict(cx))
-            .await;
+
+        cx.run_until_parked();
         cx.read(|cx| assert!(editor.is_dirty(cx)));
+        cx.read(|cx| assert!(editor.has_conflict(cx)));
 
         let save_task = window
             .update(cx, |workspace, cx| {

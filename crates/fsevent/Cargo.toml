@@ -16,7 +16,7 @@ fsevent-sys = "3.0.2"
 parking_lot.workspace = true
 
 [dev-dependencies]
-tempdir.workspace = true
+tempfile.workspace = true
 
 [package.metadata.docs.rs]
 targets = ["x86_64-apple-darwin"]

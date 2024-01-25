@@ -32,7 +32,7 @@ impl SvelteLspAdapter {
 
 #[async_trait]
 impl LspAdapter for SvelteLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("svelte-language-server".into())
     }
 
@@ -90,7 +90,7 @@ impl LspAdapter for SvelteLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
         }))

@@ -36,7 +36,7 @@ impl IntelephenseLspAdapter {
 
 #[async_trait]
 impl LspAdapter for IntelephenseLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("intelephense".into())
     }
 
@@ -96,10 +96,10 @@ impl LspAdapter for IntelephenseLspAdapter {
         None
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         None
     }
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([("PHP".into(), "php".into())])
     }
 }

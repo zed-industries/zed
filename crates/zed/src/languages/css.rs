@@ -33,7 +33,7 @@ impl CssLspAdapter {
 
 #[async_trait]
 impl LspAdapter for CssLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-css-language-server".into())
     }
 
@@ -91,7 +91,7 @@ impl LspAdapter for CssLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
         }))

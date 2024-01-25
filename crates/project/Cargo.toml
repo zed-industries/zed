@@ -83,5 +83,5 @@ prettier = { path = "../prettier", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 git2.workspace = true
-tempdir.workspace = true
+tempfile.workspace = true
 unindent.workspace = true

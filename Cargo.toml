@@ -121,7 +121,7 @@ smallvec = { version = "1.6", features = ["union"] }
 smol = { version = "1.2" }
 strum = { version = "0.25.0", features = ["derive"] }
 sysinfo = "0.29.10"
-tempdir = { version = "0.3.7" }
+tempfile = { version = "3.9.0" }
 thiserror = { version = "1.0.29" }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 toml = { version = "0.5" }

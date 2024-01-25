@@ -31,7 +31,6 @@ command_palette = { path = "../command_palette" }
 # component_test = { path = "../component_test" }
 client = { path = "../client" }
 # clock = { path = "../clock" }
-color = { path = "../color" }
 copilot = { path = "../copilot" }
 copilot_ui = { path = "../copilot_ui" }
 diagnostics = { path = "../diagnostics" }
@@ -109,7 +108,7 @@ schemars.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
 smol.workspace = true
-tempdir.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tiny_http = "0.8"
 toml.workspace = true

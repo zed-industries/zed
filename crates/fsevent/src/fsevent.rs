@@ -370,12 +370,14 @@ extern "C" {
 mod tests {
     use super::*;
     use std::{fs, sync::mpsc, thread, time::Duration};
-    use tempdir::TempDir;
 
     #[test]
     fn test_event_stream_simple() {
         for _ in 0..3 {
-            let dir = TempDir::new("test-event-stream").unwrap();
+            let dir = tempfile::Builder::new()
+                .prefix("test-event-stream")
+                .tempdir()
+                .unwrap();
             let path = dir.path().canonicalize().unwrap();
             for i in 0..10 {
                 fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
@@ -404,7 +406,10 @@ mod tests {
     #[test]
     fn test_event_stream_delayed_start() {
         for _ in 0..3 {
-            let dir = TempDir::new("test-event-stream").unwrap();
+            let dir = tempfile::Builder::new()
+                .prefix("test-event-stream")
+                .tempdir()
+                .unwrap();
             let path = dir.path().canonicalize().unwrap();
             for i in 0..10 {
                 fs::write(path.join(format!("existing-file-{}", i)), "").unwrap();
@@ -438,7 +443,10 @@ mod tests {
 
     #[test]
     fn test_event_stream_shutdown_by_dropping_handle() {
-        let dir = TempDir::new("test-event-stream").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("test-event-stream")
+            .tempdir()
+            .unwrap();
         let path = dir.path().canonicalize().unwrap();
         flush_historical_events();
 
@@ -465,7 +473,10 @@ mod tests {
 
     #[test]
     fn test_event_stream_shutdown_before_run() {
-        let dir = TempDir::new("test-event-stream").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("test-event-stream")
+            .tempdir()
+            .unwrap();
         let path = dir.path().canonicalize().unwrap();
 
         let (stream, handle) = EventStream::new(&[&path], Duration::from_millis(50));

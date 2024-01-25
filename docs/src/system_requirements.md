@@ -10,4 +10,4 @@ The implementation of our screen sharing feature makes use of [LiveKit](https://
 
 ## Linux, Windows, and Web
 
-_Not supported at this time. See our_ [_Platform Support_](https://github.com/zed-industries/community/issues/174) _issue._
+_Not supported at this time. See our_ [_Platform Support_](https://github.com/zed-industries/zed/issues/5391) _issue._
