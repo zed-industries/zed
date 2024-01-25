@@ -465,7 +465,7 @@ impl BufferSearchBar {
         registrar.register_handler(WithResults(|this, action: &SelectPrevMatch, cx| {
             this.select_prev_match(action, cx);
         }));
-        registrar.register_handler(ForDeployed(|this, action: &SelectAllMatches, cx| {
+        registrar.register_handler(WithResults(|this, action: &SelectAllMatches, cx| {
             this.select_all_matches(action, cx);
         }));
         registrar.register_handler(ForDeployed(|this, _: &editor::actions::Cancel, cx| {
@@ -764,7 +764,7 @@ impl BufferSearchBar {
         event: &editor::EditorEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let editor::EditorEvent::Edited { .. } = event {
+        if let editor::EditorEvent::Edited = event {
             self.query_contains_error = false;
             self.clear_matches(cx);
             let search = self.update_matches(cx);

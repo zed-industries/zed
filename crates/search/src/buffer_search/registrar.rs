@@ -98,6 +98,7 @@ pub trait ActionExecutor<A: Action>: 'static + Clone {
     ) -> DidHandleAction;
 }
 
+/// Run an action when the search bar has been dismissed from the panel.
 pub struct ForDismissed<A>(pub(super) SearchBarActionCallback<A>);
 impl<A> Clone for ForDismissed<A> {
     fn clone(&self) -> Self {
@@ -121,6 +122,7 @@ impl<A: Action> ActionExecutor<A> for ForDismissed<A> {
     }
 }
 
+/// Run an action when the search bar is deployed.
 pub struct ForDeployed<A>(pub(super) SearchBarActionCallback<A>);
 impl<A> Clone for ForDeployed<A> {
     fn clone(&self) -> Self {
@@ -144,6 +146,8 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
     }
 }
 
+/// Run an action when the search bar has any matches, regardless of whether it
+/// is visible or not.
 pub struct WithResults<A>(pub(super) SearchBarActionCallback<A>);
 impl<A> Clone for WithResults<A> {
     fn clone(&self) -> Self {
