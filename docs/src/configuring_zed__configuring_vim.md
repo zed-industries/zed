@@ -33,7 +33,7 @@ g h   Show inline error (hover)
 
 # Insert mode
 ctrl-x ctrl-o  Open the completion menu
-ctrl-x ctrl-c  Request Github Copilot suggestion (if configured)
+ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)
 ctrl-x ctrl-l  Open the LSP code actions
 ctrl-x ctrl-z  Hides all suggestions

@@ -88,15 +88,15 @@ impl CopilotCodeVerification {
         let connect_button_label = if connect_clicked {
             "Waiting for connection..."
         } else {
-            "Connect to Github"
+            "Connect to GitHub"
         };
         v_flex()
             .flex_1()
             .gap_2()
             .items_center()
-            .child(Headline::new("Use Github Copilot in Zed.").size(HeadlineSize::Large))
+            .child(Headline::new("Use GitHub Copilot in Zed.").size(HeadlineSize::Large))
             .child(
-                Label::new("Using Copilot requires an active subscription on Github.")
+                Label::new("Using Copilot requires an active subscription on GitHub.")
                     .color(Color::Muted),
             )
             .child(Self::render_device_code(data, cx))
@@ -139,7 +139,7 @@ impl CopilotCodeVerification {
                 "You can enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.",
             ).color(Color::Warning))
             .child(
-                Button::new("copilot-subscribe-button", "Subscribe on Github")
+                Button::new("copilot-subscribe-button", "Subscribe on GitHub")
                     .full_width()
                     .on_click(|_, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
