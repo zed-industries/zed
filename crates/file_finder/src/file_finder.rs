@@ -144,28 +144,13 @@ pub struct FileFinderDelegate {
     history_items: Vec<FoundPath>,
 }
 
-/*
-/// TODO kb better docs
-/// the first match sould have the largest score and path that
-/// starts with first alphanumerical path string.
-/// When we order path matches in descending order (ones with largest score come first),
-/// we want to show `{ score: 1.0, path: "a/b/c" }` before `{ score: 1.0, path: "d/e/f" }`.
-pub fn top_score_earlies_path_first_order(&self, other: &Self) -> Ordering {
-    self.score
-        .partial_cmp(&other.score)
-        .unwrap_or(Ordering::Equal)
-        .then_with(|| self.worktree_id.cmp(&other.worktree_id))
-        .then_with(|| {
-            other
-                .distance_to_relative_ancestor
-                .cmp(&self.distance_to_relative_ancestor)
-        })
-        .then_with(|| other.path.cmp(&self.path))
-        .reverse()
-}
-*/
-
-/// TODO kb docs
+/// Use a custom ordering for file finder: the regular one
+/// defines max element with the highest score and the latest alphanumerical path (in case of a tie on other params), e.g:
+/// `[{score: 0.5, path = "c/d" }, { score: 0.5, path = "/a/b" }]`
+///
+/// In the file finder, we would prefer to have the max element with the highest score and the earliest alphanumerical path, e.g:
+/// `[{ score: 0.5, path = "/a/b" }, {score: 0.5, path = "c/d" }]`
+/// as the files are shown in the project panel lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectPanelOrdMatch(PathMatch);
 
