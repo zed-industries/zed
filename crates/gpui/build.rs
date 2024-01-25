@@ -6,12 +6,12 @@ use std::{
 use cbindgen::Config;
 
 fn main() {
-    generate_dispatch_bindings();
+    //generate_dispatch_bindings();
     let header_path = generate_shader_bindings();
-    #[cfg(feature = "runtime_shaders")]
-    emit_stitched_shaders(&header_path);
-    #[cfg(not(feature = "runtime_shaders"))]
-    compile_metal_shaders(&header_path);
+    //#[cfg(feature = "runtime_shaders")]
+    //emit_stitched_shaders(&header_path);
+    //#[cfg(not(feature = "runtime_shaders"))]
+    //compile_metal_shaders(&header_path);
 }
 
 fn generate_dispatch_bindings() {

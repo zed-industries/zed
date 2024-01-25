@@ -26,6 +26,8 @@ anyhow.workspace = true
 async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
 bitflags = "2.4.0"
+blade-graphics = "0.3"
+blade-macros = "0.2"
 collections = { path = "../collections" }
 ctor.workspace = true
 derive_more.workspace = true
