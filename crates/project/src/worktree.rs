@@ -194,12 +194,14 @@ impl AsRef<Path> for RepositoryWorkDirectory {
 pub struct WorkDirectoryEntry(ProjectEntryId);
 
 impl WorkDirectoryEntry {
-    pub(crate) fn relativize(&self, worktree: &Snapshot, path: &Path) -> Option<RepoPath> {
-        worktree.entry_for_id(self.0).and_then(|entry| {
-            path.strip_prefix(&entry.path)
-                .ok()
-                .map(move |path| path.into())
-        })
+    pub(crate) fn relativize(&self, worktree: &Snapshot, path: &Path) -> Result<RepoPath> {
+        let entry = worktree
+            .entry_for_id(self.0)
+            .ok_or_else(|| anyhow!("entry not found"))?;
+        let path = path
+            .strip_prefix(&entry.path)
+            .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, entry.path))?;
+        Ok(path.into())
     }
 }
 
@@ -970,12 +972,13 @@ impl LocalWorktree {
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
             if let Some(repo) = snapshot.repository_for_path(&path) {
-                if let Some(repo_path) = repo.work_directory.relativize(&snapshot, &path) {
-                    if let Some(repo) = snapshot.git_repositories.get(&*repo.work_directory) {
-                        let repo = repo.repo_ptr.clone();
+                if let Some(repo_path) = repo.work_directory.relativize(&snapshot, &path).log_err()
+                {
+                    if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
+                        let git_repo = git_repo.repo_ptr.clone();
                         index_task = Some(
                             cx.background_executor()
-                                .spawn(async move { repo.lock().load_index_text(&repo_path) }),
+                                .spawn(async move { git_repo.lock().load_index_text(&repo_path) }),
                         );
                     }
                 }
