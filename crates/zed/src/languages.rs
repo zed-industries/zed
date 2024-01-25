@@ -136,7 +136,6 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
     );
     language("toml", tree_sitter_toml::language(), vec![]);
-    println!("Is deno enabled? {}", &DenoSettings::get(None, cx).enable);
     match &DenoSettings::get(None, cx).enable {
         true => {
             language(
