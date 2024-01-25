@@ -419,7 +419,7 @@ pub struct LanguageConfig {
     /// A language can have multiple flavours of line comments. All of the provided line comments are
     /// used for comment continuations on the next line, but only the first one is used for Editor::ToggleComments.
     #[serde(default)]
-    pub line_comments: Option<Vec<Arc<str>>>,
+    pub line_comments: Vec<Arc<str>>,
     /// Starting and closing characters of a block comment.
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
@@ -1715,7 +1715,7 @@ impl LanguageScope {
     pub fn line_comment_prefixes(&self) -> Option<&Vec<Arc<str>>> {
         Override::as_option(
             self.config_override().map(|o| &o.line_comments),
-            self.language.config.line_comments.as_ref(),
+            Some(&self.language.config.line_comments),
         )
     }
 
