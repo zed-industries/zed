@@ -14,7 +14,7 @@ use alacritty_terminal::{
         search::{Match, RegexIter, RegexSearch},
         Config, RenderableCursor, TermMode,
     },
-    tty::{self, setup_env, ToWinsize},
+    tty::{self, setup_env},
     vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode, Rgb},
     Term,
 };
