@@ -1,1 +1,1 @@
-ALTER TABLE rooms ADD COLUMN environment TEXT;
+ALTER TABLE rooms ADD COLUMN enviroment TEXT;
