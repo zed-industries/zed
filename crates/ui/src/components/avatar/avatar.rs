@@ -27,7 +27,7 @@ pub enum AvatarShape {
 #[derive(IntoElement)]
 pub struct Avatar {
     image: Img,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
     border_color: Option<Hsla>,
     indicator: Option<AnyElement>,
 }
@@ -82,8 +82,8 @@ impl Avatar {
     }
 
     /// Size overrides the avatar size. By default they are 1rem.
-    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
-        self.size = size.into();
+    pub fn size<L: Into<AbsoluteLength>>(mut self, size: impl Into<Option<L>>) -> Self {
+        self.size = size.into().map(Into::into);
         self
     }
 
@@ -105,8 +105,8 @@ impl RenderOnce for Avatar {
             px(0.)
         };
 
-        let image_size = self.size.unwrap_or_else(|| cx.rem_size());
-        let container_size = image_size + border_width * 2.;
+        let image_size = self.size.unwrap_or_else(|| rems(1.).into());
+        let container_size = image_size.to_pixels(cx.rem_size()) + border_width * 2.;
 
         div()
             .size(container_size)

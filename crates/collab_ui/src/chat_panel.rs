@@ -343,9 +343,11 @@ impl ChatPanel {
                 this.pt_3().child(
                     h_flex()
                         .text_ui_sm()
-                        .child(div().absolute().child(
-                            Avatar::new(message.sender.avatar_uri.clone()).size(cx.rem_size()),
-                        ))
+                        .child(
+                            div().absolute().child(
+                                Avatar::new(message.sender.avatar_uri.clone()).size(rems(1.)),
+                            ),
+                        )
                         .child(
                             div()
                                 .pl(cx.rem_size() + px(6.0))
