@@ -2634,7 +2634,7 @@ impl Default for LineEnding {
         return Self::Unix;
 
         #[cfg(not(unix))]
-        return Self::CRLF;
+        return Self::Windows;
     }
 }
 
