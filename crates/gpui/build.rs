@@ -7,14 +7,14 @@ use cbindgen::Config;
 
 fn main() {
     //generate_dispatch_bindings();
-    let header_path = generate_shader_bindings();
+    let _header_path = generate_shader_bindings();
     //#[cfg(feature = "runtime_shaders")]
     //emit_stitched_shaders(&header_path);
     //#[cfg(not(feature = "runtime_shaders"))]
     //compile_metal_shaders(&header_path);
 }
 
-fn generate_dispatch_bindings() {
+fn _generate_dispatch_bindings() {
     println!("cargo:rustc-link-lib=framework=System");
     println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
 
@@ -116,7 +116,7 @@ fn emit_stitched_shaders(header_path: &Path) {
     println!("cargo:rerun-if-changed={}", &shader_source_path);
 }
 #[cfg(not(feature = "runtime_shaders"))]
-fn compile_metal_shaders(header_path: &Path) {
+fn _compile_metal_shaders(header_path: &Path) {
     use std::process::{self, Command};
     let shader_path = "./src/platform/mac/shaders.metal";
     let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");

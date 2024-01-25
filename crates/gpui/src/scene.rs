@@ -671,6 +671,7 @@ pub(crate) struct Surface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    #[cfg(target_os = "macos")]
     pub image_buffer: media::core_video::CVImageBuffer,
 }
 

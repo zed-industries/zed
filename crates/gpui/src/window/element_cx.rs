@@ -23,6 +23,7 @@ use std::{
 use anyhow::Result;
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
+#[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 use util::post_inc;
@@ -34,7 +35,7 @@ use crate::{
     InputHandler, IsZero, KeyContext, KeyEvent, KeymatchMode, LayoutId, MonochromeSprite,
     MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
     RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StackingContext, StackingOrder, Style, Surface, TextStyleRefinement, Underline, UnderlineStyle,
+    StackingContext, StackingOrder, Style, TextStyleRefinement, Underline, UnderlineStyle,
     Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
@@ -962,6 +963,7 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint a surface into the scene for the next frame at the current z-index.
+    #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
@@ -970,7 +972,7 @@ impl<'a> ElementContext<'a> {
         let window = &mut *self.window;
         window.next_frame.scene.insert(
             &window.next_frame.z_index_stack,
-            Surface {
+            crate::Surface {
                 view_id: view_id.into(),
                 layer_id: 0,
                 order: 0,
