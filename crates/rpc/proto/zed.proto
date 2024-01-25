@@ -181,7 +181,9 @@ message Envelope {
         MarkNotificationRead mark_notification_read = 153;
         LspExtExpandMacro lsp_ext_expand_macro = 154;
         LspExtExpandMacroResponse lsp_ext_expand_macro_response = 155;
-        SetRoomParticipantRole set_room_participant_role = 156; // Current max
+        SetRoomParticipantRole set_room_participant_role = 156;
+
+        UpdateUserChannels update_user_channels = 157; // current max
     }
 }
 
@@ -992,19 +994,18 @@ message UpdateChannels {
     repeated Channel channel_invitations = 5;
     repeated uint64 remove_channel_invitations = 6;
     repeated ChannelParticipants channel_participants = 7;
-    repeated UnseenChannelMessage unseen_channel_messages = 9;
-    repeated UnseenChannelBufferChange unseen_channel_buffer_changes = 10;
+    repeated ChannelMessageId latest_channel_message_ids = 8;
+    repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
 }
 
-message UnseenChannelMessage {
+message UpdateUserChannels {
+    repeated ChannelMessageId observed_channel_message_id = 1;
+    repeated ChannelBufferVersion observed_channel_buffer_version = 2;
+}
+
+message ChannelMessageId {
     uint64 channel_id = 1;
     uint64 message_id = 2;
-}
-
-message UnseenChannelBufferChange {
-    uint64 channel_id = 1;
-    uint64 epoch = 2;
-    repeated VectorClockEntry version = 3;
 }
 
 message ChannelPermission {

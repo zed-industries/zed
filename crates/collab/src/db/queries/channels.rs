@@ -691,15 +691,13 @@ impl Database {
             .unseen_channel_buffer_changes(user_id, &channel_ids, &*tx)
             .await?;
 
-        let unseen_messages = self
-            .unseen_channel_messages(user_id, &channel_ids, &*tx)
-            .await?;
+        let latest_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
 
         Ok(ChannelsForUser {
             channels,
             channel_participants,
-            unseen_buffer_changes: channel_buffer_changes,
-            channel_messages: unseen_messages,
+            latest_buffer_versions: channel_buffer_changes,
+            latest_channel_messages: latest_messages,
         })
     }
 

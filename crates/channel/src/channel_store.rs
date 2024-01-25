@@ -33,6 +33,8 @@ pub struct ChannelStore {
     pub channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
+    observed_chat_messages: HashMap<ChannelId, u64>,
+    observed_notes_versions: HashMap<ChannelId, proto::NotesVersion>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
@@ -51,8 +53,8 @@ pub struct Channel {
     pub name: SharedString,
     pub visibility: proto::ChannelVisibility,
     pub role: proto::ChannelRole,
-    pub unseen_note_version: Option<(u64, clock::Global)>,
-    pub unseen_message_id: Option<u64>,
+    pub latest_message_id: Option<u64>,
+    pub latest_note_version: Option<proto::NotesVersion>,
     pub parent_path: Vec<u64>,
 }
 
@@ -137,8 +139,10 @@ impl ChannelStore {
         user_store: Model<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let rpc_subscription =
-            client.add_message_handler(cx.weak_model(), Self::handle_update_channels);
+        let rpc_subscriptions = [
+            client.add_message_handler(cx.weak_model(), Self::handle_update_channels),
+            client.add_message_handler(cx.weak_model(), Self::handle_update_user_channels),
+        ];
 
         let mut connection_status = client.status();
         let (update_channels_tx, mut update_channels_rx) = mpsc::unbounded();
@@ -195,6 +199,8 @@ impl ChannelStore {
                 .await
                 .log_err();
             }),
+            observed_chat_messages: Default::default(),
+            observed_notes_versions: Default::default(),
         }
     }
 
@@ -747,6 +753,19 @@ impl ChannelStore {
         Ok(())
     }
 
+    async fn handle_update_user_channels(
+        this: Model<Self>,
+        message: TypedEnvelope<proto::ObservedChannelMessage>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            // this.seen_channel_message_ids
+            //     .insert(message.channel_id, message.message_id);
+            cx.notify();
+        })?;
+    }
+
     fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.channel_index.clear();
         self.channel_invitations.clear();
@@ -911,8 +930,6 @@ impl ChannelStore {
                         visibility: channel.visibility(),
                         role: channel.role(),
                         name: channel.name.into(),
-                        unseen_note_version: None,
-                        unseen_message_id: None,
                         parent_path: channel.parent_path,
                     }),
                 ),

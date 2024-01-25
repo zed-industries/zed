@@ -618,8 +618,8 @@ impl ChannelMember {
 pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
-    pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
-    pub channel_messages: Vec<proto::UnseenChannelMessage>,
+    pub latest_buffer_versions: Vec<proto::ChannelBufferVersion>,
+    pub latest_channel_messages: Vec<proto::ChannelMessageId>,
 }
 
 #[derive(Debug)]

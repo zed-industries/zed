@@ -113,9 +113,9 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                     visibility: channel_proto.visibility(),
                     role: channel_proto.role(),
                     name: channel_proto.name.into(),
-                    unseen_note_version: None,
-                    unseen_message_id: None,
                     parent_path: channel_proto.parent_path,
+                    latest_message_id: channel_proto.latest_message_id,
+                    latest_note_version: channel_proto.latest_note_version,
                 }),
             );
             self.insert_root(channel_proto.id);
