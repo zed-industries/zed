@@ -15,11 +15,11 @@ test_both_dbs!(
 
 async fn test_channel_message_retrieval(db: &Arc<Database>) {
     let user = new_test_user(db, "user@example.com").await;
-    let result = db.create_channel("channel", None, user).await.unwrap();
+    let channel = db.create_channel("channel", None, user).await.unwrap();
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
     db.join_channel_chat(
-        result.channel.id,
+        channel.id,
         rpc::ConnectionId { owner_id, id: 0 },
         user,
     )
@@ -30,7 +30,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
     for i in 0..10 {
         all_messages.push(
             db.create_channel_message(
-                result.channel.id,
+                channel.id,
                 user,
                 &i.to_string(),
                 &[],
@@ -45,7 +45,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
     }
 
     let messages = db
-        .get_channel_messages(result.channel.id, user, 3, None)
+        .get_channel_messages(channel.id, user, 3, None)
         .await
         .unwrap()
         .into_iter()
@@ -55,7 +55,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
 
     let messages = db
         .get_channel_messages(
-            result.channel.id,
+            channel.id,
             user,
             4,
             Some(MessageId::from_proto(all_messages[6])),
@@ -370,7 +370,6 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
         .create_channel("channel", None, user_a)
         .await
         .unwrap()
-        .channel
         .id;
     db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
         .await
