@@ -1657,7 +1657,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         let language = Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
-                line_comments: Some(vec!["// ".into()]),
+                line_comments: vec!["// ".into()],
                 brackets: BracketPairConfig {
                     pairs: vec![
                         BracketPair {
@@ -2301,7 +2301,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             path_suffixes: vec!["rb".to_string()],
-            line_comments: Some(vec!["# ".into()]),
+            line_comments: vec!["# ".into()],
             ..Default::default()
         },
         Some(tree_sitter_ruby::language()),
