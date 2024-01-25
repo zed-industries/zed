@@ -130,7 +130,8 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
     } else {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
-            "Auto-updates disabled for non-bundled app.",
+            "Could not check for updates",
+            Some("Auto-updates disabled for non-bundled app."),
             &["Ok"],
         ));
     }

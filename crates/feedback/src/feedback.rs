@@ -31,7 +31,8 @@ pub fn init(cx: &mut AppContext) {
 
                     let prompt = cx.prompt(
                         PromptLevel::Info,
-                        &format!("Copied into clipboard:\n\n{specs}"),
+                        "Copied into clipboard",
+                        Some(&specs),
                         &["OK"],
                     );
                     cx.spawn(|_, _cx| async move {

@@ -97,7 +97,7 @@ impl ModalView for FeedbackModal {
             return true;
         }
 
-        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", &["Yes", "No"]);
+        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", None, &["Yes", "No"]);
 
         cx.spawn(move |this, mut cx| async move {
             if answer.await.ok() == Some(0) {
@@ -222,6 +222,7 @@ impl FeedbackModal {
         let answer = cx.prompt(
             PromptLevel::Info,
             "Ready to submit your feedback?",
+            None,
             &["Yes, Submit!", "No"],
         );
         let client = cx.global::<Arc<Client>>().clone();
@@ -255,6 +256,7 @@ impl FeedbackModal {
                             let prompt = cx.prompt(
                                 PromptLevel::Critical,
                                 FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                None,
                                 &["OK"],
                             );
                             cx.spawn(|_, _cx| async move {
