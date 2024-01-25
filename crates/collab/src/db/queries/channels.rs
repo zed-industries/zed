@@ -687,8 +687,8 @@ impl Database {
         }
 
         let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
-        let channel_buffer_changes = self
-            .unseen_channel_buffer_changes(user_id, &channel_ids, &*tx)
+        let latest_buffer_versions = self
+            .latest_channel_buffer_changes(&channel_ids, &*tx)
             .await?;
 
         let latest_messages = self.latest_channel_messages(&channel_ids, &*tx).await?;
@@ -696,7 +696,7 @@ impl Database {
         Ok(ChannelsForUser {
             channels,
             channel_participants,
-            latest_buffer_versions: channel_buffer_changes,
+            latest_buffer_versions,
             latest_channel_messages: latest_messages,
         })
     }

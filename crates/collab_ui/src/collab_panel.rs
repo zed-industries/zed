@@ -2219,17 +2219,16 @@ impl CollabPanel {
             Some(call_channel == channel_id)
         })
         .unwrap_or(false);
-        let is_public = self
-            .channel_store
-            .read(cx)
+        let channel_store = self.channel_store.read(cx);
+        let is_public = channel_store
             .channel_for_id(channel_id)
             .map(|channel| channel.visibility)
             == Some(proto::ChannelVisibility::Public);
         let disclosed =
             has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
 
-        let has_messages_notification = channel.unseen_message_id.is_some();
-        let has_notes_notification = channel.unseen_note_version.is_some();
+        let has_messages_notification = channel_store.has_new_messages(channel_id);
+        let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);
 
         const FACEPILE_LIMIT: usize = 3;
         let participants = self.channel_store.read(cx).channel_participants(channel_id);

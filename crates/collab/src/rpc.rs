@@ -2842,27 +2842,25 @@ async fn update_channel_buffer(
 
     let pool = &*session.connection_pool().await;
 
-    todo!()
-
-    // broadcast(
-    //     None,
-    //     non_collaborators
-    //         .iter()
-    //         .flat_map(|user_id| pool.user_connection_ids(*user_id)),
-    //     |peer_id| {
-    //         session.peer.send(
-    //             peer_id.into(),
-    //             proto::UpdateChannels {
-    //                 unseen_channel_buffer_changes: vec![proto::UnseenChannelBufferChange {
-    //                     channel_id: channel_id.to_proto(),
-    //                     epoch: epoch as u64,
-    //                     version: version.clone(),
-    //                 }],
-    //                 ..Default::default()
-    //             },
-    //         )
-    //     },
-    // );
+    broadcast(
+        None,
+        non_collaborators
+            .iter()
+            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        |peer_id| {
+            session.peer.send(
+                peer_id.into(),
+                proto::UpdateChannels {
+                    latest_channel_buffer_versions: vec![proto::ChannelBufferVersion {
+                        channel_id: channel_id.to_proto(),
+                        epoch: epoch as u64,
+                        version: version.clone(),
+                    }],
+                    ..Default::default()
+                },
+            )
+        },
+    );
 
     Ok(())
 }
@@ -3039,7 +3037,7 @@ async fn send_channel_message(
             session.peer.send(
                 peer_id.into(),
                 proto::UpdateChannels {
-                    unseen_channel_messages: vec![proto::UnseenChannelMessage {
+                    latest_channel_message_ids: vec![proto::ChannelMessageId {
                         channel_id: channel_id.to_proto(),
                         message_id: message_id.to_proto(),
                     }],

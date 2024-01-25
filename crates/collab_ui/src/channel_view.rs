@@ -183,7 +183,7 @@ impl ChannelView {
                 } else {
                     self.channel_store.update(cx, |store, cx| {
                         let channel_buffer = self.channel_buffer.read(cx);
-                        store.notes_changed(
+                        store.update_latest_notes_version(
                             channel_buffer.channel_id,
                             channel_buffer.epoch(),
                             &channel_buffer.buffer().read(cx).version(),

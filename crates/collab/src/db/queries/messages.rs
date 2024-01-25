@@ -398,6 +398,10 @@ impl Database {
             write!(&mut values, "({})", id).unwrap();
         }
 
+        if values.is_empty() {
+            return Ok(Vec::default());
+        }
+
         let sql = format!(
             r#"
             SELECT
