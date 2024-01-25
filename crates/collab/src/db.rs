@@ -303,13 +303,14 @@ impl Database {
         }
     }
 
-    async fn retry_on_serialization_error(&self, error: &Error, prev_attempt_count: u32) -> bool {
+    async fn retry_on_serialization_error(&self, error: &Error, prev_attempt_count: usize) -> bool {
         // If the error is due to a failure to serialize concurrent transactions, then retry
         // this transaction after a delay. With each subsequent retry, double the delay duration.
         // Also vary the delay randomly in order to ensure different database connections retry
         // at different times.
-        if is_serialization_error(error) {
-            let base_delay = 4_u64 << prev_attempt_count.min(16);
+        const SLEEPS: [f32; 10] = [10., 20., 40., 80., 160., 320., 640., 1280., 2560., 5120.];
+        if is_serialization_error(error) && prev_attempt_count < SLEEPS.len() {
+            let base_delay = SLEEPS[prev_attempt_count];
             let randomized_delay = base_delay as f32 * self.rng.lock().await.gen_range(0.5..=2.0);
             log::info!(
                 "retrying transaction after serialization error. delay: {} ms.",
