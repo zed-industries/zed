@@ -3821,6 +3821,18 @@ async fn test_select_next(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("abc\nˇabc abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_all_matches(&SelectAllMatches::default(), cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+}
+
+#[gpui::test]
 async fn test_select_next_with_multiple_carets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 

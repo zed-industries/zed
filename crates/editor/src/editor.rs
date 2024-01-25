@@ -6113,6 +6113,7 @@ impl Editor {
                         || (!movement::is_inside_word(&display_map, display_range.start)
                             && !movement::is_inside_word(&display_map, display_range.end))
                     {
+                        // TODO: This is n^2, because we might check all the selections
                         if selections
                             .iter()
                             .find(|selection| selection.range().overlaps(&offset_range))
@@ -6222,24 +6223,75 @@ impl Editor {
 
     pub fn select_all_matches(
         &mut self,
-        action: &SelectAllMatches,
+        _action: &SelectAllMatches,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        loop {
-            self.select_next_match_internal(&display_map, action.replace_newest, None, cx)?;
+        self.select_next_match_internal(&display_map, false, None, cx)?;
+        let Some(select_next_state) = self.select_next_state.as_mut() else {
+            return Ok(());
+        };
+        if select_next_state.done {
+            return Ok(());
+        }
 
-            if self
-                .select_next_state
-                .as_ref()
-                .map(|selection_state| selection_state.done)
-                .unwrap_or(true)
+        let mut new_selections = self.selections.all::<usize>(cx);
+
+        let buffer = &display_map.buffer_snapshot;
+        let query_matches = select_next_state
+            .query
+            .stream_find_iter(buffer.bytes_in_range(0..buffer.len()));
+
+        for query_match in query_matches {
+            let query_match = query_match.unwrap(); // can only fail due to I/O
+            let offset_range = query_match.start()..query_match.end();
+            let display_range = offset_range.start.to_display_point(&display_map)
+                ..offset_range.end.to_display_point(&display_map);
+
+            if !select_next_state.wordwise
+                || (!movement::is_inside_word(&display_map, display_range.start)
+                    && !movement::is_inside_word(&display_map, display_range.end))
             {
-                break;
+                self.selections.change_with(cx, |selections| {
+                    new_selections.push(Selection {
+                        id: selections.new_selection_id(),
+                        start: offset_range.start,
+                        end: offset_range.end,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    });
+                });
             }
         }
+
+        new_selections.sort_by_key(|selection| selection.start);
+        let mut ix = 0;
+        while ix + 1 < new_selections.len() {
+            let current_selection = &new_selections[ix];
+            let next_selection = &new_selections[ix + 1];
+            if current_selection.range().overlaps(&next_selection.range()) {
+                if current_selection.id < next_selection.id {
+                    new_selections.remove(ix + 1);
+                } else {
+                    new_selections.remove(ix);
+                }
+            } else {
+                ix += 1;
+            }
+        }
+
+        select_next_state.done = true;
+        self.unfold_ranges(
+            new_selections.iter().map(|selection| selection.range()),
+            false,
+            false,
+            cx,
+        );
+        self.change_selections(Some(Autoscroll::fit()), cx, |selections| {
+            selections.select(new_selections)
+        });
 
         Ok(())
     }
