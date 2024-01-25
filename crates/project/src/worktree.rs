@@ -970,13 +970,14 @@ impl LocalWorktree {
             let mut index_task = None;
             let snapshot = this.update(&mut cx, |this, _| this.as_local().unwrap().snapshot())?;
             if let Some(repo) = snapshot.repository_for_path(&path) {
-                let repo_path = repo.work_directory.relativize(&snapshot, &path).unwrap();
-                if let Some(repo) = snapshot.git_repositories.get(&*repo.work_directory) {
-                    let repo = repo.repo_ptr.clone();
-                    index_task = Some(
-                        cx.background_executor()
-                            .spawn(async move { repo.lock().load_index_text(&repo_path) }),
-                    );
+                if let Some(repo_path) = repo.work_directory.relativize(&snapshot, &path) {
+                    if let Some(repo) = snapshot.git_repositories.get(&*repo.work_directory) {
+                        let repo = repo.repo_ptr.clone();
+                        index_task = Some(
+                            cx.background_executor()
+                                .spawn(async move { repo.lock().load_index_text(&repo_path) }),
+                        );
+                    }
                 }
             }
 
