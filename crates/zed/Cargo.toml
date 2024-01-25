@@ -142,6 +142,7 @@ tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
 tree-sitter-vue.workspace = true
 tree-sitter-uiua.workspace = true
+tree-sitter-zig.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"

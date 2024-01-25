@@ -8717,6 +8717,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-zig"
+version = "0.0.1"
+source = "git+https://github.com/maxxnino/tree-sitter-zig?rev=0d08703e4c3f426ec61695d7617415fff97029bd#0d08703e4c3f426ec61695d7617415fff97029bd"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9812,6 +9821,7 @@ dependencies = [
  "tree-sitter-uiua",
  "tree-sitter-vue",
  "tree-sitter-yaml",
+ "tree-sitter-zig",
  "unindent",
  "url",
  "urlencoding",
