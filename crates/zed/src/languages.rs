@@ -100,7 +100,11 @@ pub fn init(
         ),
     }
 
-    language("gleam", tree_sitter_gleam::language(), vec![]);
+    language(
+        "gleam",
+        tree_sitter_gleam::language(),
+        vec![Arc::new(gleam::GleamLspAdapter)],
+    );
     language(
         "go",
         tree_sitter_go::language(),
