@@ -584,7 +584,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
 }
 
 /// Describes a single bracket pair and how an editor should react to e.g. inserting
-/// an opening bracket or to a newline character insertion inbetween `start` and `end` characters.
+/// an opening bracket or to a newline character insertion in between `start` and `end` characters.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct BracketPair {
     /// Starting substring for a bracket.

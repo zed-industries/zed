@@ -143,7 +143,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.on_window_should_close(move |cx| {
             handle
                 .update(cx, |workspace, cx| {
-                    // We'll handle closing asynchoronously
+                    // We'll handle closing asynchronously
                     workspace.close_window(&Default::default(), cx);
                     false
                 })
