@@ -1478,9 +1478,12 @@ impl<'a> WindowContext<'a> {
         &self,
         level: PromptLevel,
         message: &str,
+        detail: Option<&str>,
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
-        self.window.platform_window.prompt(level, message, answers)
+        self.window
+            .platform_window
+            .prompt(level, message, detail, answers)
     }
 
     /// Returns all available actions for the focused element.

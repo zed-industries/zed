@@ -209,6 +209,7 @@ enum ErrorCode {
     UpgradeRequired = 4;
     Forbidden = 5;
     WrongReleaseChannel = 6;
+    NeedsCla = 7;
 }
 
 message Test {

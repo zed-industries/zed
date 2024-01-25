@@ -778,6 +778,7 @@ impl ProjectPanel {
             let answer = cx.prompt(
                 PromptLevel::Info,
                 &format!("Delete {file_name:?}?"),
+                None,
                 &["Delete", "Cancel"],
             );
 

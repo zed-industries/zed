@@ -30,8 +30,8 @@ use gpui::{
     DragMoveEvent, Element, ElementContext, Entity, EntityId, EventEmitter, FocusHandle,
     FocusableView, GlobalPixels, InteractiveElement, IntoElement, KeyContext, LayoutId,
     ManagedView, Model, ModelContext, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, Size, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowBounds, WindowContext, WindowHandle, WindowOptions,
+    Render, SharedString, Size, Styled, Subscription, Task, View, ViewContext, VisualContext,
+    WeakView, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
 use itertools::Itertools;
@@ -1159,6 +1159,7 @@ impl Workspace {
                         cx.prompt(
                             PromptLevel::Warning,
                             "Do you want to leave the current call?",
+                            None,
                             &["Close window and hang up", "Cancel"],
                         )
                     })?;
@@ -1214,7 +1215,7 @@ impl Workspace {
             // Override save mode and display "Save all files" prompt
             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
                 let answer = workspace.update(&mut cx, |_, cx| {
-                    let prompt = Pane::file_names_for_prompt(
+                    let (prompt, detail) = Pane::file_names_for_prompt(
                         &mut dirty_items.iter().map(|(_, handle)| handle),
                         dirty_items.len(),
                         cx,
@@ -1222,6 +1223,7 @@ impl Workspace {
                     cx.prompt(
                         PromptLevel::Warning,
                         &prompt,
+                        Some(&detail),
                         &["Save all", "Discard all", "Cancel"],
                     )
                 })?;
@@ -3887,13 +3889,16 @@ async fn join_channel_internal(
 
     if should_prompt {
         if let Some(workspace) = requesting_window {
-            let answer  = workspace.update(cx, |_, cx| {
-                cx.prompt(
-                    PromptLevel::Warning,
-                    "Leaving this call will unshare your current project.\nDo you want to switch channels?",
-                    &["Yes, Join Channel", "Cancel"],
-                )
-            })?.await;
+            let answer = workspace
+                .update(cx, |_, cx| {
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        "Do you want to switch channels?",
+                        Some("Leaving this call will unshare your current project."),
+                        &["Yes, Join Channel", "Cancel"],
+                    )
+                })?
+                .await;
 
             if answer == Ok(1) {
                 return Ok(false);
@@ -3995,23 +4000,27 @@ pub fn join_channel(
             if let Some(active_window) = active_window {
                 active_window
                     .update(&mut cx, |_, cx| {
-                        let message:SharedString = match err.error_code() {
+                        let detail: SharedString = match err.error_code() {
                             ErrorCode::SignedOut => {
-                                "Failed to join channel\n\nPlease sign in to continue.".into()
+                                "Please sign in to continue.".into()
                             },
                             ErrorCode::UpgradeRequired => {
-                                "Failed to join channel\n\nPlease update to the latest version of Zed to continue.".into()
+                                "Your are running an unsupported version of Zed. Please update to continue.".into()
                             },
                             ErrorCode::NoSuchChannel => {
-                                "Failed to find channel\n\nPlease check the link and try again.".into()
+                                "No matching channel was found. Please check the link and try again.".into()
                             },
-                            ErrorCode::Disconnected => "Failed to join channel\n\nPlease check your internet connection and try again.".into(),
-                            ErrorCode::WrongReleaseChannel => format!("Failed to join channel\n\nOther people in the channel are using the {} release of Zed, please switch to that release instead.", err.error_tag("required").unwrap_or("other")).into(),
-                            _ => format!("Failed to join channel\n\n{}\n\nPlease try again.", err).into(),
+                            ErrorCode::Forbidden => {
+                                "This channel is private, and you do not have access. Please ask someone to add you and try again.".into()
+                            },
+                            ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
+                            ErrorCode::WrongReleaseChannel => format!("Others in the channel are using the {} release of Zed. Please switch to join this call.", err.error_tag("required").unwrap_or("other")).into(),
+                            _ => format!("{}\n\nPlease try again.", err).into(),
                         };
                         cx.prompt(
                             PromptLevel::Critical,
-                            &message,
+                            "Failed to join channel",
+                            Some(&detail),
                             &["Ok"],
                         )
                     })?
@@ -4238,6 +4247,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
                 cx.prompt(
                     PromptLevel::Info,
                     "Are you sure you want to restart?",
+                    None,
                     &["Restart", "Cancel"],
                 )
             })

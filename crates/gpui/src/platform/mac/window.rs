@@ -772,7 +772,13 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().input_handler.take()
     }
 
-    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {
+    fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
         // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
@@ -808,6 +814,9 @@ impl PlatformWindow for MacWindow {
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
+            if let Some(detail) = detail {
+                let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
+            }
 
             for (ix, answer) in answers
                 .iter()

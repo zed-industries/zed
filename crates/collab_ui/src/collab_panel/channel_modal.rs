@@ -14,7 +14,7 @@ use rpc::proto::channel_member;
 use std::sync::Arc;
 use ui::{prelude::*, Avatar, Checkbox, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
-use workspace::{notifications::NotifyTaskExt, ModalView};
+use workspace::{notifications::DetachAndPromptErr, ModalView};
 
 actions!(
     channel_modal,
@@ -498,7 +498,7 @@ impl ChannelModalDelegate {
                 cx.notify();
             })
         })
-        .detach_and_notify_err(cx);
+        .detach_and_prompt_err("Failed to update role", cx, |_, _| None);
         Some(())
     }
 
@@ -530,7 +530,7 @@ impl ChannelModalDelegate {
                 cx.notify();
             })
         })
-        .detach_and_notify_err(cx);
+        .detach_and_prompt_err("Failed to remove member", cx, |_, _| None);
         Some(())
     }
 
@@ -556,7 +556,7 @@ impl ChannelModalDelegate {
                 cx.notify();
             })
         })
-        .detach_and_notify_err(cx);
+        .detach_and_prompt_err("Failed to invite member", cx, |_, _| None);
     }
 
     fn show_context_menu(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {

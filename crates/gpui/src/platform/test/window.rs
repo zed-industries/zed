@@ -185,6 +185,7 @@ impl PlatformWindow for TestWindow {
         &self,
         _level: crate::PromptLevel,
         _msg: &str,
+        _detail: Option<&str>,
         _answers: &[&str],
     ) -> futures::channel::oneshot::Receiver<usize> {
         self.0
