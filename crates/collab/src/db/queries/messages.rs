@@ -385,25 +385,11 @@ impl Database {
         Ok(())
     }
 
-    /// Returns the unseen messages for the given user in the specified channels.
-    pub async fn unseen_channel_messages(
+    pub async fn latest_channel_messages(
         &self,
-        user_id: UserId,
         channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
-    ) -> Result<Vec<proto::UnseenChannelMessage>> {
-        let mut observed_messages_by_channel_id = HashMap::default();
-        let mut rows = observed_channel_messages::Entity::find()
-            .filter(observed_channel_messages::Column::UserId.eq(user_id))
-            .filter(observed_channel_messages::Column::ChannelId.is_in(channel_ids.iter().copied()))
-            .stream(&*tx)
-            .await?;
-
-        while let Some(row) = rows.next().await {
-            let row = row?;
-            observed_messages_by_channel_id.insert(row.channel_id, row);
-        }
-        drop(rows);
+    ) -> Result<Vec<proto::ChannelMessageId>> {
         let mut values = String::new();
         for id in channel_ids {
             if !values.is_empty() {
@@ -413,7 +399,7 @@ impl Database {
         }
 
         if values.is_empty() {
-            return Ok(Default::default());
+            return Ok(Vec::default());
         }
 
         let sql = format!(
@@ -437,26 +423,20 @@ impl Database {
         );
 
         let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
-        let last_messages = channel_message::Model::find_by_statement(stmt)
-            .all(&*tx)
+        let mut last_messages = channel_message::Model::find_by_statement(stmt)
+            .stream(&*tx)
             .await?;
 
-        let mut changes = Vec::new();
-        for last_message in last_messages {
-            if let Some(observed_message) =
-                observed_messages_by_channel_id.get(&last_message.channel_id)
-            {
-                if observed_message.channel_message_id == last_message.id {
-                    continue;
-                }
-            }
-            changes.push(proto::UnseenChannelMessage {
-                channel_id: last_message.channel_id.to_proto(),
-                message_id: last_message.id.to_proto(),
+        let mut results = Vec::new();
+        while let Some(result) = last_messages.next().await {
+            let message = result?;
+            results.push(proto::ChannelMessageId {
+                channel_id: message.channel_id.to_proto(),
+                message_id: message.id.to_proto(),
             });
         }
 
-        Ok(changes)
+        Ok(results)
     }
 
     /// Removes the channel message with the given ID.

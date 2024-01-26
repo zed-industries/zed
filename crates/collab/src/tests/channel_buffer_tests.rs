@@ -637,7 +637,6 @@ async fn test_channel_buffer_changes(
             .channel_store()
             .read(cx)
             .has_channel_buffer_changed(channel_id)
-            .unwrap()
     });
     assert!(has_buffer_changed);
 
@@ -655,7 +654,6 @@ async fn test_channel_buffer_changes(
             .channel_store()
             .read(cx)
             .has_channel_buffer_changed(channel_id)
-            .unwrap()
     });
     assert!(!has_buffer_changed);
 
@@ -672,7 +670,6 @@ async fn test_channel_buffer_changes(
             .channel_store()
             .read(cx)
             .has_channel_buffer_changed(channel_id)
-            .unwrap()
     });
     assert!(!has_buffer_changed);
 
@@ -687,7 +684,6 @@ async fn test_channel_buffer_changes(
             .channel_store()
             .read(cx)
             .has_channel_buffer_changed(channel_id)
-            .unwrap()
     });
     assert!(!has_buffer_changed);
 
@@ -714,7 +710,6 @@ async fn test_channel_buffer_changes(
             .channel_store()
             .read(cx)
             .has_channel_buffer_changed(channel_id)
-            .unwrap()
     });
     assert!(has_buffer_changed);
 }

@@ -125,6 +125,7 @@ impl TestServer {
         let channel_id = server
             .make_channel("a", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
             .await;
+        cx_a.run_until_parked();
 
         (client_a, client_b, channel_id)
     }
