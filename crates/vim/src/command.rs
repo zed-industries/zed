@@ -5,7 +5,7 @@ use serde_derive::Deserialize;
 use workspace::{SaveIntent, Workspace};
 
 use crate::{
-    motion::{EndOfDocument, Motion},
+    motion::{EndOfDocument, Motion, StartOfDocument},
     normal::{
         move_cursor,
         search::{FindCommand, ReplaceCommand},
@@ -235,6 +235,8 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
 
         // goto (other ranges handled under _ => )
         "$" => ("$", EndOfDocument.boxed_clone()),
+        "%" => ("%", EndOfDocument.boxed_clone()),
+        "0" => ("0", StartOfDocument.boxed_clone()),
 
         _ => {
             if query.starts_with("/") || query.starts_with("?") {
