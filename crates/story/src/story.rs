@@ -1,9 +1,8 @@
 use gpui::{
-    div, hsla, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, WindowContext,
+    div, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, WindowContext,
 };
 use itertools::Itertools;
 use smallvec::SmallVec;
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -34,13 +33,13 @@ pub struct StoryColor {
 impl StoryColor {
     pub fn new() -> Self {
         Self {
-            primary: hsla(216. / 360., 11. / 100., 0. / 100., 1.),
-            secondary: hsla(216. / 360., 11. / 100., 16. / 100., 1.),
-            border: hsla(216. / 360., 11. / 100., 91. / 100., 1.),
-            background: hsla(0. / 360., 0. / 100., 100. / 100., 1.),
-            card_background: hsla(0. / 360., 0. / 100., 96. / 100., 1.),
-            divider: hsla(216. / 360., 11. / 100., 86. / 100., 1.),
-            link: hsla(206. / 360., 100. / 100., 50. / 100., 1.),
+            primary: Hsla::new(216. / 360., 11. / 100., 0. / 100., 1.),
+            secondary: Hsla::new(216. / 360., 11. / 100., 16. / 100., 1.),
+            border: Hsla::new(216. / 360., 11. / 100., 91. / 100., 1.),
+            background: Hsla::new(0. / 360., 0. / 100., 100. / 100., 1.),
+            card_background: Hsla::new(0. / 360., 0. / 100., 96. / 100., 1.),
+            divider: Hsla::new(216. / 360., 11. / 100., 86. / 100., 1.),
+            link: Hsla::new(206. / 360., 100. / 100., 50. / 100., 1.),
         }
     }
 }
