@@ -47,6 +47,7 @@ pub struct NotificationPanel {
     local_timezone: UtcOffset,
     focus_handle: FocusHandle,
     mark_as_read_tasks: HashMap<u64, Task<Result<()>>>,
+    have_unseen_notifications: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -141,6 +142,7 @@ impl NotificationPanel {
                 active: false,
                 mark_as_read_tasks: HashMap::default(),
                 width: None,
+                have_unseen_notifications: false,
             };
 
             let mut old_dock_position = this.position(cx);
@@ -465,7 +467,10 @@ impl NotificationPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            NotificationEvent::NewNotification { entry } => self.add_toast(entry, cx),
+            NotificationEvent::NewNotification { entry } => {
+                self.have_unseen_notifications = true;
+                self.add_toast(entry, cx);
+            }
             NotificationEvent::NotificationRemoved { entry }
             | NotificationEvent::NotificationRead { entry } => self.remove_toast(entry.id, cx),
             NotificationEvent::NotificationsUpdated {
@@ -650,15 +655,26 @@ impl Panel for NotificationPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         self.active = active;
+
+        if self.active {
+            self.have_unseen_notifications = false;
+        }
+
         if self.notification_store.read(cx).notification_count() == 0 {
             cx.emit(Event::Dismissed);
         }
     }
 
     fn icon(&self, cx: &gpui::WindowContext) -> Option<IconName> {
-        (NotificationPanelSettings::get_global(cx).button
-            && self.notification_store.read(cx).notification_count() > 0)
-            .then(|| IconName::Bell)
+        let show_button = NotificationPanelSettings::get_global(cx).button;
+
+        show_button.then(|| {
+            if self.have_unseen_notifications {
+                IconName::BellBadged
+            } else {
+                IconName::Bell
+            }
+        })
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
