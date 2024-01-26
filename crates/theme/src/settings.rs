@@ -242,10 +242,10 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
-        let available_fonts = cx
-            .text_system()
-            .all_font_names()
-            .into_iter()
+        let available_fonts = params
+            .font_names
+            .iter()
+            .cloned()
             .map(Value::String)
             .collect();
         let fonts_schema = SchemaObject {

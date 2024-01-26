@@ -342,7 +342,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn workspace_configuration(&self, _: &Path, _: &mut AppContext) -> Value {
+    fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
         serde_json::json!({})
     }
 

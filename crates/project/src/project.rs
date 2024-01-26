@@ -2714,13 +2714,12 @@ impl Project {
                 })?;
 
                 for (adapter, server) in servers {
-                    let workspace_config =
+                    let settings =
                         cx.update(|cx| adapter.workspace_configuration(server.root_path(), cx))?;
+
                     server
                         .notify::<lsp::notification::DidChangeConfiguration>(
-                            lsp::DidChangeConfigurationParams {
-                                settings: workspace_config.clone(),
-                            },
+                            lsp::DidChangeConfigurationParams { settings },
                         )
                         .ok();
                 }
