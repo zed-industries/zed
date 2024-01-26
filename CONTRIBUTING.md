@@ -39,7 +39,7 @@ We plan to set aside time each week to pair program with contributors on promisi
 - Pair with us and watch us code to learn the codebase
 - Low effort PRs, such as those that just re-arrange syntax, won't be merged without a compelling justification
 
-## Bird-eye's view of Zed
+## Bird's-eye view of Zed
 
 Zed is made up of several smaller crates - let's go over those you're most likely to interact with:
 
