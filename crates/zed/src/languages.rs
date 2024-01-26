@@ -31,6 +31,7 @@ mod typescript;
 mod uiua;
 mod vue;
 mod yaml;
+mod zig;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -111,6 +112,11 @@ pub fn init(
         "go",
         tree_sitter_go::language(),
         vec![Arc::new(go::GoLspAdapter)],
+    );
+    language(
+        "zig",
+        tree_sitter_zig::language(),
+        vec![Arc::new(zig::ZlsAdapter)],
     );
     language(
         "heex",

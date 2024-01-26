@@ -161,6 +161,7 @@ tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", re
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "26bbaecda0039df4067861ab38ea8ea169f7f5aa"}
 tree-sitter-vue = {git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42"}
 tree-sitter-uiua = {git = "https://github.com/shnarazk/tree-sitter-uiua", rev = "9260f11be5900beda4ee6d1a24ab8ddfaf5a19b2"}
+tree-sitter-zig = { git = "https://github.com/maxxnino/tree-sitter-zig", rev = "0d08703e4c3f426ec61695d7617415fff97029bd" }
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "31c40449749c4263a91a43593831b82229049a4c" }
