@@ -98,6 +98,10 @@ impl ThemeSettings {
                 .styles
                 .colors
                 .refine(&theme_overrides.theme_colors_refinement());
+            base_theme
+                .styles
+                .status
+                .refine(&theme_overrides.status_colors_refinement());
 
             self.active_theme = Arc::new(base_theme);
         }

@@ -4,12 +4,51 @@ use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::ThemeColorsRefinement;
+use crate::{StatusColorsRefinement, ThemeColorsRefinement};
+
+fn try_parse_color(color: &str) -> Result<Hsla> {
+    let rgba = gpui::Rgba::try_from(color)?;
+    let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
+    let hsla = palette::Hsla::from_color(rgba);
+
+    let hsla = gpui::hsla(
+        hsla.hue.into_positive_degrees() / 360.,
+        hsla.saturation,
+        hsla.lightness,
+        hsla.alpha,
+    );
+
+    Ok(hsla)
+}
 
 /// The content of a serialized theme.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ThemeContent {
+    #[serde(flatten, default)]
+    pub colors: ThemeColorsContent,
+
+    #[serde(flatten, default)]
+    pub status: StatusColorsContent,
+}
+
+impl ThemeContent {
+    /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeContent`].
+    #[inline(always)]
+    pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
+        self.colors.theme_colors_refinement()
+    }
+
+    /// Returns a [`StatusColorsRefinement`] based on the colors in the [`ThemeContent`].
+    #[inline(always)]
+    pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
+        self.status.status_colors_refinement()
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ThemeColorsContent {
     /// Border color. Used for most borders, is usually a high contrast color.
     #[serde(rename = "border")]
     pub border: Option<String>,
@@ -386,23 +425,8 @@ pub struct ThemeContent {
     pub link_text_hover: Option<String>,
 }
 
-pub fn try_parse_color(color: &str) -> Result<Hsla> {
-    let rgba = gpui::Rgba::try_from(color)?;
-    let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
-    let hsla = palette::Hsla::from_color(rgba);
-
-    let hsla = gpui::hsla(
-        hsla.hue.into_positive_degrees() / 360.,
-        hsla.saturation,
-        hsla.lightness,
-        hsla.alpha,
-    );
-
-    Ok(hsla)
-}
-
-impl ThemeContent {
-    /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeContent`].
+impl ThemeColorsContent {
+    /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeColorsContent`].
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
         ThemeColorsRefinement {
             border: self
@@ -751,6 +775,327 @@ impl ThemeContent {
                 .and_then(|color| try_parse_color(&color).ok()),
             link_text_hover: self
                 .link_text_hover
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StatusColorsContent {
+    /// Indicates some kind of conflict, like a file changed on disk while it was open, or
+    /// merge conflicts in a Git repository.
+    #[serde(rename = "conflict")]
+    pub conflict: Option<String>,
+
+    #[serde(rename = "conflict.background")]
+    pub conflict_background: Option<String>,
+
+    #[serde(rename = "conflict.border")]
+    pub conflict_border: Option<String>,
+
+    /// Indicates something new, like a new file added to a Git repository.
+    #[serde(rename = "created")]
+    pub created: Option<String>,
+
+    #[serde(rename = "created.background")]
+    pub created_background: Option<String>,
+
+    #[serde(rename = "created.border")]
+    pub created_border: Option<String>,
+
+    /// Indicates that something no longer exists, like a deleted file.
+    #[serde(rename = "deleted")]
+    pub deleted: Option<String>,
+
+    #[serde(rename = "deleted.background")]
+    pub deleted_background: Option<String>,
+
+    #[serde(rename = "deleted.border")]
+    pub deleted_border: Option<String>,
+
+    /// Indicates a system error, a failed operation or a diagnostic error.
+    #[serde(rename = "error")]
+    pub error: Option<String>,
+
+    #[serde(rename = "error.background")]
+    pub error_background: Option<String>,
+
+    #[serde(rename = "error.border")]
+    pub error_border: Option<String>,
+
+    /// Represents a hidden status, such as a file being hidden in a file tree.
+    #[serde(rename = "hidden")]
+    pub hidden: Option<String>,
+
+    #[serde(rename = "hidden.background")]
+    pub hidden_background: Option<String>,
+
+    #[serde(rename = "hidden.border")]
+    pub hidden_border: Option<String>,
+
+    /// Indicates a hint or some kind of additional information.
+    #[serde(rename = "hint")]
+    pub hint: Option<String>,
+
+    #[serde(rename = "hint.background")]
+    pub hint_background: Option<String>,
+
+    #[serde(rename = "hint.border")]
+    pub hint_border: Option<String>,
+
+    /// Indicates that something is deliberately ignored, such as a file or operation ignored by Git.
+    #[serde(rename = "ignored")]
+    pub ignored: Option<String>,
+
+    #[serde(rename = "ignored.background")]
+    pub ignored_background: Option<String>,
+
+    #[serde(rename = "ignored.border")]
+    pub ignored_border: Option<String>,
+
+    /// Represents informational status updates or messages.
+    #[serde(rename = "info")]
+    pub info: Option<String>,
+
+    #[serde(rename = "info.background")]
+    pub info_background: Option<String>,
+
+    #[serde(rename = "info.border")]
+    pub info_border: Option<String>,
+
+    /// Indicates a changed or altered status, like a file that has been edited.
+    #[serde(rename = "modified")]
+    pub modified: Option<String>,
+
+    #[serde(rename = "modified.background")]
+    pub modified_background: Option<String>,
+
+    #[serde(rename = "modified.border")]
+    pub modified_border: Option<String>,
+
+    /// Indicates something that is predicted, like automatic code completion, or generated code.
+    #[serde(rename = "predictive")]
+    pub predictive: Option<String>,
+
+    #[serde(rename = "predictive.background")]
+    pub predictive_background: Option<String>,
+
+    #[serde(rename = "predictive.border")]
+    pub predictive_border: Option<String>,
+
+    /// Represents a renamed status, such as a file that has been renamed.
+    #[serde(rename = "renamed")]
+    pub renamed: Option<String>,
+
+    #[serde(rename = "renamed.background")]
+    pub renamed_background: Option<String>,
+
+    #[serde(rename = "renamed.border")]
+    pub renamed_border: Option<String>,
+
+    /// Indicates a successful operation or task completion.
+    #[serde(rename = "success")]
+    pub success: Option<String>,
+
+    #[serde(rename = "success.background")]
+    pub success_background: Option<String>,
+
+    #[serde(rename = "success.border")]
+    pub success_border: Option<String>,
+
+    /// Indicates some kind of unreachable status, like a block of code that can never be reached.
+    #[serde(rename = "unreachable")]
+    pub unreachable: Option<String>,
+
+    #[serde(rename = "unreachable.background")]
+    pub unreachable_background: Option<String>,
+
+    #[serde(rename = "unreachable.border")]
+    pub unreachable_border: Option<String>,
+
+    /// Represents a warning status, like an operation that is about to fail.
+    #[serde(rename = "warning")]
+    pub warning: Option<String>,
+
+    #[serde(rename = "warning.background")]
+    pub warning_background: Option<String>,
+
+    #[serde(rename = "warning.border")]
+    pub warning_border: Option<String>,
+}
+
+impl StatusColorsContent {
+    /// Returns a [`StatusColorsRefinement`] based on the colors in the [`StatusColorsContent`].
+    pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
+        StatusColorsRefinement {
+            conflict: self
+                .conflict
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            conflict_background: self
+                .conflict_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            conflict_border: self
+                .conflict_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            created: self
+                .created
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            created_background: self
+                .created_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            created_border: self
+                .created_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            deleted: self
+                .deleted
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            deleted_background: self
+                .deleted_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            deleted_border: self
+                .deleted_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            error: self
+                .error
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            error_background: self
+                .error_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            error_border: self
+                .error_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            hidden: self
+                .hidden
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            hidden_background: self
+                .hidden_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            hidden_border: self
+                .hidden_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            hint: self
+                .hint
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            hint_background: self
+                .hint_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            hint_border: self
+                .hint_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            ignored: self
+                .ignored
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            ignored_background: self
+                .ignored_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            ignored_border: self
+                .ignored_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            info: self
+                .info
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            info_background: self
+                .info_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            info_border: self
+                .info_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            modified: self
+                .modified
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            modified_background: self
+                .modified_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            modified_border: self
+                .modified_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            predictive: self
+                .predictive
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            predictive_background: self
+                .predictive_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            predictive_border: self
+                .predictive_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            renamed: self
+                .renamed
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            renamed_background: self
+                .renamed_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            renamed_border: self
+                .renamed_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            success: self
+                .success
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            success_background: self
+                .success_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            success_border: self
+                .success_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            unreachable: self
+                .unreachable
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            unreachable_background: self
+                .unreachable_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            unreachable_border: self
+                .unreachable_border
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            warning: self
+                .warning
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            warning_background: self
+                .warning_background
+                .as_ref()
+                .and_then(|color| try_parse_color(&color).ok()),
+            warning_border: self
+                .warning_border
                 .as_ref()
                 .and_then(|color| try_parse_color(&color).ok()),
         }
