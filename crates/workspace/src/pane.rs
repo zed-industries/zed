@@ -158,6 +158,7 @@ pub struct Pane {
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
+    preview_item_id: Option<EntityId>,
     last_focused_view_by_item: HashMap<EntityId, FocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
@@ -252,6 +253,7 @@ impl Pane {
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
+            preview_item_id: None,
             last_focused_view_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -497,27 +499,53 @@ impl Pane {
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
-        let mut existing_item = None;
-        if let Some(project_entry_id) = project_entry_id {
-            for (index, item) in self.items.iter().enumerate() {
-                if item.is_singleton(cx)
-                    && item.project_entry_ids(cx).as_slice() == [project_entry_id]
-                {
-                    let item = item.boxed_clone();
-                    existing_item = Some((index, item));
-                    break;
-                }
+        // check for an existing item
+        let existing_item = match project_entry_id {
+            Some(project_entry_id) => self
+                .items
+                .iter()
+                .enumerate()
+                .find(|(_, item)| {
+                    item.is_singleton(cx)
+                        && item.project_entry_ids(cx).as_slice() == [project_entry_id]
+                })
+                .map(|(index, item)| (index, item.boxed_clone())),
+            None => None,
+        };
+
+        // if the item exists, we have two choices
+        if let Some((index, existing_item)) = existing_item {
+            // if it is a preview item, make it permanent
+            if self.preview_item_id == Some(existing_item.item_id()) {
+                self.preview_item_id = None;
+                self.activate_item(index, focus_item, focus_item, cx);
+                return existing_item;
             }
+
+            // otherwise, just activate it and return
+            self.activate_item(index, focus_item, focus_item, cx);
+            return existing_item;
         }
 
-        if let Some((index, existing_item)) = existing_item {
-            self.activate_item(index, focus_item, focus_item, cx);
-            existing_item
-        } else {
+        // if we have a preview item, replace it with the new item
+        if let Some(preview_item_id) = self.preview_item_id {
+            self.items.retain(|item| item.item_id() != preview_item_id);
+
             let new_item = build_item(cx);
+
             self.add_item(new_item.clone(), true, focus_item, None, cx);
-            new_item
+            self.preview_item_id = Some(new_item.item_id());
+
+            self.activate_item(self.items.len() - 1, focus_item, focus_item, cx);
+            return new_item;
         }
+
+        // otherwise, create a new item and set it as the preview item
+        let new_item = build_item(cx);
+        self.add_item(new_item.clone(), true, focus_item, None, cx);
+        self.preview_item_id = Some(new_item.item_id());
+        self.activate_item(self.items.len() - 1, focus_item, focus_item, cx);
+        new_item
     }
 
     pub fn add_item(
@@ -1281,8 +1309,12 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
+        let is_preview = self
+            .preview_item_id
+            .map(|id| id == item.item_id())
+            .unwrap_or(false);
 
-        let label = item.tab_content(Some(detail), is_active, cx);
+        let label = item.tab_content(Some(detail), is_active, is_preview, cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
 
         let indicator = maybe!({
@@ -2619,7 +2651,7 @@ mod tests {
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        let label = self.item.tab_content(Some(self.detail), false, cx);
+        let label = self.item.tab_content(Some(self.detail), false, false, cx);
         Tab::new("")
             .selected(self.is_active)
             .child(label)

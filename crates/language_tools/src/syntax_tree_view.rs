@@ -387,7 +387,13 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        selected: bool,
+        _: bool,
+        _: &WindowContext<'_>,
+    ) -> AnyElement {
         Label::new("Syntax Tree")
             .color(if selected {
                 Color::Default

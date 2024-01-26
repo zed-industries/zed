@@ -472,7 +472,13 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        selected: bool,
+        _: bool,
+        cx: &WindowContext<'_>,
+    ) -> AnyElement {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)

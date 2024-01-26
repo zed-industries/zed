@@ -694,6 +694,7 @@ impl Item for TerminalView {
         &self,
         _detail: Option<usize>,
         selected: bool,
+        _: bool,
         cx: &WindowContext,
     ) -> AnyElement {
         let title = self.terminal().read(cx).title(true);

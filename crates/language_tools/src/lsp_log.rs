@@ -627,7 +627,13 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        selected: bool,
+        _: bool,
+        _: &WindowContext<'_>,
+    ) -> AnyElement {
         Label::new("LSP Logs")
             .color(if selected {
                 Color::Default

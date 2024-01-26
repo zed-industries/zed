@@ -244,7 +244,13 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        selected: bool,
+        _: bool,
+        cx: &WindowContext,
+    ) -> AnyElement {
         let label = if let Some(channel) = self.channel(cx) {
             match (
                 self.channel_buffer.read(cx).buffer().read(cx).read_only(),

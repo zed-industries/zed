@@ -308,7 +308,13 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        selected: bool,
+        _: bool,
+        _: &WindowContext,
+    ) -> AnyElement {
         Label::new("Welcome to Zed!")
             .color(if selected {
                 Color::Default

@@ -587,7 +587,13 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        selected: bool,
+        _: bool,
+        cx: &WindowContext,
+    ) -> AnyElement {
         let git_status = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
@@ -631,6 +637,8 @@ impl Item for Editor {
                     Label::new(description)
                         .size(LabelSize::XSmall)
                         .color(Color::Muted),
+                    // TODO: enable this after figuring out how to do italic labels
+                    // .decoration(DecorationStyle::Italic),
                 )
             })
             .into_any_element()

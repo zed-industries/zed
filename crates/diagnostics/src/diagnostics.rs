@@ -644,7 +644,13 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content(&self, _detail: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        selected: bool,
+        _: bool,
+        _: &WindowContext,
+    ) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
             Label::new("No problems")
                 .color(if selected {

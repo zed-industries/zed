@@ -96,6 +96,7 @@ impl Item for SharedScreen {
         &self,
         _: Option<usize>,
         selected: bool,
+        _: bool,
         _: &WindowContext<'_>,
     ) -> gpui::AnyElement {
         h_flex()

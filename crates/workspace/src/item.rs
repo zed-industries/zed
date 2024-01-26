@@ -112,7 +112,13 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
         None
     }
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        selected: bool,
+        preview: bool,
+        cx: &WindowContext,
+    ) -> AnyElement;
 
     fn telemetry_event_text(&self) -> Option<&'static str>;
 
@@ -226,7 +232,13 @@ pub trait ItemHandle: 'static + Send {
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        selected: bool,
+        preview: bool,
+        cx: &WindowContext,
+    ) -> AnyElement;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -324,12 +336,18 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).tab_description(detail, cx)
     }
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, selected, cx)
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        selected: bool,
+        preview: bool,
+        cx: &WindowContext,
+    ) -> AnyElement {
+        self.read(cx).tab_content(detail, selected, preview, cx)
     }
 
     fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, true, cx)
+        self.read(cx).tab_content(detail, true, false, cx)
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -935,6 +953,7 @@ pub mod test {
             &self,
             detail: Option<usize>,
             _selected: bool,
+            _preview: bool,
             _cx: &ui::prelude::WindowContext,
         ) -> AnyElement {
             self.tab_detail.set(detail);
