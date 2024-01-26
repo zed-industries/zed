@@ -110,10 +110,12 @@ impl LspAdapter for JsonLspAdapter {
         let action_names = cx.all_action_names();
         let staff_mode = cx.is_staff();
         let language_names = &self.languages.language_names();
+        let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {
                 language_names,
                 staff_mode,
+                font_names,
             },
             cx,
         );
