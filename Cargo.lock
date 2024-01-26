@@ -8373,6 +8373,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-blade"
+version = "0.0.1"
+source = "git+https://github.com/EmranMR/tree-sitter-blade?rev=01e5550cb60ef3532ace0c6df0480f6f406113ff#01e5550cb60ef3532ace0c6df0480f6f406113ff"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-c"
 version = "0.20.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9711,6 +9720,7 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-bash",
+ "tree-sitter-blade",
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",

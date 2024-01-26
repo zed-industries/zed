@@ -61,6 +61,15 @@ pub fn init(
 
     language("bash", tree_sitter_bash::language(), vec![]);
     language(
+        "blade",
+        tree_sitter_blade::language(),
+        vec![
+            Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
+            Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
+    );
+    language(
         "c",
         tree_sitter_c::language(),
         vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>],

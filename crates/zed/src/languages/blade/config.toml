@@ -1,0 +1,13 @@
+name = "Laravel Blade"
+path_suffixes = ["blade.php"]
+block_comment = ["{{-- ", " --}}"]
+autoclose_before = "}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+]
+word_characters = ["-", "."]
+prettier_parser_name = "html"
