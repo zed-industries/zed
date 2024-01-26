@@ -320,7 +320,7 @@ fn main() -> Result<()> {
 
         let output_file_path = themes_output_path.join(format!("{theme_family_slug}.rs"));
         if (output_file_path.exists()) {
-            log::info!("Skipping file {theme_family_slug}.rs, it already exists. In order to update a theme, please delete it from the output path {theme_output_path}.");
+            log::info!("Skipping file {theme_family_slug}.rs, it already exists. In order to update a theme, please delete it from the output path {themes_output_path}.");
             continue;
         }
 
