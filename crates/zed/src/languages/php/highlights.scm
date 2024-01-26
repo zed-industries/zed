@@ -96,6 +96,7 @@
 "endwhile" @keyword
 "extends" @keyword
 "final" @keyword
+"readonly" @keyword
 "finally" @keyword
 "foreach" @keyword
 "function" @keyword
