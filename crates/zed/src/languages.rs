@@ -202,7 +202,11 @@ pub fn init(
             );
         }
     }
-    language("haskell", tree_sitter_haskell::language(), vec![]);
+    language(
+        "haskell",
+        tree_sitter_haskell::language(),
+        vec![Arc::new(haskell::HaskellLspAdapter)],
+    );
     language(
         "html",
         tree_sitter_html::language(),
