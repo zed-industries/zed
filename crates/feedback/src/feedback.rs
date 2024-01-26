@@ -20,43 +20,39 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    // TODO: a way to combine these two into one?
-    cx.observe_new_views(feedback_modal::FeedbackModal::register)
-        .detach();
+    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+        // First registration
+        feedback_modal::FeedbackModal::register(workspace, cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+        // Additional actions
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
-                    let specs = SystemSpecs::new(&cx).to_string();
+                let specs = SystemSpecs::new(&cx).to_string();
 
-                    let prompt = cx.prompt(
-                        PromptLevel::Info,
-                        "Copied into clipboard",
-                        Some(&specs),
-                        &["OK"],
-                    );
-                    cx.spawn(|_, _cx| async move {
-                        prompt.await.ok();
-                    })
-                    .detach();
-                    let item = ClipboardItem::new(specs.clone());
-                    cx.write_to_clipboard(item);
+                let prompt = cx.prompt(
+                    PromptLevel::Info,
+                    "Copied into clipboard",
+                    Some(&specs),
+                    &["OK"],
+                );
+                cx.spawn(|_, _cx| async move {
+                    prompt.await.ok();
                 })
+                .detach();
+                cx.write_to_clipboard(ClipboardItem::new(specs.clone()));
+            })
             .register_action(|_, _: &RequestFeature, cx| {
-                let url = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml";
-                cx.open_url(url);
+                cx.open_url("https://github.com/zed-industries/zed/issues/new?assignees=&labels=enhancement%2Ctriage&template=0_feature_request.yml");
             })
             .register_action(move |_, _: &FileBugReport, cx| {
-                let url = format!(
+                cx.open_url(&format!(
                     "https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}",
                     urlencoding::encode(&SystemSpecs::new(&cx).to_string())
-                );
-                cx.open_url(&url);
+                ));
             })
             .register_action(move |_, _: &OpenZedRepo, cx| {
-                let url = "https://github.com/zed-industries/zed";
-                cx.open_url(&url);
-        });
+                cx.open_url(&"https://github.com/zed-industries/zed");
+            });
     })
     .detach();
 }
