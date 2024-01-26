@@ -47,7 +47,7 @@ pub struct NotificationPanel {
     local_timezone: UtcOffset,
     focus_handle: FocusHandle,
     mark_as_read_tasks: HashMap<u64, Task<Result<()>>>,
-    have_unseen_notifications: bool,
+    unseen_notifications: Vec<NotificationEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -142,7 +142,7 @@ impl NotificationPanel {
                 active: false,
                 mark_as_read_tasks: HashMap::default(),
                 width: None,
-                have_unseen_notifications: false,
+                unseen_notifications: Vec::new(),
             };
 
             let mut old_dock_position = this.position(cx);
@@ -443,6 +443,10 @@ impl NotificationPanel {
     }
 
     fn is_showing_notification(&self, notification: &Notification, cx: &ViewContext<Self>) -> bool {
+        if !self.active {
+            return false;
+        }
+
         if let Notification::ChannelMessageMention { channel_id, .. } = &notification {
             if let Some(workspace) = self.workspace.upgrade() {
                 return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
@@ -468,11 +472,16 @@ impl NotificationPanel {
     ) {
         match event {
             NotificationEvent::NewNotification { entry } => {
-                self.have_unseen_notifications = true;
+                if !self.is_showing_notification(&entry.notification, cx) {
+                    self.unseen_notifications.push(entry.clone());
+                }
                 self.add_toast(entry, cx);
             }
             NotificationEvent::NotificationRemoved { entry }
-            | NotificationEvent::NotificationRead { entry } => self.remove_toast(entry.id, cx),
+            | NotificationEvent::NotificationRead { entry } => {
+                self.unseen_notifications.retain(|n| n.id != entry.id);
+                self.remove_toast(entry.id, cx);
+            }
             NotificationEvent::NotificationsUpdated {
                 old_range,
                 new_count,
@@ -657,7 +666,8 @@ impl Panel for NotificationPanel {
         self.active = active;
 
         if self.active {
-            self.have_unseen_notifications = false;
+            self.unseen_notifications = Vec::new();
+            cx.notify();
         }
 
         if self.notification_store.read(cx).notification_count() == 0 {
@@ -667,14 +677,15 @@ impl Panel for NotificationPanel {
 
     fn icon(&self, cx: &gpui::WindowContext) -> Option<IconName> {
         let show_button = NotificationPanelSettings::get_global(cx).button;
+        if !show_button {
+            return None;
+        }
 
-        show_button.then(|| {
-            if self.have_unseen_notifications {
-                IconName::BellBadged
-            } else {
-                IconName::Bell
-            }
-        })
+        if self.unseen_notifications.is_empty() {
+            return Some(IconName::Bell);
+        }
+
+        Some(IconName::BellBadged)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
