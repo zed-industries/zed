@@ -1100,16 +1100,21 @@ async fn test_channel_membership_notifications(
     let user_b = client_b.user_id().unwrap();
 
     let channels = server
-        .make_channel_tree(&[("zed", None), ("vim", Some("zed"))], (&client_a, cx_a))
+        .make_channel_tree(
+            &[("zed", None), ("vim", Some("zed")), ("opensource", None)],
+            (&client_a, cx_a),
+        )
         .await;
     let zed_channel = channels[0];
     let vim_channel = channels[1];
+    let opensource_channel = channels[2];
 
     try_join_all(client_a.channel_store().update(cx_a, |channel_store, cx| {
         [
             channel_store.set_channel_visibility(zed_channel, proto::ChannelVisibility::Public, cx),
             channel_store.set_channel_visibility(vim_channel, proto::ChannelVisibility::Public, cx),
-            channel_store.invite_member(zed_channel, user_b, proto::ChannelRole::Guest, cx),
+            channel_store.invite_member(zed_channel, user_b, proto::ChannelRole::Admin, cx),
+            channel_store.invite_member(opensource_channel, user_b, proto::ChannelRole::Member, cx),
         ]
     }))
     .await
@@ -1144,6 +1149,34 @@ async fn test_channel_membership_notifications(
             },
         ],
     );
+
+    client_b.channel_store().update(cx_b, |channel_store, _| {
+        channel_store.is_channel_admin(zed_channel)
+    });
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(opensource_channel, true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_member_role(opensource_channel, user_b, ChannelRole::Admin, cx)
+        })
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    client_b.channel_store().update(cx_b, |channel_store, _| {
+        channel_store.is_channel_admin(opensource_channel)
+    });
 }
 
 #[gpui::test]

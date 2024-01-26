@@ -190,7 +190,9 @@ impl Database {
                     let parent = self.get_channel_internal(parent_id, &*tx).await?;
 
                     if parent.visibility != ChannelVisibility::Public {
-                        Err(anyhow!("public channels must descend from public channels"))?;
+                        Err(ErrorCode::BadPublicNesting
+                            .with_tag("direction", "parent")
+                            .anyhow())?;
                     }
                 }
             } else if visibility == ChannelVisibility::Members {
@@ -202,7 +204,9 @@ impl Database {
                         channel.id != channel_id && channel.visibility == ChannelVisibility::Public
                     })
                 {
-                    Err(anyhow!("cannot make a parent of a public channel private"))?;
+                    Err(ErrorCode::BadPublicNesting
+                        .with_tag("direction", "children")
+                        .anyhow())?;
                 }
             }
 

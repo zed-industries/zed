@@ -213,6 +213,7 @@ enum ErrorCode {
     WrongReleaseChannel = 6;
     NeedsCla = 7;
     NotARootChannel = 8;
+    BadPublicNesting = 9;
 }
 
 message Test {

@@ -79,6 +79,17 @@ impl Channel {
             + &self.id.to_string()
     }
 
+    pub fn is_root_channel(&self) -> bool {
+        self.parent_path.is_empty()
+    }
+
+    pub fn root_id(&self) -> ChannelId {
+        self.parent_path
+            .first()
+            .map(|id| *id as ChannelId)
+            .unwrap_or(self.id)
+    }
+
     pub fn slug(&self) -> String {
         let slug: String = self
             .name
@@ -473,6 +484,22 @@ impl ChannelStore {
         self.channel_role(channel_id) == proto::ChannelRole::Admin
     }
 
+    pub fn is_root_channel(&self, channel_id: ChannelId) -> bool {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map_or(false, |channel| channel.is_root_channel())
+    }
+
+    pub fn is_public_channel(&self, channel_id: ChannelId) -> bool {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map_or(false, |channel| {
+                channel.visibility == ChannelVisibility::Public
+            })
+    }
+
     pub fn channel_capability(&self, channel_id: ChannelId) -> Capability {
         match self.channel_role(channel_id) {
             ChannelRole::Admin | ChannelRole::Member => Capability::ReadWrite,
@@ -482,10 +509,11 @@ impl ChannelStore {
 
     pub fn channel_role(&self, channel_id: ChannelId) -> proto::ChannelRole {
         maybe!({
-            let channel = self.channel_for_id(channel_id)?;
-            let root_channel_id = channel.parent_path.first()?;
-            let root_channel_state = self.channel_states.get(&root_channel_id);
-            debug_assert!(root_channel_state.is_some());
+            let mut channel = self.channel_for_id(channel_id)?;
+            if !channel.is_root_channel() {
+                channel = self.channel_for_id(channel.root_id())?;
+            }
+            let root_channel_state = self.channel_states.get(&channel.id);
             root_channel_state?.role
         })
         .unwrap_or(proto::ChannelRole::Guest)

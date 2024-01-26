@@ -3281,6 +3281,18 @@ fn notify_membership_updated(
     user_id: UserId,
     peer: &Peer,
 ) {
+    let user_channels_update = proto::UpdateUserChannels {
+        channel_memberships: result
+            .new_channels
+            .channel_memberships
+            .iter()
+            .map(|cm| proto::ChannelMembership {
+                channel_id: cm.channel_id.to_proto(),
+                role: cm.role.into(),
+            })
+            .collect(),
+        ..Default::default()
+    };
     let mut update = build_channels_update(result.new_channels, vec![]);
     update.delete_channels = result
         .removed_channels
@@ -3290,6 +3302,8 @@ fn notify_membership_updated(
     update.remove_channel_invitations = vec![result.channel_id.to_proto()];
 
     for connection_id in connection_pool.user_connection_ids(user_id) {
+        peer.send(connection_id, user_channels_update.clone())
+            .trace_err();
         peer.send(connection_id, update.clone()).trace_err();
     }
 }
