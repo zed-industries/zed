@@ -11,12 +11,11 @@ use itertools::Itertools;
 use language::CursorShape;
 use settings::Settings;
 use terminal::{
-    alacritty_terminal::ansi::NamedColor,
     alacritty_terminal::{
-        ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape},
         grid::Dimensions,
         index::Point as AlacPoint,
         term::{cell::Flags, TermMode},
+        vte::ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
     },
     terminal_settings::TerminalSettings,
     IndexedCell, Terminal, TerminalContent, TerminalSize,
@@ -308,7 +307,7 @@ impl TerminalElement {
     /// Converts the Alacritty cell styles to GPUI text styles and background color.
     fn cell_style(
         indexed: &IndexedCell,
-        fg: terminal::alacritty_terminal::ansi::Color,
+        fg: terminal::alacritty_terminal::vte::ansi::Color,
         // bg: terminal::alacritty_terminal::ansi::Color,
         colors: &Theme,
         text_style: &TextStyle,
@@ -998,11 +997,11 @@ fn to_highlighted_range_lines(
 }
 
 /// Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent.
-fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) -> Hsla {
+fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme: &Theme) -> Hsla {
     let colors = theme.colors();
     match fg {
         // Named and theme defined colors
-        terminal::alacritty_terminal::ansi::Color::Named(n) => match n {
+        terminal::alacritty_terminal::vte::ansi::Color::Named(n) => match n {
             NamedColor::Black => colors.terminal_ansi_black,
             NamedColor::Red => colors.terminal_ansi_red,
             NamedColor::Green => colors.terminal_ansi_green,
@@ -1034,11 +1033,11 @@ fn convert_color(fg: &terminal::alacritty_terminal::ansi::Color, theme: &Theme) 
             NamedColor::DimForeground => colors.terminal_dim_foreground,
         },
         // 'True' colors
-        terminal::alacritty_terminal::ansi::Color::Spec(rgb) => {
+        terminal::alacritty_terminal::vte::ansi::Color::Spec(rgb) => {
             terminal::rgba_color(rgb.r, rgb.g, rgb.b)
         }
         // 8 bit, indexed colors
-        terminal::alacritty_terminal::ansi::Color::Indexed(i) => {
+        terminal::alacritty_terminal::vte::ansi::Color::Indexed(i) => {
             terminal::get_color_at_index(*i as usize, theme)
         }
     }
