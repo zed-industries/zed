@@ -1,9 +1,10 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacDisplayLinker, MacTextSystem,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowOptions,
+    ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacDisplayLink, MacTextSystem,
+    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformDisplayLink,
+    PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
+    WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -145,7 +146,6 @@ pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<MacTextSystem>,
-    display_linker: MacDisplayLinker,
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
@@ -175,7 +175,6 @@ impl MacPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system: Arc::new(MacTextSystem::new()),
-            display_linker: MacDisplayLinker::new(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
@@ -497,23 +496,12 @@ impl Platform for MacPlatform {
         Box::new(MacWindow::open(handle, options, self.foreground_executor()))
     }
 
-    fn set_display_link_output_callback(
+    fn start_display_link(
         &self,
         display_id: DisplayId,
         callback: Box<dyn FnMut() + Send>,
-    ) {
-        self.0
-            .lock()
-            .display_linker
-            .set_output_callback(display_id, callback);
-    }
-
-    fn start_display_link(&self, display_id: DisplayId) {
-        self.0.lock().display_linker.start(display_id);
-    }
-
-    fn stop_display_link(&self, display_id: DisplayId) {
-        self.0.lock().display_linker.stop(display_id);
+    ) -> Result<Box<dyn PlatformDisplayLink>> {
+        Ok(Box::new(MacDisplayLink::new(display_id, callback)?))
     }
 
     fn open_url(&self, url: &str) {

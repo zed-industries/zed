@@ -12,10 +12,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
-use futures::{
-    channel::{mpsc, oneshot},
-    StreamExt,
-};
+use futures::channel::oneshot;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -23,7 +20,6 @@ use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
     cell::RefCell,
-    collections::hash_map::Entry,
     fmt::{Debug, Display},
     future::Future,
     hash::{Hash, Hasher},
@@ -36,7 +32,7 @@ use std::{
     },
     time::Duration,
 };
-use util::{measure, ResultExt};
+use util::ResultExt;
 
 mod element_cx;
 pub use element_cx::*;
@@ -249,7 +245,7 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
-    display_id: DisplayId,
+    pub(crate) display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) rem_size: Pixels,
     pub(crate) viewport_size: Size<Pixels>,
@@ -338,14 +334,6 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
 
-        platform_window.on_request_frame(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                measure("frame duration", || {
-                    handle.update(&mut cx, |_, cx| cx.draw()).log_err();
-                })
-            }
-        }));
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |_, _| {
@@ -641,48 +629,6 @@ impl<'a> WindowContext<'a> {
     pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
         let handle = self.window.handle;
         let display_id = self.window.display_id;
-
-        let mut frame_consumers = std::mem::take(&mut self.app.frame_consumers);
-        if let Entry::Vacant(e) = frame_consumers.entry(display_id) {
-            let (tx, mut rx) = mpsc::unbounded::<()>();
-            self.platform.set_display_link_output_callback(
-                display_id,
-                Box::new(move || _ = tx.unbounded_send(())),
-            );
-
-            let consumer_task = self.app.spawn(|cx| async move {
-                while rx.next().await.is_some() {
-                    cx.update(|cx| {
-                        for callback in cx
-                            .next_frame_callbacks
-                            .get_mut(&display_id)
-                            .unwrap()
-                            .drain(..)
-                            .collect::<SmallVec<[_; 32]>>()
-                        {
-                            callback(cx);
-                        }
-                    })
-                    .ok();
-
-                    // Flush effects, then stop the display link if no new next_frame_callbacks have been added.
-
-                    cx.update(|cx| {
-                        if cx.next_frame_callbacks.is_empty() {
-                            cx.platform.stop_display_link(display_id);
-                        }
-                    })
-                    .ok();
-                }
-            });
-            e.insert(consumer_task);
-        }
-        debug_assert!(self.app.frame_consumers.is_empty());
-        self.app.frame_consumers = frame_consumers;
-
-        if self.next_frame_callbacks.is_empty() {
-            self.platform.start_display_link(display_id);
-        }
 
         self.next_frame_callbacks
             .entry(display_id)

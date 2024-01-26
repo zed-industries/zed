@@ -67,13 +67,11 @@ pub(crate) trait Platform: 'static {
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
 
-    fn set_display_link_output_callback(
+    fn start_display_link(
         &self,
         display_id: DisplayId,
         callback: Box<dyn FnMut() + Send>,
-    );
-    fn start_display_link(&self, display_id: DisplayId);
-    fn stop_display_link(&self, display_id: DisplayId);
+    ) -> Result<Box<dyn PlatformDisplayLink>>;
 
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
@@ -185,6 +183,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         None
     }
 }
+
+pub(crate) trait PlatformDisplayLink {}
 
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.

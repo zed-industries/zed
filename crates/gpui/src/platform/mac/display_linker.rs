@@ -1,75 +1,49 @@
+use crate::{DisplayId, PlatformDisplayLink};
+use anyhow::{anyhow, Result};
+use parking_lot::Mutex;
 use std::{
     ffi::c_void,
     mem,
     sync::{Arc, Weak},
 };
 
-use crate::DisplayId;
-use collections::HashMap;
-use parking_lot::Mutex;
-
-pub(crate) struct MacDisplayLinker {
-    links: HashMap<DisplayId, MacDisplayLink>,
-}
-
-struct MacDisplayLink {
-    system_link: sys::DisplayLink,
-    _output_callback: Arc<OutputCallback>,
-}
-
-impl MacDisplayLinker {
-    pub fn new() -> Self {
-        MacDisplayLinker {
-            links: Default::default(),
-        }
-    }
-}
-
 type OutputCallback = Mutex<Box<dyn FnMut() + Send>>;
 
-impl MacDisplayLinker {
-    pub fn set_output_callback(
-        &mut self,
-        display_id: DisplayId,
-        output_callback: Box<dyn FnMut() + Send>,
-    ) {
-        if let Some(mut system_link) = unsafe { sys::DisplayLink::on_display(display_id.0) } {
-            let callback = Arc::new(Mutex::new(output_callback));
-            let weak_callback_ptr: *const OutputCallback = Arc::downgrade(&callback).into_raw();
-            unsafe { system_link.set_output_callback(trampoline, weak_callback_ptr as *mut c_void) }
+pub(crate) struct MacDisplayLink {
+    system_link: sys::DisplayLink,
+    _callback: Arc<OutputCallback>,
+}
 
-            self.links.insert(
-                display_id,
-                MacDisplayLink {
-                    _output_callback: callback,
-                    system_link,
-                },
-            );
-        } else {
-            log::warn!("DisplayLink could not be obtained for {:?}", display_id);
+impl MacDisplayLink {
+    pub fn new(display_id: DisplayId, callback: Box<dyn FnMut() + Send>) -> Result<Self> {
+        let mut system_link = unsafe {
+            sys::DisplayLink::on_display(display_id.0)
+                .ok_or_else(|| anyhow!("could not create DisplayLink"))
+        }?;
+
+        let callback = Arc::new(Mutex::new(callback));
+        let weak_callback_ptr: *const OutputCallback = Arc::downgrade(&callback).into_raw();
+        unsafe {
+            system_link.set_output_callback(trampoline, weak_callback_ptr as *mut c_void);
+            system_link.start();
         }
-    }
 
-    pub fn start(&mut self, display_id: DisplayId) {
-        if let Some(link) = self.links.get_mut(&display_id) {
-            unsafe {
-                link.system_link.start();
-            }
-        } else {
-            log::warn!("No DisplayLink callback registered for {:?}", display_id)
-        }
+        Ok(Self {
+            system_link,
+            _callback: callback,
+        })
     }
+}
 
-    pub fn stop(&mut self, display_id: DisplayId) {
-        if let Some(link) = self.links.get_mut(&display_id) {
-            unsafe {
-                link.system_link.stop();
-            }
-        } else {
-            log::warn!("No DisplayLink callback registered for {:?}", display_id)
+impl Drop for MacDisplayLink {
+    fn drop(&mut self) {
+        unsafe {
+            self.system_link.stop();
         }
     }
 }
+
+impl PlatformDisplayLink for MacDisplayLink {}
 
 unsafe extern "C" fn trampoline(
     _display_link_out: *mut sys::CVDisplayLink,

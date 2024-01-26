@@ -9,6 +9,7 @@ use derive_more::{Deref, DerefMut};
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
+use smallvec::SmallVec;
 use smol::future::FutureExt;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
@@ -18,13 +19,18 @@ use crate::{
     current_platform, image_cache::ImageCache, init_app_menus, Action, ActionRegistry, Any,
     AnyView, AnyWindowHandle, AppMetadata, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, Render,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextStyle, TextStyleRefinement,
-    TextSystem, View, ViewContext, Window, WindowContext, WindowHandle, WindowId,
+    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformDisplayLink, Point, Render, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    Task, TextStyle, TextStyleRefinement, TextSystem, View, ViewContext, Window, WindowContext,
+    WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
-use collections::{FxHashMap, FxHashSet, VecDeque};
-use futures::{channel::oneshot, future::LocalBoxFuture, Future};
+use collections::{hash_map, FxHashMap, FxHashSet, VecDeque};
+use futures::{
+    channel::{mpsc, oneshot},
+    future::LocalBoxFuture,
+    Future, StreamExt,
+};
 
 use slotmap::SlotMap;
 use std::{
@@ -39,7 +45,7 @@ use std::{
 };
 use util::{
     http::{self, HttpClient},
-    ResultExt,
+    measure, ResultExt,
 };
 
 /// The duration for which futures returned from [AppContext::on_app_context] or [ModelContext::on_app_quit] can run before the application fully quits.
@@ -213,7 +219,8 @@ pub struct AppContext {
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) next_frame_callbacks: FxHashMap<DisplayId, Vec<FrameCallback>>,
-    pub(crate) frame_consumers: FxHashMap<DisplayId, Task<()>>,
+    display_links: FxHashMap<DisplayId, Box<dyn PlatformDisplayLink>>,
+    display_updates: mpsc::UnboundedSender<(DisplayId, std::sync::mpsc::Sender<()>)>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) svg_renderer: SvgRenderer,
@@ -264,6 +271,7 @@ impl AppContext {
             app_version: platform.app_version().ok(),
         };
 
+        let (display_updates_tx, mut display_updates_rx) = mpsc::unbounded();
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
                 this: this.clone(),
@@ -275,9 +283,10 @@ impl AppContext {
                 pending_updates: 0,
                 active_drag: None,
                 next_frame_callbacks: FxHashMap::default(),
-                frame_consumers: FxHashMap::default(),
+                display_links: FxHashMap::default(),
+                display_updates: display_updates_tx,
                 background_executor: executor,
-                foreground_executor,
+                foreground_executor: foreground_executor.clone(),
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 asset_source,
                 image_cache: ImageCache::new(http_client),
@@ -310,6 +319,24 @@ impl AppContext {
                 cx.borrow_mut().shutdown();
             }
         }));
+
+        foreground_executor
+            .spawn({
+                let cx = app.borrow().to_async();
+                async move {
+                    while let Some((display_id, done_tx)) = display_updates_rx.next().await {
+                        if cx
+                            .update(|cx| cx.refresh_display(display_id))
+                            .log_err()
+                            .is_none()
+                        {
+                            break;
+                        }
+                        let _ = done_tx.send(());
+                    }
+                }
+            })
+            .detach();
 
         app
     }
@@ -652,10 +679,33 @@ impl AppContext {
                     }
                 }
             } else {
+                let mut active_display_ids = FxHashSet::default();
                 for window in self.windows.values() {
                     if let Some(window) = window.as_ref() {
-                        if window.dirty {
-                            window.platform_window.invalidate();
+                        active_display_ids.insert(window.display_id);
+                    }
+                }
+
+                self.display_links
+                    .retain(|display_id, _| active_display_ids.contains(display_id));
+                for display_id in active_display_ids {
+                    if let hash_map::Entry::Vacant(entry) = self.display_links.entry(display_id) {
+                        let tx = self.display_updates.clone();
+                        if let Some(display_link) = self
+                            .platform
+                            .start_display_link(
+                                display_id,
+                                Box::new(move || {
+                                    let (done_tx, done_rx) = std::sync::mpsc::channel();
+                                    if tx.unbounded_send((display_id, done_tx)).log_err().is_some()
+                                    {
+                                        let _ = done_rx.recv();
+                                    }
+                                }),
+                            )
+                            .log_err()
+                        {
+                            entry.insert(display_link);
                         }
                     }
                 }
@@ -763,6 +813,32 @@ impl AppContext {
 
     fn apply_defer_effect(&mut self, callback: Box<dyn FnOnce(&mut Self) + 'static>) {
         callback(self);
+    }
+
+    fn refresh_display(&mut self, display_id: DisplayId) {
+        // TODO: run this as part of an effect cycle, so that if there are any side
+        // effects, they all get executed so that we can finally draw the windows at
+        // the end.
+        if let Some(callbacks) = self.next_frame_callbacks.remove(&display_id) {
+            for callback in callbacks {
+                callback(self);
+            }
+        }
+
+        let mut dirty_handles = SmallVec::<[AnyWindowHandle; 4]>::new();
+        for window in self.windows.values() {
+            if let Some(window) = window {
+                if window.dirty && window.display_id == display_id {
+                    dirty_handles.push(window.handle);
+                }
+            }
+        }
+
+        for dirty_handle in dirty_handles {
+            dirty_handle
+                .update(self, |_, cx| measure("frame duration", || cx.draw()))
+                .log_err();
+        }
     }
 
     /// Creates an `AsyncAppContext`, which can be cloned and has a static lifetime

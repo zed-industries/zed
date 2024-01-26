@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
-    WindowOptions,
+    Keymap, Platform, PlatformDisplay, PlatformDisplayLink, PlatformTextSystem, Task, TestDisplay,
+    TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -176,17 +176,13 @@ impl Platform for TestPlatform {
         Box::new(window)
     }
 
-    fn set_display_link_output_callback(
+    fn start_display_link(
         &self,
         _display_id: DisplayId,
-        mut callback: Box<dyn FnMut() + Send>,
-    ) {
-        callback()
+        _callback: Box<dyn FnMut() + Send>,
+    ) -> Result<Box<dyn PlatformDisplayLink>> {
+        todo!()
     }
-
-    fn start_display_link(&self, _display_id: DisplayId) {}
-
-    fn stop_display_link(&self, _display_id: DisplayId) {}
 
     fn open_url(&self, _url: &str) {
         unimplemented!()
