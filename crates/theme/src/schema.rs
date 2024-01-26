@@ -1,5 +1,6 @@
 use anyhow::Result;
-use gpui::Hsla;
+use gpui::{HighlightStyle, Hsla};
+use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,10 @@ pub struct ThemeContent {
 
     #[serde(flatten, default)]
     pub status: StatusColorsContent,
+
+    /// The styles for syntax nodes.
+    #[serde(default)]
+    pub syntax: IndexMap<String, HighlightStyleContent>,
 }
 
 impl ThemeContent {
@@ -43,6 +48,25 @@ impl ThemeContent {
     #[inline(always)]
     pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
         self.status.status_colors_refinement()
+    }
+
+    /// Returns the syntax style overrides in the [`ThemeContent`].
+    pub fn syntax_overrides(&self) -> Vec<(String, HighlightStyle)> {
+        self.syntax
+            .iter()
+            .map(|(key, style)| {
+                (
+                    key.clone(),
+                    HighlightStyle {
+                        color: style
+                            .color
+                            .as_ref()
+                            .and_then(|color| try_parse_color(&color).ok()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -1100,4 +1124,10 @@ impl StatusColorsContent {
                 .and_then(|color| try_parse_color(&color).ok()),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct HighlightStyleContent {
+    pub color: Option<String>,
 }

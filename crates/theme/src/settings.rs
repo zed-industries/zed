@@ -1,5 +1,5 @@
 use crate::one_themes::one_dark;
-use crate::{Theme, ThemeContent, ThemeRegistry};
+use crate::{SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
@@ -102,6 +102,15 @@ impl ThemeSettings {
                 .styles
                 .status
                 .refine(&theme_overrides.status_colors_refinement());
+            base_theme.styles.syntax = Arc::new(SyntaxTheme {
+                highlights: {
+                    let mut highlights = base_theme.styles.syntax.highlights.clone();
+                    // Overrides come second in the highlight list so that they take precedence
+                    // over the ones in the base theme.
+                    highlights.extend(theme_overrides.syntax_overrides());
+                    highlights
+                },
+            });
 
             self.active_theme = Arc::new(base_theme);
         }
