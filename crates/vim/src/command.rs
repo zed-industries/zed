@@ -280,7 +280,7 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
         return positions;
     };
 
-    for (i, c) in string.chars().enumerate() {
+    for (i, c) in string.char_indices() {
         if c == current {
             positions.push(i);
             if let Some(c) = chars.next() {
