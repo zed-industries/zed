@@ -1587,22 +1587,9 @@ dependencies = [
 name = "color"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "fs",
- "indexmap 1.9.3",
  "itertools 0.11.0",
  "palette",
- "parking_lot 0.11.2",
- "refineable",
- "schemars",
- "serde",
- "serde_derive",
- "serde_json",
- "settings",
  "story",
- "toml 0.5.11",
- "util",
- "uuid 1.4.1",
 ]
 
 [[package]]
