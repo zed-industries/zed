@@ -2714,16 +2714,14 @@ impl Project {
                 })?;
 
                 for (adapter, server) in servers {
-                    let workspace_config = cx
-                        .update(|cx| adapter.workspace_configuration(server.root_path(), cx))?
-                        .await;
-                    if let Some(settings) = workspace_config {
-                        server
-                            .notify::<lsp::notification::DidChangeConfiguration>(
-                                lsp::DidChangeConfigurationParams { settings },
-                            )
-                            .ok();
-                    }
+                    let settings =
+                        cx.update(|cx| adapter.workspace_configuration(server.root_path(), cx))?;
+
+                    server
+                        .notify::<lsp::notification::DidChangeConfiguration>(
+                            lsp::DidChangeConfigurationParams { settings },
+                        )
+                        .ok();
                 }
             }
 
@@ -3008,9 +3006,8 @@ impl Project {
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
-        let workspace_config = cx
-            .update(|cx| adapter.workspace_configuration(worktree_path, cx))?
-            .await;
+        let workspace_config =
+            cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
         let language_server = pending_server.task.await?;
 
         language_server
@@ -3044,10 +3041,8 @@ impl Project {
                     let adapter = adapter.clone();
                     let worktree_path = worktree_path.clone();
                     async move {
-                        let workspace_config = cx
-                            .update(|cx| adapter.workspace_configuration(&worktree_path, cx))?
-                            .await
-                            .context("LSP adapter could not obtain the workspace configuration")?;
+                        let workspace_config =
+                            cx.update(|cx| adapter.workspace_configuration(&worktree_path, cx))?;
                         Ok(params
                             .items
                             .into_iter()
@@ -3178,13 +3173,13 @@ impl Project {
         }
         let language_server = language_server.initialize(initialization_options).await?;
 
-        if let Some(settings) = workspace_config {
-            language_server
-                .notify::<lsp::notification::DidChangeConfiguration>(
-                    lsp::DidChangeConfigurationParams { settings },
-                )
-                .ok();
-        }
+        language_server
+            .notify::<lsp::notification::DidChangeConfiguration>(
+                lsp::DidChangeConfigurationParams {
+                    settings: workspace_config,
+                },
+            )
+            .ok();
 
         Ok(language_server)
     }

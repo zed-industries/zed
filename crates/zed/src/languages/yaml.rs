@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::{future::Shared, FutureExt, StreamExt};
-use gpui::{AppContext, Task};
+use futures::StreamExt;
+use gpui::AppContext;
 use language::{
     language_settings::all_language_settings, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
@@ -92,12 +92,8 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
     }
-    fn workspace_configuration(
-        &self,
-        _workspace_root: &Path,
-        cx: &mut AppContext,
-    ) -> Shared<Task<Option<Value>>> {
-        Task::ready(Some(serde_json::json!({
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        serde_json::json!({
             "yaml": {
                 "keyOrdering": false
             },
@@ -106,8 +102,7 @@ impl LspAdapter for YamlLspAdapter {
                     .language(Some("YAML"))
                     .tab_size,
             }
-        })))
-        .shared()
+        })
     }
 }
 
