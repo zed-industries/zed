@@ -15,10 +15,11 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, canvas, div, fill, list, overlay, point, prelude::*, px, AnyElement, AppContext,
-    AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
-    FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset, ListState,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString, Styled,
-    Subscription, Task, TextStyle, View, ViewContext, VisualContext, WeakView, WhiteSpace,
+    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div, EventEmitter,
+    FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement, IntoElement, ListOffset,
+    ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
+    SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
+    WeakView, WhiteSpace,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -1226,6 +1227,60 @@ impl CollabPanel {
         cx.notify();
     }
 
+    fn deploy_contact_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        contact: Arc<Contact>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let this = cx.view().clone();
+        let in_room = ActiveCall::global(cx).read(cx).room().is_some();
+
+        let context_menu = ContextMenu::build(cx, |mut context_menu, _| {
+            let user_id = contact.user.id;
+
+            if contact.online && !contact.busy {
+                let label = if in_room {
+                    format!("Invite {} to join", contact.user.github_login)
+                } else {
+                    format!("Call {}", contact.user.github_login)
+                };
+                context_menu = context_menu.entry(label, None, {
+                    let this = this.clone();
+                    move |cx| {
+                        this.update(cx, |this, cx| {
+                            this.call(user_id, cx);
+                        });
+                    }
+                });
+            }
+
+            context_menu.entry("Remove Contact", None, {
+                let this = this.clone();
+                move |cx| {
+                    this.update(cx, |this, cx| {
+                        this.remove_contact(contact.user.id, &contact.user.github_login, cx);
+                    });
+                }
+            })
+        });
+
+        cx.focus_view(&context_menu);
+        let subscription =
+            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                }) {
+                    cx.focus_self();
+                }
+                this.context_menu.take();
+                cx.notify();
+            });
+        self.context_menu = Some((context_menu, position, subscription));
+
+        cx.notify();
+    }
+
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if self.take_editing_state(cx) {
             cx.focus_view(&self.filter_editor);
@@ -1626,9 +1681,6 @@ impl CollabPanel {
     }
 
     fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
-        let Some(channel) = self.selected_channel() else {
-            return;
-        };
         let Some(bounds) = self
             .selection
             .and_then(|ix| self.list_state.bounds_for_item(ix))
@@ -1636,8 +1688,22 @@ impl CollabPanel {
             return;
         };
 
-        self.deploy_channel_context_menu(bounds.center(), channel.id, self.selection.unwrap(), cx);
-        cx.stop_propagation();
+        if let Some(channel) = self.selected_channel() {
+            self.deploy_channel_context_menu(
+                bounds.center(),
+                channel.id,
+                self.selection.unwrap(),
+                cx,
+            );
+            cx.stop_propagation();
+            return;
+        };
+
+        if let Some(contact) = self.selected_contact() {
+            self.deploy_contact_context_menu(bounds.center(), contact, cx);
+            cx.stop_propagation();
+            return;
+        };
     }
 
     fn selected_channel(&self) -> Option<&Arc<Channel>> {
@@ -1645,6 +1711,15 @@ impl CollabPanel {
             .and_then(|ix| self.entries.get(ix))
             .and_then(|entry| match entry {
                 ListEntry::Channel { channel, .. } => Some(channel),
+                _ => None,
+            })
+    }
+
+    fn selected_contact(&self) -> Option<Arc<Contact>> {
+        self.selection
+            .and_then(|ix| self.entries.get(ix))
+            .and_then(|entry| match entry {
+                ListEntry::Contact { contact, .. } => Some(contact.clone()),
                 _ => None,
             })
     }
@@ -2090,20 +2165,18 @@ impl CollabPanel {
 
     fn render_contact(
         &self,
-        contact: &Contact,
+        contact: &Arc<Contact>,
         calling: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let online = contact.online;
         let busy = contact.busy || calling;
-        let user_id = contact.user.id;
         let github_login = SharedString::from(contact.user.github_login.clone());
         let item = ListItem::new(github_login.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
             .selected(is_selected)
-            .on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
             .child(
                 h_flex()
                     .w_full()
@@ -2114,19 +2187,28 @@ impl CollabPanel {
                     })
                     .when(!calling, |el| {
                         el.child(
-                            IconButton::new("remove_contact", IconName::Close)
+                            IconButton::new("contact context menu", IconName::Ellipsis)
                                 .icon_color(Color::Muted)
                                 .visible_on_hover("")
-                                .tooltip(|cx| Tooltip::text("Remove Contact", cx))
                                 .on_click(cx.listener({
-                                    let github_login = github_login.clone();
-                                    move |this, _, cx| {
-                                        this.remove_contact(user_id, &github_login, cx);
+                                    let contact = contact.clone();
+                                    move |this, event: &ClickEvent, cx| {
+                                        this.deploy_contact_context_menu(
+                                            event.down.position,
+                                            contact.clone(),
+                                            cx,
+                                        );
                                     }
                                 })),
                         )
                     }),
             )
+            .on_secondary_mouse_down(cx.listener({
+                let contact = contact.clone();
+                move |this, event: &MouseDownEvent, cx| {
+                    this.deploy_contact_context_menu(event.position, contact.clone(), cx);
+                }
+            }))
             .start_slot(
                 // todo handle contacts with no avatar
                 Avatar::new(contact.user.avatar_uri.clone())
@@ -2138,10 +2220,7 @@ impl CollabPanel {
                     } else {
                         None
                     }),
-            )
-            .when(online && !busy, |el| {
-                el.on_click(cx.listener(move |this, _, cx| this.call(user_id, cx)))
-            });
+            );
 
         div()
             .id(github_login.clone())
