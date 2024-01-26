@@ -685,7 +685,7 @@ impl Panel for NotificationPanel {
             return Some(IconName::Bell);
         }
 
-        Some(IconName::BellBadged)
+        Some(IconName::BellDot)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
