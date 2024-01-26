@@ -4,8 +4,8 @@ pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use settings::Settings;
-use std::{borrow::Cow, str, sync::Arc};
-use util::{asset_str, paths::PLUGINS_DIR};
+use std::{borrow::Cow, fs, path::Path, str, sync::Arc};
+use util::{asset_str, paths::PLUGINS_DIR, ResultExt};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
@@ -303,10 +303,11 @@ pub fn init(
                 let path = child.path();
                 let config_path = path.join("config.toml");
                 if let Ok(config) = std::fs::read(&config_path) {
-                    let config: LanguageConfig = ::toml::from_slice(&config).unwrap();
-                    if let Some(grammar_name) = config.grammar_name.clone() {
-                        languages.register_wasm(path.into(), grammar_name, config);
-                    }
+                    languages.register_wasm(
+                        path.into(),
+                        ::toml::from_slice(&config).unwrap(),
+                        load_plugin_queries,
+                    );
                 }
             }
         }
@@ -338,27 +339,62 @@ fn load_config(name: &str) -> LanguageConfig {
     .unwrap()
 }
 
+const QUERY_FILENAME_PREFIXES: &[(
+    &str,
+    fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
+)] = &[
+    ("highlights", |q| &mut q.highlights),
+    ("brackets", |q| &mut q.brackets),
+    ("outline", |q| &mut q.outline),
+    ("indents", |q| &mut q.indents),
+    ("embedding", |q| &mut q.embedding),
+    ("injections", |q| &mut q.injections),
+    ("overrides", |q| &mut q.overrides),
+];
+
 fn load_queries(name: &str) -> LanguageQueries {
-    LanguageQueries {
-        highlights: load_query(name, "/highlights"),
-        brackets: load_query(name, "/brackets"),
-        indents: load_query(name, "/indents"),
-        outline: load_query(name, "/outline"),
-        embedding: load_query(name, "/embedding"),
-        injections: load_query(name, "/injections"),
-        overrides: load_query(name, "/overrides"),
+    let mut result = LanguageQueries::default();
+    for path in LanguageDir::iter() {
+        if let Some(remainder) = path.strip_prefix(name).and_then(|p| p.strip_prefix('/')) {
+            if !remainder.ends_with(".scm") {
+                continue;
+            }
+            for (name, query) in QUERY_FILENAME_PREFIXES {
+                if remainder.starts_with(name) {
+                    let contents = asset_str::<LanguageDir>(path.as_ref());
+                    match query(&mut result) {
+                        None => *query(&mut result) = Some(contents),
+                        Some(r) => r.to_mut().push_str(contents.as_ref()),
+                    }
+                }
+            }
+        }
     }
+    result
 }
 
-fn load_query(name: &str, filename_prefix: &str) -> Option<Cow<'static, str>> {
-    let mut result = None;
-    for path in LanguageDir::iter() {
-        if let Some(remainder) = path.strip_prefix(name) {
-            if remainder.starts_with(filename_prefix) {
-                let contents = asset_str::<LanguageDir>(path.as_ref());
-                match &mut result {
-                    None => result = Some(contents),
-                    Some(r) => r.to_mut().push_str(contents.as_ref()),
+fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
+    let mut result = LanguageQueries::default();
+    if let Some(entries) = fs::read_dir(root_path).log_err() {
+        for entry in entries {
+            let Some(entry) = entry.log_err() else {
+                continue;
+            };
+            let path = entry.path();
+            if let Some(remainder) = path.strip_prefix(root_path).ok().and_then(|p| p.to_str()) {
+                if !remainder.ends_with(".scm") {
+                    continue;
+                }
+                for (name, query) in QUERY_FILENAME_PREFIXES {
+                    if remainder.starts_with(name) {
+                        if let Some(contents) = fs::read_to_string(&path).log_err() {
+                            match query(&mut result) {
+                                None => *query(&mut result) = Some(contents.into()),
+                                Some(r) => r.to_mut().push_str(contents.as_ref()),
+                            }
+                        }
+                        break;
+                    }
                 }
             }
         }

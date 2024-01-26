@@ -709,8 +709,8 @@ enum AvailableGrammar {
         get_queries: fn(&str) -> LanguageQueries,
     },
     Wasm {
-        grammar_name: Arc<str>,
         path: Arc<Path>,
+        get_queries: fn(&Path) -> LanguageQueries,
     },
 }
 
@@ -776,9 +776,6 @@ impl LanguageRegistry {
     }
 
     /// Clear out all of the loaded languages and reload them from scratch.
-    ///
-    /// This is useful in development, when queries have changed.
-    #[cfg(debug_assertions)]
     pub fn reload(&self) {
         self.state.write().reload();
     }
@@ -805,12 +802,17 @@ impl LanguageRegistry {
         });
     }
 
-    pub fn register_wasm(&self, path: Arc<Path>, grammar_name: Arc<str>, config: LanguageConfig) {
+    pub fn register_wasm(
+        &self,
+        path: Arc<Path>,
+        config: LanguageConfig,
+        get_queries: fn(&Path) -> LanguageQueries,
+    ) {
         let state = &mut *self.state.write();
         state.available_languages.push(AvailableLanguage {
             id: post_inc(&mut state.next_available_language_id),
             config,
-            grammar: AvailableGrammar::Wasm { grammar_name, path },
+            grammar: AvailableGrammar::Wasm { path, get_queries },
             lsp_adapters: Vec::new(),
             loaded: false,
         });
@@ -944,7 +946,11 @@ impl LanguageRegistry {
                                             asset_dir,
                                             get_queries,
                                         } => (grammar, (get_queries)(asset_dir)),
-                                        AvailableGrammar::Wasm { grammar_name, path } => {
+                                        AvailableGrammar::Wasm { path, get_queries } => {
+                                            let grammar_name =
+                                                &language.config.grammar_name.as_ref().ok_or_else(
+                                                    || anyhow!("missing grammar name"),
+                                                )?;
                                             let mut wasm_path = path.join(grammar_name.as_ref());
                                             wasm_path.set_extension("wasm");
                                             let wasm_bytes = std::fs::read(&wasm_path)?;
@@ -956,13 +962,7 @@ impl LanguageRegistry {
                                                 parser.set_wasm_store(store).unwrap();
                                                 grammar
                                             })?;
-                                            let mut queries = LanguageQueries::default();
-                                            if let Ok(contents) = std::fs::read_to_string(
-                                                &path.join("highlights.scm"),
-                                            ) {
-                                                queries.highlights = Some(contents.into());
-                                            }
-                                            (grammar, queries)
+                                            (grammar, get_queries(path.as_ref()))
                                         }
                                     };
                                     Language::new(language.config, Some(grammar))
@@ -1189,7 +1189,6 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
-    #[cfg(debug_assertions)]
     fn reload(&mut self) {
         self.languages.clear();
         self.version += 1;
