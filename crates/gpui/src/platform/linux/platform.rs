@@ -2,8 +2,9 @@
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    Keymap, Menu, PathPromptOptions, Platform, PlatformDisplay, PlatformInput,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowOptions,
+    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion,
+    Task, WindowOptions,
 };
 
 use futures::channel::oneshot;
@@ -17,10 +18,11 @@ use std::{
 };
 use time::UtcOffset;
 
-
 pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
 
 pub(crate) struct LinuxPlatformState {
+    background_executor: BackgroundExecutor,
+    foreground_executor: ForegroundExecutor,
 }
 
 impl Default for LinuxPlatform {
@@ -31,18 +33,21 @@ impl Default for LinuxPlatform {
 
 impl LinuxPlatform {
     pub(crate) fn new() -> Self {
+        let dispatcher = Arc::new(LinuxDispatcher::new());
         Self(Mutex::new(LinuxPlatformState {
+            background_executor: BackgroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher),
         }))
     }
 }
 
 impl Platform for LinuxPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
-        unimplemented!()
+        self.0.lock().background_executor.clone()
     }
 
     fn foreground_executor(&self) -> crate::ForegroundExecutor {
-        unimplemented!()
+        self.0.lock().foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {

@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
-    WindowOptions,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestTextSystem,
+    TestWindow, WindowOptions,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -118,7 +118,7 @@ impl Platform for TestPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        Arc::new(crate::platform::mac::MacTextSystem::new())
+        Arc::new(TestTextSystem {})
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {

@@ -35,8 +35,8 @@ use crate::{
     InputHandler, IsZero, KeyContext, KeyEvent, KeymatchMode, LayoutId, MonochromeSprite,
     MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
     RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StackingContext, StackingOrder, Style, TextStyleRefinement, Underline, UnderlineStyle,
-    Window, WindowContext, SUBPIXEL_VARIANTS,
+    StackingContext, StackingOrder, Style, TextStyleRefinement, Underline, UnderlineStyle, Window,
+    WindowContext, SUBPIXEL_VARIANTS,
 };
 
 type AnyMouseListener = Box<dyn FnMut(&dyn Any, DispatchPhase, &mut ElementContext) + 'static>;

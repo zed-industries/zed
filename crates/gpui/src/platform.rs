@@ -1,9 +1,9 @@
 mod app_menu;
 mod keystroke;
-#[cfg(target_os = "macos")]
-mod mac;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod mac;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -35,10 +35,10 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keystroke::*;
-#[cfg(target_os = "macos")]
-pub(crate) use mac::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
+#[cfg(target_os = "macos")]
+pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;
