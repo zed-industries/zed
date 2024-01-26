@@ -320,6 +320,7 @@ fn main() -> Result<()> {
 
         let output_file_path = themes_output_path.join(format!("{theme_family_slug}.rs"));
         if output_file_path.exists() {
+            theme_modules.push(format!("{}", theme_family_slug));
             log::info!("Skipping file {theme_family_slug}.rs, it already exists. In order to update a theme, please delete it from the output path {:?}.", themes_output_path.display());
             continue;
         }
@@ -402,8 +403,6 @@ fn main() -> Result<()> {
 
     log::info!("Writing LICENSES file...");
 
-    // let mut licenses_file = File::create(themes_output_path.join(format!("LICENSES")))?;
-    // create LICENSES file only if it doesn't exist
     let mut licenses_file = OpenOptions::new()
         .append(true)
         .create_new(true)
