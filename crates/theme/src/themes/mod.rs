@@ -4,6 +4,7 @@
 mod andromeda;
 mod atelier;
 mod ayu;
+mod dracula;
 mod gruvbox;
 mod one;
 mod rose_pine;
@@ -14,6 +15,7 @@ mod summercamp;
 pub use andromeda::*;
 pub use atelier::*;
 pub use ayu::*;
+pub use dracula::*;
 pub use gruvbox::*;
 pub use one::*;
 pub use rose_pine::*;
@@ -28,6 +30,7 @@ pub(crate) fn all_user_themes() -> Vec<UserThemeFamily> {
         andromeda(),
         atelier(),
         ayu(),
+        dracula(),
         gruvbox(),
         one(),
         rose_pine(),
