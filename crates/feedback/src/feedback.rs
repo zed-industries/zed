@@ -51,7 +51,8 @@ pub fn init(cx: &mut AppContext) {
             })
             .register_action(move |_, _: &OpenZedRepo, cx| {
                 let url = "https://github.com/zed-industries/zed";
-                cx.open_url(&url);            });
-    })
+                cx.open_url(&url);
+            });
+        })
     .detach();
 }
