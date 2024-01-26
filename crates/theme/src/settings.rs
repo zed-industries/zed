@@ -54,7 +54,7 @@ pub struct ThemeSettingsContent {
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
-    /// These values will override the ones on the current theme specfied in `theme`.
+    /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeContent>,
 }
