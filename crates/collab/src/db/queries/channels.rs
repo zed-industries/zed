@@ -995,20 +995,20 @@ impl Database {
             let new_parent = self.get_channel_internal(new_parent_id, &*tx).await?;
 
             if new_parent.root_id() != channel.root_id() {
-                Err(anyhow!("cannot move a channel into a different root"))?;
+                Err(anyhow!(ErrorCode::WrongMoveTarget))?;
             }
 
             if new_parent
                 .ancestors_including_self()
                 .any(|id| id == channel.id)
             {
-                Err(anyhow!("cannot move a channel into one of its descendants"))?;
+                Err(anyhow!(ErrorCode::CircularNesting))?;
             }
 
             if channel.visibility == ChannelVisibility::Public
                 && new_parent.visibility != ChannelVisibility::Public
             {
-                Err(anyhow!("public channels must descend from public channels"))?;
+                Err(anyhow!(ErrorCode::BadPublicNesting))?;
             }
 
             let root_id = channel.root_id();

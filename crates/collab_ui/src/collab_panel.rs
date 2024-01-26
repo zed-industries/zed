@@ -1585,12 +1585,25 @@ impl CollabPanel {
         cx: &mut ViewContext<CollabPanel>,
     ) {
         if let Some(clipboard) = self.channel_clipboard.take() {
-            self.channel_store
-                .update(cx, |channel_store, cx| {
-                    channel_store.move_channel(clipboard.channel_id, to_channel_id, cx)
-                })
-                .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
+            self.move_channel(clipboard.channel_id, to_channel_id, cx)
         }
+    }
+
+    fn move_channel(&self, channel_id: ChannelId, to: ChannelId, cx: &mut ViewContext<Self>) {
+        self.channel_store
+            .update(cx, |channel_store, cx| {
+                channel_store.move_channel(channel_id, to, cx)
+            })
+            .detach_and_prompt_err("Failed to move channel", cx, |e, _| match e.error_code() {
+                ErrorCode::BadPublicNesting => {
+                    Some("Public channels must have public parents".into())
+                }
+                ErrorCode::CircularNesting => Some("You cannot move a channel into itself".into()),
+                ErrorCode::WrongMoveTarget => {
+                    Some("You cannot move a channel into a different root channel".into())
+                }
+                _ => None,
+            })
     }
 
     fn open_channel_notes(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
@@ -2285,6 +2298,7 @@ impl CollabPanel {
         };
 
         let width = self.width.unwrap_or(px(240.));
+        let root_id = channel.root_id();
 
         div()
             .h_6()
@@ -2292,19 +2306,28 @@ impl CollabPanel {
             .group("")
             .flex()
             .w_full()
-            .on_drag(channel.clone(), move |channel, cx| {
-                cx.new_view(|_| DraggedChannelView {
-                    channel: channel.clone(),
-                    width,
+            .when(!channel.is_root_channel(), |el| {
+                el.on_drag(channel.clone(), move |channel, cx| {
+                    cx.new_view(|_| DraggedChannelView {
+                        channel: channel.clone(),
+                        width,
+                    })
                 })
             })
-            .drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .drag_over::<Channel>({
+                move |style, dragged_channel: &Channel, cx| {
+                    if dragged_channel.root_id() == root_id {
+                        style.bg(cx.theme().colors().ghost_element_hover)
+                    } else {
+                        style
+                    }
+                }
+            })
             .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
-                this.channel_store
-                    .update(cx, |channel_store, cx| {
-                        channel_store.move_channel(dragged_channel.id, channel_id, cx)
-                    })
-                    .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
+                if dragged_channel.root_id() != root_id {
+                    return;
+                }
+                this.move_channel(dragged_channel.id, channel_id, cx);
             }))
             .child(
                 ListItem::new(channel_id as usize)

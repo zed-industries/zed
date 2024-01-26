@@ -214,6 +214,8 @@ enum ErrorCode {
     NeedsCla = 7;
     NotARootChannel = 8;
     BadPublicNesting = 9;
+    CircularNesting = 10;
+    WrongMoveTarget = 11;
 }
 
 message Test {
