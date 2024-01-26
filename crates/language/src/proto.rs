@@ -103,7 +103,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
     }
 }
 
-/// Serializes an [`operation::EditOperation`] to be sent over RPC.
+/// Serializes an [`EditOperation`] to be sent over RPC.
 pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::Edit {
     proto::operation::Edit {
         replica_id: operation.timestamp.replica_id as u32,

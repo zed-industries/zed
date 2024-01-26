@@ -78,4 +78,4 @@ Try `xcode-select --switch /Applications/Xcode.app/Contents/Developer`
 
 ### Cargo errors claiming that a dependency is using unstable features
 
-Try `cargo clean` and `cargo build`,
+Try `cargo clean` and `cargo build`.

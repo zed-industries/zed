@@ -1,8 +1,8 @@
 # Giving feedback
 
-### Community repository
+### Zed repository
 
-We track our issues at [`zed-industries/community`](https://github.com/zed-industries/zed/issues).
+We track our issues at [`zed-industries/zed`](https://github.com/zed-industries/zed/issues).
 
 #### Feature requests
 
@@ -22,7 +22,7 @@ Anonymous feedback can be submitted from within Zed via the feedback editor (com
 
 ### Zed forum
 
-Use the [community forum](https://github.com/zed-industries/zed/discussions) to ask questions and learn from one another. We will be present in the forum and answering questions as well.
+Use the [Zed forum](https://github.com/zed-industries/zed/discussions) to ask questions and learn from one another. We will be present in the forum and answering questions as well.
 
 ### Email
 

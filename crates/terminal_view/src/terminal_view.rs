@@ -911,7 +911,7 @@ impl SearchableItem for TerminalView {
     }
 }
 
-///Get's the working directory for the given workspace, respecting the user's settings.
+///Gets the working directory for the given workspace, respecting the user's settings.
 pub fn get_working_directory(
     workspace: &Workspace,
     cx: &AppContext,
@@ -932,7 +932,7 @@ pub fn get_working_directory(
     res.or_else(home_dir)
 }
 
-///Get's the first project's home directory, or the home directory
+///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     workspace
         .worktrees(cx)

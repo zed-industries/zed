@@ -18,7 +18,7 @@ pub struct RustLspAdapter;
 
 #[async_trait]
 impl LspAdapter for RustLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("rust-analyzer".into())
     }
 
@@ -98,11 +98,11 @@ impl LspAdapter for RustLspAdapter {
             })
     }
 
-    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+    fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         vec!["rustc".into()]
     }
 
-    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+    fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         Some("rust-analyzer/flycheck".into())
     }
 

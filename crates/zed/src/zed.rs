@@ -143,7 +143,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx.on_window_should_close(move |cx| {
             handle
                 .update(cx, |workspace, cx| {
-                    // We'll handle closing asynchoronously
+                    // We'll handle closing asynchronously
                     workspace.close_window(&Default::default(), cx);
                     false
                 })
@@ -370,16 +370,12 @@ fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewCo
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
-    use std::fmt::Write as _;
-
     let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
-    let mut message = format!("{app_name} {version}");
-    if let Some(sha) = cx.try_global::<AppCommitSha>() {
-        write!(&mut message, "\n\n{}", sha.0).unwrap();
-    }
+    let message = format!("{app_name} {version}");
+    let detail = cx.try_global::<AppCommitSha>().map(|sha| sha.0.as_ref());
 
-    let prompt = cx.prompt(PromptLevel::Info, &message, &["OK"]);
+    let prompt = cx.prompt(PromptLevel::Info, &message, detail, &["OK"]);
     cx.foreground_executor()
         .spawn(async {
             prompt.await.ok();
@@ -410,6 +406,7 @@ fn quit(_: &Quit, cx: &mut AppContext) {
                     cx.prompt(
                         PromptLevel::Info,
                         "Are you sure you want to quit?",
+                        None,
                         &["Quit", "Cancel"],
                     )
                 })

@@ -90,6 +90,12 @@ pub fn init(cx: &mut AppContext) {
         });
         register_workspace_action(
             workspace,
+            move |search_bar, action: &SelectPrevMatch, cx| {
+                search_bar.select_prev_match(action, cx)
+            },
+        );
+        register_workspace_action(
+            workspace,
             move |search_bar, action: &SelectNextMatch, cx| {
                 search_bar.select_next_match(action, cx)
             },
@@ -746,6 +752,7 @@ impl ProjectSearchView {
                             cx.prompt(
                                 PromptLevel::Info,
                                 prompt_text.as_str(),
+                                None,
                                 &["Continue", "Cancel"],
                             )
                         })?;
@@ -1549,7 +1556,7 @@ impl ProjectSearchBar {
         }
     }
 
-    pub fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
+    fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
         if let Some(search) = self.active_project_search.as_ref() {
             search.update(cx, |this, cx| {
                 this.select_match(Direction::Next, cx);

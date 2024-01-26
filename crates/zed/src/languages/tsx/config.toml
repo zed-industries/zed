@@ -1,6 +1,6 @@
 name = "TSX"
 path_suffixes = ["tsx"]
-line_comment = "// "
+line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
@@ -17,7 +17,7 @@ scope_opt_in_language_servers = ["tailwindcss-language-server"]
 prettier_parser_name = "typescript"
 
 [overrides.element]
-line_comment = { remove = true }
+line_comments = { remove = true }
 block_comment = ["{/* ", " */}"]
 
 [overrides.string]

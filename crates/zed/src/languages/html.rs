@@ -33,7 +33,7 @@ impl HtmlLspAdapter {
 
 #[async_trait]
 impl LspAdapter for HtmlLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-html-language-server".into())
     }
 
@@ -91,7 +91,7 @@ impl LspAdapter for HtmlLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
         }))

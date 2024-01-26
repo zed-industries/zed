@@ -8,7 +8,7 @@ pub struct UiuaLanguageServer;
 
 #[async_trait]
 impl LspAdapter for UiuaLanguageServer {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("uiua".into())
     }
 

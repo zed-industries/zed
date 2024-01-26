@@ -287,7 +287,7 @@ impl UserStore {
                     load_users.await?;
 
                     // Users are fetched in parallel above and cached in call to get_users
-                    // No need to paralellize here
+                    // No need to parallelize here
                     let mut updated_contacts = Vec::new();
                     let this = this
                         .upgrade()

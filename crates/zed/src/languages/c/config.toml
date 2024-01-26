@@ -1,6 +1,6 @@
 name = "C"
 path_suffixes = ["c"]
-line_comment = "// "
+line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

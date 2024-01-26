@@ -29,7 +29,7 @@ jobs:
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           clean: false
           submodules: "recursive"
@@ -55,7 +55,7 @@ jobs:
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           clean: false
           submodules: "recursive"
@@ -88,7 +88,7 @@ jobs:
           node-version: "18"
 
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           clean: false
           submodules: "recursive"

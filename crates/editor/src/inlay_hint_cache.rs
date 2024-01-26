@@ -1971,7 +1971,7 @@ pub mod tests {
             assert_eq!(
                 lsp_request_count.load(Ordering::Relaxed),
                 3,
-                "Should query for new hints when they got reenabled"
+                "Should query for new hints when they got re-enabled"
             );
             assert_eq!(
                 vec![
@@ -1980,7 +1980,7 @@ pub mod tests {
                     "type hint".to_string(),
                 ],
                 cached_hint_labels(editor),
-                "Should get its cached hints fully repopulated after the hints got reenabled"
+                "Should get its cached hints fully repopulated after the hints got re-enabled"
             );
             assert_eq!(
                 vec!["parameter hint".to_string()],
@@ -1990,11 +1990,11 @@ pub mod tests {
             let inlay_cache = editor.inlay_hint_cache();
             assert_eq!(
                 inlay_cache.allowed_hint_kinds, final_allowed_hint_kinds,
-                "Cache should update editor settings when hints got reenabled"
+                "Cache should update editor settings when hints got re-enabled"
             );
             assert_eq!(
                 inlay_cache.version, edits_made,
-                "Cache should update its version after hints got reenabled"
+                "Cache should update its version after hints got re-enabled"
             );
         });
 
@@ -2736,7 +2736,7 @@ pub mod tests {
                 assert_eq!(expected_hints, cached_hint_labels(editor),
                     "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scolled buffer");
+                assert_eq!(editor.inlay_hint_cache().version, last_scroll_update_version, "No updates should happen during scrolling already scrolled buffer");
             });
 
         editor_edited.store(true, Ordering::Release);
@@ -2762,7 +2762,7 @@ pub mod tests {
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
-                "After multibuffer edit, editor gets scolled back to the last selection; \
+                "After multibuffer edit, editor gets scrolled back to the last selection; \
     all hints should be invalidated and required for all of its visible excerpts"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));

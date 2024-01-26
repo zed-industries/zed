@@ -3,8 +3,6 @@ pub use alacritty_terminal;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
-    ansi::{ClearMode, Handler},
-    config::{Config, Program, PtyConfig, Scrolling},
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
@@ -13,11 +11,11 @@ use alacritty_terminal::{
     sync::FairMutex,
     term::{
         cell::Cell,
-        color::Rgb,
         search::{Match, RegexIter, RegexSearch},
-        RenderableCursor, TermMode,
+        Config, RenderableCursor, TermMode,
     },
     tty::{self, setup_env},
+    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode, Rgb},
     Term,
 };
 use anyhow::{bail, Result};
@@ -58,7 +56,6 @@ use gpui::{
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
-use lazy_static::lazy_static;
 
 actions!(
     terminal,
@@ -74,15 +71,6 @@ const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
-
-lazy_static! {
-    // Regex Copied from alacritty's ui_config.rs and modified its declaration slightly:
-    // * avoid Rust-specific escaping.
-    // * use more strict regex for `file://` protocol matching: original regex has `file:` inside, but we want to avoid matching `some::file::module` strings.
-    static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-
-    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
-}
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Debug)]
@@ -289,66 +277,70 @@ impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
         shell: Shell,
-        mut env: HashMap<String, String>,
+        env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         window: AnyWindowHandle,
     ) -> Result<TerminalBuilder> {
-        let pty_config = {
+        let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
-                Shell::Program(program) => Some(Program::Just(program)),
-                Shell::WithArguments { program, args } => Some(Program::WithArgs { program, args }),
+                Shell::Program(program) => {
+                    Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
+                }
+                Shell::WithArguments { program, args } => {
+                    Some(alacritty_terminal::tty::Shell::new(program, args))
+                }
             };
 
-            PtyConfig {
+            alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
                 hold: false,
             }
         };
 
-        //TODO: Properly set the current locale,
-        env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
-        env.insert("ZED_TERM".to_string(), true.to_string());
+        // First, setup Alacritty's env
+        setup_env();
 
-        let alac_scrolling = Scrolling::default();
-        // alac_scrolling.set_history((BACK_BUFFER_SIZE * 2) as u32);
+        // Then setup configured environment variables
+        for (key, value) in env {
+            std::env::set_var(key, value);
+        }
+        //TODO: Properly set the current locale,
+        std::env::set_var("LC_ALL", "en_US.UTF-8");
+        std::env::set_var("ZED_TERM", "true");
 
         let config = Config {
-            pty_config: pty_config.clone(),
-            env,
-            scrolling: alac_scrolling,
+            scrolling_history: 10000,
             ..Default::default()
         };
-
-        setup_env(&config);
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
         //TODO: Remove with a bounded sender which can be dispatched on &self
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
         let mut term = Term::new(
-            &config,
+            config,
             &TerminalSize::default(),
             ZedListener(events_tx.clone()),
         );
 
         //Start off blinking if we need to
         if let Some(TerminalBlink::On) = blink_settings {
-            term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
+            term.set_private_mode(PrivateMode::Named(NamedPrivateMode::BlinkingCursor));
         }
 
         //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
         if let AlternateScroll::Off = alternate_scroll {
-            term.unset_mode(alacritty_terminal::ansi::Mode::AlternateScroll)
+            term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
         }
 
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
         let pty = match tty::new(
-            &pty_config,
+            &pty_options,
             TerminalSize::default().into(),
             window.window_id().as_u64(),
         ) {
@@ -370,13 +362,16 @@ impl TerminalBuilder {
             term.clone(),
             ZedListener(events_tx.clone()),
             pty,
-            pty_config.hold,
+            pty_options.hold,
             false,
         );
 
         //Kick things off
         let pty_tx = event_loop.channel();
-        let _io_thread = event_loop.spawn();
+        let _io_thread = event_loop.spawn(); // DANGER
+
+        let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
+        let word_regex = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 
         let terminal = Terminal {
             pty_tx: Notifier(pty_tx),
@@ -396,6 +391,8 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             cmd_pressed: false,
             hovered_word: false,
+            url_regex,
+            word_regex,
         };
 
         Ok(TerminalBuilder {
@@ -514,7 +511,7 @@ impl Default for TerminalContent {
             selection_text: Default::default(),
             selection: Default::default(),
             cursor: RenderableCursor {
-                shape: alacritty_terminal::ansi::CursorShape::Block,
+                shape: alacritty_terminal::vte::ansi::CursorShape::Block,
                 point: AlacPoint::new(Line(0), Column(0)),
             },
             cursor_char: Default::default(),
@@ -550,6 +547,8 @@ pub struct Terminal {
     selection_phase: SelectionPhase,
     cmd_pressed: bool,
     hovered_word: bool,
+    url_regex: RegexSearch,
+    word_regex: RegexSearch,
 }
 
 impl Terminal {
@@ -760,7 +759,7 @@ impl Terminal {
                     let url_match = min_index..=max_index;
 
                     Some((url, true, url_match))
-                } else if let Some(word_match) = regex_match_at(term, point, &WORD_REGEX) {
+                } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let maybe_url_or_path =
                         term.bounds_to_string(*word_match.start(), *word_match.end());
                     let original_match = word_match.clone();
@@ -777,7 +776,7 @@ impl Terminal {
                             (word_match, maybe_url_or_path)
                         };
 
-                    let is_url = match regex_match_at(term, point, &URL_REGEX) {
+                    let is_url = match regex_match_at(term, point, &mut self.url_regex) {
                         Some(url_match) => {
                             // `]` is a valid symbol in the `file://` URL, so the regex match will include it
                             // consider that when ensuring that the URL match is the same as the original word
@@ -1275,14 +1274,14 @@ impl Terminal {
 
     pub fn find_matches(
         &mut self,
-        searcher: RegexSearch,
+        mut searcher: RegexSearch,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
         cx.background_executor().spawn(async move {
             let term = term.lock();
 
-            all_search_matches(&term, &searcher).collect()
+            all_search_matches(&term, &mut searcher).collect()
         })
     }
 
@@ -1332,7 +1331,7 @@ impl EventEmitter<Event> for Terminal {}
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
 /// Retrieve the match, if the specified point is inside the content matching the regex.
-fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &RegexSearch) -> Option<Match> {
+fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
     visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
 }
 
@@ -1340,7 +1339,7 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &RegexSearch) -> O
 /// Iterate over all visible regex matches.
 pub fn visible_regex_match_iter<'a, T>(
     term: &'a Term<T>,
-    regex: &'a RegexSearch,
+    regex: &'a mut RegexSearch,
 ) -> impl Iterator<Item = Match> + 'a {
     let viewport_start = Line(-(term.grid().display_offset() as i32));
     let viewport_end = viewport_start + term.bottommost_line();
@@ -1362,7 +1361,7 @@ fn make_selection(range: &RangeInclusive<AlacPoint>) -> Selection {
 
 fn all_search_matches<'a, T>(
     term: &'a Term<T>,
-    regex: &'a RegexSearch,
+    regex: &'a mut RegexSearch,
 ) -> impl Iterator<Item = Match> + 'a {
     let start = AlacPoint::new(term.grid().topmost_line(), Column(0));
     let end = AlacPoint::new(term.grid().bottommost_line(), term.grid().last_column());

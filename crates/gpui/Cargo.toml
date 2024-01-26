@@ -76,7 +76,7 @@ cbindgen = "0.26.0"
 media = { path = "../media" }
 anyhow.workspace = true
 block = "0.1"
-cocoa = "0.24"
+cocoa = "0.25"
 core-foundation = { version = "0.9.3", features = ["with-uuid"] }
 core-graphics = "0.22.3"
 core-text = "19.2"

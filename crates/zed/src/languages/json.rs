@@ -38,7 +38,7 @@ impl JsonLspAdapter {
 
 #[async_trait]
 impl LspAdapter for JsonLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("json-language-server".into())
     }
 
@@ -96,7 +96,7 @@ impl LspAdapter for JsonLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
         }))
@@ -140,7 +140,7 @@ impl LspAdapter for JsonLspAdapter {
         })
     }
 
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         [("JSON".into(), "jsonc".into())].into_iter().collect()
     }
 }

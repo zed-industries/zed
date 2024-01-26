@@ -121,6 +121,7 @@ tree-sitter-elixir.workspace = true
 tree-sitter-elm.workspace = true
 tree-sitter-embedded-template.workspace = true
 tree-sitter-glsl.workspace = true
+tree-sitter-gleam.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-json.workspace = true
@@ -142,6 +143,7 @@ tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
 tree-sitter-vue.workspace = true
 tree-sitter-uiua.workspace = true
+tree-sitter-zig.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"

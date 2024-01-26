@@ -590,6 +590,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
@@ -974,8 +975,7 @@ impl Project {
 
         // Start all the newly-enabled language servers.
         for (worktree, language) in language_servers_to_start {
-            let worktree_path = worktree.read(cx).abs_path();
-            self.start_language_servers(&worktree, worktree_path, language, cx);
+            self.start_language_servers(&worktree, language, cx);
         }
 
         // Restart all language servers with changed initialization options.
@@ -2774,8 +2774,8 @@ impl Project {
         };
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
-            if let Some(tree) = worktree.read(cx).as_local() {
-                self.start_language_servers(&worktree, tree.abs_path().clone(), new_language, cx);
+            if worktree.read(cx).is_local() {
+                self.start_language_servers(&worktree, new_language, cx);
             }
         }
     }
@@ -2783,7 +2783,6 @@ impl Project {
     fn start_language_servers(
         &mut self,
         worktree: &Model<Worktree>,
-        worktree_path: Arc<Path>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2793,22 +2792,14 @@ impl Project {
             return;
         }
 
-        let worktree_id = worktree.read(cx).id();
         for adapter in language.lsp_adapters() {
-            self.start_language_server(
-                worktree_id,
-                worktree_path.clone(),
-                adapter.clone(),
-                language.clone(),
-                cx,
-            );
+            self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
     }
 
     fn start_language_server(
         &mut self,
-        worktree_id: WorktreeId,
-        worktree_path: Arc<Path>,
+        worktree: &Model<Worktree>,
         adapter: Arc<CachedLspAdapter>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
@@ -2817,6 +2808,9 @@ impl Project {
             return;
         }
 
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        let worktree_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
         if self.language_server_ids.contains_key(&key) {
             return;
@@ -2949,20 +2943,14 @@ impl Project {
             this.update(&mut cx, |this, cx| {
                 let worktrees = this.worktrees.clone();
                 for worktree in worktrees {
-                    let worktree = match worktree.upgrade() {
-                        Some(worktree) => worktree.read(cx),
-                        None => continue,
-                    };
-                    let worktree_id = worktree.id();
-                    let root_path = worktree.abs_path();
-
-                    this.start_language_server(
-                        worktree_id,
-                        root_path,
-                        adapter.clone(),
-                        language.clone(),
-                        cx,
-                    );
+                    if let Some(worktree) = worktree.upgrade() {
+                        this.start_language_server(
+                            &worktree,
+                            adapter.clone(),
+                            language.clone(),
+                            cx,
+                        );
+                    }
                 }
             })
             .ok();
@@ -3176,7 +3164,7 @@ impl Project {
                 }
             })
             .detach();
-        let mut initialization_options = adapter.adapter.initialization_options().await;
+        let mut initialization_options = adapter.adapter.initialization_options();
         match (&mut initialization_options, override_options) {
             (Some(initialization_options), Some(override_options)) => {
                 merge_json_value_into(override_options, initialization_options);
@@ -3332,7 +3320,7 @@ impl Project {
         worktree_id: WorktreeId,
         adapter_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
-    ) -> Task<(Option<PathBuf>, Vec<WorktreeId>)> {
+    ) -> Task<Vec<WorktreeId>> {
         let key = (worktree_id, adapter_name);
         if let Some(server_id) = self.language_server_ids.remove(&key) {
             log::info!("stopping language server {}", key.1 .0);
@@ -3370,8 +3358,6 @@ impl Project {
             let server_state = self.language_servers.remove(&server_id);
             cx.emit(Event::LanguageServerRemoved(server_id));
             cx.spawn(move |this, mut cx| async move {
-                let mut root_path = None;
-
                 let server = match server_state {
                     Some(LanguageServerState::Starting(task)) => task.await,
                     Some(LanguageServerState::Running { server, .. }) => Some(server),
@@ -3379,7 +3365,6 @@ impl Project {
                 };
 
                 if let Some(server) = server {
-                    root_path = Some(server.root_path().clone());
                     if let Some(shutdown) = server.shutdown() {
                         shutdown.await;
                     }
@@ -3393,10 +3378,10 @@ impl Project {
                     .ok();
                 }
 
-                (root_path, orphaned_worktrees)
+                orphaned_worktrees
             })
         } else {
-            Task::ready((None, Vec::new()))
+            Task::ready(Vec::new())
         }
     }
 
@@ -3426,7 +3411,6 @@ impl Project {
         None
     }
 
-    // TODO This will break in the case where the adapter's root paths and worktrees are not equal
     fn restart_language_servers(
         &mut self,
         worktree: Model<Worktree>,
@@ -3434,50 +3418,42 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
-        let fallback_path = worktree.read(cx).abs_path();
 
-        let mut stops = Vec::new();
-        for adapter in language.lsp_adapters() {
-            stops.push(self.stop_language_server(worktree_id, adapter.name.clone(), cx));
-        }
-
-        if stops.is_empty() {
+        let stop_tasks = language
+            .lsp_adapters()
+            .iter()
+            .map(|adapter| {
+                let stop_task = self.stop_language_server(worktree_id, adapter.name.clone(), cx);
+                (stop_task, adapter.name.clone())
+            })
+            .collect::<Vec<_>>();
+        if stop_tasks.is_empty() {
             return;
         }
-        let mut stops = stops.into_iter();
 
         cx.spawn(move |this, mut cx| async move {
-            let (original_root_path, mut orphaned_worktrees) = stops.next().unwrap().await;
-            for stop in stops {
-                let (_, worktrees) = stop.await;
-                orphaned_worktrees.extend_from_slice(&worktrees);
+            // For each stopped language server, record all of the worktrees with which
+            // it was associated.
+            let mut affected_worktrees = Vec::new();
+            for (stop_task, language_server_name) in stop_tasks {
+                for affected_worktree_id in stop_task.await {
+                    affected_worktrees.push((affected_worktree_id, language_server_name.clone()));
+                }
             }
 
-            let this = match this.upgrade() {
-                Some(this) => this,
-                None => return,
-            };
-
             this.update(&mut cx, |this, cx| {
-                // Attempt to restart using original server path. Fallback to passed in
-                // path if we could not retrieve the root path
-                let root_path = original_root_path
-                    .map(|path_buf| Arc::from(path_buf.as_path()))
-                    .unwrap_or(fallback_path);
-
-                this.start_language_servers(&worktree, root_path, language.clone(), cx);
+                // Restart the language server for the given worktree.
+                this.start_language_servers(&worktree, language.clone(), cx);
 
                 // Lookup new server ids and set them for each of the orphaned worktrees
-                for adapter in language.lsp_adapters() {
+                for (affected_worktree_id, language_server_name) in affected_worktrees {
                     if let Some(new_server_id) = this
                         .language_server_ids
-                        .get(&(worktree_id, adapter.name.clone()))
+                        .get(&(worktree_id, language_server_name.clone()))
                         .cloned()
                     {
-                        for &orphaned_worktree in &orphaned_worktrees {
-                            this.language_server_ids
-                                .insert((orphaned_worktree, adapter.name.clone()), new_server_id);
-                        }
+                        this.language_server_ids
+                            .insert((affected_worktree_id, language_server_name), new_server_id);
                     }
                 }
             })
@@ -7749,6 +7725,40 @@ impl Project {
                 .as_ref()
                 .map(language::proto::serialize_transaction),
         })
+    }
+
+    async fn handle_resolve_completion_documentation(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ResolveCompletionDocumentationResponse> {
+        let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
+
+        let completion = this
+            .read_with(&mut cx, |this, _| {
+                let id = LanguageServerId(envelope.payload.language_server_id as usize);
+                let Some(server) = this.language_server_for_id(id) else {
+                    return Err(anyhow!("No language server {id}"));
+                };
+
+                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+            })??
+            .await?;
+
+        let mut is_markdown = false;
+        let text = match completion.documentation {
+            Some(lsp::Documentation::String(text)) => text,
+
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value })) => {
+                is_markdown = kind == lsp::MarkupKind::Markdown;
+                value
+            }
+
+            _ => String::new(),
+        };
+
+        Ok(proto::ResolveCompletionDocumentationResponse { text, is_markdown })
     }
 
     async fn handle_apply_code_action(

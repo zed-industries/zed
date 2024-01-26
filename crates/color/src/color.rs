@@ -59,10 +59,7 @@ pub fn hex_to_hsla(s: &str) -> Result<RGBAColor, String> {
 
     // Expand shorthand formats #RGB and #RGBA to #RRGGBB and #RRGGBBAA
     let hex = match hex.len() {
-        3 => hex
-            .chars()
-            .map(|c| c.to_string().repeat(2))
-            .collect::<String>(),
+        3 => hex.chars().map(|c| c.to_string().repeat(2)).collect(),
         4 => {
             let (rgb, alpha) = hex.split_at(3);
             let rgb = rgb
@@ -80,14 +77,12 @@ pub fn hex_to_hsla(s: &str) -> Result<RGBAColor, String> {
     let hex_val =
         u32::from_str_radix(&hex, 16).map_err(|_| format!("Invalid hexadecimal string: {}", s))?;
 
-    let r = ((hex_val >> 24) & 0xFF) as f32 / 255.0;
-    let g = ((hex_val >> 16) & 0xFF) as f32 / 255.0;
-    let b = ((hex_val >> 8) & 0xFF) as f32 / 255.0;
-    let a = (hex_val & 0xFF) as f32 / 255.0;
-
-    let color = RGBAColor { r, g, b, a };
-
-    Ok(color)
+    Ok(RGBAColor {
+        r: ((hex_val >> 24) & 0xFF) as f32 / 255.0,
+        g: ((hex_val >> 16) & 0xFF) as f32 / 255.0,
+        b: ((hex_val >> 8) & 0xFF) as f32 / 255.0,
+        a: (hex_val & 0xFF) as f32 / 255.0,
+    })
 }
 
 // These derives implement to and from palette's color types.
@@ -128,8 +123,7 @@ where
     Rgb<S, f32>: FromColorUnclamped<Srgb>,
 {
     fn from_color_unclamped(color: RGBAColor) -> Self {
-        let srgb = Srgb::new(color.r, color.g, color.b);
-        Self::from_color_unclamped(srgb)
+        Self::from_color_unclamped(Srgb::new(color.r, color.g, color.b))
     }
 }
 

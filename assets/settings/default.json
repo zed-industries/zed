@@ -447,6 +447,10 @@
     //
     "lsp": "elixir_ls"
   },
+  // Settings specific to our deno integration
+  "deno": {
+    "enable": false
+  },
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {

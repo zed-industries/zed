@@ -30,7 +30,7 @@ impl PythonLspAdapter {
 
 #[async_trait]
 impl LspAdapter for PythonLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
     }
 

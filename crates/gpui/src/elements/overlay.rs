@@ -40,7 +40,7 @@ impl Overlay {
         self
     }
 
-    /// Sets the position in window co-ordinates
+    /// Sets the position in window coordinates
     /// (otherwise the location the overlay is rendered is used)
     pub fn position(mut self, anchor: Point<Pixels>) -> Self {
         self.anchor_position = Some(anchor);
