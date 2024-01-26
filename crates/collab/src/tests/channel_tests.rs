@@ -1308,7 +1308,7 @@ async fn test_invite_access(
 
 #[gpui::test]
 async fn test_leave_channel(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    let (_server, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+    let (_server, _client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
 
     client_b
         .channel_store()
