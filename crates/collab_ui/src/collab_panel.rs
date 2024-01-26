@@ -1122,7 +1122,9 @@ impl CollabPanel {
                     }),
                 );
 
+            let mut has_destructive_actions = false;
             if self.channel_store.read(cx).is_channel_admin(channel_id) {
+                has_destructive_actions = true;
                 context_menu = context_menu
                     .separator()
                     .entry(
@@ -1191,6 +1193,17 @@ impl CollabPanel {
                     "Delete",
                     None,
                     cx.handler_for(&this, move |this, cx| this.remove_channel(channel_id, cx)),
+                );
+            }
+
+            if self.channel_store.read(cx).is_root_channel(channel_id) {
+                if !has_destructive_actions {
+                    context_menu = context_menu.separator()
+                }
+                context_menu = context_menu.entry(
+                    "Leave Channel",
+                    None,
+                    cx.handler_for(&this, move |this, cx| this.leave_channel(channel_id, cx)),
                 );
             }
 
@@ -1665,6 +1678,34 @@ impl CollabPanel {
             })
         })
         .detach();
+    }
+
+    fn leave_channel(&self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+        let Some(user_id) = self.user_store.read(cx).current_user().map(|u| u.id) else {
+            return;
+        };
+        let Some(channel) = self.channel_store.read(cx).channel_for_id(channel_id) else {
+            return;
+        };
+        let prompt_message = format!("Are you sure you want to leave \"#{}\"?", channel.name);
+        let answer = cx.prompt(
+            PromptLevel::Warning,
+            &prompt_message,
+            None,
+            &["Leave", "Cancel"],
+        );
+        cx.spawn(|this, mut cx| async move {
+            if answer.await? != 0 {
+                return Ok(());
+            }
+            this.update(&mut cx, |this, cx| {
+                this.channel_store.update(cx, |channel_store, cx| {
+                    channel_store.remove_member(channel_id, user_id, cx)
+                })
+            })?
+            .await
+        })
+        .detach_and_prompt_err("Failed to leave channel", cx, |_, _| None)
     }
 
     fn remove_channel(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {

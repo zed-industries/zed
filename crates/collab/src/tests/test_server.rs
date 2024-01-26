@@ -118,7 +118,7 @@ impl TestServer {
     pub async fn start2(
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
-    ) -> (TestClient, TestClient, u64) {
+    ) -> (TestServer, TestClient, TestClient, u64) {
         let mut server = Self::start(cx_a.executor()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
@@ -127,7 +127,7 @@ impl TestServer {
             .await;
         cx_a.run_until_parked();
 
-        (client_a, client_b, channel_id)
+        (server, client_a, client_b, channel_id)
     }
 
     pub async fn start1<'a>(cx: &'a mut TestAppContext) -> TestClient {

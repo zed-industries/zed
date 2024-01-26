@@ -1307,6 +1307,28 @@ async fn test_invite_access(
 }
 
 #[gpui::test]
+async fn test_leave_channel(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let (_server, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, cx| {
+            channel_store.remove_member(channel_id, client_b.user_id().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    assert_eq!(
+        client_b
+            .channel_store()
+            .read_with(cx_b, |store, _| store.channels().count()),
+        0
+    );
+}
+
+#[gpui::test]
 async fn test_channel_moving(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
