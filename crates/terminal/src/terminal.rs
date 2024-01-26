@@ -277,7 +277,7 @@ impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
         shell: Shell,
-        mut env: HashMap<String, String>,
+        env: HashMap<String, String>,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: AlternateScroll,
         window: AnyWindowHandle,
@@ -300,16 +300,21 @@ impl TerminalBuilder {
             }
         };
 
+        // First, setup Alacritty's env
+        setup_env();
+
+        // Then setup configured environment variables
+        for (key, value) in env {
+            std::env::set_var(key, value);
+        }
         //TODO: Properly set the current locale,
-        env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
-        env.insert("ZED_TERM".to_string(), true.to_string());
+        std::env::set_var("LC_ALL", "en_US.UTF-8");
+        std::env::set_var("ZED_TERM", "true");
 
         let config = Config {
             scrolling_history: 10000,
             ..Default::default()
         };
-
-        setup_env();
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
         //TODO: Remove with a bounded sender which can be dispatched on &self
