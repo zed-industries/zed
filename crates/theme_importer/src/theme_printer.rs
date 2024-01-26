@@ -1,6 +1,5 @@
-use std::fmt::{self, Debug};
-
 use gpui::Hsla;
+use std::fmt::{self, Debug};
 use theme::{
     Appearance, PlayerColor, PlayerColors, StatusColorsRefinement, SystemColors,
     ThemeColorsRefinement, UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeFamily,

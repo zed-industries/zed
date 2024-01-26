@@ -4,19 +4,22 @@ use std::fmt;
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
-    let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let b = (hex & 0xFF) as f32 / 255.0;
-    Rgba { r, g, b, a: 1.0 }
+    Rgba {
+        r: ((hex >> 16) & 0xFF) as f32 / 255.0,
+        g: ((hex >> 8) & 0xFF) as f32 / 255.0,
+        b: (hex & 0xFF) as f32 / 255.0,
+        a: 1.0,
+    }
 }
 
 /// Convert an RGBA hex color code number to [`Rgba`]
 pub fn rgba(hex: u32) -> Rgba {
-    let r = ((hex >> 24) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let a = (hex & 0xFF) as f32 / 255.0;
-    Rgba { r, g, b, a }
+    Rgba {
+        r: ((hex >> 24) & 0xFF) as f32 / 255.0,
+        g: ((hex >> 16) & 0xFF) as f32 / 255.0,
+        b: ((hex >> 8) & 0xFF) as f32 / 255.0,
+        a: (hex & 0xFF) as f32 / 255.0,
+    }
 }
 
 /// An RGBA color

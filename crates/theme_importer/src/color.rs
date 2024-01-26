@@ -18,11 +18,15 @@ pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
 }
 
 pub(crate) fn pack_color(color: Hsla) -> u32 {
-    let hsla = palette::Hsla::from_components((color.h * 360., color.s, color.l, color.a));
-    let rgba = palette::rgb::Srgba::from_color(hsla);
-    let rgba = rgba.into_format::<u8, u8>();
-
-    u32::from(rgba)
+    u32::from(
+        palette::rgb::Srgba::from_color(palette::Hsla::from_components((
+            color.h * 360.,
+            color.s,
+            color.l,
+            color.a,
+        )))
+        .into_format::<u8, u8>(),
+    )
 }
 
 #[cfg(test)]
