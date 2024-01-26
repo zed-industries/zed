@@ -15,6 +15,7 @@ mod deno;
 mod elixir;
 mod gleam;
 mod go;
+mod haskell;
 mod html;
 mod json;
 #[cfg(feature = "plugin_runtime")]
@@ -201,6 +202,7 @@ pub fn init(
             );
         }
     }
+    language("haskell", tree_sitter_haskell::language(), vec![]);
     language(
         "html",
         tree_sitter_html::language(),
