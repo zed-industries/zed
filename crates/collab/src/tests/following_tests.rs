@@ -17,7 +17,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use workspace::{
     dock::{test::TestPanel, DockPosition},
-    item::{test::TestItem, ItemHandle as _},
+    item::{test::TestItem, Item, ItemHandle as _},
     shared_screen::SharedScreen,
     SplitDirection, Workspace,
 };
@@ -1994,5 +1994,77 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             workspace.active_item(cx).expect("no active item").item_id(),
             channel_notes_2_b.entity_id()
         );
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_following_to_channel_notes_other_workspace(
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
+) {
+    let (server, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    let mut cx_a2 = cx_a.clone();
+    let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
+    let project_a = workspace_a.update(cx_a, |workspace, cx| workspace.project().clone());
+
+    active_call_a
+        .update(cx_a, |call, cx| call.join_channel(channel, cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    cx_a.simulate_keystrokes("cmd-p 1 enter");
+    cx_a.run_until_parked();
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    cx_b.update(|cx| workspace::join_channel(channel, client_b.app_state.clone(), None, cx))
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    let (workspace_b, cx_b) = client_b.active_workspace(cx_b);
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.read(cx).tab_description(0, cx).unwrap(), "1.txt");
+    });
+
+    let (workspace_a2, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
+
+    // client a and b in a channel, b is following a in shared workspace.
+    // client_b.channel_store()
+    // other_workspace.cx_a2
+    // assert that a is in file ??
+
+    cx_a2.update(|cx| cx.activate_window());
+    let channel_notes_a = cx_a2
+        .update(|cx| ChannelView::open(channel, workspace_a2, cx))
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item_as::<ChannelView>(cx).unwrap();
+        assert_eq!(editor.read(cx).channel(cx).unwrap().id, channel);
+    });
+
+    cx_a.update(|cx| cx.activate_window());
+    cx_a.run_until_parked();
+
+    workspace_b.update(cx_b, |workspace, cx| {
+        let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.read(cx).tab_description(0, cx).unwrap(), "1.txt");
     });
 }
