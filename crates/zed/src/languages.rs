@@ -7,10 +7,11 @@ use settings::Settings;
 use std::{borrow::Cow, str, sync::Arc};
 use util::{asset_str, paths::PLUGINS_DIR};
 
-use self::elixir::ElixirSettings;
+use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
 mod css;
+mod deno;
 mod elixir;
 mod gleam;
 mod go;
@@ -51,6 +52,7 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     ElixirSettings::register(cx);
+    DenoSettings::register(cx);
 
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
@@ -140,32 +142,59 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
     );
     language("toml", tree_sitter_toml::language(), vec![]);
-    language(
-        "tsx",
-        tree_sitter_typescript::language_tsx(),
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
-    );
-    language(
-        "typescript",
-        tree_sitter_typescript::language_typescript(),
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-        ],
-    );
-    language(
-        "javascript",
-        tree_sitter_typescript::language_tsx(),
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
-    );
+    match &DenoSettings::get(None, cx).enable {
+        true => {
+            language(
+                "tsx",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(deno::DenoLspAdapter::new()),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+            language(
+                "typescript",
+                tree_sitter_typescript::language_typescript(),
+                vec![Arc::new(deno::DenoLspAdapter::new())],
+            );
+            language(
+                "javascript",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(deno::DenoLspAdapter::new()),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+        }
+        false => {
+            language(
+                "tsx",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+            language(
+                "typescript",
+                tree_sitter_typescript::language_typescript(),
+                vec![
+                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+            language(
+                "javascript",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+        }
+    }
     language(
         "html",
         tree_sitter_html::language(),
