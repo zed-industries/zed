@@ -330,8 +330,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.unseen_channel_buffer_changes(
-                    observer_id,
+                db.latest_channel_buffer_changes(
                     &[
                         buffers[0].channel_id,
                         buffers[1].channel_id,
@@ -348,12 +347,12 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     pretty_assertions::assert_eq!(
         buffer_changes,
         [
-            rpc::proto::UnseenChannelBufferChange {
+            rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[0].channel_id.to_proto(),
                 epoch: 0,
                 version: serialize_version(&text_buffers[0].version()),
             },
-            rpc::proto::UnseenChannelBufferChange {
+            rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[1].channel_id.to_proto(),
                 epoch: 1,
                 version: serialize_version(&text_buffers[1].version())
@@ -362,99 +361,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
                         == buffer_changes[1].version.first().unwrap().replica_id)
                     .collect::<Vec<_>>(),
             },
-            rpc::proto::UnseenChannelBufferChange {
-                channel_id: buffers[2].channel_id.to_proto(),
-                epoch: 0,
-                version: serialize_version(&text_buffers[2].version()),
-            },
-        ]
-    );
-
-    db.observe_buffer_version(
-        buffers[1].id,
-        observer_id,
-        1,
-        serialize_version(&text_buffers[1].version()).as_slice(),
-    )
-    .await
-    .unwrap();
-
-    let buffer_changes = db
-        .transaction(|tx| {
-            let buffers = &buffers;
-            async move {
-                db.unseen_channel_buffer_changes(
-                    observer_id,
-                    &[
-                        buffers[0].channel_id,
-                        buffers[1].channel_id,
-                        buffers[2].channel_id,
-                    ],
-                    &*tx,
-                )
-                .await
-            }
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(
-        buffer_changes,
-        [
-            rpc::proto::UnseenChannelBufferChange {
-                channel_id: buffers[0].channel_id.to_proto(),
-                epoch: 0,
-                version: serialize_version(&text_buffers[0].version()),
-            },
-            rpc::proto::UnseenChannelBufferChange {
-                channel_id: buffers[2].channel_id.to_proto(),
-                epoch: 0,
-                version: serialize_version(&text_buffers[2].version()),
-            },
-        ]
-    );
-
-    // Observe an earlier version of the buffer.
-    db.observe_buffer_version(
-        buffers[1].id,
-        observer_id,
-        1,
-        &[rpc::proto::VectorClockEntry {
-            replica_id: 0,
-            timestamp: 0,
-        }],
-    )
-    .await
-    .unwrap();
-
-    let buffer_changes = db
-        .transaction(|tx| {
-            let buffers = &buffers;
-            async move {
-                db.unseen_channel_buffer_changes(
-                    observer_id,
-                    &[
-                        buffers[0].channel_id,
-                        buffers[1].channel_id,
-                        buffers[2].channel_id,
-                    ],
-                    &*tx,
-                )
-                .await
-            }
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(
-        buffer_changes,
-        [
-            rpc::proto::UnseenChannelBufferChange {
-                channel_id: buffers[0].channel_id.to_proto(),
-                epoch: 0,
-                version: serialize_version(&text_buffers[0].version()),
-            },
-            rpc::proto::UnseenChannelBufferChange {
+            rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[2].channel_id.to_proto(),
                 epoch: 0,
                 version: serialize_version(&text_buffers[2].version()),

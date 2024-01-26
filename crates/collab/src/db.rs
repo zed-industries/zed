@@ -40,7 +40,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tables::*;
+pub use tables::*;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 pub use ids::*;
@@ -502,35 +502,6 @@ pub struct NewUserResult {
     pub signup_device_id: Option<String>,
 }
 
-/// The result of moving a channel.
-#[derive(Debug)]
-pub struct MoveChannelResult {
-    pub previous_participants: Vec<ChannelMember>,
-    pub descendent_ids: Vec<ChannelId>,
-}
-
-/// The result of renaming a channel.
-#[derive(Debug)]
-pub struct RenameChannelResult {
-    pub channel: Channel,
-    pub participants_to_update: HashMap<UserId, Channel>,
-}
-
-/// The result of creating a channel.
-#[derive(Debug)]
-pub struct CreateChannelResult {
-    pub channel: Channel,
-    pub participants_to_update: Vec<(UserId, ChannelsForUser)>,
-}
-
-/// The result of setting a channel's visibility.
-#[derive(Debug)]
-pub struct SetChannelVisibilityResult {
-    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
-    pub participants_to_remove: HashSet<UserId>,
-    pub channels_to_remove: Vec<ChannelId>,
-}
-
 /// The result of updating a channel membership.
 #[derive(Debug)]
 pub struct MembershipUpdated {
@@ -570,18 +541,16 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub visibility: ChannelVisibility,
-    pub role: ChannelRole,
     /// parent_path is the channel ids from the root to this one (not including this one)
     pub parent_path: Vec<ChannelId>,
 }
 
 impl Channel {
-    fn from_model(value: channel::Model, role: ChannelRole) -> Self {
+    fn from_model(value: channel::Model) -> Self {
         Channel {
             id: value.id,
             visibility: value.visibility,
             name: value.clone().name,
-            role,
             parent_path: value.ancestors().collect(),
         }
     }
@@ -591,7 +560,6 @@ impl Channel {
             id: self.id.to_proto(),
             name: self.name.clone(),
             visibility: self.visibility.into(),
-            role: self.role.into(),
             parent_path: self.parent_path.iter().map(|c| c.to_proto()).collect(),
         }
     }
@@ -617,9 +585,10 @@ impl ChannelMember {
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
+    pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
-    pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
-    pub channel_messages: Vec<proto::UnseenChannelMessage>,
+    pub latest_buffer_versions: Vec<proto::ChannelBufferVersion>,
+    pub latest_channel_messages: Vec<proto::ChannelMessageId>,
 }
 
 #[derive(Debug)]

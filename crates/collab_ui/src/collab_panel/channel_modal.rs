@@ -10,7 +10,6 @@ use gpui::{
     WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use rpc::proto::channel_member;
 use std::sync::Arc;
 use ui::{prelude::*, Avatar, Checkbox, ContextMenu, ListItem, ListItemSpacing};
 use util::TryFutureExt;
@@ -359,10 +358,8 @@ impl PickerDelegate for ChannelModalDelegate {
                     Some(proto::channel_member::Kind::Invitee) => {
                         self.remove_member(selected_user.id, cx);
                     }
-                    Some(proto::channel_member::Kind::AncestorMember) | None => {
-                        self.invite_member(selected_user, cx)
-                    }
                     Some(proto::channel_member::Kind::Member) => {}
+                    None => self.invite_member(selected_user, cx),
                 },
             }
         }
@@ -402,10 +399,6 @@ impl PickerDelegate for ChannelModalDelegate {
                             .children(
                                 if request_status == Some(proto::channel_member::Kind::Invitee) {
                                     Some(Label::new("Invited"))
-                                } else if membership.map(|m| m.kind)
-                                    == Some(channel_member::Kind::AncestorMember)
-                                {
-                                    Some(Label::new("Parent"))
                                 } else {
                                     None
                                 },
@@ -563,16 +556,9 @@ impl ChannelModalDelegate {
         let Some(membership) = self.member_at_index(ix) else {
             return;
         };
-        if membership.kind == proto::channel_member::Kind::AncestorMember {
-            return;
-        }
         let user_id = membership.user.id;
         let picker = cx.view().clone();
         let context_menu = ContextMenu::build(cx, |mut menu, _cx| {
-            if membership.kind == channel_member::Kind::AncestorMember {
-                return menu.entry("Inherited membership", None, |_| {});
-            };
-
             let role = membership.role;
 
             if role == ChannelRole::Admin || role == ChannelRole::Member {

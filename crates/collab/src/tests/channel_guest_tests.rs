@@ -198,6 +198,13 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     client_a
         .channel_store()
         .update(cx_a, |store, cx| {
+            store.set_channel_visibility(parent_channel_id, proto::ChannelVisibility::Public, cx)
+        })
+        .await
+        .unwrap();
+    client_a
+        .channel_store()
+        .update(cx_a, |store, cx| {
             store.set_channel_visibility(channel_id, proto::ChannelVisibility::Public, cx)
         })
         .await

@@ -15,7 +15,7 @@ test_both_dbs!(
 
 async fn test_channel_message_retrieval(db: &Arc<Database>) {
     let user = new_test_user(db, "user@example.com").await;
-    let channel = db.create_channel("channel", None, user).await.unwrap();
+    let channel = db.create_channel("channel", None, user).await.unwrap().0;
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
     db.join_channel_chat(channel.id, rpc::ConnectionId { owner_id, id: 0 }, user)
@@ -235,11 +235,10 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let second_message = db
+    let _ = db
         .create_channel_message(channel_1, user, "1_2", &[], OffsetDateTime::now_utc(), 2)
         .await
-        .unwrap()
-        .message_id;
+        .unwrap();
 
     let third_message = db
         .create_channel_message(channel_1, user, "1_3", &[], OffsetDateTime::now_utc(), 3)
@@ -258,96 +257,26 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
         .message_id;
 
     // Check that observer has new messages
-    let unseen_messages = db
+    let latest_messages = db
         .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
+            db.latest_channel_messages(&[channel_1, channel_2], &*tx)
                 .await
         })
         .await
         .unwrap();
 
     assert_eq!(
-        unseen_messages,
+        latest_messages,
         [
-            rpc::proto::UnseenChannelMessage {
+            rpc::proto::ChannelMessageId {
                 channel_id: channel_1.to_proto(),
                 message_id: third_message.to_proto(),
             },
-            rpc::proto::UnseenChannelMessage {
+            rpc::proto::ChannelMessageId {
                 channel_id: channel_2.to_proto(),
                 message_id: fourth_message.to_proto(),
             },
         ]
-    );
-
-    // Observe the second message
-    db.observe_channel_message(channel_1, observer, second_message)
-        .await
-        .unwrap();
-
-    // Make sure the observer still has a new message
-    let unseen_messages = db
-        .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
-                .await
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        unseen_messages,
-        [
-            rpc::proto::UnseenChannelMessage {
-                channel_id: channel_1.to_proto(),
-                message_id: third_message.to_proto(),
-            },
-            rpc::proto::UnseenChannelMessage {
-                channel_id: channel_2.to_proto(),
-                message_id: fourth_message.to_proto(),
-            },
-        ]
-    );
-
-    // Observe the third message,
-    db.observe_channel_message(channel_1, observer, third_message)
-        .await
-        .unwrap();
-
-    // Make sure the observer does not have a new method
-    let unseen_messages = db
-        .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
-                .await
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(
-        unseen_messages,
-        [rpc::proto::UnseenChannelMessage {
-            channel_id: channel_2.to_proto(),
-            message_id: fourth_message.to_proto(),
-        }]
-    );
-
-    // Observe the second message again, should not regress our observed state
-    db.observe_channel_message(channel_1, observer, second_message)
-        .await
-        .unwrap();
-
-    // Make sure the observer does not have a new message
-    let unseen_messages = db
-        .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
-                .await
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        unseen_messages,
-        [rpc::proto::UnseenChannelMessage {
-            channel_id: channel_2.to_proto(),
-            message_id: fourth_message.to_proto(),
-        }]
     );
 }
 
@@ -362,7 +291,12 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
     let user_b = new_test_user(db, "user_b@example.com").await;
     let user_c = new_test_user(db, "user_c@example.com").await;
 
-    let channel = db.create_channel("channel", None, user_a).await.unwrap().id;
+    let channel = db
+        .create_channel("channel", None, user_a)
+        .await
+        .unwrap()
+        .0
+        .id;
     db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
         .await
         .unwrap();
