@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
-use gpui::{AppContext, Task};
+use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
