@@ -75,15 +75,23 @@
   (#set! injection.language "json"))
 
 ; -----------------------------------------------------------------------------
+; NOTE: Commented out because the "sql" grammar is not currently added to Zed.
+;
 ; SQL
 ; postgresql-simple
-(quasiquote
-  (quoter) @injection.language
-  (#eq? @injection.language "sql")
-  (quasiquote_body) @injection.content)
+;
+; (quasiquote
+;   (quoter) @injection.language
+;   (#eq? @injection.language "sql")
+;   (quasiquote_body) @injection.content)
 
-(quasiquote
-  (quoter) @_name
-  (#any-of? @_name "persistUpperCase" "persistLowerCase" "persistWith")
-  (quasiquote_body) @injection.content
-  (#set! injection.language "haskell_persistent"))
+; -----------------------------------------------------------------------------
+; NOTE: Commented out because the "haskell_persistent" grammar is not currently added to Zed.
+;       See: https://github.com/nvim-treesitter/nvim-treesitter/tree/master/queries/haskell_persistent
+;            https://github.com/MercuryTechnologies/tree-sitter-haskell-persistent
+;
+; (quasiquote
+;   (quoter) @_name
+;   (#any-of? @_name "persistUpperCase" "persistLowerCase" "persistWith")
+;   (quasiquote_body) @injection.content
+;   (#set! injection.language "haskell_persistent"))
