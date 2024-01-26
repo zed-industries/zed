@@ -1,4 +1,4 @@
-use gpui::{hsla, point, px, BoxShadow};
+use gpui::{point, px, BoxShadow, Hsla};
 use smallvec::{smallvec, SmallVec};
 
 #[doc = include_str!("docs/elevation.md")]
@@ -36,7 +36,7 @@ impl ElevationIndex {
             ElevationIndex::Surface => smallvec![],
 
             ElevationIndex::ElevatedSurface => smallvec![BoxShadow {
-                color: hsla(0., 0., 0., 0.12),
+                color: Hsla::new(0., 0., 0., 0.12),
                 offset: point(px(0.), px(2.)),
                 blur_radius: px(3.),
                 spread_radius: px(0.),
@@ -44,19 +44,19 @@ impl ElevationIndex {
 
             ElevationIndex::ModalSurface => smallvec![
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.12),
+                    color: Hsla::new(0., 0., 0., 0.12),
                     offset: point(px(0.), px(2.)),
                     blur_radius: px(3.),
                     spread_radius: px(0.),
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.08),
+                    color: Hsla::new(0., 0., 0., 0.08),
                     offset: point(px(0.), px(3.)),
                     blur_radius: px(6.),
                     spread_radius: px(0.),
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.04),
+                    color: Hsla::new(0., 0., 0., 0.04),
                     offset: point(px(0.), px(6.)),
                     blur_radius: px(12.),
                     spread_radius: px(0.),

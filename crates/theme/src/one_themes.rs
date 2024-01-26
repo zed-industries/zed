@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
-use gpui::{hsla, FontStyle, FontWeight, HighlightStyle};
-
 use crate::{
     default_color_scales, Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme,
     ThemeColors, ThemeFamily, ThemeStyles,
 };
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use std::sync::Arc;
 
 // Note: This theme family is not the one you see in Zed at the moment.
 // This is a from-scratch rebuild that Nate started work on. We currently
@@ -22,18 +20,18 @@ pub fn one_family() -> ThemeFamily {
 }
 
 pub(crate) fn one_dark() -> Theme {
-    let bg = hsla(215. / 360., 12. / 100., 15. / 100., 1.);
-    let editor = hsla(220. / 360., 12. / 100., 18. / 100., 1.);
-    let elevated_surface = hsla(225. / 360., 12. / 100., 17. / 100., 1.);
+    let bg = Hsla::new(215. / 360., 12. / 100., 15. / 100., 1.);
+    let editor = Hsla::new(220. / 360., 12. / 100., 18. / 100., 1.);
+    let elevated_surface = Hsla::new(225. / 360., 12. / 100., 17. / 100., 1.);
 
-    let blue = hsla(207.8 / 360., 81. / 100., 66. / 100., 1.0);
-    let gray = hsla(218.8 / 360., 10. / 100., 40. / 100., 1.0);
-    let green = hsla(95. / 360., 38. / 100., 62. / 100., 1.0);
-    let orange = hsla(29. / 360., 54. / 100., 61. / 100., 1.0);
-    let purple = hsla(286. / 360., 51. / 100., 64. / 100., 1.0);
-    let red = hsla(355. / 360., 65. / 100., 65. / 100., 1.0);
-    let teal = hsla(187. / 360., 47. / 100., 55. / 100., 1.0);
-    let yellow = hsla(39. / 360., 67. / 100., 69. / 100., 1.0);
+    let blue = Hsla::new(207.8 / 360., 81. / 100., 66. / 100., 1.0);
+    let gray = Hsla::new(218.8 / 360., 10. / 100., 40. / 100., 1.0);
+    let green = Hsla::new(95. / 360., 38. / 100., 62. / 100., 1.0);
+    let orange = Hsla::new(29. / 360., 54. / 100., 61. / 100., 1.0);
+    let purple = Hsla::new(286. / 360., 51. / 100., 64. / 100., 1.0);
+    let red = Hsla::new(355. / 360., 65. / 100., 65. / 100., 1.0);
+    let teal = Hsla::new(187. / 360., 47. / 100., 55. / 100., 1.0);
+    let yellow = Hsla::new(39. / 360., 67. / 100., 69. / 100., 1.0);
 
     Theme {
         id: "one_dark".to_string(),
@@ -43,35 +41,35 @@ pub(crate) fn one_dark() -> Theme {
         styles: ThemeStyles {
             system: SystemColors::default(),
             colors: ThemeColors {
-                border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
-                border_variant: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                border_focused: hsla(223. / 360., 78. / 100., 65. / 100., 1.),
-                border_selected: hsla(222.6 / 360., 77.5 / 100., 65.1 / 100., 1.0),
+                border: Hsla::new(225. / 360., 13. / 100., 12. / 100., 1.),
+                border_variant: Hsla::new(228. / 360., 8. / 100., 25. / 100., 1.),
+                border_focused: Hsla::new(223. / 360., 78. / 100., 65. / 100., 1.),
+                border_selected: Hsla::new(222.6 / 360., 77.5 / 100., 65.1 / 100., 1.0),
                 border_transparent: SystemColors::default().transparent,
-                border_disabled: hsla(222.0 / 360., 11.6 / 100., 33.7 / 100., 1.0),
+                border_disabled: Hsla::new(222.0 / 360., 11.6 / 100., 33.7 / 100., 1.0),
                 elevated_surface_background: elevated_surface,
                 surface_background: bg,
                 background: bg,
-                element_background: hsla(223.0 / 360., 13. / 100., 21. / 100., 1.0),
-                element_hover: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
-                element_active: hsla(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
-                element_selected: hsla(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),
+                element_background: Hsla::new(223.0 / 360., 13. / 100., 21. / 100., 1.0),
+                element_hover: Hsla::new(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
+                element_active: Hsla::new(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
+                element_selected: Hsla::new(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),
                 element_disabled: SystemColors::default().transparent,
-                drop_target_background: hsla(220.0 / 360., 8.3 / 100., 21.4 / 100., 1.0),
+                drop_target_background: Hsla::new(220.0 / 360., 8.3 / 100., 21.4 / 100., 1.0),
                 ghost_element_background: SystemColors::default().transparent,
-                ghost_element_hover: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
-                ghost_element_active: hsla(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
-                ghost_element_selected: hsla(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),
+                ghost_element_hover: Hsla::new(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
+                ghost_element_active: Hsla::new(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
+                ghost_element_selected: Hsla::new(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),
                 ghost_element_disabled: SystemColors::default().transparent,
-                text: hsla(221. / 360., 11. / 100., 86. / 100., 1.0),
-                text_muted: hsla(218.0 / 360., 7. / 100., 46. / 100., 1.0),
-                text_placeholder: hsla(220.0 / 360., 6.6 / 100., 44.5 / 100., 1.0),
-                text_disabled: hsla(220.0 / 360., 6.6 / 100., 44.5 / 100., 1.0),
-                text_accent: hsla(222.6 / 360., 77.5 / 100., 65.1 / 100., 1.0),
-                icon: hsla(222.9 / 360., 9.9 / 100., 86.1 / 100., 1.0),
-                icon_muted: hsla(220.0 / 360., 12.1 / 100., 66.1 / 100., 1.0),
-                icon_disabled: hsla(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
-                icon_placeholder: hsla(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
+                text: Hsla::new(221. / 360., 11. / 100., 86. / 100., 1.0),
+                text_muted: Hsla::new(218.0 / 360., 7. / 100., 46. / 100., 1.0),
+                text_placeholder: Hsla::new(220.0 / 360., 6.6 / 100., 44.5 / 100., 1.0),
+                text_disabled: Hsla::new(220.0 / 360., 6.6 / 100., 44.5 / 100., 1.0),
+                text_accent: Hsla::new(222.6 / 360., 77.5 / 100., 65.1 / 100., 1.0),
+                icon: Hsla::new(222.9 / 360., 9.9 / 100., 86.1 / 100., 1.0),
+                icon_muted: Hsla::new(220.0 / 360., 12.1 / 100., 66.1 / 100., 1.0),
+                icon_disabled: Hsla::new(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
+                icon_placeholder: Hsla::new(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
                 icon_accent: blue.into(),
                 status_bar_background: bg,
                 title_bar_background: bg,
@@ -84,14 +82,24 @@ pub(crate) fn one_dark() -> Theme {
                 editor_background: editor,
                 editor_gutter_background: editor,
                 editor_subheader_background: bg,
-                editor_active_line_background: hsla(222.9 / 360., 13.5 / 100., 20.4 / 100., 1.0),
-                editor_highlighted_line_background: hsla(207.8 / 360., 81. / 100., 66. / 100., 0.1),
-                editor_line_number: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
-                editor_active_line_number: hsla(216.0 / 360., 5.9 / 100., 49.6 / 100., 1.0),
-                editor_invisible: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
-                editor_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_active_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_document_highlight_read_background: hsla(
+                editor_active_line_background: Hsla::new(
+                    222.9 / 360.,
+                    13.5 / 100.,
+                    20.4 / 100.,
+                    1.0,
+                ),
+                editor_highlighted_line_background: Hsla::new(
+                    207.8 / 360.,
+                    81. / 100.,
+                    66. / 100.,
+                    0.1,
+                ),
+                editor_line_number: Hsla::new(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
+                editor_active_line_number: Hsla::new(216.0 / 360., 5.9 / 100., 49.6 / 100., 1.0),
+                editor_invisible: Hsla::new(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
+                editor_wrap_guide: Hsla::new(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_active_wrap_guide: Hsla::new(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_document_highlight_read_background: Hsla::new(
                     207.8 / 360.,
                     81. / 100.,
                     66. / 100.,
@@ -132,11 +140,16 @@ pub(crate) fn one_dark() -> Theme {
                 panel_focused_border: blue,
                 pane_focused_border: blue,
                 scrollbar_thumb_background: gpui::transparent_black(),
-                scrollbar_thumb_hover_background: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
-                scrollbar_thumb_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                scrollbar_thumb_hover_background: Hsla::new(
+                    225.0 / 360.,
+                    11.8 / 100.,
+                    26.7 / 100.,
+                    1.0,
+                ),
+                scrollbar_thumb_border: Hsla::new(228. / 360., 8. / 100., 25. / 100., 1.),
                 scrollbar_track_background: gpui::transparent_black(),
-                scrollbar_track_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_foreground: hsla(218. / 360., 14. / 100., 71. / 100., 1.),
+                scrollbar_track_border: Hsla::new(228. / 360., 8. / 100., 25. / 100., 1.),
+                editor_foreground: Hsla::new(218. / 360., 14. / 100., 71. / 100., 1.),
                 link_text_hover: blue,
             },
             status: StatusColors {

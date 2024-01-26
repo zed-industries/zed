@@ -7,7 +7,7 @@ pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
     let hsla = palette::Hsla::from_color(rgba);
 
-    let hsla = gpui::hsla(
+    let hsla = Hsla::new(
         hsla.hue.into_positive_degrees() / 360.,
         hsla.saturation,
         hsla.lightness,

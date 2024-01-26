@@ -1,5 +1,5 @@
 use crate::{
-    self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
+    self as gpui, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
     DefiniteLength, Fill, FlexDirection, FontWeight, Hsla, JustifyContent, Length, Position,
     SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
@@ -436,7 +436,7 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_sm(mut self) -> Self {
         self.style().box_shadow = Some(smallvec::smallvec![BoxShadow {
-            color: hsla(0., 0., 0., 0.05),
+            color: Hsla::new(0., 0., 0., 0.05),
             offset: point(px(0.), px(1.)),
             blur_radius: px(2.),
             spread_radius: px(0.),
@@ -449,13 +449,13 @@ pub trait Styled: Sized {
     fn shadow_md(mut self) -> Self {
         self.style().box_shadow = Some(smallvec![
             BoxShadow {
-                color: hsla(0.5, 0., 0., 0.1),
+                color: Hsla::new(0.5, 0., 0., 0.1),
                 offset: point(px(0.), px(4.)),
                 blur_radius: px(6.),
                 spread_radius: px(-1.),
             },
             BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
+                color: Hsla::new(0., 0., 0., 0.1),
                 offset: point(px(0.), px(2.)),
                 blur_radius: px(4.),
                 spread_radius: px(-2.),
@@ -469,13 +469,13 @@ pub trait Styled: Sized {
     fn shadow_lg(mut self) -> Self {
         self.style().box_shadow = Some(smallvec![
             BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
+                color: Hsla::new(0., 0., 0., 0.1),
                 offset: point(px(0.), px(10.)),
                 blur_radius: px(15.),
                 spread_radius: px(-3.),
             },
             BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
+                color: Hsla::new(0., 0., 0., 0.1),
                 offset: point(px(0.), px(4.)),
                 blur_radius: px(6.),
                 spread_radius: px(-4.),
@@ -489,13 +489,13 @@ pub trait Styled: Sized {
     fn shadow_xl(mut self) -> Self {
         self.style().box_shadow = Some(smallvec![
             BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
+                color: Hsla::new(0., 0., 0., 0.1),
                 offset: point(px(0.), px(20.)),
                 blur_radius: px(25.),
                 spread_radius: px(-5.),
             },
             BoxShadow {
-                color: hsla(0., 0., 0., 0.1),
+                color: Hsla::new(0., 0., 0., 0.1),
                 offset: point(px(0.), px(8.)),
                 blur_radius: px(10.),
                 spread_radius: px(-6.),
@@ -508,7 +508,7 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/box-shadow)
     fn shadow_2xl(mut self) -> Self {
         self.style().box_shadow = Some(smallvec![BoxShadow {
-            color: hsla(0., 0., 0., 0.25),
+            color: Hsla::new(0., 0., 0., 0.25),
             offset: point(px(0.), px(25.)),
             blur_radius: px(50.),
             spread_radius: px(-12.),

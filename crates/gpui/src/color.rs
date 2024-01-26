@@ -220,16 +220,6 @@ impl Ord for Hsla {
 
 impl Eq for Hsla {}
 
-/// Construct an [`Hsla`] object from plain values
-pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
-    Hsla {
-        h: h.clamp(0., 1.),
-        s: s.clamp(0., 1.),
-        l: l.clamp(0., 1.),
-        a: a.clamp(0., 1.),
-    }
-}
-
 /// Pure black in [`Hsla`]
 pub fn black() -> Hsla {
     Hsla {
@@ -301,6 +291,16 @@ pub fn yellow() -> Hsla {
 }
 
 impl Hsla {
+    /// Construct an [`Hsla`] object from plain values
+    pub fn new(h: f32, s: f32, l: f32, a: f32) -> Self {
+        Self {
+            h: h.clamp(0., 1.),
+            s: s.clamp(0., 1.),
+            l: l.clamp(0., 1.),
+            a: a.clamp(0., 1.),
+        }
+    }
+
     /// Converts this HSLA color to an RGBA color.
     pub fn to_rgb(self) -> Rgba {
         self.into()

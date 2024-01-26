@@ -1,9 +1,8 @@
-use gpui::{hsla, px, Styled, WindowContext};
-use settings::Settings;
-use theme::ThemeSettings;
-
 use crate::prelude::*;
 use crate::{ElevationIndex, UiTextSize};
+use gpui::{px, Hsla, Styled, WindowContext};
+use settings::Settings;
+use theme::ThemeSettings;
 
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
@@ -122,32 +121,32 @@ pub trait StyledExt: Styled + Sized {
 
     /// Sets the background color to red for debugging when building UI.
     fn debug_bg_red(self) -> Self {
-        self.bg(hsla(0. / 360., 1., 0.5, 1.))
+        self.bg(Hsla::new(0. / 360., 1., 0.5, 1.))
     }
 
     /// Sets the background color to green for debugging when building UI.
     fn debug_bg_green(self) -> Self {
-        self.bg(hsla(120. / 360., 1., 0.5, 1.))
+        self.bg(Hsla::new(120. / 360., 1., 0.5, 1.))
     }
 
     /// Sets the background color to blue for debugging when building UI.
     fn debug_bg_blue(self) -> Self {
-        self.bg(hsla(240. / 360., 1., 0.5, 1.))
+        self.bg(Hsla::new(240. / 360., 1., 0.5, 1.))
     }
 
     /// Sets the background color to yellow for debugging when building UI.
     fn debug_bg_yellow(self) -> Self {
-        self.bg(hsla(60. / 360., 1., 0.5, 1.))
+        self.bg(Hsla::new(60. / 360., 1., 0.5, 1.))
     }
 
     /// Sets the background color to cyan for debugging when building UI.
     fn debug_bg_cyan(self) -> Self {
-        self.bg(hsla(160. / 360., 1., 0.5, 1.))
+        self.bg(Hsla::new(160. / 360., 1., 0.5, 1.))
     }
 
     /// Sets the background color to magenta for debugging when building UI.
     fn debug_bg_magenta(self) -> Self {
-        self.bg(hsla(300. / 360., 1., 0.5, 1.))
+        self.bg(Hsla::new(300. / 360., 1., 0.5, 1.))
     }
 }
 
