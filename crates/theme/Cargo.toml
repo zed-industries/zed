@@ -25,6 +25,7 @@ anyhow.workspace = true
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 indexmap = "1.6.2"
+palette = { version = "0.7.3", default-features = false, features = ["std"] }
 parking_lot.workspace = true
 refineable.workspace = true
 schemars.workspace = true

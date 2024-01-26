@@ -7856,6 +7856,7 @@ dependencies = [
  "gpui",
  "indexmap 1.9.3",
  "itertools 0.11.0",
+ "palette",
  "parking_lot 0.11.2",
  "refineable",
  "schemars",

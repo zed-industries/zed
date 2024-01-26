@@ -101,6 +101,7 @@ pub struct ThemeFamily {
 
 impl ThemeFamily {}
 
+#[derive(Clone)]
 pub struct Theme {
     pub id: String,
     pub name: SharedString,
