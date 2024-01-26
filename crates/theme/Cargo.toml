@@ -24,10 +24,11 @@ doctest = false
 anyhow.workspace = true
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
-indexmap = "1.6.2"
+indexmap = { version = "1.6.2", features = ["serde"] }
+palette = { version = "0.7.3", default-features = false, features = ["std"] }
 parking_lot.workspace = true
 refineable.workspace = true
-schemars.workspace = true
+schemars = { workspace = true, features = ["indexmap"] }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

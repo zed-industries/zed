@@ -12,6 +12,7 @@ mod one_themes;
 pub mod prelude;
 mod registry;
 mod scale;
+mod schema;
 mod settings;
 mod styles;
 #[cfg(not(feature = "importing-themes"))]
@@ -25,6 +26,7 @@ pub use default_colors::*;
 pub use default_theme::*;
 pub use registry::*;
 pub use scale::*;
+pub use schema::*;
 pub use settings::*;
 pub use styles::*;
 #[cfg(not(feature = "importing-themes"))]
@@ -99,6 +101,7 @@ pub struct ThemeFamily {
 
 impl ThemeFamily {}
 
+#[derive(Clone)]
 pub struct Theme {
     pub id: String,
     pub name: SharedString,

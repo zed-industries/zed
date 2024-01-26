@@ -6524,6 +6524,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f7b0ce13155372a76ee2e1c5ffba1fe61ede73fbea5630d61eee6fac4929c0c"
 dependencies = [
  "dyn-clone",
+ "indexmap 1.9.3",
  "schemars_derive",
  "serde",
  "serde_json",
@@ -7856,6 +7857,7 @@ dependencies = [
  "gpui",
  "indexmap 1.9.3",
  "itertools 0.11.0",
+ "palette",
  "parking_lot 0.11.2",
  "refineable",
  "schemars",

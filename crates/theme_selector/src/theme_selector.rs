@@ -159,6 +159,7 @@ impl ThemeSelectorDelegate {
         cx.update_global(|store: &mut SettingsStore, cx| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
             theme_settings.active_theme = theme;
+            theme_settings.apply_theme_overrides();
             store.override_global(theme_settings);
             cx.refresh();
         });
