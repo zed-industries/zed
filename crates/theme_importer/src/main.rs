@@ -287,6 +287,10 @@ fn main() -> Result<()> {
                 None => theme.name.clone(),
             };
 
+            if licenses.contains(&license_header) {
+                continue;
+            }
+
             licenses.push(formatdoc!(
                 "
                 ## {license_header}
@@ -319,7 +323,7 @@ fn main() -> Result<()> {
             .to_case(Case::Snake);
 
         let output_file_path = themes_output_path.join(format!("{theme_family_slug}.rs"));
-        if (output_file_path.exists()) {
+        if output_file_path.exists() {
             log::info!("Skipping file {theme_family_slug}.rs, it already exists. In order to update a theme, please delete it from the output path {:?}.", themes_output_path.display());
             continue;
         }
@@ -404,7 +408,7 @@ fn main() -> Result<()> {
 
     let mut licenses_file = File::create(themes_output_path.join(format!("LICENSES")))?;
 
-    licenses_file.write_all(licenses.join("\n").as_bytes())?;
+    licenses_file.write(licenses.join("\n").as_bytes())?;
 
     log::info!("Formatting themes...");
 
