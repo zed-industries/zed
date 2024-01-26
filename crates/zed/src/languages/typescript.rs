@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::{AppContext, Task};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -210,8 +210,12 @@ impl EsLintLspAdapter {
 
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, workspace_root: &Path, _: &mut AppContext) -> Value {
-        json!({
+    fn workspace_configuration(
+        &self,
+        workspace_root: &Path,
+        _: &mut AppContext,
+    ) -> Task<Result<Value>> {
+        Task::ready(Ok(json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
@@ -224,7 +228,7 @@ impl LspAdapter for EsLintLspAdapter {
                         .unwrap_or_else(|| workspace_root.as_os_str()),
                 },
             }
-        })
+        })))
     }
 
     fn name(&self) -> LanguageServerName {

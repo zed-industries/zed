@@ -215,7 +215,11 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
+    pub fn workspace_configuration(
+        &self,
+        workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> Task<Result<serde_json::Value>> {
         self.adapter.workspace_configuration(workspace_root, cx)
     }
 
@@ -342,8 +346,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn workspace_configuration(&self, _: &Path, _: &mut AppContext) -> Value {
-        serde_json::json!({})
+    fn workspace_configuration(
+        &self,
+        _: &Path,
+        _: &mut AppContext,
+    ) -> Task<Result<serde_json::Value>> {
+        Task::ready(Ok(serde_json::json!({})))
     }
 
     /// Returns a list of code actions supported by a given LspAdapter

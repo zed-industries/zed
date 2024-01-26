@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::{AppContext, Task};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use serde_json::json;
+use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
 use std::{
@@ -106,39 +106,44 @@ impl LspAdapter for JsonLspAdapter {
         &self,
         _workspace_root: &Path,
         cx: &mut AppContext,
-    ) -> serde_json::Value {
-        let action_names = cx.all_action_names();
-        let staff_mode = cx.is_staff();
-        let language_names = &self.languages.language_names();
-        let font_names = &cx.text_system().all_font_names();
-        let settings_schema = cx.global::<SettingsStore>().json_schema(
-            &SettingsJsonSchemaParams {
-                language_names,
-                staff_mode,
-                font_names,
-            },
-            cx,
-        );
+    ) -> Task<Result<Value>> {
+        let language_names = self.languages.language_names();
+        cx.spawn(move |cx| async move {
+            cx.update(|cx| {
+                let action_names = cx.all_action_names();
+                let staff_mode = cx.is_staff();
 
-        serde_json::json!({
-            "json": {
-                "format": {
-                    "enable": true,
-                },
-                "schemas": [
-                    {
-                        "fileMatch": [
-                            schema_file_match(&paths::SETTINGS),
-                            &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
-                        ],
-                        "schema": settings_schema,
+                let font_names = &cx.text_system().all_font_names();
+                let settings_schema = cx.global::<SettingsStore>().json_schema(
+                    &SettingsJsonSchemaParams {
+                        language_names: &language_names,
+                        staff_mode,
+                        font_names,
                     },
-                    {
-                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
-                        "schema": KeymapFile::generate_json_schema(&action_names),
+                    cx,
+                );
+
+                serde_json::json!({
+                    "json": {
+                        "format": {
+                            "enable": true,
+                        },
+                        "schemas": [
+                            {
+                                "fileMatch": [
+                                    schema_file_match(&paths::SETTINGS),
+                                    &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
+                                ],
+                                "schema": settings_schema,
+                            },
+                            {
+                                "fileMatch": [schema_file_match(&paths::KEYMAP)],
+                                "schema": KeymapFile::generate_json_schema(&action_names),
+                            }
+                        ]
                     }
-                ]
-            }
+                })
+            })
         })
     }
 

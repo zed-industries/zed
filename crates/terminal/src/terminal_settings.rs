@@ -162,7 +162,7 @@ impl settings::Settings for TerminalSettings {
     fn json_schema(
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,
-        cx: &AppContext,
+        _: &AppContext,
     ) -> RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
         let available_fonts = params
