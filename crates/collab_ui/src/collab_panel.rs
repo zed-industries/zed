@@ -33,8 +33,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    prelude::*, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Icon, IconButton,
-    IconName, IconSize, Label, ListHeader, ListItem, Tooltip,
+    prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
+    Icon, IconButton, IconName, IconSize, Label, ListHeader, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -367,9 +367,11 @@ impl CollabPanel {
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
 
-                if let Some(channel_id) = room.channel_id() {
-                    self.entries.push(ListEntry::ChannelNotes { channel_id });
-                    self.entries.push(ListEntry::ChannelChat { channel_id });
+                if query.is_empty() {
+                    if let Some(channel_id) = room.channel_id() {
+                        self.entries.push(ListEntry::ChannelNotes { channel_id });
+                        self.entries.push(ListEntry::ChannelChat { channel_id });
+                    }
                 }
 
                 // Populate the active user.
@@ -2539,7 +2541,16 @@ impl CollabPanel {
                             ),
                     ),
             )
-            .tooltip(|cx| Tooltip::text("Join channel", cx))
+            .tooltip({
+                let channel_store = self.channel_store.clone();
+                move |cx| {
+                    cx.new_view(|_| JoinChannelTooltip {
+                        channel_store: channel_store.clone(),
+                        channel_id,
+                    })
+                    .into()
+                }
+            })
     }
 
     fn render_channel_editor(&self, depth: usize, _cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -2815,5 +2826,29 @@ impl Render for DraggedChannelView {
                 .color(Color::Muted),
             )
             .child(Label::new(self.channel.name.clone()))
+    }
+}
+
+struct JoinChannelTooltip {
+    channel_store: Model<ChannelStore>,
+    channel_id: ChannelId,
+}
+
+impl Render for JoinChannelTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, cx| {
+            let participants = self
+                .channel_store
+                .read(cx)
+                .channel_participants(self.channel_id);
+
+            div.child(Label::new("Join Channel"))
+                .children(participants.iter().map(|participant| {
+                    h_flex()
+                        .gap_2()
+                        .child(Avatar::new(participant.avatar_uri.clone()))
+                        .child(Label::new(participant.github_login.clone()))
+                }))
+        })
     }
 }
