@@ -543,7 +543,12 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
         let mut backtrace = backtrace
             .frames()
             .iter()
-            .filter_map(|frame| Some(format!("{:#}", frame.symbols().first()?.name()?)))
+            .flat_map(|frame| {
+                frame
+                    .symbols()
+                    .iter()
+                    .filter_map(|frame| Some(format!("{:#}", frame.name()?)))
+            })
             .collect::<Vec<_>>();
 
         // Strip out leading stack frames for rust panic-handling.
