@@ -1,4 +1,4 @@
-["when" "and" "or" "not" "in" "not in" "fn" "do" "end" "catch" "rescue" "after" "else"] @keyword
+["when" "and" "or" "not" "in" "not in" "fn" "do" "end" "catch" "rescue" "after" "else" "receive"] @keyword
 
 (unary_operator
   operator: "&"
