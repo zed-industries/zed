@@ -25,6 +25,7 @@ parameter: (IDENTIFIER) @parameter
   ] @type
   (#match? @type "^[A-Z]([a-z]+[A-Za-z0-9]*)*$")
 )
+
 ;; assume camelCase is a function
 (
   [
@@ -32,7 +33,7 @@ parameter: (IDENTIFIER) @parameter
     field_access: (IDENTIFIER)
     parameter: (IDENTIFIER)
   ] @function
-  (#match? @function "^[a-z]+([A-Z][a-z0-9]*)+$")
+  (#match? @function "^[a-z]+([A-Z][a-z0-9]+)$")
 )
 
 ;; assume all CAPS_1 is a constant
@@ -49,7 +50,7 @@ parameter: (IDENTIFIER) @parameter
   function: (IDENTIFIER)
 ] @function
 
-exception: "!" @exception
+exception: "!" @keyword.exception
 
 (
   (IDENTIFIER) @variable.builtin
@@ -72,13 +73,12 @@ field_constant: (IDENTIFIER) @constant
 
 (BUILTINIDENTIFIER) @keyword
 
-; No idea why this doesnt work
-; ((BUILTINIDENTIFIER) @include
-;   (#any-of? @include "@import" "@cImport"))
+((BUILTINIDENTIFIER) @keyword.import
+  (#any-of? @keyword.import "@import" "@cImport"))
 
 (INTEGER) @number
 
-(FLOAT) @float
+(FLOAT) @number.float
 
 [
   "true"
@@ -135,7 +135,7 @@ field_constant: (IDENTIFIER) @constant
   "if"
   "else"
   "switch"
-] @conditional
+] @keyword
 
 [
   "for"
@@ -146,7 +146,7 @@ field_constant: (IDENTIFIER) @constant
 
 [
   "usingnamespace"
-] @include
+] @keyword.import
 
 [
   "try"
@@ -171,7 +171,7 @@ field_constant: (IDENTIFIER) @constant
   "align"
   "callconv"
   "linksection"
-] @storageclass
+] @keyword.storage
 
 [
   "comptime"
