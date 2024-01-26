@@ -85,7 +85,7 @@ impl Render for Tooltip {
     }
 }
 
-fn tooltip_container<V>(
+pub fn tooltip_container<V>(
     cx: &mut ViewContext<V>,
     f: impl FnOnce(Div, &mut ViewContext<V>) -> Div,
 ) -> impl IntoElement {

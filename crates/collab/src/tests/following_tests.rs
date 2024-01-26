@@ -1575,7 +1575,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
 #[gpui::test]
 async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    let (client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+    let (_, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
 
     let (workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
     client_a

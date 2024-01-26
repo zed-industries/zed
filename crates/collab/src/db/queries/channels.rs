@@ -473,8 +473,11 @@ impl Database {
     ) -> Result<RemoveChannelMemberResult> {
         self.transaction(|tx| async move {
             let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, admin_id, &*tx)
-                .await?;
+
+            if member_id != admin_id {
+                self.check_user_is_channel_admin(&channel, admin_id, &*tx)
+                    .await?;
+            }
 
             let result = channel_member::Entity::delete_many()
                 .filter(
