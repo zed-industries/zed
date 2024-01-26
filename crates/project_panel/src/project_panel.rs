@@ -1371,7 +1371,7 @@ impl ProjectPanel {
                     entry_id: *entry_id,
                 })
             })
-            .drag_over::<ProjectEntryId>(|style| {
+            .drag_over::<ProjectEntryId>(|style, _, cx| {
                 style.bg(cx.theme().colors().drop_target_background)
             })
             .on_drop(cx.listener(move |this, dragged_id: &ProjectEntryId, cx| {

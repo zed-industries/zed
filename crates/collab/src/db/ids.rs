@@ -129,6 +129,15 @@ impl ChannelRole {
         }
     }
 
+    pub fn can_see_channel(&self, visibility: ChannelVisibility) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member => true,
+            Guest => visibility == ChannelVisibility::Public,
+            Banned => false,
+        }
+    }
+
     /// True if the role allows access to all descendant channels
     pub fn can_see_all_descendants(&self) -> bool {
         use ChannelRole::*;

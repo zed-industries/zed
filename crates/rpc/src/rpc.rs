@@ -11,4 +11,4 @@ pub use notification::*;
 pub use peer::*;
 mod macros;
 
-pub const PROTOCOL_VERSION: u32 = 67;
+pub const PROTOCOL_VERSION: u32 = 68;

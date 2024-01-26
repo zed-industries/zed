@@ -48,13 +48,11 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".into(),
                 depth: 0,
-                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".into(),
                 depth: 1,
-                role: ChannelRole::Admin,
             },
         ],
     );
@@ -94,7 +92,6 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".into(),
             depth: 0,
-            role: ChannelRole::Member,
         }],
     );
 
@@ -141,13 +138,11 @@ async fn test_core_channels(
             ExpectedChannel {
                 id: channel_a_id,
                 name: "channel-a".into(),
-                role: ChannelRole::Member,
                 depth: 0,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".into(),
-                role: ChannelRole::Member,
                 depth: 1,
             },
         ],
@@ -169,19 +164,16 @@ async fn test_core_channels(
             ExpectedChannel {
                 id: channel_a_id,
                 name: "channel-a".into(),
-                role: ChannelRole::Member,
                 depth: 0,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".into(),
-                role: ChannelRole::Member,
                 depth: 1,
             },
             ExpectedChannel {
                 id: channel_c_id,
                 name: "channel-c".into(),
-                role: ChannelRole::Member,
                 depth: 2,
             },
         ],
@@ -213,19 +205,16 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".into(),
                 depth: 0,
-                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".into(),
                 depth: 1,
-                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_c_id,
                 name: "channel-c".into(),
                 depth: 2,
-                role: ChannelRole::Admin,
             },
         ],
     );
@@ -247,7 +236,6 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".into(),
             depth: 0,
-            role: ChannelRole::Admin,
         }],
     );
     assert_channels(
@@ -257,7 +245,6 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".into(),
             depth: 0,
-            role: ChannelRole::Admin,
         }],
     );
 
@@ -280,7 +267,6 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".into(),
             depth: 0,
-            role: ChannelRole::Admin,
         }],
     );
 
@@ -311,7 +297,6 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a-renamed".into(),
             depth: 0,
-            role: ChannelRole::Admin,
         }],
     );
 }
@@ -420,7 +405,6 @@ async fn test_channel_room(
             id: zed_id,
             name: "zed".into(),
             depth: 0,
-            role: ChannelRole::Member,
         }],
     );
     cx_b.read(|cx| {
@@ -681,7 +665,6 @@ async fn test_permissions_update_while_invited(
             depth: 0,
             id: rust_id,
             name: "rust".into(),
-            role: ChannelRole::Member,
         }],
     );
     assert_channels(client_b.channel_store(), cx_b, &[]);
@@ -709,7 +692,6 @@ async fn test_permissions_update_while_invited(
             depth: 0,
             id: rust_id,
             name: "rust".into(),
-            role: ChannelRole::Member,
         }],
     );
     assert_channels(client_b.channel_store(), cx_b, &[]);
@@ -748,7 +730,6 @@ async fn test_channel_rename(
             depth: 0,
             id: rust_id,
             name: "rust-archive".into(),
-            role: ChannelRole::Admin,
         }],
     );
 
@@ -760,7 +741,6 @@ async fn test_channel_rename(
             depth: 0,
             id: rust_id,
             name: "rust-archive".into(),
-            role: ChannelRole::Member,
         }],
     );
 }
@@ -889,7 +869,6 @@ async fn test_lost_channel_creation(
             depth: 0,
             id: channel_id,
             name: "x".into(),
-            role: ChannelRole::Member,
         }],
     );
 
@@ -913,13 +892,11 @@ async fn test_lost_channel_creation(
                 depth: 0,
                 id: channel_id,
                 name: "x".into(),
-                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 depth: 1,
                 id: subchannel_id,
                 name: "subchannel".into(),
-                role: ChannelRole::Admin,
             },
         ],
     );
@@ -944,13 +921,11 @@ async fn test_lost_channel_creation(
                 depth: 0,
                 id: channel_id,
                 name: "x".into(),
-                role: ChannelRole::Member,
             },
             ExpectedChannel {
                 depth: 1,
                 id: subchannel_id,
                 name: "subchannel".into(),
-                role: ChannelRole::Member,
             },
         ],
     );
@@ -1035,7 +1010,7 @@ async fn test_channel_link_notifications(
     let vim_channel = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.create_channel("vim", None, cx)
+            channel_store.create_channel("vim", Some(zed_channel), cx)
         })
         .await
         .unwrap();
@@ -1048,26 +1023,16 @@ async fn test_channel_link_notifications(
         .await
         .unwrap();
 
-    client_a
-        .channel_store()
-        .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(vim_channel, Some(active_channel), cx)
-        })
-        .await
-        .unwrap();
-
-    executor.run_until_parked();
-
     // the new channel shows for b and c
     assert_channels_list_shape(
         client_a.channel_store(),
         cx_a,
-        &[(zed_channel, 0), (active_channel, 1), (vim_channel, 2)],
+        &[(zed_channel, 0), (active_channel, 1), (vim_channel, 1)],
     );
     assert_channels_list_shape(
         client_b.channel_store(),
         cx_b,
-        &[(zed_channel, 0), (active_channel, 1), (vim_channel, 2)],
+        &[(zed_channel, 0), (active_channel, 1), (vim_channel, 1)],
     );
     assert_channels_list_shape(
         client_c.channel_store(),
@@ -1078,7 +1043,7 @@ async fn test_channel_link_notifications(
     let helix_channel = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.create_channel("helix", None, cx)
+            channel_store.create_channel("helix", Some(zed_channel), cx)
         })
         .await
         .unwrap();
@@ -1086,7 +1051,7 @@ async fn test_channel_link_notifications(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(helix_channel, Some(vim_channel), cx)
+            channel_store.move_channel(helix_channel, vim_channel, cx)
         })
         .await
         .unwrap();
@@ -1102,6 +1067,7 @@ async fn test_channel_link_notifications(
         })
         .await
         .unwrap();
+    cx_a.run_until_parked();
 
     // the new channel shows for b and c
     assert_channels_list_shape(
@@ -1110,8 +1076,8 @@ async fn test_channel_link_notifications(
         &[
             (zed_channel, 0),
             (active_channel, 1),
-            (vim_channel, 2),
-            (helix_channel, 3),
+            (vim_channel, 1),
+            (helix_channel, 2),
         ],
     );
     assert_channels_list_shape(
@@ -1119,41 +1085,6 @@ async fn test_channel_link_notifications(
         cx_c,
         &[(zed_channel, 0), (vim_channel, 1), (helix_channel, 2)],
     );
-
-    client_a
-        .channel_store()
-        .update(cx_a, |channel_store, cx| {
-            channel_store.set_channel_visibility(vim_channel, proto::ChannelVisibility::Members, cx)
-        })
-        .await
-        .unwrap();
-
-    executor.run_until_parked();
-
-    // the members-only channel is still shown for c, but hidden for b
-    assert_channels_list_shape(
-        client_b.channel_store(),
-        cx_b,
-        &[
-            (zed_channel, 0),
-            (active_channel, 1),
-            (vim_channel, 2),
-            (helix_channel, 3),
-        ],
-    );
-    cx_b.read(|cx| {
-        client_b.channel_store().read_with(cx, |channel_store, _| {
-            assert_eq!(
-                channel_store
-                    .channel_for_id(vim_channel)
-                    .unwrap()
-                    .visibility,
-                proto::ChannelVisibility::Members
-            )
-        })
-    });
-
-    assert_channels_list_shape(client_c.channel_store(), cx_c, &[(zed_channel, 0)]);
 }
 
 #[gpui::test]
@@ -1170,24 +1101,20 @@ async fn test_channel_membership_notifications(
 
     let channels = server
         .make_channel_tree(
-            &[
-                ("zed", None),
-                ("active", Some("zed")),
-                ("vim", Some("active")),
-            ],
+            &[("zed", None), ("vim", Some("zed")), ("opensource", None)],
             (&client_a, cx_a),
         )
         .await;
     let zed_channel = channels[0];
-    let _active_channel = channels[1];
-    let vim_channel = channels[2];
+    let vim_channel = channels[1];
+    let opensource_channel = channels[2];
 
     try_join_all(client_a.channel_store().update(cx_a, |channel_store, cx| {
         [
             channel_store.set_channel_visibility(zed_channel, proto::ChannelVisibility::Public, cx),
             channel_store.set_channel_visibility(vim_channel, proto::ChannelVisibility::Public, cx),
-            channel_store.invite_member(vim_channel, user_b, proto::ChannelRole::Member, cx),
-            channel_store.invite_member(zed_channel, user_b, proto::ChannelRole::Guest, cx),
+            channel_store.invite_member(zed_channel, user_b, proto::ChannelRole::Admin, cx),
+            channel_store.invite_member(opensource_channel, user_b, proto::ChannelRole::Member, cx),
         ]
     }))
     .await
@@ -1203,14 +1130,6 @@ async fn test_channel_membership_notifications(
         .await
         .unwrap();
 
-    client_b
-        .channel_store()
-        .update(cx_b, |channel_store, cx| {
-            channel_store.respond_to_channel_invite(vim_channel, true, cx)
-        })
-        .await
-        .unwrap();
-
     executor.run_until_parked();
 
     // we have an admin (a), and a guest (b) with access to all of zed, and membership in vim.
@@ -1222,45 +1141,42 @@ async fn test_channel_membership_notifications(
                 depth: 0,
                 id: zed_channel,
                 name: "zed".into(),
-                role: ChannelRole::Guest,
             },
             ExpectedChannel {
                 depth: 1,
                 id: vim_channel,
                 name: "vim".into(),
-                role: ChannelRole::Member,
             },
         ],
     );
 
-    client_a
+    client_b.channel_store().update(cx_b, |channel_store, _| {
+        channel_store.is_channel_admin(zed_channel)
+    });
+
+    client_b
         .channel_store()
-        .update(cx_a, |channel_store, cx| {
-            channel_store.remove_member(vim_channel, user_b, cx)
+        .update(cx_b, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(opensource_channel, true, cx)
         })
         .await
         .unwrap();
 
-    executor.run_until_parked();
+    cx_a.run_until_parked();
 
-    assert_channels(
-        client_b.channel_store(),
-        cx_b,
-        &[
-            ExpectedChannel {
-                depth: 0,
-                id: zed_channel,
-                name: "zed".into(),
-                role: ChannelRole::Guest,
-            },
-            ExpectedChannel {
-                depth: 1,
-                id: vim_channel,
-                name: "vim".into(),
-                role: ChannelRole::Guest,
-            },
-        ],
-    )
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_member_role(opensource_channel, user_b, ChannelRole::Admin, cx)
+        })
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    client_b.channel_store().update(cx_b, |channel_store, _| {
+        channel_store.is_channel_admin(opensource_channel)
+    });
 }
 
 #[gpui::test]
@@ -1329,25 +1245,6 @@ async fn test_guest_access(
         assert_eq!(participants.len(), 1);
         assert_eq!(participants[0].id, client_b.user_id().unwrap());
     });
-
-    client_a
-        .channel_store()
-        .update(cx_a, |channel_store, cx| {
-            channel_store.set_channel_visibility(channel_a, proto::ChannelVisibility::Members, cx)
-        })
-        .await
-        .unwrap();
-    executor.run_until_parked();
-
-    assert_channels_list_shape(client_b.channel_store(), cx_b, &[]);
-
-    active_call_b
-        .update(cx_b, |call, cx| call.join_channel(channel_b, cx))
-        .await
-        .unwrap();
-
-    executor.run_until_parked();
-    assert_channels_list_shape(client_b.channel_store(), cx_b, &[(channel_b, 0)]);
 }
 
 #[gpui::test]
@@ -1451,7 +1348,7 @@ async fn test_channel_moving(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(channel_d_id, Some(channel_b_id), cx)
+            channel_store.move_channel(channel_d_id, channel_b_id, cx)
         })
         .await
         .unwrap();
@@ -1476,7 +1373,6 @@ struct ExpectedChannel {
     depth: usize,
     id: ChannelId,
     name: SharedString,
-    role: ChannelRole,
 }
 
 #[track_caller]
@@ -1494,7 +1390,6 @@ fn assert_channel_invitations(
                     depth: 0,
                     name: channel.name.clone(),
                     id: channel.id,
-                    role: channel.role,
                 })
                 .collect::<Vec<_>>()
         })
@@ -1516,7 +1411,6 @@ fn assert_channels(
                     depth,
                     name: channel.name.clone().into(),
                     id: channel.id,
-                    role: channel.role,
                 })
                 .collect::<Vec<_>>()
         })

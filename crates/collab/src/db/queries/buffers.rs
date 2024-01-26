@@ -748,18 +748,11 @@ impl Database {
         .await
     }
 
-    pub async fn unseen_channel_buffer_changes(
+    pub async fn latest_channel_buffer_changes(
         &self,
-        user_id: UserId,
         channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
-    ) -> Result<Vec<proto::UnseenChannelBufferChange>> {
-        #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
-        enum QueryIds {
-            ChannelId,
-            Id,
-        }
-
+    ) -> Result<Vec<proto::ChannelBufferVersion>> {
         let mut channel_ids_by_buffer_id = HashMap::default();
         let mut rows = buffer::Entity::find()
             .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
@@ -771,51 +764,23 @@ impl Database {
         }
         drop(rows);
 
-        let mut observed_edits_by_buffer_id = HashMap::default();
-        let mut rows = observed_buffer_edits::Entity::find()
-            .filter(observed_buffer_edits::Column::UserId.eq(user_id))
-            .filter(
-                observed_buffer_edits::Column::BufferId
-                    .is_in(channel_ids_by_buffer_id.keys().copied()),
-            )
-            .stream(&*tx)
-            .await?;
-        while let Some(row) = rows.next().await {
-            let row = row?;
-            observed_edits_by_buffer_id.insert(row.buffer_id, row);
-        }
-        drop(rows);
-
         let latest_operations = self
             .get_latest_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), &*tx)
             .await?;
 
-        let mut changes = Vec::default();
-        for latest in latest_operations {
-            if let Some(observed) = observed_edits_by_buffer_id.get(&latest.buffer_id) {
-                if (
-                    observed.epoch,
-                    observed.lamport_timestamp,
-                    observed.replica_id,
-                ) >= (latest.epoch, latest.lamport_timestamp, latest.replica_id)
-                {
-                    continue;
-                }
-            }
-
-            if let Some(channel_id) = channel_ids_by_buffer_id.get(&latest.buffer_id) {
-                changes.push(proto::UnseenChannelBufferChange {
-                    channel_id: channel_id.to_proto(),
-                    epoch: latest.epoch as u64,
+        Ok(latest_operations
+            .iter()
+            .flat_map(|op| {
+                Some(proto::ChannelBufferVersion {
+                    channel_id: channel_ids_by_buffer_id.get(&op.buffer_id)?.to_proto(),
+                    epoch: op.epoch as u64,
                     version: vec![proto::VectorClockEntry {
-                        replica_id: latest.replica_id as u32,
-                        timestamp: latest.lamport_timestamp as u32,
+                        replica_id: op.replica_id as u32,
+                        timestamp: op.lamport_timestamp as u32,
                     }],
-                });
-            }
-        }
-
-        Ok(changes)
+                })
+            })
+            .collect())
     }
 
     /// Returns the latest operations for the buffers with the specified IDs.

@@ -274,7 +274,7 @@ impl ChatPanel {
             } => {
                 if !self.active {
                     self.channel_store.update(cx, |store, cx| {
-                        store.new_message(*channel_id, *message_id, cx)
+                        store.update_latest_message_id(*channel_id, *message_id, cx)
                     })
                 }
             }

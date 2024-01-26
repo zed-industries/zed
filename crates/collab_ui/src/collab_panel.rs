@@ -23,7 +23,7 @@ use gpui::{
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use rpc::{
-    proto::{self, PeerId},
+    proto::{self, ChannelVisibility, PeerId},
     ErrorCode, ErrorExt,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -1134,13 +1134,6 @@ impl CollabPanel {
                         "Rename",
                         Some(Box::new(SecondaryConfirm)),
                         cx.handler_for(&this, move |this, cx| this.rename_channel(channel_id, cx)),
-                    )
-                    .entry(
-                        "Move this channel",
-                        None,
-                        cx.handler_for(&this, move |this, cx| {
-                            this.start_move_channel(channel_id, cx)
-                        }),
                     );
 
                 if let Some(channel_name) = clipboard_channel_name {
@@ -1153,23 +1146,52 @@ impl CollabPanel {
                     );
                 }
 
-                context_menu = context_menu
-                    .separator()
-                    .entry(
-                        "Invite Members",
-                        None,
-                        cx.handler_for(&this, move |this, cx| this.invite_members(channel_id, cx)),
-                    )
-                    .entry(
+                if self.channel_store.read(cx).is_root_channel(channel_id) {
+                    context_menu = context_menu.separator().entry(
                         "Manage Members",
                         None,
                         cx.handler_for(&this, move |this, cx| this.manage_members(channel_id, cx)),
                     )
-                    .entry(
-                        "Delete",
+                } else {
+                    context_menu = context_menu.entry(
+                        "Move this channel",
                         None,
-                        cx.handler_for(&this, move |this, cx| this.remove_channel(channel_id, cx)),
+                        cx.handler_for(&this, move |this, cx| {
+                            this.start_move_channel(channel_id, cx)
+                        }),
                     );
+                    if self.channel_store.read(cx).is_public_channel(channel_id) {
+                        context_menu = context_menu.separator().entry(
+                            "Make Channel Private",
+                            None,
+                            cx.handler_for(&this, move |this, cx| {
+                                this.set_channel_visibility(
+                                    channel_id,
+                                    ChannelVisibility::Members,
+                                    cx,
+                                )
+                            }),
+                        )
+                    } else {
+                        context_menu = context_menu.separator().entry(
+                            "Make Channel Public",
+                            None,
+                            cx.handler_for(&this, move |this, cx| {
+                                this.set_channel_visibility(
+                                    channel_id,
+                                    ChannelVisibility::Public,
+                                    cx,
+                                )
+                            }),
+                        )
+                    }
+                }
+
+                context_menu = context_menu.entry(
+                    "Delete",
+                    None,
+                    cx.handler_for(&this, move |this, cx| this.remove_channel(channel_id, cx)),
+                );
             }
 
             context_menu
@@ -1490,10 +1512,6 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn invite_members(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
-        self.show_channel_modal(channel_id, channel_modal::Mode::InviteMembers, cx);
-    }
-
     fn manage_members(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, cx);
     }
@@ -1530,6 +1548,27 @@ impl CollabPanel {
         }
     }
 
+    fn set_channel_visibility(
+        &mut self,
+        channel_id: ChannelId,
+        visibility: ChannelVisibility,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.channel_store
+            .update(cx, |channel_store, cx| {
+                channel_store.set_channel_visibility(channel_id, visibility, cx)
+            })
+            .detach_and_prompt_err("Failed to set channel visibility", cx, |e, _| match e.error_code() {
+                ErrorCode::BadPublicNesting =>
+                    if e.error_tag("direction") == Some("parent") {
+                        Some("To make a channel public, its parent channel must be public.".to_string())
+                    } else {
+                        Some("To make a channel private, all of its subchannels must be private.".to_string())
+                    },
+                _ => None
+            });
+    }
+
     fn start_move_channel(&mut self, channel_id: ChannelId, _cx: &mut ViewContext<Self>) {
         self.channel_clipboard = Some(ChannelMoveClipboard { channel_id });
     }
@@ -1546,12 +1585,25 @@ impl CollabPanel {
         cx: &mut ViewContext<CollabPanel>,
     ) {
         if let Some(clipboard) = self.channel_clipboard.take() {
-            self.channel_store
-                .update(cx, |channel_store, cx| {
-                    channel_store.move_channel(clipboard.channel_id, Some(to_channel_id), cx)
-                })
-                .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
+            self.move_channel(clipboard.channel_id, to_channel_id, cx)
         }
+    }
+
+    fn move_channel(&self, channel_id: ChannelId, to: ChannelId, cx: &mut ViewContext<Self>) {
+        self.channel_store
+            .update(cx, |channel_store, cx| {
+                channel_store.move_channel(channel_id, to, cx)
+            })
+            .detach_and_prompt_err("Failed to move channel", cx, |e, _| match e.error_code() {
+                ErrorCode::BadPublicNesting => {
+                    Some("Public channels must have public parents".into())
+                }
+                ErrorCode::CircularNesting => Some("You cannot move a channel into itself".into()),
+                ErrorCode::WrongMoveTarget => {
+                    Some("You cannot move a channel into a different root channel".into())
+                }
+                _ => None,
+            })
     }
 
     fn open_channel_notes(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
@@ -1980,32 +2032,19 @@ impl CollabPanel {
             | Section::Offline => true,
         };
 
-        h_flex()
-            .w_full()
-            .group("section-header")
-            .child(
-                ListHeader::new(text)
-                    .when(can_collapse, |header| {
-                        header.toggle(Some(!is_collapsed)).on_toggle(cx.listener(
-                            move |this, _, cx| {
-                                this.toggle_section_expanded(section, cx);
-                            },
-                        ))
-                    })
-                    .inset(true)
-                    .end_slot::<AnyElement>(button)
-                    .selected(is_selected),
-            )
-            .when(section == Section::Channels, |el| {
-                el.drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                    .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
-                        this.channel_store
-                            .update(cx, |channel_store, cx| {
-                                channel_store.move_channel(dragged_channel.id, None, cx)
-                            })
-                            .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
-                    }))
-            })
+        h_flex().w_full().group("section-header").child(
+            ListHeader::new(text)
+                .when(can_collapse, |header| {
+                    header
+                        .toggle(Some(!is_collapsed))
+                        .on_toggle(cx.listener(move |this, _, cx| {
+                            this.toggle_section_expanded(section, cx);
+                        }))
+                })
+                .inset(true)
+                .end_slot::<AnyElement>(button)
+                .selected(is_selected),
+        )
     }
 
     fn render_contact(
@@ -2219,17 +2258,16 @@ impl CollabPanel {
             Some(call_channel == channel_id)
         })
         .unwrap_or(false);
-        let is_public = self
-            .channel_store
-            .read(cx)
+        let channel_store = self.channel_store.read(cx);
+        let is_public = channel_store
             .channel_for_id(channel_id)
             .map(|channel| channel.visibility)
             == Some(proto::ChannelVisibility::Public);
         let disclosed =
             has_children.then(|| !self.collapsed_channels.binary_search(&channel.id).is_ok());
 
-        let has_messages_notification = channel.unseen_message_id.is_some();
-        let has_notes_notification = channel.unseen_note_version.is_some();
+        let has_messages_notification = channel_store.has_new_messages(channel_id);
+        let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);
 
         const FACEPILE_LIMIT: usize = 3;
         let participants = self.channel_store.read(cx).channel_participants(channel_id);
@@ -2260,25 +2298,35 @@ impl CollabPanel {
         };
 
         let width = self.width.unwrap_or(px(240.));
+        let root_id = channel.root_id();
 
         div()
             .id(channel_id as usize)
             .group("")
             .flex()
             .w_full()
-            .on_drag(channel.clone(), move |channel, cx| {
-                cx.new_view(|_| DraggedChannelView {
-                    channel: channel.clone(),
-                    width,
+            .when(!channel.is_root_channel(), |el| {
+                el.on_drag(channel.clone(), move |channel, cx| {
+                    cx.new_view(|_| DraggedChannelView {
+                        channel: channel.clone(),
+                        width,
+                    })
                 })
             })
-            .drag_over::<Channel>(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .drag_over::<Channel>({
+                move |style, dragged_channel: &Channel, cx| {
+                    if dragged_channel.root_id() == root_id {
+                        style.bg(cx.theme().colors().ghost_element_hover)
+                    } else {
+                        style
+                    }
+                }
+            })
             .on_drop(cx.listener(move |this, dragged_channel: &Channel, cx| {
-                this.channel_store
-                    .update(cx, |channel_store, cx| {
-                        channel_store.move_channel(dragged_channel.id, Some(channel_id), cx)
-                    })
-                    .detach_and_prompt_err("Failed to move channel", cx, |_, _| None)
+                if dragged_channel.root_id() != root_id {
+                    return;
+                }
+                this.move_channel(dragged_channel.id, channel_id, cx);
             }))
             .child(
                 ListItem::new(channel_id as usize)
