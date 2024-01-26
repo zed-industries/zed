@@ -6,7 +6,7 @@ mod vscode;
 mod zed1;
 
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -287,10 +287,6 @@ fn main() -> Result<()> {
                 None => theme.name.clone(),
             };
 
-            if licenses.contains(&license_header) {
-                continue;
-            }
-
             licenses.push(formatdoc!(
                 "
                 ## {license_header}
@@ -406,7 +402,12 @@ fn main() -> Result<()> {
 
     log::info!("Writing LICENSES file...");
 
-    let mut licenses_file = File::create(themes_output_path.join(format!("LICENSES")))?;
+    // let mut licenses_file = File::create(themes_output_path.join(format!("LICENSES")))?;
+    // create LICENSES file only if it doesn't exist
+    let mut licenses_file = OpenOptions::new()
+        .append(true)
+        .create_new(true)
+        .open(themes_output_path.join(format!("LICENSES")))?;
 
     licenses_file.write(licenses.join("\n").as_bytes())?;
 
