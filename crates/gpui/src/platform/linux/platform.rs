@@ -2,9 +2,9 @@
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion,
-    Task, WindowOptions,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, Task, WindowOptions,
 };
 
 use futures::channel::oneshot;
@@ -23,6 +23,7 @@ pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
 pub(crate) struct LinuxPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
+    text_system: Arc<LinuxTextSystem>,
 }
 
 impl Default for LinuxPlatform {
@@ -37,6 +38,7 @@ impl LinuxPlatform {
         Self(Mutex::new(LinuxPlatformState {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
+            text_system: Arc::new(LinuxTextSystem::new()),
         }))
     }
 }
@@ -51,7 +53,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        unimplemented!()
+        self.0.lock().text_system.clone()
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
