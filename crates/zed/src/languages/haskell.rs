@@ -1,4 +1,5 @@
 use std::env::consts::ARCH;
+use std::ffi::OsString;
 use std::{any::Any, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
@@ -13,6 +14,10 @@ use lsp::LanguageServerBinary;
 use util::async_maybe;
 use util::github::latest_github_release;
 use util::{github::GitHubLspBinaryVersion, ResultExt};
+
+fn server_binary_arguments() -> Vec<OsString> {
+    vec!["--lsp".into()]
+}
 
 pub struct HaskellLspAdapter;
 
@@ -80,7 +85,7 @@ impl LspAdapter for HaskellLspAdapter {
         .await?;
         Ok(LanguageServerBinary {
             path: binary_path,
-            arguments: vec!["--lsp".into()],
+            arguments: server_binary_arguments(),
         })
     }
 
@@ -124,7 +129,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         if let Some(path) = last_binary_path {
             Ok(LanguageServerBinary {
                 path,
-                arguments: Vec::new(),
+                arguments: server_binary_arguments(),
             })
         } else {
             Err(anyhow!("no cached binary"))
