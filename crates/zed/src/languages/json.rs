@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
-use futures::{future::Shared, FutureExt, StreamExt};
+use futures::StreamExt;
 use gpui::{AppContext, Task};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
@@ -12,10 +12,9 @@ use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
 use std::{
     any::Any,
-    cell::OnceCell,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
 };
 use util::{paths, ResultExt};
 
@@ -33,11 +32,7 @@ pub struct JsonLspAdapter {
 }
 
 impl JsonLspAdapter {
-    pub fn new(
-        node: Arc<dyn NodeRuntime>,
-        languages: Arc<LanguageRegistry>,
-        cx: &mut AppContext,
-    ) -> Self {
+    pub fn new(node: Arc<dyn NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
         Self {
             node,
             languages,
