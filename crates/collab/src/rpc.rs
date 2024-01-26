@@ -2451,7 +2451,7 @@ async fn remove_channel_member(
 
 /// Toggle the channel between public and private.
 /// Care is taken to maintain the invariant that public channels only descend from public channels,
-/// (though members-only channels can appear at any point in the heirarchy).
+/// (though members-only channels can appear at any point in the hierarchy).
 async fn set_channel_visibility(
     request: proto::SetChannelVisibility,
     response: Response<proto::SetChannelVisibility>,
@@ -2604,7 +2604,6 @@ async fn move_channel(
             channels,
             ..Default::default()
         };
-        dbg!(&member, &update);
 
         for connection_id in connection_pool.user_connection_ids(member.user_id) {
             session.peer.send(connection_id, update.clone())?;

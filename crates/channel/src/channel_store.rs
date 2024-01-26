@@ -88,15 +88,6 @@ impl Channel {
 
         slug.trim_matches(|c| c == '-').to_string()
     }
-
-    pub fn channel_buffer_capability(&self) -> Capability {
-        todo!() // go ask the channel store
-                // if self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin {
-                //     Capability::ReadWrite
-                // } else {
-                //     Capability::ReadOnly
-                // }
-    }
 }
 
 pub struct ChannelMembership {
