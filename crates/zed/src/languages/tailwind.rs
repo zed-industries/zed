@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::StreamExt;
+use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{AppContext, Task};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
@@ -108,12 +108,13 @@ impl LspAdapter for TailwindLspAdapter {
         &self,
         _workspace_root: &Path,
         _: &mut AppContext,
-    ) -> Task<Result<Value>> {
-        Task::ready(Ok(json!({
+    ) -> Shared<Task<Option<Value>>> {
+        Task::ready(Some(json!({
             "tailwindCSS": {
                 "emmetCompletions": true,
             }
         })))
+        .shared()
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

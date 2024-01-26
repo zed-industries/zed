@@ -3,6 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::{future::Shared, FutureExt};
 use gpui::{AppContext, Task};
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
@@ -214,8 +215,8 @@ impl LspAdapter for EsLintLspAdapter {
         &self,
         workspace_root: &Path,
         _: &mut AppContext,
-    ) -> Task<Result<Value>> {
-        Task::ready(Ok(json!({
+    ) -> Shared<Task<Option<Value>>> {
+        Task::ready(Some(json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
@@ -229,6 +230,7 @@ impl LspAdapter for EsLintLspAdapter {
                 },
             }
         })))
+        .shared()
     }
 
     fn name(&self) -> LanguageServerName {

@@ -219,7 +219,7 @@ impl CachedLspAdapter {
         &self,
         workspace_root: &Path,
         cx: &mut AppContext,
-    ) -> Task<Result<serde_json::Value>> {
+    ) -> Shared<Task<Option<serde_json::Value>>> {
         self.adapter.workspace_configuration(workspace_root, cx)
     }
 
@@ -350,8 +350,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         _: &Path,
         _: &mut AppContext,
-    ) -> Task<Result<serde_json::Value>> {
-        Task::ready(Ok(serde_json::json!({})))
+    ) -> Shared<Task<Option<serde_json::Value>>> {
+        Task::ready(Some(serde_json::json!({}))).shared()
     }
 
     /// Returns a list of code actions supported by a given LspAdapter

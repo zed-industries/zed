@@ -132,6 +132,7 @@ pub fn init(
         vec![Arc::new(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
+            cx,
         ))],
     );
     language("markdown", tree_sitter_markdown::language(), vec![]);

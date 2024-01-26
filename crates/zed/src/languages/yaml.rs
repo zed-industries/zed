@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{AppContext, Task};
 use language::{
     language_settings::all_language_settings, LanguageServerName, LspAdapter, LspAdapterDelegate,
@@ -96,8 +96,8 @@ impl LspAdapter for YamlLspAdapter {
         &self,
         _workspace_root: &Path,
         cx: &mut AppContext,
-    ) -> Task<Result<Value>> {
-        Task::ready(Ok(serde_json::json!({
+    ) -> Shared<Task<Option<Value>>> {
+        Task::ready(Some(serde_json::json!({
             "yaml": {
                 "keyOrdering": false
             },
@@ -107,6 +107,7 @@ impl LspAdapter for YamlLspAdapter {
                     .tab_size,
             }
         })))
+        .shared()
     }
 }
 

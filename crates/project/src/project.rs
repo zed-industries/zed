@@ -2716,14 +2716,14 @@ impl Project {
                 for (adapter, server) in servers {
                     let workspace_config = cx
                         .update(|cx| adapter.workspace_configuration(server.root_path(), cx))?
-                        .await?;
-                    server
-                        .notify::<lsp::notification::DidChangeConfiguration>(
-                            lsp::DidChangeConfigurationParams {
-                                settings: workspace_config.clone(),
-                            },
-                        )
-                        .ok();
+                        .await;
+                    if let Some(settings) = workspace_config {
+                        server
+                            .notify::<lsp::notification::DidChangeConfiguration>(
+                                lsp::DidChangeConfigurationParams { settings },
+                            )
+                            .ok();
+                    }
                 }
             }
 
@@ -3010,7 +3010,7 @@ impl Project {
     ) -> Result<Arc<LanguageServer>> {
         let workspace_config = cx
             .update(|cx| adapter.workspace_configuration(worktree_path, cx))?
-            .await?;
+            .await;
         let language_server = pending_server.task.await?;
 
         language_server
@@ -3046,7 +3046,8 @@ impl Project {
                     async move {
                         let workspace_config = cx
                             .update(|cx| adapter.workspace_configuration(&worktree_path, cx))?
-                            .await?;
+                            .await
+                            .context("LSP adapter could not obtain the workspace configuration")?;
                         Ok(params
                             .items
                             .into_iter()
@@ -3177,13 +3178,13 @@ impl Project {
         }
         let language_server = language_server.initialize(initialization_options).await?;
 
-        language_server
-            .notify::<lsp::notification::DidChangeConfiguration>(
-                lsp::DidChangeConfigurationParams {
-                    settings: workspace_config,
-                },
-            )
-            .ok();
+        if let Some(settings) = workspace_config {
+            language_server
+                .notify::<lsp::notification::DidChangeConfiguration>(
+                    lsp::DidChangeConfigurationParams { settings },
+                )
+                .ok();
+        }
 
         Ok(language_server)
     }

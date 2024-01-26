@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
-use futures::StreamExt;
+use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{AppContext, Task};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
@@ -27,12 +27,64 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct JsonLspAdapter {
     node: Arc<dyn NodeRuntime>,
-    languages: Arc<LanguageRegistry>,
+    workspace_config: Shared<Task<Option<Value>>>,
 }
 
 impl JsonLspAdapter {
-    pub fn new(node: Arc<dyn NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
-        JsonLspAdapter { node, languages }
+    pub fn new(
+        node: Arc<dyn NodeRuntime>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut AppContext,
+    ) -> Self {
+        Self {
+            node,
+            workspace_config: Self::get_workspace_config(languages.language_names(), cx),
+        }
+    }
+
+    fn get_workspace_config(
+        language_names: Vec<String>,
+        cx: &mut AppContext,
+    ) -> Shared<Task<Option<Value>>> {
+        cx.spawn(move |cx| async move {
+            cx.update(|cx| {
+                let action_names = cx.all_action_names();
+                let staff_mode = cx.is_staff();
+
+                let font_names = &cx.text_system().all_font_names();
+                let settings_schema = cx.global::<SettingsStore>().json_schema(
+                    &SettingsJsonSchemaParams {
+                        language_names: &language_names,
+                        staff_mode,
+                        font_names,
+                    },
+                    cx,
+                );
+
+                serde_json::json!({
+                    "json": {
+                        "format": {
+                            "enable": true,
+                        },
+                        "schemas": [
+                            {
+                                "fileMatch": [
+                                    schema_file_match(&paths::SETTINGS),
+                                    &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
+                                ],
+                                "schema": settings_schema,
+                            },
+                            {
+                                "fileMatch": [schema_file_match(&paths::KEYMAP)],
+                                "schema": KeymapFile::generate_json_schema(&action_names),
+                            }
+                        ]
+                    }
+                })
+            })
+            .log_err()
+        })
+        .shared()
     }
 }
 
@@ -105,46 +157,9 @@ impl LspAdapter for JsonLspAdapter {
     fn workspace_configuration(
         &self,
         _workspace_root: &Path,
-        cx: &mut AppContext,
-    ) -> Task<Result<Value>> {
-        let language_names = self.languages.language_names();
-        cx.spawn(move |cx| async move {
-            cx.update(|cx| {
-                let action_names = cx.all_action_names();
-                let staff_mode = cx.is_staff();
-
-                let font_names = &cx.text_system().all_font_names();
-                let settings_schema = cx.global::<SettingsStore>().json_schema(
-                    &SettingsJsonSchemaParams {
-                        language_names: &language_names,
-                        staff_mode,
-                        font_names,
-                    },
-                    cx,
-                );
-
-                serde_json::json!({
-                    "json": {
-                        "format": {
-                            "enable": true,
-                        },
-                        "schemas": [
-                            {
-                                "fileMatch": [
-                                    schema_file_match(&paths::SETTINGS),
-                                    &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
-                                ],
-                                "schema": settings_schema,
-                            },
-                            {
-                                "fileMatch": [schema_file_match(&paths::KEYMAP)],
-                                "schema": KeymapFile::generate_json_schema(&action_names),
-                            }
-                        ]
-                    }
-                })
-            })
-        })
+        _cx: &mut AppContext,
+    ) -> Shared<Task<Option<Value>>> {
+        self.workspace_config.clone()
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
