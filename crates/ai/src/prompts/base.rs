@@ -7,13 +7,13 @@ use util::ResultExt;
 
 use crate::models::LanguageModel;
 use crate::prompts::repository_context::PromptCodeSnippet;
+use crate::providers::open_ai::OpenAILanguageModel;
 
 pub(crate) enum PromptFileType {
     Text,
     Code,
 }
 
-// TODO: Set this up to manage for defaults well
 pub struct PromptArguments {
     pub model: Arc<dyn LanguageModel>,
     pub user_prompt: Option<String>,
@@ -23,6 +23,21 @@ pub struct PromptArguments {
     pub reserved_tokens: usize,
     pub buffer: Option<BufferSnapshot>,
     pub selected_range: Option<Range<usize>>,
+}
+
+impl Default for PromptArguments {
+    fn default() -> Self {
+        PromptArguments {
+            model: Arc::new(OpenAILanguageModel::default()),
+            user_prompt: None,
+            language_name: None,
+            project_name: None,
+            snippets: Vec::new(),
+            reserved_tokens: 0,
+            buffer: None,
+            selected_range: None,
+        }
+    }
 }
 
 impl PromptArguments {

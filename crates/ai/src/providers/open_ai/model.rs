@@ -4,7 +4,7 @@ use util::ResultExt;
 
 use crate::models::{LanguageModel, TruncationDirection};
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct OpenAILanguageModel {
     name: String,
     bpe: Option<CoreBPE>,
