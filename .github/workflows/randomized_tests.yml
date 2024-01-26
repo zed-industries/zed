@@ -12,6 +12,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
   RUST_BACKTRACE: 1
   ZED_SERVER_URL: https://zed.dev
 
@@ -28,7 +29,7 @@ jobs:
           node-version: "18"
 
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           clean: false
           submodules: "recursive"
