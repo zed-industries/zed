@@ -1,5 +1,5 @@
 name = "Ruby"
-path_suffixes = ["rb", "Gemfile"]
+path_suffixes = ["rb", "Gemfile", "Gemfile.lock", "rake"]
 first_line_pattern = '^#!.*\bruby\b'
 line_comments = ["# "]
 autoclose_before = ";:.,=}])>"
