@@ -135,6 +135,48 @@
         "warning": "#a06d3aff",
         "warning.background": "#231a12ff",
         "warning.border": "#392a19ff",
+        "players": [
+          {
+            "cursor": "#566ddaff",
+            "background": "#566ddaff",
+            "selection": "#566dda3d"
+          },
+          {
+            "cursor": "#bf41bfff",
+            "background": "#bf41bfff",
+            "selection": "#bf41bf3d"
+          },
+          {
+            "cursor": "#aa563bff",
+            "background": "#aa563bff",
+            "selection": "#aa563b3d"
+          },
+          {
+            "cursor": "#955ae6ff",
+            "background": "#955ae6ff",
+            "selection": "#955ae63d"
+          },
+          {
+            "cursor": "#3a8bc6ff",
+            "background": "#3a8bc6ff",
+            "selection": "#3a8bc63d"
+          },
+          {
+            "cursor": "#be4677ff",
+            "background": "#be4677ff",
+            "selection": "#be46773d"
+          },
+          {
+            "cursor": "#a06d3aff",
+            "background": "#a06d3aff",
+            "selection": "#a06d3a3d"
+          },
+          {
+            "cursor": "#2b9292ff",
+            "background": "#2b9292ff",
+            "selection": "#2b92923d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#566ddaff",
@@ -477,6 +519,48 @@
         "warning": "#a06e3bff",
         "warning.background": "#eee0d5ff",
         "warning.border": "#e0c9b5ff",
+        "players": [
+          {
+            "cursor": "#586cdaff",
+            "background": "#586cdaff",
+            "selection": "#586cda3d"
+          },
+          {
+            "cursor": "#bf41bfff",
+            "background": "#bf41bfff",
+            "selection": "#bf41bf3d"
+          },
+          {
+            "cursor": "#aa573cff",
+            "background": "#aa573cff",
+            "selection": "#aa573c3d"
+          },
+          {
+            "cursor": "#955ae6ff",
+            "background": "#955ae6ff",
+            "selection": "#955ae63d"
+          },
+          {
+            "cursor": "#3a8bc6ff",
+            "background": "#3a8bc6ff",
+            "selection": "#3a8bc63d"
+          },
+          {
+            "cursor": "#bd4677ff",
+            "background": "#bd4677ff",
+            "selection": "#bd46773d"
+          },
+          {
+            "cursor": "#a06e3bff",
+            "background": "#a06e3bff",
+            "selection": "#a06e3b3d"
+          },
+          {
+            "cursor": "#2b9292ff",
+            "background": "#2b9292ff",
+            "selection": "#2b92923d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#586cdaff",
@@ -819,6 +903,48 @@
         "warning": "#ae9414ff",
         "warning.background": "#2a200dff",
         "warning.border": "#413413ff",
+        "players": [
+          {
+            "cursor": "#6684e0ff",
+            "background": "#6684e0ff",
+            "selection": "#6684e03d"
+          },
+          {
+            "cursor": "#d43651ff",
+            "background": "#d43651ff",
+            "selection": "#d436513d"
+          },
+          {
+            "cursor": "#b65611ff",
+            "background": "#b65611ff",
+            "selection": "#b656113d"
+          },
+          {
+            "cursor": "#b854d3ff",
+            "background": "#b854d3ff",
+            "selection": "#b854d33d"
+          },
+          {
+            "cursor": "#20ad83ff",
+            "background": "#20ad83ff",
+            "selection": "#20ad833d"
+          },
+          {
+            "cursor": "#d73837ff",
+            "background": "#d73837ff",
+            "selection": "#d738373d"
+          },
+          {
+            "cursor": "#ae9414ff",
+            "background": "#ae9414ff",
+            "selection": "#ae94143d"
+          },
+          {
+            "cursor": "#5fac39ff",
+            "background": "#5fac39ff",
+            "selection": "#5fac393d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#6684e0ff",
@@ -1161,6 +1287,48 @@
         "warning": "#ae9414ff",
         "warning.background": "#f2e8d1ff",
         "warning.border": "#e7d7aeff",
+        "players": [
+          {
+            "cursor": "#6684dfff",
+            "background": "#6684dfff",
+            "selection": "#6684df3d"
+          },
+          {
+            "cursor": "#d43652ff",
+            "background": "#d43652ff",
+            "selection": "#d436523d"
+          },
+          {
+            "cursor": "#b65712ff",
+            "background": "#b65712ff",
+            "selection": "#b657123d"
+          },
+          {
+            "cursor": "#b755d3ff",
+            "background": "#b755d3ff",
+            "selection": "#b755d33d"
+          },
+          {
+            "cursor": "#21ad82ff",
+            "background": "#21ad82ff",
+            "selection": "#21ad823d"
+          },
+          {
+            "cursor": "#d73737ff",
+            "background": "#d73737ff",
+            "selection": "#d737373d"
+          },
+          {
+            "cursor": "#ae9414ff",
+            "background": "#ae9414ff",
+            "selection": "#ae94143d"
+          },
+          {
+            "cursor": "#61ac39ff",
+            "background": "#61ac39ff",
+            "selection": "#61ac393d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#6684dfff",
@@ -1503,6 +1671,48 @@
         "warning": "#a5980fff",
         "warning.background": "#25210dff",
         "warning.border": "#3b3612ff",
+        "players": [
+          {
+            "cursor": "#36a165ff",
+            "background": "#36a165ff",
+            "selection": "#36a1653d"
+          },
+          {
+            "cursor": "#9d6b7bff",
+            "background": "#9d6b7bff",
+            "selection": "#9d6b7b3d"
+          },
+          {
+            "cursor": "#ae7214ff",
+            "background": "#ae7214ff",
+            "selection": "#ae72143d"
+          },
+          {
+            "cursor": "#5f9182ff",
+            "background": "#5f9182ff",
+            "selection": "#5f91823d"
+          },
+          {
+            "cursor": "#5a9d47ff",
+            "background": "#5a9d47ff",
+            "selection": "#5a9d473d"
+          },
+          {
+            "cursor": "#ba6136ff",
+            "background": "#ba6136ff",
+            "selection": "#ba61363d"
+          },
+          {
+            "cursor": "#a5980fff",
+            "background": "#a5980fff",
+            "selection": "#a5980f3d"
+          },
+          {
+            "cursor": "#7d9726ff",
+            "background": "#7d9726ff",
+            "selection": "#7d97263d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#36a165ff",
@@ -1845,6 +2055,48 @@
         "warning": "#a5980fff",
         "warning.background": "#f0e9d1ff",
         "warning.border": "#e3d8adff",
+        "players": [
+          {
+            "cursor": "#37a165ff",
+            "background": "#37a165ff",
+            "selection": "#37a1653d"
+          },
+          {
+            "cursor": "#9d6b7bff",
+            "background": "#9d6b7bff",
+            "selection": "#9d6b7b3d"
+          },
+          {
+            "cursor": "#ae7214ff",
+            "background": "#ae7214ff",
+            "selection": "#ae72143d"
+          },
+          {
+            "cursor": "#5f9182ff",
+            "background": "#5f9182ff",
+            "selection": "#5f91823d"
+          },
+          {
+            "cursor": "#5c9d49ff",
+            "background": "#5c9d49ff",
+            "selection": "#5c9d493d"
+          },
+          {
+            "cursor": "#ba6336ff",
+            "background": "#ba6336ff",
+            "selection": "#ba63363d"
+          },
+          {
+            "cursor": "#a5980fff",
+            "background": "#a5980fff",
+            "selection": "#a5980f3d"
+          },
+          {
+            "cursor": "#7c9728ff",
+            "background": "#7c9728ff",
+            "selection": "#7c97283d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#37a165ff",
@@ -2187,6 +2439,48 @@
         "warning": "#c38418ff",
         "warning.background": "#371d0dff",
         "warning.border": "#4f2e11ff",
+        "players": [
+          {
+            "cursor": "#407ee6ff",
+            "background": "#407ee6ff",
+            "selection": "#407ee63d"
+          },
+          {
+            "cursor": "#c340f2ff",
+            "background": "#c340f2ff",
+            "selection": "#c340f23d"
+          },
+          {
+            "cursor": "#df5321ff",
+            "background": "#df5321ff",
+            "selection": "#df53213d"
+          },
+          {
+            "cursor": "#6565e9ff",
+            "background": "#6565e9ff",
+            "selection": "#6565e93d"
+          },
+          {
+            "cursor": "#3d97b8ff",
+            "background": "#3d97b8ff",
+            "selection": "#3d97b83d"
+          },
+          {
+            "cursor": "#f22c3fff",
+            "background": "#f22c3fff",
+            "selection": "#f22c3f3d"
+          },
+          {
+            "cursor": "#c38418ff",
+            "background": "#c38418ff",
+            "selection": "#c384183d"
+          },
+          {
+            "cursor": "#7a9726ff",
+            "background": "#7a9726ff",
+            "selection": "#7a97263d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#407ee6ff",
@@ -2529,6 +2823,48 @@
         "warning": "#c38419ff",
         "warning.background": "#f8e5d1ff",
         "warning.border": "#f0d1adff",
+        "players": [
+          {
+            "cursor": "#407ee6ff",
+            "background": "#407ee6ff",
+            "selection": "#407ee63d"
+          },
+          {
+            "cursor": "#c340f2ff",
+            "background": "#c340f2ff",
+            "selection": "#c340f23d"
+          },
+          {
+            "cursor": "#df5421ff",
+            "background": "#df5421ff",
+            "selection": "#df54213d"
+          },
+          {
+            "cursor": "#6765e9ff",
+            "background": "#6765e9ff",
+            "selection": "#6765e93d"
+          },
+          {
+            "cursor": "#3e96b8ff",
+            "background": "#3e96b8ff",
+            "selection": "#3e96b83d"
+          },
+          {
+            "cursor": "#f22e40ff",
+            "background": "#f22e40ff",
+            "selection": "#f22e403d"
+          },
+          {
+            "cursor": "#c38419ff",
+            "background": "#c38419ff",
+            "selection": "#c384193d"
+          },
+          {
+            "cursor": "#7a9728ff",
+            "background": "#7a9728ff",
+            "selection": "#7a97283d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#407ee6ff",
@@ -2871,6 +3207,48 @@
         "warning": "#bb8a35ff",
         "warning.background": "#2d1e11ff",
         "warning.border": "#463218ff",
+        "players": [
+          {
+            "cursor": "#5169ebff",
+            "background": "#5169ebff",
+            "selection": "#5169eb3d"
+          },
+          {
+            "cursor": "#cc34ccff",
+            "background": "#cc34ccff",
+            "selection": "#cc34cc3d"
+          },
+          {
+            "cursor": "#a65827ff",
+            "background": "#a65827ff",
+            "selection": "#a658273d"
+          },
+          {
+            "cursor": "#7b58bfff",
+            "background": "#7b58bfff",
+            "selection": "#7b58bf3d"
+          },
+          {
+            "cursor": "#189393ff",
+            "background": "#189393ff",
+            "selection": "#1893933d"
+          },
+          {
+            "cursor": "#ca3f2bff",
+            "background": "#ca3f2bff",
+            "selection": "#ca3f2b3d"
+          },
+          {
+            "cursor": "#bb8a35ff",
+            "background": "#bb8a35ff",
+            "selection": "#bb8a353d"
+          },
+          {
+            "cursor": "#918b3aff",
+            "background": "#918b3aff",
+            "selection": "#918b3a3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#5169ebff",
@@ -3213,6 +3591,48 @@
         "warning": "#bb8a35ff",
         "warning.background": "#f5e6d5ff",
         "warning.border": "#ebd3b5ff",
+        "players": [
+          {
+            "cursor": "#5169ebff",
+            "background": "#5169ebff",
+            "selection": "#5169eb3d"
+          },
+          {
+            "cursor": "#cc34ccff",
+            "background": "#cc34ccff",
+            "selection": "#cc34cc3d"
+          },
+          {
+            "cursor": "#a65927ff",
+            "background": "#a65927ff",
+            "selection": "#a659273d"
+          },
+          {
+            "cursor": "#7a5ac0ff",
+            "background": "#7a5ac0ff",
+            "selection": "#7a5ac03d"
+          },
+          {
+            "cursor": "#189393ff",
+            "background": "#189393ff",
+            "selection": "#1893933d"
+          },
+          {
+            "cursor": "#ca402bff",
+            "background": "#ca402bff",
+            "selection": "#ca402b3d"
+          },
+          {
+            "cursor": "#bb8a35ff",
+            "background": "#bb8a35ff",
+            "selection": "#bb8a353d"
+          },
+          {
+            "cursor": "#918b3bff",
+            "background": "#918b3bff",
+            "selection": "#918b3b3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#5169ebff",
@@ -3555,6 +3975,48 @@
         "warning": "#8a8a10ff",
         "warning.background": "#201e0cff",
         "warning.border": "#323111ff",
+        "players": [
+          {
+            "cursor": "#267eadff",
+            "background": "#267eadff",
+            "selection": "#267ead3d"
+          },
+          {
+            "cursor": "#b72ed2ff",
+            "background": "#b72ed2ff",
+            "selection": "#b72ed23d"
+          },
+          {
+            "cursor": "#935b25ff",
+            "background": "#935b25ff",
+            "selection": "#935b253d"
+          },
+          {
+            "cursor": "#6a6ab7ff",
+            "background": "#6a6ab7ff",
+            "selection": "#6a6ab73d"
+          },
+          {
+            "cursor": "#2d8f6fff",
+            "background": "#2d8f6fff",
+            "selection": "#2d8f6f3d"
+          },
+          {
+            "cursor": "#d22e72ff",
+            "background": "#d22e72ff",
+            "selection": "#d22e723d"
+          },
+          {
+            "cursor": "#8a8a10ff",
+            "background": "#8a8a10ff",
+            "selection": "#8a8a103d"
+          },
+          {
+            "cursor": "#558c3aff",
+            "background": "#558c3aff",
+            "selection": "#558c3a3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#267eadff",
@@ -3897,6 +4359,48 @@
         "warning": "#8a8a10ff",
         "warning.background": "#eae6d0ff",
         "warning.border": "#d8d3abff",
+        "players": [
+          {
+            "cursor": "#267eadff",
+            "background": "#267eadff",
+            "selection": "#267ead3d"
+          },
+          {
+            "cursor": "#b72ed2ff",
+            "background": "#b72ed2ff",
+            "selection": "#b72ed23d"
+          },
+          {
+            "cursor": "#935c25ff",
+            "background": "#935c25ff",
+            "selection": "#935c253d"
+          },
+          {
+            "cursor": "#6c6ab7ff",
+            "background": "#6c6ab7ff",
+            "selection": "#6c6ab73d"
+          },
+          {
+            "cursor": "#2e8f6eff",
+            "background": "#2e8f6eff",
+            "selection": "#2e8f6e3d"
+          },
+          {
+            "cursor": "#d22e71ff",
+            "background": "#d22e71ff",
+            "selection": "#d22e713d"
+          },
+          {
+            "cursor": "#8a8a10ff",
+            "background": "#8a8a10ff",
+            "selection": "#8a8a103d"
+          },
+          {
+            "cursor": "#568c3bff",
+            "background": "#568c3bff",
+            "selection": "#568c3b3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#267eadff",
@@ -4239,6 +4743,48 @@
         "warning": "#a06d3aff",
         "warning.background": "#231a12ff",
         "warning.border": "#392a19ff",
+        "players": [
+          {
+            "cursor": "#7272caff",
+            "background": "#7272caff",
+            "selection": "#7272ca3d"
+          },
+          {
+            "cursor": "#bd5187ff",
+            "background": "#bd5187ff",
+            "selection": "#bd51873d"
+          },
+          {
+            "cursor": "#b4593bff",
+            "background": "#b4593bff",
+            "selection": "#b4593b3d"
+          },
+          {
+            "cursor": "#8464c4ff",
+            "background": "#8464c4ff",
+            "selection": "#8464c43d"
+          },
+          {
+            "cursor": "#5485b6ff",
+            "background": "#5485b6ff",
+            "selection": "#5485b63d"
+          },
+          {
+            "cursor": "#ca4848ff",
+            "background": "#ca4848ff",
+            "selection": "#ca48483d"
+          },
+          {
+            "cursor": "#a06d3aff",
+            "background": "#a06d3aff",
+            "selection": "#a06d3a3d"
+          },
+          {
+            "cursor": "#4b8b8bff",
+            "background": "#4b8b8bff",
+            "selection": "#4b8b8b3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#7272caff",
@@ -4581,6 +5127,48 @@
         "warning": "#a06e3bff",
         "warning.background": "#eee0d5ff",
         "warning.border": "#e0c9b5ff",
+        "players": [
+          {
+            "cursor": "#7272caff",
+            "background": "#7272caff",
+            "selection": "#7272ca3d"
+          },
+          {
+            "cursor": "#bd5186ff",
+            "background": "#bd5186ff",
+            "selection": "#bd51863d"
+          },
+          {
+            "cursor": "#b45a3cff",
+            "background": "#b45a3cff",
+            "selection": "#b45a3c3d"
+          },
+          {
+            "cursor": "#8464c4ff",
+            "background": "#8464c4ff",
+            "selection": "#8464c43d"
+          },
+          {
+            "cursor": "#5485b5ff",
+            "background": "#5485b5ff",
+            "selection": "#5485b53d"
+          },
+          {
+            "cursor": "#ca4a4aff",
+            "background": "#ca4a4aff",
+            "selection": "#ca4a4a3d"
+          },
+          {
+            "cursor": "#a06e3bff",
+            "background": "#a06e3bff",
+            "selection": "#a06e3b3d"
+          },
+          {
+            "cursor": "#4c8b8bff",
+            "background": "#4c8b8bff",
+            "selection": "#4c8b8b3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#7272caff",
@@ -4923,6 +5511,48 @@
         "warning": "#a07d3aff",
         "warning.background": "#231d12ff",
         "warning.border": "#392e19ff",
+        "players": [
+          {
+            "cursor": "#468b8fff",
+            "background": "#468b8fff",
+            "selection": "#468b8f3d"
+          },
+          {
+            "cursor": "#857368ff",
+            "background": "#857368ff",
+            "selection": "#8573683d"
+          },
+          {
+            "cursor": "#9f703bff",
+            "background": "#9f703bff",
+            "selection": "#9f703b3d"
+          },
+          {
+            "cursor": "#55859bff",
+            "background": "#55859bff",
+            "selection": "#55859b3d"
+          },
+          {
+            "cursor": "#1d9aa0ff",
+            "background": "#1d9aa0ff",
+            "selection": "#1d9aa03d"
+          },
+          {
+            "cursor": "#b16038ff",
+            "background": "#b16038ff",
+            "selection": "#b160383d"
+          },
+          {
+            "cursor": "#a07d3aff",
+            "background": "#a07d3aff",
+            "selection": "#a07d3a3d"
+          },
+          {
+            "cursor": "#479962ff",
+            "background": "#479962ff",
+            "selection": "#4799623d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#468b8fff",
@@ -5265,6 +5895,48 @@
         "warning": "#a07d3bff",
         "warning.background": "#eee4d5ff",
         "warning.border": "#dfcfb6ff",
+        "players": [
+          {
+            "cursor": "#488b90ff",
+            "background": "#488b90ff",
+            "selection": "#488b903d"
+          },
+          {
+            "cursor": "#857368ff",
+            "background": "#857368ff",
+            "selection": "#8573683d"
+          },
+          {
+            "cursor": "#9f713cff",
+            "background": "#9f713cff",
+            "selection": "#9f713c3d"
+          },
+          {
+            "cursor": "#55859bff",
+            "background": "#55859bff",
+            "selection": "#55859b3d"
+          },
+          {
+            "cursor": "#1e9aa0ff",
+            "background": "#1e9aa0ff",
+            "selection": "#1e9aa03d"
+          },
+          {
+            "cursor": "#b16139ff",
+            "background": "#b16139ff",
+            "selection": "#b161393d"
+          },
+          {
+            "cursor": "#a07d3bff",
+            "background": "#a07d3bff",
+            "selection": "#a07d3b3d"
+          },
+          {
+            "cursor": "#499963ff",
+            "background": "#499963ff",
+            "selection": "#4999633d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#488b90ff",
@@ -5607,6 +6279,48 @@
         "warning": "#98981bff",
         "warning.background": "#22210fff",
         "warning.border": "#373614ff",
+        "players": [
+          {
+            "cursor": "#3e62f4ff",
+            "background": "#3e62f4ff",
+            "selection": "#3e62f43d"
+          },
+          {
+            "cursor": "#e61cc3ff",
+            "background": "#e61cc3ff",
+            "selection": "#e61cc33d"
+          },
+          {
+            "cursor": "#87711dff",
+            "background": "#87711dff",
+            "selection": "#87711d3d"
+          },
+          {
+            "cursor": "#ac2dedff",
+            "background": "#ac2dedff",
+            "selection": "#ac2ded3d"
+          },
+          {
+            "cursor": "#1b99b3ff",
+            "background": "#1b99b3ff",
+            "selection": "#1b99b33d"
+          },
+          {
+            "cursor": "#e61c3bff",
+            "background": "#e61c3bff",
+            "selection": "#e61c3b3d"
+          },
+          {
+            "cursor": "#98981bff",
+            "background": "#98981bff",
+            "selection": "#98981b3d"
+          },
+          {
+            "cursor": "#2aa329ff",
+            "background": "#2aa329ff",
+            "selection": "#2aa3293d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#3e62f4ff",
@@ -5949,6 +6663,48 @@
         "warning": "#98981cff",
         "warning.background": "#ece8d1ff",
         "warning.border": "#ddd8afff",
+        "players": [
+          {
+            "cursor": "#3e61f4ff",
+            "background": "#3e61f4ff",
+            "selection": "#3e61f43d"
+          },
+          {
+            "cursor": "#e61cc2ff",
+            "background": "#e61cc2ff",
+            "selection": "#e61cc23d"
+          },
+          {
+            "cursor": "#87711fff",
+            "background": "#87711fff",
+            "selection": "#87711f3d"
+          },
+          {
+            "cursor": "#ac2dedff",
+            "background": "#ac2dedff",
+            "selection": "#ac2ded3d"
+          },
+          {
+            "cursor": "#1c99b3ff",
+            "background": "#1c99b3ff",
+            "selection": "#1c99b33d"
+          },
+          {
+            "cursor": "#e61c3dff",
+            "background": "#e61c3dff",
+            "selection": "#e61c3d3d"
+          },
+          {
+            "cursor": "#98981cff",
+            "background": "#98981cff",
+            "selection": "#98981c3d"
+          },
+          {
+            "cursor": "#2aa32aff",
+            "background": "#2aa32aff",
+            "selection": "#2aa32a3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#3e61f4ff",
@@ -6291,6 +7047,48 @@
         "warning": "#c08b30ff",
         "warning.background": "#301e11ff",
         "warning.border": "#4b3117ff",
+        "players": [
+          {
+            "cursor": "#3e8ed0ff",
+            "background": "#3e8ed0ff",
+            "selection": "#3e8ed03d"
+          },
+          {
+            "cursor": "#9b6279ff",
+            "background": "#9b6279ff",
+            "selection": "#9b62793d"
+          },
+          {
+            "cursor": "#c76a29ff",
+            "background": "#c76a29ff",
+            "selection": "#c76a293d"
+          },
+          {
+            "cursor": "#6679ccff",
+            "background": "#6679ccff",
+            "selection": "#6679cc3d"
+          },
+          {
+            "cursor": "#24a1c9ff",
+            "background": "#24a1c9ff",
+            "selection": "#24a1c93d"
+          },
+          {
+            "cursor": "#c94922ff",
+            "background": "#c94922ff",
+            "selection": "#c949223d"
+          },
+          {
+            "cursor": "#c08b30ff",
+            "background": "#c08b30ff",
+            "selection": "#c08b303d"
+          },
+          {
+            "cursor": "#ac9739ff",
+            "background": "#ac9739ff",
+            "selection": "#ac97393d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#3e8ed0ff",
@@ -6633,6 +7431,48 @@
         "warning": "#c08b30ff",
         "warning.background": "#f6e6d4ff",
         "warning.border": "#eed4b3ff",
+        "players": [
+          {
+            "cursor": "#3e8fd0ff",
+            "background": "#3e8fd0ff",
+            "selection": "#3e8fd03d"
+          },
+          {
+            "cursor": "#9b6279ff",
+            "background": "#9b6279ff",
+            "selection": "#9b62793d"
+          },
+          {
+            "cursor": "#c76a29ff",
+            "background": "#c76a29ff",
+            "selection": "#c76a293d"
+          },
+          {
+            "cursor": "#6679cbff",
+            "background": "#6679cbff",
+            "selection": "#6679cb3d"
+          },
+          {
+            "cursor": "#24a1c9ff",
+            "background": "#24a1c9ff",
+            "selection": "#24a1c93d"
+          },
+          {
+            "cursor": "#c94922ff",
+            "background": "#c94922ff",
+            "selection": "#c949223d"
+          },
+          {
+            "cursor": "#c08b30ff",
+            "background": "#c08b30ff",
+            "selection": "#c08b303d"
+          },
+          {
+            "cursor": "#ac9739ff",
+            "background": "#ac9739ff",
+            "selection": "#ac97393d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#3e8fd0ff",
