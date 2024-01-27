@@ -33,6 +33,7 @@ mod uiua;
 mod vue;
 mod yaml;
 mod zig;
+mod astro;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -248,6 +249,14 @@ pub fn init(
             Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
+    );
+    language(
+        "astro",
+        tree_sitter_astro::language(),
+        vec![
+            Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ]
     );
     language(
         "php",
