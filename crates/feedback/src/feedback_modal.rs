@@ -1,6 +1,4 @@
-use std::{ops::RangeInclusive, path::PathBuf, sync::Arc, time::Duration};
-// use comrak::nodes::{AstNode, NodeValue};
-// use comrak::{format_html, parse_document, Arena, Options};
+use std::{ops::RangeInclusive, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail};
 use bitflags::bitflags;
@@ -13,8 +11,8 @@ use gpui::{
     PromptLevel, Render, Task, View, ViewContext,
 };
 use isahc::Request;
-use language::{Buffer, LanguageRegistry};
-use project::{Project, ProjectPath};
+use language::Buffer;
+use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
@@ -50,12 +48,6 @@ struct FeedbackRequestBody<'a> {
     is_staff: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FoundPath {
-    project: ProjectPath,
-    absolute: Option<PathBuf>,
-}
-
 bitflags! {
     #[derive(Debug, Clone, PartialEq)]
     struct InvalidStateFlags: u8 {
@@ -83,7 +75,6 @@ pub struct FeedbackModal {
     submission_state: Option<SubmissionState>,
     dismiss_modal: bool,
     character_count: i32,
-    languages: Arc<LanguageRegistry>,
 }
 
 impl FocusableView for FeedbackModal {
@@ -125,27 +116,6 @@ impl ModalView for FeedbackModal {
 
 impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        // let currently_opened_path = {
-        //     let project = workspace.project().read(cx);
-        //     workspace
-        //         .active_item(cx)
-        //         .and_then(|item| item.project_path(cx))
-        //         .map(|project_path| {
-        //             let abs_path = project
-        //                 .worktree_for_id(project_path.worktree_id, cx)
-        //                 .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
-
-        //             FoundPath {
-        //                 absolute: abs_path,
-        //                 project: project_path,
-        //             }
-        //         })
-        // };
-
-        // log::error!("currently_opened_path {:#?}", currently_opened_path);
-
-        let languages = workspace.app_state().languages.clone();
-
         let _handle = cx.view().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, cx| {
             let markdown = workspace
@@ -169,7 +139,6 @@ impl FeedbackModal {
                 return;
             }
 
-            let languages = languages.clone();
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
                 let buffer = project
@@ -181,17 +150,8 @@ impl FeedbackModal {
                 workspace.update(&mut cx, |workspace, cx| {
                     let system_specs = SystemSpecs::new(cx);
 
-                    // let currently_opened_path = {
-                    //     let project = workspace.ed().read(cx);
-                    //     workspace
-                    //         .active_item(cx)
-                    //         .and_then(|item| item.act_as_type(cx))
-                    // };
-
                     workspace.toggle_modal(cx, move |cx| {
-                        // log::error!("currently_opened_path {:#?}", currently_opened_path);
-
-                        FeedbackModal::new(system_specs, project, buffer, cx, languages)
+                        FeedbackModal::new(system_specs, project, buffer, cx)
                     });
                 })?;
 
@@ -206,7 +166,6 @@ impl FeedbackModal {
         project: Model<Project>,
         buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
-        languages: Arc<LanguageRegistry>,
     ) -> Self {
         let email_address_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -253,7 +212,6 @@ impl FeedbackModal {
             submission_state: None,
             dismiss_modal: false,
             character_count: 0,
-            languages,
         }
     }
 
@@ -451,238 +409,119 @@ impl FeedbackModal {
     }
 }
 
-enum MarkdownNode {
-    Heading(i8, String),
-    Text(String),
-    Bold(String),
-    Italic(String),
-    Link(String, String),
-}
-
-enum MarkdownElement {
-    Heading(Headline),
-    Text(Label),
-}
-
-// impl IntoElement for MarkdownElement {
-//     type Element;
-
-//     fn element_id(&self) -> Option<ElementId> {
-//         match self {
-//             MarkdownElement::Heading(element) => element.,
-//             MarkdownElement::Text(element) => Some(*id),
-//         }
-//     }
-// }
-
-// fn iter_nodes<'a, F>(node: &'a AstNode<'a>, f: &F)
-// where
-//     F: Fn(&'a AstNode<'a>),
-// {
-//     f(node);
-//     for c in node.children() {
-//         iter_nodes(c, f);
-//     }
-// }
-
 impl Render for FeedbackModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut container = v_flex()
+        self.update_submission_state(cx);
+
+        let submit_button_text = if self.awaiting_submission() {
+            "Submitting..."
+        } else {
+            "Submit"
+        };
+
+        let open_zed_repo = cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedRepo)));
+
+        v_flex()
             .elevation_3(cx)
-            .key_context("MarkdownPreview")
+            .key_context("GiveFeedback")
+            .on_action(cx.listener(Self::cancel))
             .min_w(rems(40.))
             .max_w(rems(96.))
             .h(rems(32.))
             .p_4()
-            .gap_2();
-
-        let md = "# Heading \n\n This is my input.\n\n1. Also my input.\n2. Certainly my input.\n";
-        let mentions = vec![];
-
-        let text = rich_text::render_markdown(md.to_string(), &mentions, &self.languages, None);
-
-        container.child(text.element("body".into(), cx))
-
-        ///////////////////////////////////////////////////////////////////////////////////////////////
-
-        // // The returned nodes are created in the supplied Arena, and are bound by its lifetime.
-        // let arena = Arena::new();
-
-        // let root = parse_document(
-        //     &arena,
-        //     "# Heading \n\n This is my input.\n\n1. Also my input.\n2. Certainly my input.\n",
-        //     &Options::default(),
-        // );
-
-        // iter_nodes(root, &|node| match &mut node.data.borrow_mut().value {
-        //     NodeValue::Text(text) => {
-        //         log::error!("TEXT: {}", text);
-        //         container.child(Label::new(text));
-        //     }
-        //     _ => (),
-        // });
-        ///////////////////////////////////////////////////////////////////////////////////////////////
-
-        // let test_markdown = vec![
-        //     MarkdownNode::Heading(1, "Heading 1".to_string()),
-        //     MarkdownNode::Text("This is a test of the ".to_string()),
-        //     MarkdownNode::Bold("bold".to_string()),
-        //     MarkdownNode::Text(" and ".to_string()),
-        //     MarkdownNode::Italic("italic".to_string()),
-        //     MarkdownNode::Heading(2, "Heading 2".to_string()),
-        //     MarkdownNode::Heading(3, "Heading 3".to_string()),
-        //     MarkdownNode::Text(" text. This is a ".to_string()),
-        //     MarkdownNode::Link("link".to_string(), "https://zedapp.org".to_string()),
-        //     MarkdownNode::Text(".".to_string()),
-        // ];
-
-        // for node in test_markdown {
-        //     match node {
-        //         MarkdownNode::Heading(level, text) => {
-        //             // Headline::new("Share Feedback")
-
-        //             let mut heading = Headline::new(text);
-        //             let size = match level {
-        //                 1 => HeadlineSize::XLarge,
-        //                 2 => HeadlineSize::Large,
-        //                 3 => HeadlineSize::Medium,
-        //                 4 => HeadlineSize::Small,
-        //                 _ => HeadlineSize::Small,
-        //             };
-        //             heading = heading.size(size);
-        //             container = container.child(heading);
-        //         }
-        //         MarkdownNode::Text(text) => {
-        //             let element = Label::new(text);
-        //             container = container.child(element);
-        //         }
-        //         // MarkdownNode::Bold(text) => Label::new(text).font_weight(FontWeight::Bold).into(),
-        //         // MarkdownNode::Italic(text) => Label::new(text).font_style(FontStyle::Italic).into(),
-        //         _ => {
-        //             let element = Label::new("Not implemented");
-        //             container = container.child(element);
-        //         } // MarkdownNode::Link(text, url) => Link::new(text)
-        //           //     .url(url)
-        //           //     .on_click(open_zed_repo.clone())
-        //           //     .into(),
-        //     };
-        // }
-
-        // return container;
-
-        ///////////////////////////////////////////////////////////////////////////////////////////////
-
-        // self.update_submission_state(cx);
-
-        // let submit_button_text = if self.awaiting_submission() {
-        //     "Submitting..."
-        // } else {
-        //     "Submit"
-        // };
-
-        // let open_zed_repo = cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedRepo)));
-
-        // v_flex()
-        //     .elevation_3(cx)
-        //     .key_context("GiveFeedback")
-        //     .on_action(cx.listener(Self::cancel))
-        //     .min_w(rems(40.))
-        //     .max_w(rems(96.))
-        //     .h(rems(32.))
-        //     .p_4()
-        //     .gap_2()
-        //     .child(Headline::new("Share Feedback"))
-        //     .child(
-        //         Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
-        //             format!(
-        //                 "Feedback must be at least {} characters.",
-        //                 FEEDBACK_CHAR_LIMIT.start()
-        //             )
-        //         } else {
-        //             format!(
-        //                 "Characters: {}",
-        //                 *FEEDBACK_CHAR_LIMIT.end() - self.character_count
-        //             )
-        //         })
-        //         .color(if self.valid_character_count() {
-        //             Color::Success
-        //         } else {
-        //             Color::Error
-        //         }),
-        //     )
-        //     .child(
-        //         div()
-        //             .flex_1()
-        //             .bg(cx.theme().colors().editor_background)
-        //             .p_2()
-        //             .border()
-        //             .rounded_md()
-        //             .border_color(cx.theme().colors().border)
-        //             .child(self.feedback_editor.clone()),
-        //     )
-        //     .child(
-        //         v_flex()
-        //             .gap_1()
-        //             .child(
-        //                 h_flex()
-        //                     .bg(cx.theme().colors().editor_background)
-        //                     .p_2()
-        //                     .border()
-        //                     .rounded_md()
-        //                     .border_color(if self.valid_email_address() {
-        //                         cx.theme().colors().border
-        //                     } else {
-        //                         cx.theme().status().error_border
-        //                     })
-        //                     .child(self.email_address_editor.clone()),
-        //             )
-        //             .child(
-        //                 Label::new("Provide an email address if you want us to be able to reply.")
-        //                     .size(LabelSize::Small)
-        //                     .color(Color::Muted),
-        //             ),
-        //     )
-        //     .child(
-        //         h_flex()
-        //             .justify_between()
-        //             .gap_1()
-        //             .child(
-        //                 Button::new("zed_repository", "Zed Repository")
-        //                     .style(ButtonStyle::Transparent)
-        //                     .icon(IconName::ExternalLink)
-        //                     .icon_position(IconPosition::End)
-        //                     .icon_size(IconSize::Small)
-        //                     .on_click(open_zed_repo),
-        //             )
-        //             .child(
-        //                 h_flex()
-        //                     .gap_1()
-        //                     .child(
-        //                         Button::new("cancel_feedback", "Cancel")
-        //                             .style(ButtonStyle::Subtle)
-        //                             .color(Color::Muted)
-        //                             .on_click(cx.listener(move |_, _, cx| {
-        //                                 cx.spawn(|this, mut cx| async move {
-        //                                     this.update(&mut cx, |_, cx| cx.emit(DismissEvent))
-        //                                         .ok();
-        //                                 })
-        //                                 .detach();
-        //                             })),
-        //                     )
-        //                     .child(
-        //                         Button::new("submit_feedback", submit_button_text)
-        //                             .color(Color::Accent)
-        //                             .style(ButtonStyle::Filled)
-        //                             .on_click(cx.listener(|this, _, cx| {
-        //                                 this.submit(cx).detach();
-        //                             }))
-        //                             .tooltip(move |cx| {
-        //                                 Tooltip::text("Submit feedback to the Zed team.", cx)
-        //                             })
-        //                             .when(!self.can_submit(), |this| this.disabled(true)),
-        //                     ),
-        //             ),
-        //     )
+            .gap_2()
+            .child(Headline::new("Share Feedback"))
+            .child(
+                Label::new(if self.character_count < *FEEDBACK_CHAR_LIMIT.start() {
+                    format!(
+                        "Feedback must be at least {} characters.",
+                        FEEDBACK_CHAR_LIMIT.start()
+                    )
+                } else {
+                    format!(
+                        "Characters: {}",
+                        *FEEDBACK_CHAR_LIMIT.end() - self.character_count
+                    )
+                })
+                .color(if self.valid_character_count() {
+                    Color::Success
+                } else {
+                    Color::Error
+                }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .p_2()
+                    .border()
+                    .rounded_md()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.feedback_editor.clone()),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .bg(cx.theme().colors().editor_background)
+                            .p_2()
+                            .border()
+                            .rounded_md()
+                            .border_color(if self.valid_email_address() {
+                                cx.theme().colors().border
+                            } else {
+                                cx.theme().status().error_border
+                            })
+                            .child(self.email_address_editor.clone()),
+                    )
+                    .child(
+                        Label::new("Provide an email address if you want us to be able to reply.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .gap_1()
+                    .child(
+                        Button::new("zed_repository", "Zed Repository")
+                            .style(ButtonStyle::Transparent)
+                            .icon(IconName::ExternalLink)
+                            .icon_position(IconPosition::End)
+                            .icon_size(IconSize::Small)
+                            .on_click(open_zed_repo),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("cancel_feedback", "Cancel")
+                                    .style(ButtonStyle::Subtle)
+                                    .color(Color::Muted)
+                                    .on_click(cx.listener(move |_, _, cx| {
+                                        cx.spawn(|this, mut cx| async move {
+                                            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))
+                                                .ok();
+                                        })
+                                        .detach();
+                                    })),
+                            )
+                            .child(
+                                Button::new("submit_feedback", submit_button_text)
+                                    .color(Color::Accent)
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.submit(cx).detach();
+                                    }))
+                                    .tooltip(move |cx| {
+                                        Tooltip::text("Submit feedback to the Zed team.", cx)
+                                    })
+                                    .when(!self.can_submit(), |this| this.disabled(true)),
+                            ),
+                    ),
+            )
     }
 }
 

@@ -25,9 +25,7 @@ theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace"}
-rich_text = { path = "../rich_text" }
 
-comrak = "0.21.0"
 bitflags = "2.4.1"
 human_bytes = "0.4.1"
 
