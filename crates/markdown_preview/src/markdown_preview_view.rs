@@ -1,4 +1,4 @@
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use gpui::{
     div, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, View, ViewContext,
@@ -39,6 +39,13 @@ impl MarkdownPreviewView {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+
+        cx.subscribe(&active_editor, |this, editor, event: &EditorEvent, cx| {
+            if *event == EditorEvent::Edited {
+                cx.notify();
+            }
+        })
+        .detach();
 
         Self {
             languages,
@@ -135,8 +142,8 @@ impl Item for MarkdownPreviewView {
 impl Render for MarkdownPreviewView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let container = div()
-            .elevation_3(cx)
             .key_context("MarkdownPreview")
+            .bg(cx.theme().colors().editor_background)
             .p_4()
             .gap_4();
 
