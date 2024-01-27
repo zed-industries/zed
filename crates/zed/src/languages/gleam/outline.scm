@@ -1,7 +1,7 @@
 (external_type
     (visibility_modifier)? @context
     "type" @context
-    (_) @name) @item
+    (type_name) @name) @item
 
 (type_definition
     (visibility_modifier)? @context
@@ -26,5 +26,6 @@
     name: (_) @name) @item
 
 (constant
+    (visibility_modifier)? @context
     "const" @context
     name: (_) @name) @item
