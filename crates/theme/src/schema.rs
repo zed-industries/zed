@@ -46,8 +46,6 @@ pub struct ThemeFamilyContent {
 pub struct ThemeContent {
     pub name: String,
     pub appearance: AppearanceContent,
-
-    #[serde(flatten)]
     pub style: ThemeStyleContent,
 }
 
