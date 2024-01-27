@@ -251,7 +251,7 @@ pub fn init(
     );
     language(
         "php",
-        tree_sitter_php::language(),
+        tree_sitter_php::language_php(),
         vec![
             Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
