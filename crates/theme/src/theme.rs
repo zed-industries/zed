@@ -15,9 +15,6 @@ mod scale;
 mod schema;
 mod settings;
 mod styles;
-#[cfg(not(feature = "importing-themes"))]
-mod themes;
-mod user_theme;
 
 use std::sync::Arc;
 
@@ -29,9 +26,6 @@ pub use scale::*;
 pub use schema::*;
 pub use settings::*;
 pub use styles::*;
-#[cfg(not(feature = "importing-themes"))]
-pub use themes::*;
-pub use user_theme::*;
 
 use gpui::{AppContext, AssetSource, Hsla, SharedString};
 use serde::Deserialize;

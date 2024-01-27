@@ -1249,6 +1249,12 @@ pub struct HighlightStyleContent {
     pub font_weight: Option<FontWeightContent>,
 }
 
+impl HighlightStyleContent {
+    pub fn is_empty(&self) -> bool {
+        self.color.is_none() && self.font_style.is_none() && self.font_weight.is_none()
+    }
+}
+
 fn treat_error_as_none<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     T: Deserialize<'de>,

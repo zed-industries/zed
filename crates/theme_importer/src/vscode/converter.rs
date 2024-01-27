@@ -1,30 +1,27 @@
 use anyhow::Result;
-use gpui::rgba;
 use indexmap::IndexMap;
 use strum::IntoEnumIterator;
 use theme::{
-    StatusColorsRefinement, ThemeColorsRefinement, UserFontStyle, UserFontWeight,
-    UserHighlightStyle, UserSyntaxTheme, UserTheme, UserThemeStylesRefinement,
+    FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
+    ThemeColorsContent, ThemeContent, ThemeStyleContent,
 };
 
-use crate::color::try_parse_color;
-use crate::util::Traverse;
 use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 use crate::ThemeMetadata;
 
 use super::ZedSyntaxToken;
 
-pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<UserFontWeight> {
+pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<FontWeightContent> {
     match font_style {
-        style if style.contains("bold") => Some(UserFontWeight::BOLD),
+        style if style.contains("bold") => Some(FontWeightContent::Bold),
         _ => None,
     }
 }
 
-pub(crate) fn try_parse_font_style(font_style: &str) -> Option<UserFontStyle> {
+pub(crate) fn try_parse_font_style(font_style: &str) -> Option<FontStyleContent> {
     match font_style {
-        style if style.contains("italic") => Some(UserFontStyle::Italic),
-        style if style.contains("oblique") => Some(UserFontStyle::Oblique),
+        style if style.contains("italic") => Some(FontStyleContent::Italic),
+        style if style.contains("oblique") => Some(FontStyleContent::Oblique),
         _ => None,
     }
 }
@@ -48,292 +45,145 @@ impl VsCodeThemeConverter {
         }
     }
 
-    pub fn convert(self) -> Result<UserTheme> {
+    pub fn convert(self) -> Result<ThemeContent> {
         let appearance = self.theme_metadata.appearance.into();
 
-        let status_color_refinements = self.convert_status_colors()?;
-        let theme_colors_refinements = self.convert_theme_colors()?;
+        let status_colors = self.convert_status_colors()?;
+        let theme_colors = self.convert_theme_colors()?;
         let syntax_theme = self.convert_syntax_theme()?;
 
-        Ok(UserTheme {
+        Ok(ThemeContent {
             name: self.theme_metadata.name,
             appearance,
-            styles: UserThemeStylesRefinement {
-                colors: theme_colors_refinements,
-                status: status_color_refinements,
-                player: None,
-                syntax: Some(syntax_theme),
+            style: ThemeStyleContent {
+                colors: theme_colors,
+                status: status_colors,
+                players: Vec::new(),
+                syntax: syntax_theme,
             },
         })
     }
 
-    fn convert_status_colors(&self) -> Result<StatusColorsRefinement> {
+    fn convert_status_colors(&self) -> Result<StatusColorsContent> {
         let vscode_colors = &self.theme.colors;
 
-        let vscode_base_status_colors = StatusColorsRefinement {
-            hint: Some(rgba(0x969696ff).into()),
+        let vscode_base_status_colors = StatusColorsContent {
+            hint: Some("#969696ff".to_string()),
             ..Default::default()
         };
 
-        Ok(StatusColorsRefinement {
-            created: vscode_colors
-                .editor_gutter_added_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            modified: vscode_colors
-                .editor_gutter_modified_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            deleted: vscode_colors
-                .editor_gutter_deleted_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+        Ok(StatusColorsContent {
+            created: vscode_colors.editor_gutter_added_background.clone(),
+            modified: vscode_colors.editor_gutter_modified_background.clone(),
+            deleted: vscode_colors.editor_gutter_deleted_background.clone(),
             conflict: vscode_colors
                 .git_decoration_conflicting_resource_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            error: vscode_colors
-                .error_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            hidden: vscode_colors
-                .tab_inactive_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .clone(),
+            error: vscode_colors.error_foreground.clone(),
+            hidden: vscode_colors.tab_inactive_foreground.clone(),
             hint: vscode_colors
                 .editor_inlay_hint_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?
+                .clone()
                 .or(vscode_base_status_colors.hint),
             ignored: vscode_colors
                 .git_decoration_ignored_resource_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .clone(),
             // info: None,
             // renamed: None,
             // success: None,
-            warning: vscode_colors
-                .list_warning_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+            warning: vscode_colors.list_warning_foreground.clone(),
             ..Default::default()
         })
     }
 
-    fn convert_theme_colors(&self) -> Result<ThemeColorsRefinement> {
+    fn convert_theme_colors(&self) -> Result<ThemeColorsContent> {
         let vscode_colors = &self.theme.colors;
 
-        let vscode_panel_border = vscode_colors
-            .panel_border
-            .as_ref()
-            .traverse(|color| try_parse_color(&color))?;
-
-        let vscode_tab_inactive_background = vscode_colors
-            .tab_inactive_background
-            .as_ref()
-            .traverse(|color| try_parse_color(&color))?;
-
-        let vscode_editor_foreground = vscode_colors
-            .editor_foreground
-            .as_ref()
-            .traverse(|color| try_parse_color(&color))?;
-
-        let vscode_editor_background = vscode_colors
-            .editor_background
-            .as_ref()
-            .traverse(|color| try_parse_color(&color))?;
-
-        let vscode_scrollbar_slider_background = vscode_colors
-            .scrollbar_slider_background
-            .as_ref()
-            .traverse(|color| try_parse_color(&color))?;
-
+        let vscode_panel_border = vscode_colors.panel_border.clone();
+        let vscode_tab_inactive_background = vscode_colors.tab_inactive_background.clone();
+        let vscode_editor_foreground = vscode_colors.editor_foreground.clone();
+        let vscode_editor_background = vscode_colors.editor_background.clone();
+        let vscode_scrollbar_slider_background = vscode_colors.scrollbar_slider_background.clone();
         let vscode_token_colors_foreground = self
             .theme
             .token_colors
             .iter()
             .find(|token_color| token_color.scope.is_none())
             .and_then(|token_color| token_color.settings.foreground.as_ref())
-            .traverse(|color| try_parse_color(&color))
-            .ok()
-            .flatten();
+            .cloned();
 
-        Ok(ThemeColorsRefinement {
-            border: vscode_panel_border,
-            border_variant: vscode_panel_border,
-            border_focused: vscode_colors
-                .focus_border
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            border_disabled: vscode_panel_border,
-            border_selected: vscode_panel_border,
-            border_transparent: vscode_panel_border,
-            elevated_surface_background: vscode_colors
-                .dropdown_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            surface_background: vscode_colors
-                .panel_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            background: vscode_editor_background,
-            title_bar_background: vscode_colors
-                .title_bar_active_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            status_bar_background: vscode_colors
-                .status_bar_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            element_background: vscode_colors
-                .button_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            element_hover: vscode_colors
-                .list_hover_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            element_selected: vscode_colors
-                .list_active_selection_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            ghost_element_hover: vscode_colors
-                .list_hover_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            ghost_element_selected: vscode_colors
-                .list_active_selection_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            drop_target_background: vscode_colors
-                .list_drop_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+        Ok(ThemeColorsContent {
+            border: vscode_panel_border.clone(),
+            border_variant: vscode_panel_border.clone(),
+            border_focused: vscode_colors.focus_border.clone(),
+            border_disabled: vscode_panel_border.clone(),
+            border_selected: vscode_panel_border.clone(),
+            border_transparent: vscode_panel_border.clone(),
+            elevated_surface_background: vscode_colors.dropdown_background.clone(),
+            surface_background: vscode_colors.panel_background.clone(),
+            background: vscode_editor_background.clone(),
+            title_bar_background: vscode_colors.title_bar_active_background.clone(),
+            status_bar_background: vscode_colors.status_bar_background.clone(),
+            element_background: vscode_colors.button_background.clone(),
+            element_hover: vscode_colors.list_hover_background.clone(),
+            element_selected: vscode_colors.list_active_selection_background.clone(),
+            ghost_element_hover: vscode_colors.list_hover_background.clone(),
+            ghost_element_selected: vscode_colors.list_active_selection_background.clone(),
+            drop_target_background: vscode_colors.list_drop_background.clone(),
             text: vscode_colors
                 .foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?
-                .or(vscode_token_colors_foreground),
-            text_muted: vscode_colors
-                .tab_inactive_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            link_text_hover: vscode_colors
-                .text_link_active_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            tab_bar_background: vscode_colors
-                .editor_group_header_tabs_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .clone()
+                .or(vscode_token_colors_foreground.clone()),
+            text_muted: vscode_colors.tab_inactive_foreground.clone(),
+            link_text_hover: vscode_colors.text_link_active_foreground.clone(),
+            tab_bar_background: vscode_colors.editor_group_header_tabs_background.clone(),
             tab_active_background: vscode_colors
                 .tab_active_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?
-                .or(vscode_tab_inactive_background),
-            tab_inactive_background: vscode_tab_inactive_background,
+                .clone()
+                .or(vscode_tab_inactive_background.clone()),
+            tab_inactive_background: vscode_tab_inactive_background.clone(),
             toolbar_background: vscode_colors
                 .breadcrumb_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?
-                .or(vscode_editor_background),
-            editor_foreground: vscode_editor_foreground.or(vscode_token_colors_foreground),
-            editor_background: vscode_editor_background,
-            editor_gutter_background: vscode_editor_background,
-            editor_line_number: vscode_colors
-                .editor_line_number_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            editor_active_line_number: vscode_colors
-                .editor_foreground
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            editor_wrap_guide: vscode_panel_border,
-            editor_active_wrap_guide: vscode_panel_border,
-            scrollbar_track_background: vscode_editor_background,
-            scrollbar_track_border: vscode_colors
-                .editor_overview_ruler_border
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            scrollbar_thumb_background: vscode_scrollbar_slider_background,
-            scrollbar_thumb_border: vscode_scrollbar_slider_background,
+                .clone()
+                .or(vscode_editor_background.clone()),
+            editor_foreground: vscode_editor_foreground
+                .clone()
+                .or(vscode_token_colors_foreground.clone()),
+            editor_background: vscode_editor_background.clone(),
+            editor_gutter_background: vscode_editor_background.clone(),
+            editor_line_number: vscode_colors.editor_line_number_foreground.clone(),
+            editor_active_line_number: vscode_colors.editor_foreground.clone(),
+            editor_wrap_guide: vscode_panel_border.clone(),
+            editor_active_wrap_guide: vscode_panel_border.clone(),
+            scrollbar_track_background: vscode_editor_background.clone(),
+            scrollbar_track_border: vscode_colors.editor_overview_ruler_border.clone(),
+            scrollbar_thumb_background: vscode_scrollbar_slider_background.clone(),
+            scrollbar_thumb_border: vscode_scrollbar_slider_background.clone(),
             scrollbar_thumb_hover_background: vscode_colors
                 .scrollbar_slider_hover_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_background: vscode_colors
-                .terminal_background
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_black: vscode_colors
-                .terminal_ansi_bright_black
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_red: vscode_colors
-                .terminal_ansi_bright_red
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_green: vscode_colors
-                .terminal_ansi_bright_green
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_yellow: vscode_colors
-                .terminal_ansi_bright_yellow
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_blue: vscode_colors
-                .terminal_ansi_bright_blue
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_magenta: vscode_colors
-                .terminal_ansi_bright_magenta
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_cyan: vscode_colors
-                .terminal_ansi_bright_cyan
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_bright_white: vscode_colors
-                .terminal_ansi_bright_white
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_black: vscode_colors
-                .terminal_ansi_black
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_red: vscode_colors
-                .terminal_ansi_red
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_green: vscode_colors
-                .terminal_ansi_green
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_yellow: vscode_colors
-                .terminal_ansi_yellow
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_blue: vscode_colors
-                .terminal_ansi_blue
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_magenta: vscode_colors
-                .terminal_ansi_magenta
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_cyan: vscode_colors
-                .terminal_ansi_cyan
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
-            terminal_ansi_white: vscode_colors
-                .terminal_ansi_white
-                .as_ref()
-                .traverse(|color| try_parse_color(&color))?,
+                .clone(),
+            terminal_background: vscode_colors.terminal_background.clone(),
+            terminal_ansi_bright_black: vscode_colors.terminal_ansi_bright_black.clone(),
+            terminal_ansi_bright_red: vscode_colors.terminal_ansi_bright_red.clone(),
+            terminal_ansi_bright_green: vscode_colors.terminal_ansi_bright_green.clone(),
+            terminal_ansi_bright_yellow: vscode_colors.terminal_ansi_bright_yellow.clone(),
+            terminal_ansi_bright_blue: vscode_colors.terminal_ansi_bright_blue.clone(),
+            terminal_ansi_bright_magenta: vscode_colors.terminal_ansi_bright_magenta.clone(),
+            terminal_ansi_bright_cyan: vscode_colors.terminal_ansi_bright_cyan.clone(),
+            terminal_ansi_bright_white: vscode_colors.terminal_ansi_bright_white.clone(),
+            terminal_ansi_black: vscode_colors.terminal_ansi_black.clone(),
+            terminal_ansi_red: vscode_colors.terminal_ansi_red.clone(),
+            terminal_ansi_green: vscode_colors.terminal_ansi_green.clone(),
+            terminal_ansi_yellow: vscode_colors.terminal_ansi_yellow.clone(),
+            terminal_ansi_blue: vscode_colors.terminal_ansi_blue.clone(),
+            terminal_ansi_magenta: vscode_colors.terminal_ansi_magenta.clone(),
+            terminal_ansi_cyan: vscode_colors.terminal_ansi_cyan.clone(),
+            terminal_ansi_white: vscode_colors.terminal_ansi_white.clone(),
             ..Default::default()
         })
     }
 
-    fn convert_syntax_theme(&self) -> Result<UserSyntaxTheme> {
+    fn convert_syntax_theme(&self) -> Result<IndexMap<String, HighlightStyleContent>> {
         let mut highlight_styles = IndexMap::new();
 
         for syntax_token in ZedSyntaxToken::iter() {
@@ -371,12 +221,8 @@ impl VsCodeThemeConverter {
                     .unwrap_or_else(|| "no identifier".to_string())
             );
 
-            let highlight_style = UserHighlightStyle {
-                color: token_color
-                    .settings
-                    .foreground
-                    .as_ref()
-                    .traverse(|color| try_parse_color(&color))?,
+            let highlight_style = HighlightStyleContent {
+                color: token_color.settings.foreground.clone(),
                 font_style: token_color
                     .settings
                     .font_style
@@ -396,8 +242,6 @@ impl VsCodeThemeConverter {
             highlight_styles.insert(syntax_token.to_string(), highlight_style);
         }
 
-        Ok(UserSyntaxTheme {
-            highlights: highlight_styles.into_iter().collect(),
-        })
+        Ok(highlight_styles)
     }
 }
