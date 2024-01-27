@@ -35,7 +35,7 @@
         "icon.muted": "#736e55ff",
         "icon.disabled": "#4c4735ff",
         "icon.placeholder": "#736e55ff",
-        "con.accent": "#499befff",
+        "icon.accent": "#499befff",
         "status_bar.background": "#2a261cff",
         "title_bar.background": "#2a261cff",
         "toolbar.background": "#1b1810ff",
