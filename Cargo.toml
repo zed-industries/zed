@@ -92,7 +92,7 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = { version = "1.0.57" }
 async-trait = { version = "0.1" }
-async-compression = { version = "0.4", features = ["gzip", "xz", "futures-io"] }
+async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 chrono = { version = "0.4", features = ["serde"] }
 ctor = "0.2.6"
 derive_more = { version = "0.99.17" }
