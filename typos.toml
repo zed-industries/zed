@@ -19,6 +19,7 @@ extend-exclude = [
 extend-ignore-re = [
     '"ba"',
     ":ba\\|z",
+    # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
     "ADD COLUMN enviroment TEXT",
 ]
 check-filename = true
