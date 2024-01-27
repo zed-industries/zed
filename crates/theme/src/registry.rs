@@ -6,8 +6,9 @@ use gpui::{AssetSource, HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
-    try_parse_color, Appearance, AppearanceContent, PlayerColors, StatusColors, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent, ThemeStyles,
+    try_parse_color, Appearance, AppearanceContent, PlayerColor, PlayerColors, StatusColors,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
+    ThemeStyles,
 };
 
 #[derive(Debug, Clone)]
@@ -80,7 +81,30 @@ impl ThemeRegistry {
                 AppearanceContent::Dark => PlayerColors::dark(),
             };
             if !user_theme.style.players.is_empty() {
-                // player_colors = user_theme.style.players;
+                player_colors = PlayerColors(
+                    user_theme
+                        .style
+                        .players
+                        .into_iter()
+                        .map(|player| PlayerColor {
+                            cursor: player
+                                .cursor
+                                .as_ref()
+                                .and_then(|color| try_parse_color(&color).ok())
+                                .unwrap_or_default(),
+                            background: player
+                                .background
+                                .as_ref()
+                                .and_then(|color| try_parse_color(&color).ok())
+                                .unwrap_or_default(),
+                            selection: player
+                                .selection
+                                .as_ref()
+                                .and_then(|color| try_parse_color(&color).ok())
+                                .unwrap_or_default(),
+                        })
+                        .collect(),
+                );
             }
 
             let mut syntax_colors = match user_theme.appearance {
