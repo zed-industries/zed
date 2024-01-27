@@ -115,7 +115,19 @@ fn main() -> Result<()> {
         }
 
         for family in families {
-            println!("{}", serde_json::to_string_pretty(&family).unwrap());
+            let theme_family_slug = any_ascii(&family.name)
+                .replace("(", "")
+                .replace(")", "")
+                .to_case(Case::Snake);
+
+            let output_dir = PathBuf::from("assets/themes/").join(&theme_family_slug);
+
+            fs::create_dir_all(&output_dir)?;
+
+            let mut output_file =
+                File::create(output_dir.join(format!("{theme_family_slug}.json")))?;
+
+            output_file.write_all(serde_json::to_string_pretty(&family).unwrap().as_bytes())?;
         }
 
         return Ok(());
