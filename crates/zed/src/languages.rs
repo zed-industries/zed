@@ -299,6 +299,12 @@ pub fn init(
         tree_sitter_nu::language(),
         vec![Arc::new(nu::NuLanguageServer {})],
     );
+    language("ocaml", tree_sitter_ocaml::language_ocaml(), vec![]);
+    language(
+        "ocaml-interface",
+        tree_sitter_ocaml::language_ocaml_interface(),
+        vec![],
+    );
     language(
         "vue",
         tree_sitter_vue::language(),
