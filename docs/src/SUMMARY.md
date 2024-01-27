@@ -6,6 +6,7 @@
 # Configuring Zed
 
 - [Settings](./configuring_zed.md)
+- [Key bindings](./configuring_zed__key_bindings.md)
 - [Vim Mode](./configuring_zed__configuring_vim.md)
 
 # Using Zed
