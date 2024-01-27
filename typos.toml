@@ -1,5 +1,6 @@
 [files]
 ignore-files = true
+ignore-hidden = false
 extend-exclude = [
     # glsl isn't recognized by this tool
     "crates/zed/src/languages/glsl/*",
@@ -12,10 +13,12 @@ extend-exclude = [
     # Editor and file finder rely on partial typing and custom in-string syntax
     "crates/file_finder/src/file_finder_tests.rs",
     "crates/editor/src/editor_tests.rs",
-    # :/
-    "crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql",
 ]
 
 [default]
-extend-ignore-re = ["ba"]
+extend-ignore-re = [
+    '"ba"',
+    ":ba\\|z",
+    "ADD COLUMN enviroment TEXT",
+]
 check-filename = true
