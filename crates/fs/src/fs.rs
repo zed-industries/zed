@@ -2,9 +2,14 @@ pub mod repository;
 
 use anyhow::{anyhow, Result};
 #[cfg(target_os = "macos")]
-use fsevent::{Event, EventStream};
+pub use fsevent::Event;
+#[cfg(target_os = "macos")]
+use fsevent::EventStream;
+
 #[cfg(not(target_os = "macos"))]
-use notify::{Event, Watcher, Config};
+pub use notify::Event;
+#[cfg(not(target_os = "macos"))]
+use notify::{Config, Watcher};
 
 use futures::{future::BoxFuture, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
@@ -319,6 +324,20 @@ impl Fs for RealFs {
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
+    events.into_iter().map(|event| event.path).collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn fs_events_paths(events: Vec<Event>) -> Vec<PathBuf> {
+    events
+        .into_iter()
+        .map(|event| event.paths.into_iter())
+        .flatten()
+        .collect()
 }
 
 #[cfg(any(test, feature = "test-support"))]
