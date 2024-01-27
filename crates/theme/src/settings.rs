@@ -51,6 +51,10 @@ pub struct ThemeSettingsContent {
     pub buffer_font_features: Option<FontFeatures>,
     #[serde(default)]
     pub theme: Option<String>,
+    #[serde(default)]
+    pub theme_dark: Option<String>,
+    #[serde(default)]
+    pub theme_mode: Option<String>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -166,6 +170,13 @@ impl settings::Settings for ThemeSettings {
     ) -> Result<Self> {
         let themes = cx.default_global::<ThemeRegistry>();
 
+        let mut use_dark_theme = matches!(defaults.theme_mode.as_deref(), Some("dark"));
+        for value in user_values.into_iter().copied().cloned() {
+            if let Some(theme_mode) = value.theme_mode.as_ref() {
+                use_dark_theme = theme_mode == "dark"
+            }
+        }
+
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
@@ -183,7 +194,11 @@ impl settings::Settings for ThemeSettings {
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             active_theme: themes
-                .get(defaults.theme.as_ref().unwrap())
+                .get(if use_dark_theme {
+                    defaults.theme_dark.as_ref().unwrap()
+                } else {
+                    defaults.theme.as_ref().unwrap()
+                })
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
@@ -204,7 +219,11 @@ impl settings::Settings for ThemeSettings {
                 this.ui_font.features = value;
             }
 
-            if let Some(value) = &value.theme {
+            if let Some(value) = if use_dark_theme {
+                &value.theme_dark
+            } else {
+                &value.theme
+            } {
                 if let Some(theme) = themes.get(value).log_err() {
                     this.active_theme = theme;
                 }
