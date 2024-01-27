@@ -12,4 +12,4 @@ Use `⌘` + `,` to open your custom settings to set things like fonts, formattin
 
 ### Set up your key bindings
 
-You can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K` + `S` to open your custom keymap to add your own key bindings. See Key Bindings for more info.
+You can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K`, `⌘` + `S` to open your custom keymap to add your own key bindings. See Key Bindings for more info.
