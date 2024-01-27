@@ -26,6 +26,7 @@ mod python;
 mod ruby;
 mod rust;
 mod svelte;
+mod swift;
 mod tailwind;
 mod typescript;
 mod uiua;
@@ -243,6 +244,11 @@ pub fn init(
         ],
     );
     language(
+        "swift",
+        tree_sitter_swift::language(),
+        vec![Arc::new(swift::SourcekitLspAdapter)],
+    );
+    language(
         "php",
         tree_sitter_php::language(),
         vec![
@@ -250,7 +256,6 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);

@@ -8599,6 +8599,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-swift"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "452e6ee0a14b82a0dcd93400b8d3fe3784fdbd775191a89ef84586e5ccec6be7"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-toml"
 version = "0.5.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-toml?rev=342d9be207c2dba869b9967124c679b5e6fd0ebe#342d9be207c2dba869b9967124c679b5e6fd0ebe"
@@ -9736,6 +9746,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-scheme",
  "tree-sitter-svelte",
+ "tree-sitter-swift",
  "tree-sitter-toml",
  "tree-sitter-typescript",
  "tree-sitter-uiua",
