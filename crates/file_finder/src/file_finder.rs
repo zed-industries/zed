@@ -156,26 +156,24 @@ struct ProjectPanelOrdMatch(PathMatch);
 
 impl Ord for ProjectPanelOrdMatch {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.partial_cmp(other).unwrap()
+        self.0
+            .score
+            .partial_cmp(&other.0.score)
+            .unwrap_or(cmp::Ordering::Equal)
+            .then_with(|| self.0.worktree_id.cmp(&other.0.worktree_id))
+            .then_with(|| {
+                other
+                    .0
+                    .distance_to_relative_ancestor
+                    .cmp(&self.0.distance_to_relative_ancestor)
+            })
+            .then_with(|| self.0.path.cmp(&other.0.path).reverse())
     }
 }
 
 impl PartialOrd for ProjectPanelOrdMatch {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(
-            self.0
-                .score
-                .partial_cmp(&other.0.score)
-                .unwrap_or(cmp::Ordering::Equal)
-                .then_with(|| self.0.worktree_id.cmp(&other.0.worktree_id))
-                .then_with(|| {
-                    other
-                        .0
-                        .distance_to_relative_ancestor
-                        .cmp(&self.0.distance_to_relative_ancestor)
-                })
-                .then_with(|| self.0.path.cmp(&other.0.path).reverse()),
-        )
+        Some(self.cmp(other))
     }
 }
 
