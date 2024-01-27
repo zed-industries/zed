@@ -127,7 +127,9 @@ fn main() -> Result<()> {
             let mut output_file =
                 File::create(output_dir.join(format!("{theme_family_slug}.json")))?;
 
-            output_file.write_all(serde_json::to_string_pretty(&family).unwrap().as_bytes())?;
+            let theme_json = serde_json::to_string_pretty(&family).unwrap();
+
+            output_file.write_all(format!("{theme_json}\n").as_bytes())?;
         }
 
         return Ok(());
