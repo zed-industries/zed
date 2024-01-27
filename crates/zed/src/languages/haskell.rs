@@ -1,83 +1,37 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
-use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
-use settings::Settings;
-use std::ops::Deref;
 use std::{any::Any, path::PathBuf};
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-pub struct HaskellSettings {
-    pub lsp: HaskellLspSetting,
-}
-
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HaskellLspSetting {
-    None,
-    Local {
-        path: String,
-        arguments: Vec<String>,
-    },
-}
-
-#[derive(Clone, Serialize, Default, Deserialize, JsonSchema)]
-pub struct HaskellSettingsContent {
-    lsp: Option<HaskellLspSetting>,
-}
-
-impl Settings for HaskellSettings {
-    const KEY: Option<&'static str> = Some("haskell");
-
-    type FileContent = HaskellSettingsContent;
-
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Self::load_via_json_merge(default_value, user_values)
-    }
-}
-
-pub struct LocalLspAdapter {
-    pub path: String,
-    pub arguments: Vec<String>,
-}
+pub struct HaskellLanguageServer;
 
 #[async_trait]
-impl LspAdapter for LocalLspAdapter {
+impl LspAdapter for HaskellLanguageServer {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("local-hls".into())
+        LanguageServerName("hls".into())
     }
 
     fn short_name(&self) -> &'static str {
-        "local-hls"
+        "hls"
     }
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(()) as Box<_>)
+    ) -> Result<Box<dyn 'static + Any + Send>> {
+        Ok(Box::new(()))
     }
 
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
-        _: PathBuf,
+        _version: Box<dyn 'static + Send + Any>,
+        _container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let path = shellexpand::full(&self.path)?;
-        Ok(LanguageServerBinary {
-            path: PathBuf::from(path.deref()),
-            arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
-        })
+        Err(anyhow!(
+            "hls (haskell language server) must be installed via ghcup"
+        ))
     }
 
     async fn cached_server_binary(
@@ -85,18 +39,17 @@ impl LspAdapter for LocalLspAdapter {
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let path = shellexpand::full(&self.path).ok()?;
         Some(LanguageServerBinary {
-            path: PathBuf::from(path.deref()),
-            arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
+            path: "haskell-language-server-wrapper".into(),
+            arguments: vec!["lsp".into()],
         })
     }
 
+    fn can_be_reinstalled(&self) -> bool {
+        false
+    }
+
     async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
-        let path = shellexpand::full(&self.path).ok()?;
-        Some(LanguageServerBinary {
-            path: PathBuf::from(path.deref()),
-            arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
-        })
+        None
     }
 }

@@ -451,10 +451,6 @@
   "deno": {
     "enable": false
   },
-  // Settings specific to the Haskell integration
-  "haskell": {
-    "lsp": "none"
-  },
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {

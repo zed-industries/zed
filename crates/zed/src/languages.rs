@@ -7,7 +7,7 @@ use settings::Settings;
 use std::{borrow::Cow, str, sync::Arc};
 use util::{asset_str, paths::PLUGINS_DIR};
 
-use self::{deno::DenoSettings, elixir::ElixirSettings, haskell::HaskellSettings};
+use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
 mod css;
@@ -55,7 +55,6 @@ pub fn init(
 ) {
     ElixirSettings::register(cx);
     DenoSettings::register(cx);
-    HaskellSettings::register(cx);
 
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
@@ -204,20 +203,11 @@ pub fn init(
         }
     }
 
-    match &HaskellSettings::get(None, cx).lsp {
-        haskell::HaskellLspSetting::None => {
-            language("haskell", tree_sitter_haskell::language(), vec![])
-        }
-        haskell::HaskellLspSetting::Local { path, arguments } => language(
-            "haskell",
-            tree_sitter_haskell::language(),
-            vec![Arc::new(haskell::LocalLspAdapter {
-                path: path.clone(),
-                arguments: arguments.clone(),
-            })],
-        ),
-    }
-
+    language(
+        "haskell",
+        tree_sitter_haskell::language(),
+        vec![Arc::new(haskell::HaskellLanguageServer {})],
+    );
     language(
         "html",
         tree_sitter_html::language(),
