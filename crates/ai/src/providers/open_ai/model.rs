@@ -4,6 +4,8 @@ use util::ResultExt;
 
 use crate::models::{LanguageModel, TruncationDirection};
 
+use super::OPENAI_BPE_TOKENIZER;
+
 #[derive(Clone)]
 pub struct OpenAILanguageModel {
     name: String,
@@ -12,10 +14,11 @@ pub struct OpenAILanguageModel {
 
 impl OpenAILanguageModel {
     pub fn load(model_name: &str) -> Self {
-        let bpe = tiktoken_rs::get_bpe_from_model(model_name).log_err();
+        let bpe =
+            tiktoken_rs::get_bpe_from_model(model_name).unwrap_or(OPENAI_BPE_TOKENIZER.to_owned());
         OpenAILanguageModel {
             name: model_name.to_string(),
-            bpe,
+            bpe: Some(bpe),
         }
     }
 }
