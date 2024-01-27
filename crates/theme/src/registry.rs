@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use gpui::{HighlightStyle, SharedString};
+use gpui::{AssetSource, HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
-    Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme, ThemeColors,
-    ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
+    try_parse_color, Appearance, AppearanceContent, PlayerColor, PlayerColors, StatusColors,
+    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
+    ThemeStyles,
 };
 
 #[derive(Debug, Clone)]
@@ -17,10 +18,27 @@ pub struct ThemeMeta {
 }
 
 pub struct ThemeRegistry {
+    assets: Box<dyn AssetSource>,
     themes: HashMap<SharedString, Arc<Theme>>,
 }
 
 impl ThemeRegistry {
+    pub fn new(assets: Box<dyn AssetSource>) -> Self {
+        let mut registry = Self {
+            assets,
+            themes: HashMap::new(),
+        };
+
+        // We're loading our new versions of the One themes by default, as
+        // we need them to be loaded for tests.
+        //
+        // These themes will get overwritten when `load_user_themes` is called
+        // when Zed starts, so the One variants used will be the ones ported from Zed1.
+        registry.insert_theme_families([crate::one_themes::one_family()]);
+
+        registry
+    }
+
     fn insert_theme_families(&mut self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);
@@ -34,48 +52,78 @@ impl ThemeRegistry {
     }
 
     #[allow(unused)]
-    fn insert_user_theme_families(&mut self, families: impl IntoIterator<Item = UserThemeFamily>) {
+    fn insert_user_theme_families(
+        &mut self,
+        families: impl IntoIterator<Item = ThemeFamilyContent>,
+    ) {
         for family in families.into_iter() {
             self.insert_user_themes(family.themes);
         }
     }
 
     #[allow(unused)]
-    fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = UserTheme>) {
+    fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = ThemeContent>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
-                Appearance::Light => ThemeColors::light(),
-                Appearance::Dark => ThemeColors::dark(),
+                AppearanceContent::Light => ThemeColors::light(),
+                AppearanceContent::Dark => ThemeColors::dark(),
             };
-            theme_colors.refine(&user_theme.styles.colors);
+            theme_colors.refine(&user_theme.style.theme_colors_refinement());
 
             let mut status_colors = match user_theme.appearance {
-                Appearance::Light => StatusColors::light(),
-                Appearance::Dark => StatusColors::dark(),
+                AppearanceContent::Light => StatusColors::light(),
+                AppearanceContent::Dark => StatusColors::dark(),
             };
-            status_colors.refine(&user_theme.styles.status);
+            status_colors.refine(&user_theme.style.status_colors_refinement());
 
             let mut player_colors = match user_theme.appearance {
-                Appearance::Light => PlayerColors::light(),
-                Appearance::Dark => PlayerColors::dark(),
+                AppearanceContent::Light => PlayerColors::light(),
+                AppearanceContent::Dark => PlayerColors::dark(),
             };
-            if let Some(player_colors_from_theme) = user_theme.styles.player {
-                player_colors = player_colors_from_theme;
+            if !user_theme.style.players.is_empty() {
+                player_colors = PlayerColors(
+                    user_theme
+                        .style
+                        .players
+                        .into_iter()
+                        .map(|player| PlayerColor {
+                            cursor: player
+                                .cursor
+                                .as_ref()
+                                .and_then(|color| try_parse_color(&color).ok())
+                                .unwrap_or_default(),
+                            background: player
+                                .background
+                                .as_ref()
+                                .and_then(|color| try_parse_color(&color).ok())
+                                .unwrap_or_default(),
+                            selection: player
+                                .selection
+                                .as_ref()
+                                .and_then(|color| try_parse_color(&color).ok())
+                                .unwrap_or_default(),
+                        })
+                        .collect(),
+                );
             }
 
             let mut syntax_colors = match user_theme.appearance {
-                Appearance::Light => SyntaxTheme::light(),
-                Appearance::Dark => SyntaxTheme::dark(),
+                AppearanceContent::Light => SyntaxTheme::light(),
+                AppearanceContent::Dark => SyntaxTheme::dark(),
             };
-            if let Some(user_syntax) = user_theme.styles.syntax {
-                syntax_colors.highlights = user_syntax
-                    .highlights
+            if !user_theme.style.syntax.is_empty() {
+                syntax_colors.highlights = user_theme
+                    .style
+                    .syntax
                     .iter()
                     .map(|(syntax_token, highlight)| {
                         (
                             syntax_token.clone(),
                             HighlightStyle {
-                                color: highlight.color,
+                                color: highlight
+                                    .color
+                                    .as_ref()
+                                    .and_then(|color| try_parse_color(&color).ok()),
                                 font_style: highlight.font_style.map(Into::into),
                                 font_weight: highlight.font_weight.map(Into::into),
                                 ..Default::default()
@@ -88,7 +136,10 @@ impl ThemeRegistry {
             Theme {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: user_theme.name.into(),
-                appearance: user_theme.appearance,
+                appearance: match user_theme.appearance {
+                    AppearanceContent::Light => Appearance::Light,
+                    AppearanceContent::Dark => Appearance::Dark,
+                },
                 styles: ThemeStyles {
                     system: SystemColors::default(),
                     colors: theme_colors,
@@ -124,24 +175,28 @@ impl ThemeRegistry {
     }
 
     pub fn load_user_themes(&mut self) {
-        #[cfg(not(feature = "importing-themes"))]
-        self.insert_user_theme_families(crate::all_user_themes());
+        let theme_paths = self
+            .assets
+            .list("themes/")
+            .unwrap()
+            .into_iter()
+            .filter(|path| path.ends_with(".json"));
+
+        for path in theme_paths {
+            let theme = self
+                .assets
+                .load(&path)
+                .expect(&format!("Failed to load theme '{path}'"));
+
+            let theme_family: ThemeFamilyContent = serde_json::from_slice(&theme).unwrap();
+
+            self.insert_user_theme_families([theme_family]);
+        }
     }
 }
 
 impl Default for ThemeRegistry {
     fn default() -> Self {
-        let mut registry = Self {
-            themes: HashMap::default(),
-        };
-
-        // We're loading our new versions of the One themes by default, as
-        // we need them to be loaded for tests.
-        //
-        // These themes will get overwritten when `load_user_themes` is called
-        // when Zed starts, so the One variants used will be the ones ported from Zed1.
-        registry.insert_theme_families([crate::one_themes::one_family()]);
-
-        registry
+        Self::new(Box::new(()))
     }
 }

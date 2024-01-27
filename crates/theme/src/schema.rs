@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{HighlightStyle, Hsla};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
 use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::gen::SchemaGenerator;
@@ -11,7 +11,7 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
-fn try_parse_color(color: &str) -> Result<Hsla> {
+pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     let rgba = gpui::Rgba::try_from(color)?;
     let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
     let hsla = palette::Hsla::from_color(rgba);
@@ -1171,6 +1171,16 @@ pub enum FontStyleContent {
     Oblique,
 }
 
+impl From<FontStyleContent> for FontStyle {
+    fn from(value: FontStyleContent) -> Self {
+        match value {
+            FontStyleContent::Normal => FontStyle::Normal,
+            FontStyleContent::Italic => FontStyle::Italic,
+            FontStyleContent::Oblique => FontStyle::Oblique,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(u16)]
 pub enum FontWeightContent {
@@ -1208,6 +1218,22 @@ impl JsonSchema for FontWeightContent {
             900.into(),
         ]);
         schema_object.into()
+    }
+}
+
+impl From<FontWeightContent> for FontWeight {
+    fn from(value: FontWeightContent) -> Self {
+        match value {
+            FontWeightContent::Thin => FontWeight::THIN,
+            FontWeightContent::ExtraLight => FontWeight::EXTRA_LIGHT,
+            FontWeightContent::Light => FontWeight::LIGHT,
+            FontWeightContent::Normal => FontWeight::NORMAL,
+            FontWeightContent::Medium => FontWeight::MEDIUM,
+            FontWeightContent::Semibold => FontWeight::SEMIBOLD,
+            FontWeightContent::Bold => FontWeight::BOLD,
+            FontWeightContent::ExtraBold => FontWeight::EXTRA_BOLD,
+            FontWeightContent::Black => FontWeight::BLACK,
+        }
     }
 }
 

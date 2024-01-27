@@ -69,7 +69,7 @@ fn main() {
             .unwrap();
         cx.set_global(store);
 
-        theme::init(theme::LoadThemes::All, cx);
+        theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
         let selector = story_selector;
 
