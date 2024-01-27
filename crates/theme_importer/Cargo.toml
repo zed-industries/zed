@@ -23,5 +23,5 @@ serde.workspace = true
 serde_json.workspace = true
 simplelog = "0.9"
 strum = { version = "0.25.0", features = ["derive"] }
-theme = { path = "../theme", features = ["importing-themes"] }
+theme = { path = "../theme", features = [] }
 uuid.workspace = true

@@ -11,9 +11,7 @@
 /crates/collab/static/styles.css
 /crates/collab/.admins.json
 /vendor/bin
-/assets/themes/*.json
 /assets/*licenses.md
-/assets/themes/staff/*.json
 **/venv
 .build
 Packages

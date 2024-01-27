@@ -26,10 +26,33 @@ fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(hsla)
 }
 
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceContent {
+    Light,
+    Dark,
+}
+
+/// The content of a serialized theme family.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ThemeFamilyContent {
+    pub name: String,
+    pub author: String,
+    pub themes: Vec<ThemeContent>,
+}
+
+/// The content of a serialized theme.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ThemeContent {
+    pub name: String,
+    pub appearance: AppearanceContent,
+    pub style: ThemeStyleContent,
+}
+
 /// The content of a serialized theme.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
-pub struct ThemeContent {
+pub struct ThemeStyleContent {
     #[serde(flatten, default)]
     pub colors: ThemeColorsContent,
 
@@ -41,7 +64,7 @@ pub struct ThemeContent {
     pub syntax: IndexMap<String, HighlightStyleContent>,
 }
 
-impl ThemeContent {
+impl ThemeStyleContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeContent`].
     #[inline(always)]
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
@@ -230,7 +253,7 @@ pub struct ThemeColorsContent {
     /// Fill Color. Used for the accent fill color of an icon.
     ///
     /// This might be used to show when a toggleable icon button is selected.
-    #[serde(rename = "con.accent")]
+    #[serde(rename = "icon.accent")]
     pub icon_accent: Option<String>,
 
     #[serde(rename = "status_bar.background")]
