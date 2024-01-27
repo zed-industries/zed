@@ -7,7 +7,7 @@ mod zed1;
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
@@ -405,10 +405,18 @@ fn main() -> Result<()> {
 
     let mut licenses_file = OpenOptions::new()
         .append(true)
-        .create_new(true)
+        .read(true)
+        .create(true)
         .open(themes_output_path.join(format!("LICENSES")))?;
 
-    licenses_file.write(licenses.join("\n").as_bytes())?;
+    for license in &licenses {
+        let mut licenses_content = String::new();
+        licenses_file.read_to_string(&mut licenses_content)?;
+        if licenses_content.contains(license) {
+            continue;
+        }
+        licenses_file.write(licenses.join("\n").as_bytes())?;
+    }
 
     log::info!("Formatting themes...");
 
