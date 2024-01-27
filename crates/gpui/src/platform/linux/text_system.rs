@@ -55,13 +55,13 @@ impl Default for LinuxTextSystem {
 #[allow(unused)]
 impl PlatformTextSystem for LinuxTextSystem {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
-        unimplemented!()
+        Ok(()) //TODO
     }
     fn all_font_names(&self) -> Vec<String> {
-        unimplemented!()
+        Vec::new()
     }
     fn all_font_families(&self) -> Vec<String> {
-        unimplemented!()
+        Vec::new()
     }
     fn font_id(&self, descriptor: &Font) -> Result<FontId> {
         unimplemented!()
