@@ -67,8 +67,6 @@ simplelog = "0.9"
 
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-core-foundation = "0.9.3"
-core-graphics = "0.22.3"
 cocoa = "0.25"
 objc = "0.2"
 
