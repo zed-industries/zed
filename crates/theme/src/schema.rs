@@ -2,8 +2,12 @@ use anyhow::Result;
 use gpui::{HighlightStyle, Hsla};
 use indexmap::IndexMap;
 use palette::FromColor;
+use schemars::gen::SchemaGenerator;
+use schemars::schema::{Schema, SchemaObject};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -1126,8 +1130,71 @@ impl StatusColorsContent {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FontStyleContent {
+    Normal,
+    Italic,
+    Oblique,
+}
+
+#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[repr(u16)]
+pub enum FontWeightContent {
+    Thin = 100,
+    ExtraLight = 200,
+    Light = 300,
+    Normal = 400,
+    Medium = 500,
+    Semibold = 600,
+    Bold = 700,
+    ExtraBold = 800,
+    Black = 900,
+}
+
+impl JsonSchema for FontWeightContent {
+    fn schema_name() -> String {
+        "FontWeightContent".to_owned()
+    }
+
+    fn is_referenceable() -> bool {
+        false
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let mut schema_object = SchemaObject::default();
+        schema_object.enum_values = Some(vec![
+            100.into(),
+            200.into(),
+            300.into(),
+            400.into(),
+            500.into(),
+            600.into(),
+            700.into(),
+            800.into(),
+            900.into(),
+        ]);
+        schema_object.into()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct HighlightStyleContent {
     pub color: Option<String>,
+
+    #[serde(deserialize_with = "treat_error_as_none")]
+    pub font_style: Option<FontStyleContent>,
+
+    #[serde(deserialize_with = "treat_error_as_none")]
+    pub font_weight: Option<FontWeightContent>,
+}
+
+fn treat_error_as_none<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let value: Value = Deserialize::deserialize(deserializer)?;
+    Ok(T::deserialize(value).ok())
 }

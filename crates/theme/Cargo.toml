@@ -32,6 +32,7 @@ schemars = { workspace = true, features = ["indexmap"] }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+serde_repr.workspace = true
 settings = { path = "../settings" }
 story = { path = "../story", optional = true }
 toml.workspace = true
