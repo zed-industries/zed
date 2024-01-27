@@ -266,6 +266,7 @@ pub fn init(
         tree_sitter_nu::language(),
         vec![Arc::new(nu::NuLanguageServer {})],
     );
+    language("solidity", tree_sitter_solidity::language(), vec![]);
     language(
         "vue",
         tree_sitter_vue::language(),

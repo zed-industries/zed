@@ -1,0 +1,9 @@
+name = "Solidity"
+path_suffixes = ["sol"]
+line_comment = ["// ", "/// "]
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
