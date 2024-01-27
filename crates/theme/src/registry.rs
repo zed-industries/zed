@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use gpui::{HighlightStyle, SharedString};
+use gpui::{AssetSource, HighlightStyle, SharedString};
 use refineable::Refineable;
 
 use crate::{
     Appearance, PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme, ThemeColors,
-    ThemeFamily, ThemeStyles, UserTheme, UserThemeFamily,
+    ThemeFamily, ThemeFamilyContent, ThemeStyles, UserTheme, UserThemeFamily,
 };
 
 #[derive(Debug, Clone)]
@@ -17,10 +17,27 @@ pub struct ThemeMeta {
 }
 
 pub struct ThemeRegistry {
+    assets: Box<dyn AssetSource>,
     themes: HashMap<SharedString, Arc<Theme>>,
 }
 
 impl ThemeRegistry {
+    pub fn new(assets: Box<dyn AssetSource>) -> Self {
+        let mut registry = Self {
+            assets,
+            themes: HashMap::new(),
+        };
+
+        // We're loading our new versions of the One themes by default, as
+        // we need them to be loaded for tests.
+        //
+        // These themes will get overwritten when `load_user_themes` is called
+        // when Zed starts, so the One variants used will be the ones ported from Zed1.
+        registry.insert_theme_families([crate::one_themes::one_family()]);
+
+        registry
+    }
+
     fn insert_theme_families(&mut self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);
@@ -124,6 +141,24 @@ impl ThemeRegistry {
     }
 
     pub fn load_user_themes(&mut self) {
+        let theme_paths = self
+            .assets
+            .list("themes/")
+            .unwrap()
+            .into_iter()
+            .filter(|path| path.ends_with(".json"));
+
+        for path in theme_paths {
+            let theme = self
+                .assets
+                .load(&path)
+                .expect(&format!("Failed to load theme '{path}'"));
+
+            let theme_family: ThemeFamilyContent = serde_json::from_slice(&theme).unwrap();
+
+            dbg!(theme_family.name);
+        }
+
         #[cfg(not(feature = "importing-themes"))]
         self.insert_user_theme_families(crate::all_user_themes());
     }
@@ -131,17 +166,6 @@ impl ThemeRegistry {
 
 impl Default for ThemeRegistry {
     fn default() -> Self {
-        let mut registry = Self {
-            themes: HashMap::default(),
-        };
-
-        // We're loading our new versions of the One themes by default, as
-        // we need them to be loaded for tests.
-        //
-        // These themes will get overwritten when `load_user_themes` is called
-        // when Zed starts, so the One variants used will be the ones ported from Zed1.
-        registry.insert_theme_families([crate::one_themes::one_family()]);
-
-        registry
+        Self::new(Box::new(()))
     }
 }

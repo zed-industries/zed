@@ -149,7 +149,7 @@ fn main() {
         cx.set_global(client.clone());
 
         zed::init(cx);
-        theme::init(theme::LoadThemes::All, cx);
+        theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);
