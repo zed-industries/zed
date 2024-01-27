@@ -14,12 +14,13 @@ use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
-actions!(theme_selector, [Toggle, Reload]);
+actions!(theme_selector, [Toggle, ToggleMode, Reload]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(toggle);
+            workspace.register_action(toggle_mode);
         },
     )
     .detach();
@@ -34,6 +35,15 @@ pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Worksp
             cx,
         )
     });
+}
+
+pub fn toggle_mode(workspace: &mut Workspace, _: &ToggleMode, cx: &mut ViewContext<Workspace>) {
+    let fs = workspace.app_state().fs.clone();
+    update_settings_file::<ThemeSettings>(fs, cx, move |settings| {
+        let is_dark_mode = settings.theme_mode.as_deref() == Some("dark");
+        let new_theme_mode = if is_dark_mode { "light" } else { "dark" };
+        settings.theme_mode = Some(new_theme_mode.to_string());
+    })
 }
 
 #[cfg(debug_assertions)]
@@ -186,7 +196,12 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .report_setting_event("theme", theme_name.to_string());
 
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings| {
-            settings.theme = Some(theme_name.to_string());
+            let is_dark_mode = settings.theme_mode.as_deref() == Some("dark");
+            if is_dark_mode {
+                settings.theme_dark = Some(theme_name.to_string());
+            } else {
+                settings.theme = Some(theme_name.to_string());
+            }
         });
 
         self.view
