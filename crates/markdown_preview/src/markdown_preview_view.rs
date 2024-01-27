@@ -1,7 +1,7 @@
 use editor::{Editor, EditorEvent};
 use gpui::{
-    div, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, View, ViewContext,
+    div, list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext,
 };
 use language::LanguageRegistry;
 use std::sync::Arc;
@@ -12,9 +12,8 @@ use workspace::Workspace;
 use crate::OpenPreview;
 
 pub struct MarkdownPreviewView {
-    languages: Arc<LanguageRegistry>,
-    active_editor: View<Editor>,
     focus_handle: FocusHandle,
+    list_state: ListState,
 }
 
 impl MarkdownPreviewView {
@@ -40,16 +39,30 @@ impl MarkdownPreviewView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        cx.subscribe(&active_editor, |this, editor, event: &EditorEvent, cx| {
+        cx.subscribe(&active_editor, |_this, _editor, event: &EditorEvent, cx| {
             if *event == EditorEvent::Edited {
                 cx.notify();
             }
         })
         .detach();
 
+        let list_state = ListState::new(1, gpui::ListAlignment::Top, px(1000.), move |_ix, cx| {
+            let editor = active_editor.read(cx);
+            let contents = editor.buffer().read(cx).snapshot(cx).text();
+
+            let mentions = vec![];
+            let text = rich_text::render_markdown(contents, &mentions, &languages, None);
+
+            v_flex()
+                .w_full()
+                .id("markdown_preview_container")
+                .group("")
+                .child(text.element("body".into(), cx))
+                .into_any()
+        });
+
         Self {
-            languages,
-            active_editor,
+            list_state,
             focus_handle,
         }
     }
@@ -97,9 +110,7 @@ impl FocusableView for MarkdownPreviewView {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreviewEvent {
-    Dismiss,
-}
+pub enum PreviewEvent {}
 
 impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
 
@@ -131,39 +142,24 @@ impl Item for MarkdownPreviewView {
         Some("markdown preview")
     }
 
-    fn to_item_events(event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {
-        // TODO: Not sure what I need here
-        match event {
-            PreviewEvent::Dismiss => {}
-        }
-    }
+    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
 }
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let container = div()
+        v_flex()
             .key_context("MarkdownPreview")
+            .track_focus(&self.focus_handle)
+            .full()
             .bg(cx.theme().colors().editor_background)
-            .p_4()
-            .gap_4();
-
-        let editor = self.active_editor.read(cx);
-        let contents = editor.buffer().read(cx).snapshot(cx).text();
-
-        let mentions = vec![];
-        let text = rich_text::render_markdown(contents, &mentions, &self.languages, None);
-
-        let md_container = div()
-            // TODO: Why do I need `.id` in order to use overflow?
-            // TODO: This doesn't make the child `text` element scrollable
-            // and I can't add `overflow_y_scroll` to `text` because it's
-            // an `AnyElement`.
-            .id("markdown_preview_container")
-            .gap_2()
-            .overflow_y_scroll()
-            .child(text.element("body".into(), cx));
-
-        container.child(md_container)
+            .child(
+                div()
+                    .flex_grow()
+                    .px_2()
+                    .pt_1()
+                    .map(|this| this.child(list(self.list_state.clone()).full())),
+            )
+            .into_any()
     }
 }
 
