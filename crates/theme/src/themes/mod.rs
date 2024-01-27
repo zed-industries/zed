@@ -23,7 +23,7 @@ pub use summercamp::*;
 
 use crate::UserThemeFamily;
 
-pub(crate) fn all_user_themes() -> Vec<UserThemeFamily> {
+pub fn all_user_themes() -> Vec<UserThemeFamily> {
     vec![
         andromeda(),
         atelier(),
