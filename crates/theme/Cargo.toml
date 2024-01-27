@@ -8,7 +8,6 @@ license = "GPL-3.0-or-later"
 
 [features]
 default = []
-importing-themes = []
 stories = ["dep:itertools", "dep:story"]
 test-support = [
     "gpui/test-support",
