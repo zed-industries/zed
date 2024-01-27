@@ -29,7 +29,6 @@ rich_text = { path = "../rich_text" }
 
 anyhow.workspace = true
 futures.workspace = true
-isahc.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 postage.workspace = true

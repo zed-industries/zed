@@ -1,4 +1,4 @@
-use gpui::{actions, AppContext, ClipboardItem, PromptLevel};
+use gpui::{actions, AppContext};
 use workspace::Workspace;
 
 pub mod markdown_preview_view;

@@ -1,18 +1,13 @@
-use client::{Client, ZED_SERVER_URL};
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Editor};
-use futures::AsyncReadExt;
+use editor::Editor;
 use gpui::{
-    div, px, rems, AnyElement, AppContext, CursorStyle, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Hsla, InteractiveElement, IntoElement, Model, MouseButton, ParentElement,
-    Pixels, PromptLevel, Render, SharedString, Size, StatefulInteractiveElement, Styled, Task,
-    View, ViewContext, WeakView,
+    div, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, View, ViewContext,
 };
-use isahc::Request;
-use language::{Buffer, LanguageRegistry};
-use std::{ops::RangeInclusive, path::PathBuf, sync::Arc, time::Duration};
-use ui::{prelude::*, Button, ButtonStyle};
+use language::LanguageRegistry;
+use std::sync::Arc;
+use ui::prelude::*;
 use workspace::item::Item;
-use workspace::{ModalView, Workspace};
+use workspace::Workspace;
 
 use crate::OpenPreview;
 
@@ -23,10 +18,10 @@ pub struct MarkdownPreviewView {
 }
 
 impl MarkdownPreviewView {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    pub fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
         let languages = workspace.app_state().languages.clone();
 
-        workspace.register_action(move |workspace, action: &OpenPreview, cx| {
+        workspace.register_action(move |workspace, _: &OpenPreview, cx| {
             if workspace.has_active_modal(cx) {
                 cx.propagate();
                 return;
@@ -75,7 +70,7 @@ impl MarkdownPreviewView {
         existing: Option<View<MarkdownPreviewView>>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let preview = if let Some(existing) = existing {
+        if let Some(existing) = existing {
             workspace.activate_item(&existing, cx);
             existing
         } else {
@@ -104,7 +99,12 @@ impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
 impl Item for MarkdownPreviewView {
     type Event = PreviewEvent;
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        selected: bool,
+        _cx: &WindowContext,
+    ) -> AnyElement {
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::FileDoc).color(if selected {
@@ -124,7 +124,7 @@ impl Item for MarkdownPreviewView {
         Some("markdown preview")
     }
 
-    fn to_item_events(event: &Self::Event, f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {
         // TODO: Not sure what I need here
         match event {
             PreviewEvent::Dismiss => {}
