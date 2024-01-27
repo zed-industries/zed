@@ -242,6 +242,7 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
+    language("swift", tree_sitter_swift::language(), vec![]);
     language(
         "php",
         tree_sitter_php::language(),

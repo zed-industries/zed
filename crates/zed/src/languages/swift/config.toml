@@ -1,0 +1,10 @@
+name = "Swift"
+path_suffixes = ["swift"]
+line_comment = "// "
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = true, newline = true },
+]
