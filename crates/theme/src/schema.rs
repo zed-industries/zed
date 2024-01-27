@@ -253,7 +253,7 @@ pub struct ThemeColorsContent {
     /// Fill Color. Used for the accent fill color of an icon.
     ///
     /// This might be used to show when a toggleable icon button is selected.
-    #[serde(rename = "con.accent")]
+    #[serde(rename = "icon.accent")]
     pub icon_accent: Option<String>,
 
     #[serde(rename = "status_bar.background")]
