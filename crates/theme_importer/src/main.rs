@@ -16,7 +16,7 @@ use any_ascii::any_ascii;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use convert_case::{Case, Casing};
-use gpui::{Hsla, Rgba};
+use gpui::Hsla;
 use indexmap::IndexMap;
 use indoc::formatdoc;
 use json_comments::StripComments;
@@ -25,8 +25,7 @@ use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
 use theme::{
     Appearance, FontWeightContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
-    ThemeContent, ThemeFamilyContent, ThemeStyleContent, UserFontWeight, UserTheme,
-    UserThemeFamily,
+    ThemeContent, ThemeFamilyContent, ThemeStyleContent, UserTheme, UserThemeFamily,
 };
 
 use crate::theme_printer::UserThemeFamilyPrinter;
@@ -674,15 +673,15 @@ fn convert_theme_styles(styles: theme::UserThemeStylesRefinement) -> ThemeStyleC
                                 theme::UserFontStyle::Oblique => theme::FontStyleContent::Oblique,
                             }),
                             font_weight: style.font_weight.map(|font_weight| match font_weight.0 {
-                                100.0 => FontWeightContent::Thin,
-                                200.0 => FontWeightContent::ExtraLight,
-                                300.0 => FontWeightContent::Light,
-                                400.0 => FontWeightContent::Normal,
-                                500.0 => FontWeightContent::Medium,
-                                600.0 => FontWeightContent::Semibold,
-                                700.0 => FontWeightContent::Bold,
-                                800.0 => FontWeightContent::ExtraBold,
-                                900.0 => FontWeightContent::Black,
+                                _ if font_weight.0 == 100.0 => FontWeightContent::Thin,
+                                _ if font_weight.0 == 200.0 => FontWeightContent::ExtraLight,
+                                _ if font_weight.0 == 300.0 => FontWeightContent::Light,
+                                _ if font_weight.0 == 400.0 => FontWeightContent::Normal,
+                                _ if font_weight.0 == 500.0 => FontWeightContent::Medium,
+                                _ if font_weight.0 == 600.0 => FontWeightContent::Semibold,
+                                _ if font_weight.0 == 700.0 => FontWeightContent::Bold,
+                                _ if font_weight.0 == 800.0 => FontWeightContent::ExtraBold,
+                                _ if font_weight.0 == 900.0 => FontWeightContent::Black,
                                 _ => unreachable!(),
                             }),
                         },
