@@ -9,6 +9,10 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 - [Building Zed](./docs/src/developing_zed__building_zed.md)
 - [Running Collaboration Locally](./docs/src/developing_zed__local_collaboration.md)
 
+## Platform Support
+Currently, Zed only supports **macOS**. More info within [Issue 5391](https://github.com/zed-industries/zed/issues/5391) and the [public roadmap](https://zed.dev/roadmap).
+
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
