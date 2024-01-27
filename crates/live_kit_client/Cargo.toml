@@ -31,8 +31,6 @@ media = { path = "../media" }
 
 anyhow.workspace = true
 async-broadcast = "0.4"
-core-foundation = "0.9.3"
-core-graphics = "0.22.3"
 futures.workspace = true
 log.workspace = true
 parking_lot.workspace = true
@@ -40,6 +38,9 @@ postage.workspace = true
 
 async-trait = { workspace = true, optional = true }
 nanoid = { version ="0.4", optional = true}
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9.3"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
@@ -53,14 +54,10 @@ async-trait.workspace = true
 block = "0.1"
 bytes = "1.2"
 byteorder = "1.4"
-cocoa = "0.25"
-core-foundation = "0.9.3"
-core-graphics = "0.22.3"
 foreign-types = "0.3"
 futures.workspace = true
 hmac = "0.12"
 jwt = "0.16"
-objc = "0.2"
 parking_lot.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
