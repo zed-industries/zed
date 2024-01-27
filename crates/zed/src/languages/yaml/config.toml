@@ -1,6 +1,6 @@
 name = "YAML"
 path_suffixes = ["yml", "yaml"]
-line_comment = "# "
+line_comments = ["# "]
 autoclose_before = ",]}"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

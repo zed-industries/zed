@@ -13,11 +13,11 @@ use gpui::{
 };
 use language::Capability;
 use rpc::{
-    proto::{self, ChannelVisibility},
+    proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
 use std::{mem, sync::Arc, time::Duration};
-use util::{async_maybe, ResultExt};
+use util::{async_maybe, maybe, ResultExt};
 
 pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let channel_store =
@@ -29,31 +29,45 @@ pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type ChannelId = u64;
 
+#[derive(Debug, Clone, Default)]
+struct NotesVersion {
+    epoch: u64,
+    version: clock::Global,
+}
+
 pub struct ChannelStore {
     pub channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
+    channel_states: HashMap<ChannelId, ChannelState>,
+
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
     opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
     client: Arc<Client>,
     user_store: Model<UserStore>,
-    _rpc_subscription: Subscription,
+    _rpc_subscriptions: [Subscription; 2],
     _watch_connection_status: Task<Option<()>>,
     disconnect_channel_buffers_task: Option<Task<()>>,
     _update_channels: Task<()>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: SharedString,
     pub visibility: proto::ChannelVisibility,
-    pub role: proto::ChannelRole,
-    pub unseen_note_version: Option<(u64, clock::Global)>,
-    pub unseen_message_id: Option<u64>,
     pub parent_path: Vec<u64>,
+}
+
+#[derive(Default)]
+pub struct ChannelState {
+    latest_chat_message: Option<u64>,
+    latest_notes_versions: Option<NotesVersion>,
+    observed_chat_message: Option<u64>,
+    observed_notes_versions: Option<NotesVersion>,
+    role: Option<ChannelRole>,
 }
 
 impl Channel {
@@ -65,6 +79,17 @@ impl Channel {
             + &self.id.to_string()
     }
 
+    pub fn is_root_channel(&self) -> bool {
+        self.parent_path.is_empty()
+    }
+
+    pub fn root_id(&self) -> ChannelId {
+        self.parent_path
+            .first()
+            .map(|id| *id as ChannelId)
+            .unwrap_or(self.id)
+    }
+
     pub fn slug(&self) -> String {
         let slug: String = self
             .name
@@ -73,14 +98,6 @@ impl Channel {
             .collect();
 
         slug.trim_matches(|c| c == '-').to_string()
-    }
-
-    pub fn channel_buffer_capability(&self) -> Capability {
-        if self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin {
-            Capability::ReadWrite
-        } else {
-            Capability::ReadOnly
-        }
     }
 }
 
@@ -100,8 +117,7 @@ impl ChannelMembership {
             },
             kind_order: match self.kind {
                 proto::channel_member::Kind::Member => 0,
-                proto::channel_member::Kind::AncestorMember => 1,
-                proto::channel_member::Kind::Invitee => 2,
+                proto::channel_member::Kind::Invitee => 1,
             },
             username_order: self.user.github_login.as_str(),
         }
@@ -137,8 +153,10 @@ impl ChannelStore {
         user_store: Model<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let rpc_subscription =
-            client.add_message_handler(cx.weak_model(), Self::handle_update_channels);
+        let rpc_subscriptions = [
+            client.add_message_handler(cx.weak_model(), Self::handle_update_channels),
+            client.add_message_handler(cx.weak_model(), Self::handle_update_user_channels),
+        ];
 
         let mut connection_status = client.status();
         let (update_channels_tx, mut update_channels_rx) = mpsc::unbounded();
@@ -175,7 +193,7 @@ impl ChannelStore {
             update_channels_tx,
             client,
             user_store,
-            _rpc_subscription: rpc_subscription,
+            _rpc_subscriptions: rpc_subscriptions,
             _watch_connection_status: watch_connection_status,
             disconnect_channel_buffers_task: None,
             _update_channels: cx.spawn(|this, mut cx| async move {
@@ -195,6 +213,7 @@ impl ChannelStore {
                 .await
                 .log_err();
             }),
+            channel_states: Default::default(),
         }
     }
 
@@ -306,39 +325,16 @@ impl ChannelStore {
         })
     }
 
-    pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> Option<bool> {
-        self.channel_index
-            .by_id()
+    pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> bool {
+        self.channel_states
             .get(&channel_id)
-            .map(|channel| channel.unseen_note_version.is_some())
+            .is_some_and(|state| state.has_channel_buffer_changed())
     }
 
-    pub fn has_new_messages(&self, channel_id: ChannelId) -> Option<bool> {
-        self.channel_index
-            .by_id()
+    pub fn has_new_messages(&self, channel_id: ChannelId) -> bool {
+        self.channel_states
             .get(&channel_id)
-            .map(|channel| channel.unseen_message_id.is_some())
-    }
-
-    pub fn notes_changed(
-        &mut self,
-        channel_id: ChannelId,
-        epoch: u64,
-        version: &clock::Global,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.channel_index.note_changed(channel_id, epoch, version);
-        cx.notify();
-    }
-
-    pub fn new_message(
-        &mut self,
-        channel_id: ChannelId,
-        message_id: u64,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.channel_index.new_message(channel_id, message_id);
-        cx.notify();
+            .is_some_and(|state| state.has_new_messages())
     }
 
     pub fn acknowledge_message_id(
@@ -347,8 +343,23 @@ impl ChannelStore {
         message_id: u64,
         cx: &mut ModelContext<Self>,
     ) {
-        self.channel_index
-            .acknowledge_message_id(channel_id, message_id);
+        self.channel_states
+            .entry(channel_id)
+            .or_insert_with(|| Default::default())
+            .acknowledge_message_id(message_id);
+        cx.notify();
+    }
+
+    pub fn update_latest_message_id(
+        &mut self,
+        channel_id: ChannelId,
+        message_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_states
+            .entry(channel_id)
+            .or_insert_with(|| Default::default())
+            .update_latest_message_id(message_id);
         cx.notify();
     }
 
@@ -359,9 +370,25 @@ impl ChannelStore {
         version: &clock::Global,
         cx: &mut ModelContext<Self>,
     ) {
-        self.channel_index
-            .acknowledge_note_version(channel_id, epoch, version);
-        cx.notify();
+        self.channel_states
+            .entry(channel_id)
+            .or_insert_with(|| Default::default())
+            .acknowledge_notes_version(epoch, version);
+        cx.notify()
+    }
+
+    pub fn update_latest_notes_version(
+        &mut self,
+        channel_id: ChannelId,
+        epoch: u64,
+        version: &clock::Global,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_states
+            .entry(channel_id)
+            .or_insert_with(|| Default::default())
+            .update_latest_notes_version(epoch, version);
+        cx.notify()
     }
 
     pub fn open_channel_chat(
@@ -454,10 +481,42 @@ impl ChannelStore {
     }
 
     pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
-        let Some(channel) = self.channel_for_id(channel_id) else {
-            return false;
-        };
-        channel.role == proto::ChannelRole::Admin
+        self.channel_role(channel_id) == proto::ChannelRole::Admin
+    }
+
+    pub fn is_root_channel(&self, channel_id: ChannelId) -> bool {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map_or(false, |channel| channel.is_root_channel())
+    }
+
+    pub fn is_public_channel(&self, channel_id: ChannelId) -> bool {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map_or(false, |channel| {
+                channel.visibility == ChannelVisibility::Public
+            })
+    }
+
+    pub fn channel_capability(&self, channel_id: ChannelId) -> Capability {
+        match self.channel_role(channel_id) {
+            ChannelRole::Admin | ChannelRole::Member => Capability::ReadWrite,
+            _ => Capability::ReadOnly,
+        }
+    }
+
+    pub fn channel_role(&self, channel_id: ChannelId) -> proto::ChannelRole {
+        maybe!({
+            let mut channel = self.channel_for_id(channel_id)?;
+            if !channel.is_root_channel() {
+                channel = self.channel_for_id(channel.root_id())?;
+            }
+            let root_channel_state = self.channel_states.get(&channel.id);
+            root_channel_state?.role
+        })
+        .unwrap_or(proto::ChannelRole::Guest)
     }
 
     pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
@@ -508,7 +567,7 @@ impl ChannelStore {
     pub fn move_channel(
         &mut self,
         channel_id: ChannelId,
-        to: Option<ChannelId>,
+        to: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
@@ -747,6 +806,36 @@ impl ChannelStore {
         Ok(())
     }
 
+    async fn handle_update_user_channels(
+        this: Model<Self>,
+        message: TypedEnvelope<proto::UpdateUserChannels>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            for buffer_version in message.payload.observed_channel_buffer_version {
+                let version = language::proto::deserialize_version(&buffer_version.version);
+                this.acknowledge_notes_version(
+                    buffer_version.channel_id,
+                    buffer_version.epoch,
+                    &version,
+                    cx,
+                );
+            }
+            for message_id in message.payload.observed_channel_message_id {
+                this.acknowledge_message_id(message_id.channel_id, message_id.message_id, cx);
+            }
+            for membership in message.payload.channel_memberships {
+                if let Some(role) = ChannelRole::from_i32(membership.role) {
+                    this.channel_states
+                        .entry(membership.channel_id)
+                        .or_insert_with(|| ChannelState::default())
+                        .set_role(role)
+                }
+            }
+        })
+    }
+
     fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.channel_index.clear();
         self.channel_invitations.clear();
@@ -909,10 +998,7 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         visibility: channel.visibility(),
-                        role: channel.role(),
                         name: channel.name.into(),
-                        unseen_note_version: None,
-                        unseen_message_id: None,
                         parent_path: channel.parent_path,
                     }),
                 ),
@@ -921,8 +1007,8 @@ impl ChannelStore {
 
         let channels_changed = !payload.channels.is_empty()
             || !payload.delete_channels.is_empty()
-            || !payload.unseen_channel_messages.is_empty()
-            || !payload.unseen_channel_buffer_changes.is_empty();
+            || !payload.latest_channel_message_ids.is_empty()
+            || !payload.latest_channel_buffer_versions.is_empty();
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
@@ -963,20 +1049,19 @@ impl ChannelStore {
                 }
             }
 
-            for unseen_buffer_change in payload.unseen_channel_buffer_changes {
-                let version = language::proto::deserialize_version(&unseen_buffer_change.version);
-                index.note_changed(
-                    unseen_buffer_change.channel_id,
-                    unseen_buffer_change.epoch,
-                    &version,
-                );
+            for latest_buffer_version in payload.latest_channel_buffer_versions {
+                let version = language::proto::deserialize_version(&latest_buffer_version.version);
+                self.channel_states
+                    .entry(latest_buffer_version.channel_id)
+                    .or_default()
+                    .update_latest_notes_version(latest_buffer_version.epoch, &version)
             }
 
-            for unseen_channel_message in payload.unseen_channel_messages {
-                index.new_messages(
-                    unseen_channel_message.channel_id,
-                    unseen_channel_message.message_id,
-                );
+            for latest_channel_message in payload.latest_channel_message_ids {
+                self.channel_states
+                    .entry(latest_channel_message.channel_id)
+                    .or_default()
+                    .update_latest_message_id(latest_channel_message.message_id);
             }
         }
 
@@ -1023,5 +1108,71 @@ impl ChannelStore {
                 cx.notify();
             })
         }))
+    }
+}
+
+impl ChannelState {
+    fn set_role(&mut self, role: ChannelRole) {
+        self.role = Some(role);
+    }
+
+    fn has_channel_buffer_changed(&self) -> bool {
+        if let Some(latest_version) = &self.latest_notes_versions {
+            if let Some(observed_version) = &self.observed_notes_versions {
+                latest_version.epoch > observed_version.epoch
+                    || latest_version
+                        .version
+                        .changed_since(&observed_version.version)
+            } else {
+                true
+            }
+        } else {
+            false
+        }
+    }
+
+    fn has_new_messages(&self) -> bool {
+        let latest_message_id = self.latest_chat_message;
+        let observed_message_id = self.observed_chat_message;
+
+        latest_message_id.is_some_and(|latest_message_id| {
+            latest_message_id > observed_message_id.unwrap_or_default()
+        })
+    }
+
+    fn acknowledge_message_id(&mut self, message_id: u64) {
+        let observed = self.observed_chat_message.get_or_insert(message_id);
+        *observed = (*observed).max(message_id);
+    }
+
+    fn update_latest_message_id(&mut self, message_id: u64) {
+        self.latest_chat_message =
+            Some(message_id.max(self.latest_chat_message.unwrap_or_default()));
+    }
+
+    fn acknowledge_notes_version(&mut self, epoch: u64, version: &clock::Global) {
+        if let Some(existing) = &mut self.observed_notes_versions {
+            if existing.epoch == epoch {
+                existing.version.join(version);
+                return;
+            }
+        }
+        self.observed_notes_versions = Some(NotesVersion {
+            epoch,
+            version: version.clone(),
+        });
+    }
+
+    fn update_latest_notes_version(&mut self, epoch: u64, version: &clock::Global) {
+        if let Some(existing) = &mut self.latest_notes_versions {
+            if existing.epoch == epoch {
+                existing.version.join(version);
+                return;
+            }
+        }
+        self.latest_notes_versions = Some(NotesVersion {
+            epoch,
+            version: version.clone(),
+        });
     }
 }

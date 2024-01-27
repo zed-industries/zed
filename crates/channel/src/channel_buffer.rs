@@ -61,11 +61,12 @@ impl ChannelBuffer {
             .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let buffer = cx.new_model(|_| {
+        let buffer = cx.new_model(|cx| {
+            let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(
                 response.buffer_id,
                 response.replica_id as u16,
-                channel.channel_buffer_capability(),
+                capability,
                 base_text,
             )
         })?;

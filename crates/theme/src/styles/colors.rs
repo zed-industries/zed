@@ -236,7 +236,7 @@ pub struct ThemeColors {
 #[derive(Refineable, Clone)]
 pub struct ThemeStyles {
     pub system: SystemColors,
-    /// An array of colors used for theme elements that iterrate through a series of colors.
+    /// An array of colors used for theme elements that iterate through a series of colors.
     ///
     /// Example: Player colors, rainbow brackets and indent guides, etc.
     pub accents: Vec<Hsla>,

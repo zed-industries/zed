@@ -782,10 +782,20 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Apply the given style when the given data type is dragged over this element
-    fn drag_over<S: 'static>(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
-        self.interactivity()
-            .drag_over_styles
-            .push((TypeId::of::<S>(), f(StyleRefinement::default())));
+    fn drag_over<S: 'static>(
+        mut self,
+        f: impl 'static + Fn(StyleRefinement, &S, &WindowContext) -> StyleRefinement,
+    ) -> Self {
+        self.interactivity().drag_over_styles.push((
+            TypeId::of::<S>(),
+            Box::new(move |currently_dragged: &dyn Any, cx| {
+                f(
+                    StyleRefinement::default(),
+                    currently_dragged.downcast_ref::<S>().unwrap(),
+                    cx,
+                )
+            }),
+        ));
         self
     }
 
@@ -1174,7 +1184,10 @@ pub struct Interactivity {
     pub(crate) group_hover_style: Option<GroupStyle>,
     pub(crate) active_style: Option<Box<StyleRefinement>>,
     pub(crate) group_active_style: Option<GroupStyle>,
-    pub(crate) drag_over_styles: Vec<(TypeId, StyleRefinement)>,
+    pub(crate) drag_over_styles: Vec<(
+        TypeId,
+        Box<dyn Fn(&dyn Any, &mut WindowContext) -> StyleRefinement>,
+    )>,
     pub(crate) group_drag_over_styles: Vec<(TypeId, GroupStyle)>,
     pub(crate) mouse_down_listeners: Vec<MouseDownListener>,
     pub(crate) mouse_up_listeners: Vec<MouseUpListener>,
@@ -1980,7 +1993,7 @@ impl Interactivity {
                             }
                         }
 
-                        for (state_type, drag_over_style) in &self.drag_over_styles {
+                        for (state_type, build_drag_over_style) in &self.drag_over_styles {
                             if *state_type == drag.value.as_ref().type_id()
                                 && bounds
                                     .intersect(&cx.content_mask().bounds)
@@ -1990,7 +2003,7 @@ impl Interactivity {
                                     cx.stacking_order(),
                                 )
                             {
-                                style.refine(drag_over_style);
+                                style.refine(&build_drag_over_style(drag.value.as_ref(), cx));
                             }
                         }
                     }

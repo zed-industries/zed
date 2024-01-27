@@ -66,7 +66,7 @@ Copy that json file into the theme family directory and tidy up the filenames as
 
 A LICENSE file is required to import a theme family. Failing to provide a complete text license will cause it to be skipped when the import is run.
 
-If the theme only provices a license code (e.g. MIT, Apache 2.0, etc.) then put that code into the LICENSE file.
+If the theme only provides a license code (e.g. MIT, Apache 2.0, etc.) then put that code into the LICENSE file.
 
 If no license is provided, either contact the theme creator or don't add the theme.
 

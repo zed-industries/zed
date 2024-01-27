@@ -17,6 +17,14 @@ impl Model {
         self.ancestors().last()
     }
 
+    pub fn is_root(&self) -> bool {
+        self.parent_path.is_empty()
+    }
+
+    pub fn root_id(&self) -> ChannelId {
+        self.ancestors().next().unwrap_or(self.id)
+    }
+
     pub fn ancestors(&self) -> impl Iterator<Item = ChannelId> + '_ {
         self.parent_path
             .trim_end_matches('/')

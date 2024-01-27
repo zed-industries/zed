@@ -298,10 +298,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
-    /// Returns true if a language server can be reinstalled.
-    /// If language server initialization fails, a reinstallation will be attempted unless the value returned from this method is false.
+    /// Returns `true` if a language server can be reinstalled.
+    ///
+    /// If language server initialization fails, a reinstallation will be attempted unless the value returned from this method is `false`.
+    ///
     /// Implementations that rely on software already installed on user's system
-    /// should have [`can_be_reinstalled`] return false.
+    /// should have [`can_be_reinstalled`](Self::can_be_reinstalled) return `false`.
     fn can_be_reinstalled(&self) -> bool {
         true
     }
@@ -313,7 +315,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    /// A callback called for each [`lsp_types::CompletionItem`] obtained from LSP server.
+    /// A callback called for each [`lsp::CompletionItem`] obtained from LSP server.
     /// Some LspAdapter implementations might want to modify the obtained item to
     /// change how it's displayed.
     async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
@@ -335,12 +337,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp_types::InitializeParams`]
+    /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     fn initialization_options(&self) -> Option<Value> {
         None
     }
 
-    fn workspace_configuration(&self, _: &Path, _: &mut AppContext) -> Value {
+    fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
         serde_json::json!({})
     }
 
@@ -416,8 +418,10 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub collapsed_placeholder: String,
     /// A line comment string that is inserted in e.g. `toggle comments` action.
+    /// A language can have multiple flavours of line comments. All of the provided line comments are
+    /// used for comment continuations on the next line, but only the first one is used for Editor::ToggleComments.
     #[serde(default)]
-    pub line_comment: Option<Arc<str>>,
+    pub line_comments: Vec<Arc<str>>,
     /// Starting and closing characters of a block comment.
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
@@ -460,7 +464,7 @@ pub struct LanguageScope {
 #[derive(Clone, Deserialize, Default, Debug)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
-    pub line_comment: Override<Arc<str>>,
+    pub line_comments: Override<Vec<Arc<str>>>,
     #[serde(default)]
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
     #[serde(skip_deserializing)]
@@ -506,7 +510,7 @@ impl Default for LanguageConfig {
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
-            line_comment: Default::default(),
+            line_comments: Default::default(),
             block_comment: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
@@ -584,7 +588,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
 }
 
 /// Describes a single bracket pair and how an editor should react to e.g. inserting
-/// an opening bracket or to a newline character insertion inbetween `start` and `end` characters.
+/// an opening bracket or to a newline character insertion in between `start` and `end` characters.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct BracketPair {
     /// Starting substring for a bracket.
@@ -1710,10 +1714,10 @@ impl LanguageScope {
 
     /// Returns line prefix that is inserted in e.g. line continuations or
     /// in `toggle comments` action.
-    pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
+    pub fn line_comment_prefixes(&self) -> Option<&Vec<Arc<str>>> {
         Override::as_option(
-            self.config_override().map(|o| &o.line_comment),
-            self.language.config.line_comment.as_ref(),
+            self.config_override().map(|o| &o.line_comments),
+            Some(&self.language.config.line_comments),
         )
     }
 

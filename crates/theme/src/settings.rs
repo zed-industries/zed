@@ -1,9 +1,10 @@
 use crate::one_themes::one_dark;
-use crate::{Theme, ThemeRegistry};
+use crate::{SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
 };
+use refineable::Refineable;
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -26,6 +27,7 @@ pub struct ThemeSettings {
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
     pub active_theme: Arc<Theme>,
+    pub theme_overrides: Option<ThemeContent>,
 }
 
 #[derive(Default)]
@@ -49,6 +51,12 @@ pub struct ThemeSettingsContent {
     pub buffer_font_features: Option<FontFeatures>,
     #[serde(default)]
     pub theme: Option<String>,
+
+    /// EXPERIMENTAL: Overrides for the current theme.
+    ///
+    /// These values will override the ones on the current theme specified in `theme`.
+    #[serde(rename = "experimental.theme_overrides", default)]
+    pub theme_overrides: Option<ThemeContent>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
@@ -79,6 +87,33 @@ impl ThemeSettings {
 
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
+    }
+
+    /// Applies the theme overrides, if there are any, to the current theme.
+    pub fn apply_theme_overrides(&mut self) {
+        if let Some(theme_overrides) = &self.theme_overrides {
+            let mut base_theme = (*self.active_theme).clone();
+
+            base_theme
+                .styles
+                .colors
+                .refine(&theme_overrides.theme_colors_refinement());
+            base_theme
+                .styles
+                .status
+                .refine(&theme_overrides.status_colors_refinement());
+            base_theme.styles.syntax = Arc::new(SyntaxTheme {
+                highlights: {
+                    let mut highlights = base_theme.styles.syntax.highlights.clone();
+                    // Overrides come second in the highlight list so that they take precedence
+                    // over the ones in the base theme.
+                    highlights.extend(theme_overrides.syntax_overrides());
+                    highlights
+                },
+            });
+
+            self.active_theme = Arc::new(base_theme);
+        }
     }
 }
 
@@ -151,6 +186,7 @@ impl settings::Settings for ThemeSettings {
                 .get(defaults.theme.as_ref().unwrap())
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
+            theme_overrides: None,
         };
 
         for value in user_values.into_iter().copied().cloned() {
@@ -173,6 +209,9 @@ impl settings::Settings for ThemeSettings {
                     this.active_theme = theme;
                 }
             }
+
+            this.theme_overrides = value.theme_overrides;
+            this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
             merge(
@@ -203,10 +242,10 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
-        let available_fonts = cx
-            .text_system()
-            .all_font_names()
-            .into_iter()
+        let available_fonts = params
+            .font_names
+            .iter()
+            .cloned()
             .map(Value::String)
             .collect();
         let fonts_schema = SchemaObject {

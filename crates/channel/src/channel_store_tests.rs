@@ -19,14 +19,12 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 1,
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
-                    role: proto::ChannelRole::Admin.into(),
                     parent_path: Vec::new(),
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
-                    role: proto::ChannelRole::Member.into(),
                     parent_path: Vec::new(),
                 },
             ],
@@ -38,8 +36,8 @@ fn test_update_channels(cx: &mut AppContext) {
         &channel_store,
         &[
             //
-            (0, "a".to_string(), proto::ChannelRole::Member),
-            (0, "b".to_string(), proto::ChannelRole::Admin),
+            (0, "a".to_string()),
+            (0, "b".to_string()),
         ],
         cx,
     );
@@ -52,14 +50,12 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 3,
                     name: "x".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
-                    role: proto::ChannelRole::Admin.into(),
                     parent_path: vec![1],
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
-                    role: proto::ChannelRole::Member.into(),
                     parent_path: vec![2],
                 },
             ],
@@ -70,10 +66,10 @@ fn test_update_channels(cx: &mut AppContext) {
     assert_channels(
         &channel_store,
         &[
-            (0, "a".to_string(), proto::ChannelRole::Member),
-            (1, "y".to_string(), proto::ChannelRole::Member),
-            (0, "b".to_string(), proto::ChannelRole::Admin),
-            (1, "x".to_string(), proto::ChannelRole::Admin),
+            (0, "a".to_string()),
+            (1, "y".to_string()),
+            (0, "b".to_string()),
+            (1, "x".to_string()),
         ],
         cx,
     );
@@ -91,21 +87,18 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
                     id: 0,
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
-                    role: proto::ChannelRole::Admin.into(),
                     parent_path: vec![],
                 },
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
-                    role: proto::ChannelRole::Admin.into(),
                     parent_path: vec![0],
                 },
                 proto::Channel {
                     id: 2,
                     name: "c".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
-                    role: proto::ChannelRole::Admin.into(),
                     parent_path: vec![0, 1],
                 },
             ],
@@ -118,9 +111,9 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
         &channel_store,
         &[
             //
-            (0, "a".to_string(), proto::ChannelRole::Admin),
-            (1, "b".to_string(), proto::ChannelRole::Admin),
-            (2, "c".to_string(), proto::ChannelRole::Admin),
+            (0, "a".to_string()),
+            (1, "b".to_string()),
+            (2, "c".to_string()),
         ],
         cx,
     );
@@ -135,11 +128,7 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
     );
 
     // Make sure that the 1/2/3 path is gone
-    assert_channels(
-        &channel_store,
-        &[(0, "a".to_string(), proto::ChannelRole::Admin)],
-        cx,
-    );
+    assert_channels(&channel_store, &[(0, "a".to_string())], cx);
 }
 
 #[gpui::test]
@@ -156,18 +145,13 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             id: channel_id,
             name: "the-channel".to_string(),
             visibility: proto::ChannelVisibility::Members as i32,
-            role: proto::ChannelRole::Member.into(),
             parent_path: vec![],
         }],
         ..Default::default()
     });
     cx.executor().run_until_parked();
     cx.update(|cx| {
-        assert_channels(
-            &channel_store,
-            &[(0, "the-channel".to_string(), proto::ChannelRole::Member)],
-            cx,
-        );
+        assert_channels(&channel_store, &[(0, "the-channel".to_string())], cx);
     });
 
     let get_users = server.receive::<proto::GetUsers>().await.unwrap();
@@ -368,13 +352,13 @@ fn update_channels(
 #[track_caller]
 fn assert_channels(
     channel_store: &Model<ChannelStore>,
-    expected_channels: &[(usize, String, proto::ChannelRole)],
+    expected_channels: &[(usize, String)],
     cx: &mut AppContext,
 ) {
     let actual = channel_store.update(cx, |store, _| {
         store
             .ordered_channels()
-            .map(|(depth, channel)| (depth, channel.name.to_string(), channel.role))
+            .map(|(depth, channel)| (depth, channel.name.to_string()))
             .collect::<Vec<_>>()
     });
     assert_eq!(actual, expected_channels);

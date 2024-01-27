@@ -197,7 +197,7 @@ pub struct Diagnostic {
     /// Whether this diagnostic is considered to originate from an analysis of
     /// files on disk, as opposed to any unsaved buffer contents. This is a
     /// property of a given diagnostic source, and is configured for a given
-    /// language server via the [LspAdapter::disk_based_diagnostic_sources] method
+    /// language server via the [`LspAdapter::disk_based_diagnostic_sources`](crate::LspAdapter::disk_based_diagnostic_sources) method
     /// for the language server.
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
@@ -236,7 +236,7 @@ pub async fn prepare_completion_documentation(
     }
 }
 
-/// Documentation associated with a [Completion].
+/// Documentation associated with a [`Completion`].
 #[derive(Clone, Debug)]
 pub enum Documentation {
     /// There is no documentation for this completion.
@@ -301,7 +301,7 @@ pub enum Operation {
         lamport_timestamp: clock::Lamport,
         /// Whether the selections are in 'line mode'.
         line_mode: bool,
-        /// The [CursorShape] associated with these selections.
+        /// The [`CursorShape`] associated with these selections.
         cursor_shape: CursorShape,
     },
 
@@ -347,7 +347,7 @@ pub enum Event {
 
 /// The file associated with a buffer.
 pub trait File: Send + Sync {
-    /// Returns the [LocalFile] associated with this file, if the
+    /// Returns the [`LocalFile`] associated with this file, if the
     /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
 
@@ -378,7 +378,7 @@ pub trait File: Send + Sync {
     /// Returns whether the file has been deleted.
     fn is_deleted(&self) -> bool;
 
-    /// Converts this file into an [Any] trait object.
+    /// Converts this file into an [`Any`] trait object.
     fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
@@ -1538,8 +1538,6 @@ impl Buffer {
     /// Starts a transaction, providing the current time. Subsequent transactions
     /// that occur within a short period of time will be grouped together. This
     /// is controlled by the buffer's undo grouping duration.
-    ///
-    /// See [`Buffer::set_group_interval`].
     pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.was_dirty_before_starting_transaction.is_none() {
@@ -1556,8 +1554,6 @@ impl Buffer {
     /// Terminates the current transaction, providing the current time. Subsequent transactions
     /// that occur within a short period of time will be grouped together. This
     /// is controlled by the buffer's undo grouping duration.
-    ///
-    /// See [`Buffer::set_group_interval`].
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
@@ -2420,7 +2416,7 @@ impl BufferSnapshot {
     }
 
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
-    /// in an arbitrary way due to being stored in a [`rope::Rope`]. The text is also
+    /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
     /// diagnostic status.
     pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {

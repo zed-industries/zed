@@ -1334,8 +1334,12 @@ impl Pane {
                 },
                 |tab, cx| cx.new_view(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().drop_target_background))
-            .drag_over::<ProjectEntryId>(|tab| tab.bg(cx.theme().colors().drop_target_background))
+            .drag_over::<DraggedTab>(|tab, _, cx| {
+                tab.bg(cx.theme().colors().drop_target_background)
+            })
+            .drag_over::<ProjectEntryId>(|tab, _, cx| {
+                tab.bg(cx.theme().colors().drop_target_background)
+            })
             .when_some(self.can_drop_predicate.clone(), |this, p| {
                 this.can_drop(move |a, cx| p(a, cx))
             })
@@ -1505,10 +1509,10 @@ impl Pane {
                     .child("")
                     .h_full()
                     .flex_grow()
-                    .drag_over::<DraggedTab>(|bar| {
+                    .drag_over::<DraggedTab>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
-                    .drag_over::<ProjectEntryId>(|bar| {
+                    .drag_over::<ProjectEntryId>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
                     .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {

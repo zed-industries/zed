@@ -266,7 +266,7 @@ impl ChatPanel {
             } => {
                 if !self.active {
                     self.channel_store.update(cx, |store, cx| {
-                        store.new_message(*channel_id, *message_id, cx)
+                        store.update_latest_message_id(*channel_id, *message_id, cx)
                     })
                 }
             }
@@ -343,9 +343,11 @@ impl ChatPanel {
                 this.pt_3().child(
                     h_flex()
                         .text_ui_sm()
-                        .child(div().absolute().child(
-                            Avatar::new(message.sender.avatar_uri.clone()).size(cx.rem_size()),
-                        ))
+                        .child(
+                            div().absolute().child(
+                                Avatar::new(message.sender.avatar_uri.clone()).size(rems(1.)),
+                            ),
+                        )
                         .child(
                             div()
                                 .pl(cx.rem_size() + px(6.0))

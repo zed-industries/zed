@@ -59,7 +59,7 @@ pub async fn latest_github_release(
 
         Err(_) => {
             log::error!(
-                "Error deserializing Github API response text: {:?}",
+                "Error deserializing GitHub API response text: {:?}",
                 String::from_utf8_lossy(body.as_slice())
             );
             return Err(anyhow!("error deserializing latest release"));

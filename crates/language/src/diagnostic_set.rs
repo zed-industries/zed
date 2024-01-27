@@ -12,7 +12,7 @@ use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
 /// A set of diagnostics associated with a given buffer, provided
 /// by a single language server.
 ///
-/// The diagnostics are stored in a [SumTree], which allows this struct
+/// The diagnostics are stored in a [`SumTree`], which allows this struct
 /// to be cheaply copied, and allows for efficient retrieval of the
 /// diagnostics that intersect a given range of the buffer.
 #[derive(Clone, Debug, Default)]
@@ -21,9 +21,9 @@ pub struct DiagnosticSet {
 }
 
 /// A single diagnostic in a set. Generic over its range type, because
-/// the diagnostics are stored internally as [Anchor]s, but can be
-/// resolved to different coordinates types like [usize] byte offsets or
-/// [Point]s.
+/// the diagnostics are stored internally as [`Anchor`]s, but can be
+/// resolved to different coordinates types like [`usize`] byte offsets or
+/// [`Point`](gpui::Point)s.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticEntry<T> {
     /// The range of the buffer where the diagnostic applies.
@@ -52,7 +52,7 @@ pub struct Summary {
 }
 
 impl<T> DiagnosticEntry<T> {
-    /// Returns a raw LSP diagnostic ssed to provide diagnostic context to lsp
+    /// Returns a raw LSP diagnostic ssed to provide diagnostic context to LSP
     /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> lsp::Diagnostic {
         let code = self

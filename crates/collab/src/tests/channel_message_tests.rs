@@ -313,7 +313,6 @@ async fn test_channel_message_changes(
             .channel_store()
             .read(cx)
             .has_new_messages(channel_id)
-            .unwrap()
     });
 
     assert!(b_has_messages);
@@ -341,7 +340,6 @@ async fn test_channel_message_changes(
             .channel_store()
             .read(cx)
             .has_new_messages(channel_id)
-            .unwrap()
     });
 
     assert!(!b_has_messages);
@@ -359,7 +357,6 @@ async fn test_channel_message_changes(
             .channel_store()
             .read(cx)
             .has_new_messages(channel_id)
-            .unwrap()
     });
 
     assert!(!b_has_messages);
@@ -382,7 +379,6 @@ async fn test_channel_message_changes(
             .channel_store()
             .read(cx)
             .has_new_messages(channel_id)
-            .unwrap()
     });
 
     assert!(b_has_messages);
@@ -402,7 +398,6 @@ async fn test_channel_message_changes(
             .channel_store()
             .read(cx)
             .has_new_messages(channel_id)
-            .unwrap()
     });
 
     assert!(b_has_messages);

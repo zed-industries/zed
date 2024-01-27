@@ -114,6 +114,7 @@ pub trait Settings: 'static + Send + Sync {
 pub struct SettingsJsonSchemaParams<'a> {
     pub staff_mode: bool,
     pub language_names: &'a [String],
+    pub font_names: &'a [String],
 }
 
 /// A set of strongly-typed setting values defined via multiple JSON files.

@@ -574,7 +574,7 @@ impl AppContext {
     }
 
     /// Displays a platform modal for selecting a new path where a file can be saved.
-    /// The provided directory will be used to set the iniital location.
+    /// The provided directory will be used to set the initial location.
     /// When a path is selected, it is relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
     pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {

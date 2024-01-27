@@ -161,14 +161,14 @@ impl settings::Settings for TerminalSettings {
     }
     fn json_schema(
         generator: &mut SchemaGenerator,
-        _: &SettingsJsonSchemaParams,
-        cx: &AppContext,
+        params: &SettingsJsonSchemaParams,
+        _: &AppContext,
     ) -> RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
-        let available_fonts = cx
-            .text_system()
-            .all_font_names()
-            .into_iter()
+        let available_fonts = params
+            .font_names
+            .iter()
+            .cloned()
             .map(Value::String)
             .collect();
         let fonts_schema = SchemaObject {

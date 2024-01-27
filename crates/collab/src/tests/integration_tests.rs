@@ -3884,6 +3884,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Join project as client C and observe the diagnostics.
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
+    executor.run_until_parked();
     let project_c_diagnostic_summaries =
         Rc::new(RefCell::new(project_c.read_with(cx_c, |project, cx| {
             project.diagnostic_summaries(false, cx).collect::<Vec<_>>()

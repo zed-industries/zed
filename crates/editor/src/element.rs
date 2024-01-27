@@ -3582,7 +3582,7 @@ mod tests {
         );
 
         // multi-buffer support
-        // in DisplayPoint co-ordinates, this is what we're dealing with:
+        // in DisplayPoint coordinates, this is what we're dealing with:
         //  0: [[file
         //  1:   header]]
         //  2: aaaaaa

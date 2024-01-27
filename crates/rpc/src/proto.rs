@@ -269,6 +269,7 @@ messages!(
     (UpdateChannelBuffer, Foreground),
     (UpdateChannelBufferCollaborators, Foreground),
     (UpdateChannels, Foreground),
+    (UpdateUserChannels, Foreground),
     (UpdateContacts, Foreground),
     (UpdateDiagnosticSummary, Foreground),
     (UpdateDiffBase, Foreground),
