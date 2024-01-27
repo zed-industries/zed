@@ -48,6 +48,7 @@ journal = { path = "../journal" }
 language = { path = "../language" }
 language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
+markdown_preview = { path = "../markdown_preview" }
 menu = { path = "../menu" }
 language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }

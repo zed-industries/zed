@@ -8,9 +8,14 @@ use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use collections::VecDeque;
 use editor::{Editor, MultiBuffer};
+// use gpui::{
+// };
 use gpui::{
-    actions, point, px, AppContext, Context, FocusableView, PromptLevel, TitlebarOptions, View,
-    ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    actions, div, point, px, rems, AnyElement, AppContext, Context, CursorStyle, DismissEvent,
+    EventEmitter, FocusHandle, FocusableView, Hsla, InteractiveElement, IntoElement, Model,
+    MouseButton, ParentElement, Pixels, PromptLevel, Render, SharedString, Size,
+    StatefulInteractiveElement, Styled, Task, TitlebarOptions, View, ViewContext, VisualContext,
+    WeakView, WindowBounds, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -33,11 +38,11 @@ use util::{
 };
 use uuid::Uuid;
 use welcome::BaseKeymap;
-use workspace::Pane;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, Workspace, WorkspaceSettings,
 };
+use workspace::{ui::Label, Pane};
 use zed_actions::{OpenBrowser, OpenSettings, OpenZedURL, Quit};
 
 actions!(
@@ -1181,7 +1186,7 @@ mod tests {
             cx: &AppContext,
         ) {
             let project_panel = [
-                workspace.left_dock().read(cx).panel::<ProjectPanel>(),
+                workspace.left_ock().read(cx).panel::<ProjectPanel>(),
                 workspace.right_dock().read(cx).panel::<ProjectPanel>(),
                 workspace.bottom_dock().read(cx).panel::<ProjectPanel>(),
             ]

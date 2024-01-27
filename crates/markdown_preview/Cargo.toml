@@ -1,5 +1,5 @@
 [package]
-name = "feedback"
+name = "markdown_preview"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -7,7 +7,7 @@ license = "GPL-3.0-only"
 
 
 [lib]
-path = "src/feedback.rs"
+path = "src/markdown_preview.rs"
 
 [features]
 test-support = []
@@ -26,10 +26,6 @@ ui = { path = "../ui" }
 util = { path = "../util" }
 workspace = { path = "../workspace"}
 rich_text = { path = "../rich_text" }
-
-comrak = "0.21.0"
-bitflags = "2.4.1"
-human_bytes = "0.4.1"
 
 anyhow.workspace = true
 futures.workspace = true
