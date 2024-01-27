@@ -24,8 +24,9 @@ use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::{TermLogger, TerminalMode};
 use theme::{
-    Appearance, FontWeightContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
-    ThemeContent, ThemeFamilyContent, ThemeStyleContent, UserTheme, UserThemeFamily,
+    Appearance, FontWeightContent, HighlightStyleContent, PlayerColorContent, StatusColorsContent,
+    ThemeColorsContent, ThemeContent, ThemeFamilyContent, ThemeStyleContent, UserTheme,
+    UserThemeFamily,
 };
 
 use crate::theme_printer::UserThemeFamilyPrinter;
@@ -105,7 +106,7 @@ fn main() -> Result<()> {
         .expect("could not initialize logger");
 
     if 1 < 2 {
-        let themes = Vec::new();
+        let themes: Vec<UserThemeFamily> = Vec::new();
         // Uncomment this line when you need to regenerate themes.
         // let themes = theme::all_user_themes();
 
@@ -661,6 +662,20 @@ fn convert_theme_styles(styles: theme::UserThemeStylesRefinement) -> ThemeStyleC
             warning_background: styles.status.warning_background.map(serialize_color),
             warning_border: styles.status.warning_border.map(serialize_color),
         },
+        players: styles
+            .player
+            .map(|players| {
+                players
+                    .0
+                    .into_iter()
+                    .map(|player_color| PlayerColorContent {
+                        cursor: Some(player_color.cursor).map(serialize_color),
+                        background: Some(player_color.background).map(serialize_color),
+                        selection: Some(player_color.selection).map(serialize_color),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         syntax: styles
             .syntax
             .map(|syntax| {

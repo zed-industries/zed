@@ -59,6 +59,9 @@ pub struct ThemeStyleContent {
     #[serde(flatten, default)]
     pub status: StatusColorsContent,
 
+    #[serde(default)]
+    pub players: Vec<PlayerColorContent>,
+
     /// The styles for syntax nodes.
     #[serde(default)]
     pub syntax: IndexMap<String, HighlightStyleContent>,
@@ -1151,6 +1154,13 @@ impl StatusColorsContent {
                 .and_then(|color| try_parse_color(&color).ok()),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PlayerColorContent {
+    pub cursor: Option<String>,
+    pub background: Option<String>,
+    pub selection: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]

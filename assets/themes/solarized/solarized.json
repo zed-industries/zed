@@ -135,6 +135,48 @@
         "warning": "#b58902ff",
         "warning.background": "#2e1d0cff",
         "warning.border": "#47300fff",
+        "players": [
+          {
+            "cursor": "#278ad1ff",
+            "background": "#278ad1ff",
+            "selection": "#278ad13d"
+          },
+          {
+            "cursor": "#d33781ff",
+            "background": "#d33781ff",
+            "selection": "#d337813d"
+          },
+          {
+            "cursor": "#cb4b16ff",
+            "background": "#cb4b16ff",
+            "selection": "#cb4b163d"
+          },
+          {
+            "cursor": "#6c71c4ff",
+            "background": "#6c71c4ff",
+            "selection": "#6c71c43d"
+          },
+          {
+            "cursor": "#2ba198ff",
+            "background": "#2ba198ff",
+            "selection": "#2ba1983d"
+          },
+          {
+            "cursor": "#dc3330ff",
+            "background": "#dc3330ff",
+            "selection": "#dc33303d"
+          },
+          {
+            "cursor": "#b58902ff",
+            "background": "#b58902ff",
+            "selection": "#b589023d"
+          },
+          {
+            "cursor": "#849903ff",
+            "background": "#849903ff",
+            "selection": "#8499033d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#278ad1ff",
@@ -462,6 +504,48 @@
         "warning": "#b58903ff",
         "warning.background": "#f5e6d0ff",
         "warning.border": "#ebd3aaff",
+        "players": [
+          {
+            "cursor": "#288bd1ff",
+            "background": "#288bd1ff",
+            "selection": "#288bd13d"
+          },
+          {
+            "cursor": "#d33781ff",
+            "background": "#d33781ff",
+            "selection": "#d337813d"
+          },
+          {
+            "cursor": "#cb4b17ff",
+            "background": "#cb4b17ff",
+            "selection": "#cb4b173d"
+          },
+          {
+            "cursor": "#6c71c3ff",
+            "background": "#6c71c3ff",
+            "selection": "#6c71c33d"
+          },
+          {
+            "cursor": "#2ba198ff",
+            "background": "#2ba198ff",
+            "selection": "#2ba1983d"
+          },
+          {
+            "cursor": "#dc3330ff",
+            "background": "#dc3330ff",
+            "selection": "#dc33303d"
+          },
+          {
+            "cursor": "#b58903ff",
+            "background": "#b58903ff",
+            "selection": "#b589033d"
+          },
+          {
+            "cursor": "#849903ff",
+            "background": "#849903ff",
+            "selection": "#8499033d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#288bd1ff",

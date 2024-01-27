@@ -135,6 +135,48 @@
         "warning": "#f5c177ff",
         "warning.background": "#50331aff",
         "warning.border": "#6d4d2bff",
+        "players": [
+          {
+            "cursor": "#9bced6ff",
+            "background": "#9bced6ff",
+            "selection": "#9bced63d"
+          },
+          {
+            "cursor": "#9d7591ff",
+            "background": "#9d7591ff",
+            "selection": "#9d75913d"
+          },
+          {
+            "cursor": "#c4a7e6ff",
+            "background": "#c4a7e6ff",
+            "selection": "#c4a7e63d"
+          },
+          {
+            "cursor": "#c4a7e6ff",
+            "background": "#c4a7e6ff",
+            "selection": "#c4a7e63d"
+          },
+          {
+            "cursor": "#31738fff",
+            "background": "#31738fff",
+            "selection": "#31738f3d"
+          },
+          {
+            "cursor": "#ea6e92ff",
+            "background": "#ea6e92ff",
+            "selection": "#ea6e923d"
+          },
+          {
+            "cursor": "#f5c177ff",
+            "background": "#f5c177ff",
+            "selection": "#f5c1773d"
+          },
+          {
+            "cursor": "#5cc1a3ff",
+            "background": "#5cc1a3ff",
+            "selection": "#5cc1a33d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#9bced6ff",
@@ -472,6 +514,48 @@
         "warning": "#e99d35ff",
         "warning.background": "#ffebd6ff",
         "warning.border": "#ffdab7ff",
+        "players": [
+          {
+            "cursor": "#57949fff",
+            "background": "#57949fff",
+            "selection": "#57949f3d"
+          },
+          {
+            "cursor": "#7c697fff",
+            "background": "#7c697fff",
+            "selection": "#7c697f3d"
+          },
+          {
+            "cursor": "#9079a9ff",
+            "background": "#9079a9ff",
+            "selection": "#9079a93d"
+          },
+          {
+            "cursor": "#9079a9ff",
+            "background": "#9079a9ff",
+            "selection": "#9079a93d"
+          },
+          {
+            "cursor": "#296983ff",
+            "background": "#296983ff",
+            "selection": "#2969833d"
+          },
+          {
+            "cursor": "#b4647aff",
+            "background": "#b4647aff",
+            "selection": "#b4647a3d"
+          },
+          {
+            "cursor": "#e99d35ff",
+            "background": "#e99d35ff",
+            "selection": "#e99d353d"
+          },
+          {
+            "cursor": "#3daa8eff",
+            "background": "#3daa8eff",
+            "selection": "#3daa8e3d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#57949fff",
@@ -809,6 +893,48 @@
         "warning": "#f5c177ff",
         "warning.background": "#50331aff",
         "warning.border": "#6d4d2bff",
+        "players": [
+          {
+            "cursor": "#9bced6ff",
+            "background": "#9bced6ff",
+            "selection": "#9bced63d"
+          },
+          {
+            "cursor": "#a683a0ff",
+            "background": "#a683a0ff",
+            "selection": "#a683a03d"
+          },
+          {
+            "cursor": "#c4a7e6ff",
+            "background": "#c4a7e6ff",
+            "selection": "#c4a7e63d"
+          },
+          {
+            "cursor": "#c4a7e6ff",
+            "background": "#c4a7e6ff",
+            "selection": "#c4a7e63d"
+          },
+          {
+            "cursor": "#3e8fb0ff",
+            "background": "#3e8fb0ff",
+            "selection": "#3e8fb03d"
+          },
+          {
+            "cursor": "#ea6e92ff",
+            "background": "#ea6e92ff",
+            "selection": "#ea6e923d"
+          },
+          {
+            "cursor": "#f5c177ff",
+            "background": "#f5c177ff",
+            "selection": "#f5c1773d"
+          },
+          {
+            "cursor": "#5cc1a3ff",
+            "background": "#5cc1a3ff",
+            "selection": "#5cc1a33d"
+          }
+        ],
         "syntax": {
           "attribute": {
             "color": "#9bced6ff",
