@@ -170,10 +170,10 @@ impl settings::Settings for ThemeSettings {
     ) -> Result<Self> {
         let themes = cx.default_global::<ThemeRegistry>();
 
-        let mut use_dark_theme = matches!(defaults.theme_mode.as_deref(), Some("dark"));
+        let mut is_dark_mode = defaults.theme_mode.as_deref() == Some("dark");
         for value in user_values.into_iter().copied().cloned() {
             if let Some(theme_mode) = value.theme_mode.as_ref() {
-                use_dark_theme = theme_mode == "dark"
+                is_dark_mode = theme_mode == "dark"
             }
         }
 
@@ -194,7 +194,7 @@ impl settings::Settings for ThemeSettings {
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             active_theme: themes
-                .get(if use_dark_theme {
+                .get(if is_dark_mode {
                     defaults.theme_dark.as_ref().unwrap()
                 } else {
                     defaults.theme.as_ref().unwrap()
@@ -219,7 +219,7 @@ impl settings::Settings for ThemeSettings {
                 this.ui_font.features = value;
             }
 
-            if let Some(value) = if use_dark_theme {
+            if let Some(value) = if is_dark_mode {
                 &value.theme_dark
             } else {
                 &value.theme

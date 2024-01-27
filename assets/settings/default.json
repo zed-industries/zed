@@ -2,6 +2,7 @@
   // The name of the Zed theme to use for the UI
   "theme": "One Light",
   "theme_dark": "One Dark",
+  "theme_mode": "dark",
   // The name of a base set of key bindings to use.
   // This setting can take four values, each named after another
   // text editor:
