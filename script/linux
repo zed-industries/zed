@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+# if not on Linux, do nothing
+[[ $(uname) == "Linux" ]] || exit 0
+
+# if sudo is not installed, define an empty alias
+maysudo=$(command -v sudo || true)
+export maysudo
+
+# package manager
+pkgman=$(command -v apt-get || true)
+
+# install packages
+if [[ -n $pkgman ]]; then
+  $maysudo "$pkgman" install -y \
+    libasound2-dev
+else
+  echo "Could not install: libasound2-dev"
+fi
