@@ -104,9 +104,10 @@ fn main() -> Result<()> {
     TermLogger::init(LevelFilter::Trace, log_config, TerminalMode::Mixed)
         .expect("could not initialize logger");
 
-    #[cfg(not(feature = "importing-themes"))]
     if 1 < 2 {
-        let themes = theme::all_user_themes();
+        let themes = Vec::new();
+        // Uncomment this line when you need to regenerate themes.
+        // let themes = theme::all_user_themes();
 
         let mut families = Vec::new();
 
