@@ -1,5 +1,5 @@
 use crate::one_themes::one_dark;
-use crate::{SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
+use crate::{SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
@@ -27,7 +27,7 @@ pub struct ThemeSettings {
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
     pub active_theme: Arc<Theme>,
-    pub theme_overrides: Option<ThemeContent>,
+    pub theme_overrides: Option<ThemeStyleContent>,
 }
 
 #[derive(Default)]
@@ -56,7 +56,7 @@ pub struct ThemeSettingsContent {
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
-    pub theme_overrides: Option<ThemeContent>,
+    pub theme_overrides: Option<ThemeStyleContent>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
