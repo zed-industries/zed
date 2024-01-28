@@ -815,14 +815,14 @@ fn load_embedded_fonts(cx: &AppContext) {
             }
 
             scope.spawn(async {
-                let font_bytes = asset_source.load(font_path).unwrap().to_vec();
-                embedded_fonts.lock().push(Arc::from(font_bytes));
+                let font_bytes = asset_source.load(font_path).unwrap();
+                embedded_fonts.lock().push(font_bytes);
             });
         }
     }));
 
     cx.text_system()
-        .add_fonts(&embedded_fonts.into_inner())
+        .add_fonts(embedded_fonts.into_inner())
         .unwrap();
 }
 

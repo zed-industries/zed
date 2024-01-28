@@ -2676,17 +2676,9 @@ mod tests {
     #[gpui::test]
     fn test_bundled_settings_and_themes(cx: &mut AppContext) {
         cx.text_system()
-            .add_fonts(&[
-                Assets
-                    .load("fonts/zed-sans/zed-sans-extended.ttf")
-                    .unwrap()
-                    .to_vec()
-                    .into(),
-                Assets
-                    .load("fonts/zed-mono/zed-mono-extended.ttf")
-                    .unwrap()
-                    .to_vec()
-                    .into(),
+            .add_fonts(vec![
+                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap(),
+                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap(),
             ])
             .unwrap();
         let themes = ThemeRegistry::default();
