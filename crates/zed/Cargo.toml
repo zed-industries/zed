@@ -124,6 +124,7 @@ tree-sitter-glsl.workspace = true
 tree-sitter-gleam.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-heex.workspace = true
+tree-sitter-java.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-markdown.workspace = true

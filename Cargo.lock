@@ -8484,6 +8484,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-java"
+version = "0.20.2"
+source = "git+https://github.com/tree-sitter/tree-sitter-java?rev=2b57cd9541f9fd3a89207d054ce8fbe72657c444#2b57cd9541f9fd3a89207d054ce8fbe72657c444"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-json"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9733,6 +9742,7 @@ dependencies = [
  "tree-sitter-haskell",
  "tree-sitter-heex",
  "tree-sitter-html",
+ "tree-sitter-java",
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",
  "tree-sitter-markdown",

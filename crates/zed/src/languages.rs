@@ -17,6 +17,7 @@ mod gleam;
 mod go;
 mod haskell;
 mod html;
+mod java;
 mod json;
 #[cfg(feature = "plugin_runtime")]
 mod language_plugin;
@@ -126,6 +127,11 @@ pub fn init(
             Arc::new(elixir::ElixirLspAdapter),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
+    );
+    language(
+        "java",
+        tree_sitter_java::language(),
+        vec![Arc::new(java::JavaLspAdapter)],
     );
     language(
         "json",
