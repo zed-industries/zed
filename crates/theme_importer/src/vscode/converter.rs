@@ -78,20 +78,27 @@ impl VsCodeThemeConverter {
                 .clone(),
             created: vscode_colors.editor_gutter_added_background.clone(),
             deleted: vscode_colors.editor_gutter_deleted_background.clone(),
-            error: vscode_colors.error_foreground.clone(),
+            error: vscode_colors.editor_error_foreground.clone(),
+            error_background: vscode_colors.editor_error_background.clone(),
+            error_border: vscode_colors.editor_error_border.clone(),
             hidden: vscode_colors.tab_inactive_foreground.clone(),
             hint: vscode_colors
                 .editor_inlay_hint_foreground
                 .clone()
                 .or(vscode_base_status_colors.hint),
+            hint_border: vscode_colors.editor_hint_border.clone(),
             ignored: vscode_colors
                 .git_decoration_ignored_resource_foreground
                 .clone(),
+            info: vscode_colors.editor_info_foreground.clone(),
+            info_background: vscode_colors.editor_info_background.clone(),
+            info_border: vscode_colors.editor_info_border.clone(),
             modified: vscode_colors.editor_gutter_modified_background.clone(),
-            // info: None,
             // renamed: None,
             // success: None,
-            warning: vscode_colors.list_warning_foreground.clone(),
+            warning: vscode_colors.editor_warning_foreground.clone(),
+            warning_background: vscode_colors.editor_warning_background.clone(),
+            warning_border: vscode_colors.editor_warning_border.clone(),
             ..Default::default()
         })
     }
