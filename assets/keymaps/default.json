@@ -418,6 +418,12 @@
       "escape": "workspace::Unfollow"
     }
   },
+  {
+    "context": "ProjectPanel",
+    "bindings": {
+      "space": "project_panel::Open"
+    }
+  },
   // Bindings from Sublime Text
   {
     "context": "Editor",
