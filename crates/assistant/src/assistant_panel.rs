@@ -1096,6 +1096,14 @@ impl AssistantPanel {
             let conversation =
                 Conversation::deserialize(saved_conversation, path.clone(), languages, &mut cx)
                     .await?;
+
+            // The saved conversation will be initialized without any credentials,
+            // so we need to retrieve the credentials again.
+            let completion_provider =
+                cx.update(|cx| conversation.read(cx).completion_provider.clone())?;
+            cx.update(|cx| completion_provider.retrieve_credentials(cx))?
+                .await;
+
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
                 // the same conversation, we don't want to open it again.
@@ -1676,6 +1684,7 @@ impl Conversation {
 
         if should_assist {
             if !self.completion_provider.has_credentials() {
+                log::info!("completion provider has no credentials");
                 return Default::default();
             }
 
