@@ -37,6 +37,7 @@
         "gitattributes": "vcs",
         "gitignore": "vcs",
         "gitmodules": "vcs",
+        "gitkeep": "vcs",
         "go": "code",
         "h": "code",
         "handlebars": "code",
