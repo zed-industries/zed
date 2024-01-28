@@ -50,7 +50,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{update_settings_file, Settings};
 use shared_screen::SharedScreen;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
@@ -663,6 +663,14 @@ impl Workspace {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
                     store.workspaces.remove(&window);
+                })
+            }),
+            cx.observe_appearance_change(|this, cx| {
+                let is_dark_mode = cx.is_dark_mode();
+                let fs = this.app_state().fs.clone();
+                update_settings_file::<ThemeSettings>(fs, cx, move |settings| {
+                    let new_theme_mode = if is_dark_mode { "dark" } else { "light" };
+                    settings.theme_mode = Some(new_theme_mode.to_string());
                 })
             }),
         ];
