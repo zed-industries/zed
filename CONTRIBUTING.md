@@ -10,7 +10,7 @@ All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/d
 
 If you're looking for ideas about what to work on, check out:
 
-- Our public roadmap (link coming soon!) contains a rough outline of our near-term priorities for Zed.
+- Our [public roadmap](https://zed.dev/roadmap) contains a rough outline of our near-term priorities for Zed.
 - Our [top-ranking issues](https://github.com/zed-industries/zed/issues/5393) based on votes by the community.
 
 Outside of a handful of extremely popular languages and themes, we are generally not looking to extend Zed's language or theme support by directly building them into Zed. We really want to build a plugin system to handle making the editor extensible going forward. If you are passionate about shipping new languages or themes we suggest contributing to the extension system to help us get there faster.
@@ -19,7 +19,7 @@ Outside of a handful of extremely popular languages and themes, we are generally
 
 The best way to propose a change is to [start a discussion on our GitHub repository](https://github.com/zed-industries/zed/discussions).
 
-First, write a short **problem statement**, which *clearly* and *briefly* describes the problem you want to solve independently from any specific solution. It doesn't need to be long or formal, but it's difficult to consider a solution in absence of a clear understanding of the problem.
+First, write a short **problem statement**, which _clearly_ and _briefly_ describes the problem you want to solve independently from any specific solution. It doesn't need to be long or formal, but it's difficult to consider a solution in absence of a clear understanding of the problem.
 
 Next, write a short **solution proposal**. How can the problem (or set of problems) you have stated above be addressed? What are the pros and cons of your approach? Again, keep it brief and informal. This isn't a specification, but rather a starting point for a conversation.
 
