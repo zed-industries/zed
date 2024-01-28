@@ -6,8 +6,8 @@ use crate::{
     KeymatchResult, Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowBounds,
-    WindowOptions,
+    Subscription, TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance,
+    WindowBounds, WindowOptions,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -276,6 +276,8 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    appearance: WindowAppearance,
+    appearance_observers: SubscriberSet<(), AnyObserver>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) focus_invalidated: bool,
@@ -337,6 +339,7 @@ impl Window {
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let bounds = platform_window.bounds();
+        let appearance = platform_window.appearance();
 
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
@@ -387,6 +390,15 @@ impl Window {
             })
         });
 
+        platform_window.on_appearance_changed({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, cx| cx.appearance_changed())
+                    .log_err();
+            })
+        });
+
         Window {
             handle,
             removed: false,
@@ -421,6 +433,9 @@ impl Window {
 
             #[cfg(any(test, feature = "test-support"))]
             focus_invalidated: false,
+
+            appearance,
+            appearance_observers: SubscriberSet::new(),
         }
     }
 }
@@ -729,6 +744,15 @@ impl<'a> WindowContext<'a> {
             .retain(&(), |callback| callback(self));
     }
 
+    fn appearance_changed(&mut self) {
+        self.window.appearance = self.window.platform_window.appearance();
+
+        self.window
+            .appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(self));
+    }
+
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.bounds
@@ -742,6 +766,14 @@ impl<'a> WindowContext<'a> {
     /// Returns whether this window is focused by the operating system (receiving key events).
     pub fn is_window_active(&self) -> bool {
         self.window.active
+    }
+
+    /// Returns whether this window is in dark mode.
+    pub fn is_dark_mode(&self) -> bool {
+        match self.window.appearance {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => true,
+            WindowAppearance::Light | WindowAppearance::VibrantLight => false,
+        }
     }
 
     /// Toggle zoom on the window.
@@ -2053,6 +2085,20 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     ) -> Subscription {
         let view = self.view.downgrade();
         let (subscription, activate) = self.window.activation_observers.insert(
+            (),
+            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
+        );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to be invoked when the window appearance changes.
+    pub fn observe_appearance_change(
+        &mut self,
+        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
+    ) -> Subscription {
+        let view = self.view.downgrade();
+        let (subscription, activate) = self.window.appearance_observers.insert(
             (),
             Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
         );
