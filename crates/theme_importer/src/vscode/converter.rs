@@ -73,12 +73,11 @@ impl VsCodeThemeConverter {
         };
 
         Ok(StatusColorsContent {
-            created: vscode_colors.editor_gutter_added_background.clone(),
-            modified: vscode_colors.editor_gutter_modified_background.clone(),
-            deleted: vscode_colors.editor_gutter_deleted_background.clone(),
             conflict: vscode_colors
                 .git_decoration_conflicting_resource_foreground
                 .clone(),
+            created: vscode_colors.editor_gutter_added_background.clone(),
+            deleted: vscode_colors.editor_gutter_deleted_background.clone(),
             error: vscode_colors.error_foreground.clone(),
             hidden: vscode_colors.tab_inactive_foreground.clone(),
             hint: vscode_colors
@@ -88,6 +87,7 @@ impl VsCodeThemeConverter {
             ignored: vscode_colors
                 .git_decoration_ignored_resource_foreground
                 .clone(),
+            modified: vscode_colors.editor_gutter_modified_background.clone(),
             // info: None,
             // renamed: None,
             // success: None,
