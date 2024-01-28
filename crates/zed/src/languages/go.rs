@@ -18,7 +18,7 @@ use std::{
         Arc,
     },
 };
-use util::{fs::remove_matching, github::latest_github_release, ResultExt};
+use util::{async_maybe, fs::remove_matching, github::latest_github_release, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -329,7 +329,7 @@ impl super::LspAdapter for GoLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last_binary_path = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -352,7 +352,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         } else {
             Err(anyhow!("no cached binary"))
         }
-    })()
+    })
     .await
     .log_err()
 }

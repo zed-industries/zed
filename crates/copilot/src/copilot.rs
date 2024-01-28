@@ -28,7 +28,8 @@ use std::{
     sync::Arc,
 };
 use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
+    async_maybe, fs::remove_matching, github::latest_github_release, http::HttpClient, paths,
+    ResultExt,
 };
 
 actions!(
@@ -992,7 +993,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         e @ Err(..) => {
             e.log_err();
             // Fetch a cached binary, if it exists
-            (|| async move {
+            async_maybe!({
                 let mut last_version_dir = None;
                 let mut entries = fs::read_dir(paths::COPILOT_DIR.as_path()).await?;
                 while let Some(entry) = entries.next().await {
@@ -1012,7 +1013,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                         last_version_dir
                     ))
                 }
-            })()
+            })
             .await
         }
     }

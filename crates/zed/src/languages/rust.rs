@@ -9,6 +9,7 @@ use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
 use util::{
+    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
     ResultExt,
@@ -272,7 +273,7 @@ impl LspAdapter for RustLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -283,7 +284,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             path: last.ok_or_else(|| anyhow!("no cached binary"))?,
             arguments: Default::default(),
         })
-    })()
+    })
     .await
     .log_err()
 }
