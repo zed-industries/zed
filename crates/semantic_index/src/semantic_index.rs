@@ -8,7 +8,7 @@ mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
 use ai::embedding::{Embedding, EmbeddingProvider};
-use ai::providers::open_ai::OpenAIEmbeddingProvider;
+use ai::providers::open_ai::OpenAiEmbeddingProvider;
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
@@ -91,7 +91,7 @@ pub fn init(
 
     cx.spawn(move |cx| async move {
         let embedding_provider =
-            OpenAIEmbeddingProvider::new(http_client, cx.background_executor().clone()).await;
+            OpenAiEmbeddingProvider::new(http_client, cx.background_executor().clone()).await;
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
