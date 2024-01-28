@@ -287,8 +287,7 @@ impl TerminalBuilder {
                 Shell::System => {
                     // by default alacritty does not use $SHELL as the default shell,
                     // so we make it use it here if it's specified
-                    if std::env::var("SHELL").is_ok() {
-                        let shell = std::env::var("SHELL").unwrap();
+                    if let Ok(shell) = std::env::var("SHELL") {
                         Some(alacritty_terminal::tty::Shell::new(shell, Vec::new()))
                     } else {
                         None
