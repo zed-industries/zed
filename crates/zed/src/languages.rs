@@ -258,6 +258,7 @@ pub fn init(
         ],
     );
 
+    language("purescript", tree_sitter_purescript::language(), vec![]);
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
