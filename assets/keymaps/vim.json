@@ -341,6 +341,7 @@
       "shift-s": "vim::SubstituteLine",
       "> >": "editor::Indent",
       "< <": "editor::Outdent",
+      "shift-h": "vim::WindowTop",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }

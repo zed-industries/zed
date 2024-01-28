@@ -8,11 +8,12 @@ pub fn yank_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let mut original_positions: HashMap<_, _> = Default::default();
+            let editor_clone = editor.clone(cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     let original_position = (selection.head(), selection.goal);
                     original_positions.insert(selection.id, original_position);
-                    motion.expand_selection(map, selection, times, true, &text_layout_details);
+                    motion.expand_selection(map, selection, times, true, &text_layout_details, &editor_clone);
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);
