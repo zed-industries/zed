@@ -47,6 +47,7 @@ class IssueData:
 
 @app.command()
 def main(
+    issue_reference_number: int,
     github_token: Optional[str] = None,
     prod: bool = False,
     query_day_interval: Optional[int] = None,
@@ -57,7 +58,8 @@ def main(
 
     if query_day_interval:
         tz = timezone("america/new_york")
-        start_date = datetime.now(tz) - timedelta(days=query_day_interval)
+        current_time = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = current_time - timedelta(days=query_day_interval)
 
     # GitHub Workflow will pass in the token as an environment variable,
     # but we can place it in our env when running the script locally, for convenience
@@ -84,7 +86,7 @@ def main(
     )
 
     if prod:
-        top_ranking_issues_issue: Issue = repository.get_issue(5393)
+        top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
         top_ranking_issues_issue.edit(body=issue_text)
     else:
         print(issue_text)
