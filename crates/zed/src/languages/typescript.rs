@@ -349,6 +349,7 @@ async fn get_cached_eslint_server_binary(
 #[cfg(test)]
 mod tests {
     use gpui::{Context, TestAppContext};
+    use text::BufferId;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -376,7 +377,8 @@ mod tests {
         .unindent();
 
         let buffer = cx.new_model(|cx| {
-            language::Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+                .with_language(language, cx)
         });
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(

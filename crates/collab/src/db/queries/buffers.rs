@@ -693,7 +693,7 @@ impl Database {
             return Ok(());
         }
 
-        let mut text_buffer = text::Buffer::new(0, 0, base_text);
+        let mut text_buffer = text::Buffer::new(0, text::BufferId::new(1).unwrap(), base_text);
         text_buffer
             .apply_ops(operations.into_iter().filter_map(operation_from_wire))
             .unwrap();
