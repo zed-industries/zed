@@ -8550,6 +8550,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-purescript"
+version = "1.0.0"
+source = "git+https://github.com/ivanmoreau/tree-sitter-purescript?rev=a37140f0c7034977b90faa73c94fcb8a5e45ed08#a37140f0c7034977b90faa73c94fcb8a5e45ed08"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-python"
 version = "0.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9739,6 +9748,7 @@ dependencies = [
  "tree-sitter-nix",
  "tree-sitter-nu",
  "tree-sitter-php",
+ "tree-sitter-purescript",
  "tree-sitter-python",
  "tree-sitter-racket",
  "tree-sitter-ruby",

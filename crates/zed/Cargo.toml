@@ -134,6 +134,7 @@ tree-sitter-ruby.workspace = true
 tree-sitter-haskell.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-php.workspace = true
+tree-sitter-purescript.workspace = true
 tree-sitter-scheme.workspace = true
 tree-sitter-svelte.workspace = true
 tree-sitter-racket.workspace = true
