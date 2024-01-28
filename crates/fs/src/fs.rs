@@ -279,7 +279,6 @@ impl Fs for RealFs {
         })))
     }
 
-    // implement file watching using the notify crate
     #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
