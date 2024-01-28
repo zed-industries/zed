@@ -1,3 +1,3 @@
-{"Put":{"state":"abc\ndef\n\nparagraph\nthe second\n\n\n\nthird ˇand\nfinal"}}
+{"Put":{"state":"abc\ndef\nparagraph\nthe second\nthird ˇand\nfinal"}}
 {"Key":"shift-h"}
-{"Get":{"state":"abˇc\ndef\n\nparagraph\nthe second\n\n\n\nthird and\nfinal","mode":"Normal"}}
+{"Get":{"state":"abˇc\ndef\nparagraph\nthe second\nthird and\nfinal","mode":"Normal"}}

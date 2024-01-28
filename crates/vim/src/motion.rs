@@ -963,14 +963,18 @@ pub(crate) fn next_line_end(
 }
 
 fn window_top(map: &DisplaySnapshot,
-    _point: DisplayPoint,
+    point: DisplayPoint,
     _: &TextLayoutDetails,
     editor: &Editor) -> (DisplayPoint, SelectionGoal) {
       let top_anchor = editor.scroll_manager.anchor().anchor;
       let top = top_anchor.to_display_point(map);
 
-      let new_col = _point.column().min(map.line_len(top.row())-1);
-      let new_point = DisplayPoint::new(top.row(), new_col);
+      // new column will be min of current column or length of top row
+      let new_col = point.column().min(map.line_len(top.row()));
+
+      // shift back a character unless there are 0 characters
+      let new_col_shifted = (new_col-1).max(0);
+      let new_point = DisplayPoint::new(top.row(), new_col_shifted);
       (new_point, SelectionGoal::None)
     }
 
@@ -1132,12 +1136,8 @@ mod test {
       let mut cx = NeovimBackedTestContext::new(cx).await;
       let initial_state = indoc! {r"abc
           def
-
           paragraph
           the second
-
-
-
           third ˇand
           final"};
 
@@ -1145,12 +1145,8 @@ mod test {
       cx.simulate_shared_keystrokes(["shift-h"]).await;
       cx.assert_shared_state(indoc! {r"abˇc
           def
-
           paragraph
           the second
-
-
-
           third and
           final"})
           .await;
