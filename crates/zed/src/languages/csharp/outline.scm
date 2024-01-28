@@ -25,8 +25,11 @@
 (method_declaration
     (modifier)? @context
     (modifier)? @context
+    type: (predefined_type)? @context
+    type: (identifier)? @context
     type: (generic_name)? @context
     name: (identifier) @name
+    parameters: (parameter_list) @context
 ) @item
 
 (enum_declaration
