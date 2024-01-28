@@ -1,5 +1,6 @@
 mod blade_atlas;
 mod blade_belt;
+mod blade_renderer;
 mod dispatcher;
 mod display;
 mod platform;
@@ -14,3 +15,4 @@ pub(crate) use text_system::*;
 pub(crate) use window::*;
 
 use blade_belt::*;
+use blade_renderer::*;

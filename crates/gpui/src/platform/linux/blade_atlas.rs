@@ -22,6 +22,22 @@ struct BladeAtlasState {
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
 }
 
+impl BladeAtlasState {
+    fn destroy(&mut self) {
+        for texture in self.monochrome_textures.drain(..) {
+            self.gpu.destroy_texture(texture.raw);
+        }
+        for texture in self.polychrome_textures.drain(..) {
+            self.gpu.destroy_texture(texture.raw);
+        }
+        for texture in self.path_textures.drain(..) {
+            self.gpu.destroy_texture(texture.raw);
+        }
+        self.gpu.destroy_command_encoder(&mut self.gpu_encoder);
+        self.upload_belt.destroy(&self.gpu);
+    }
+}
+
 impl BladeAtlas {
     pub(crate) fn new(gpu: &Arc<blade::Context>) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
@@ -39,6 +55,10 @@ impl BladeAtlas {
             path_textures: Default::default(),
             tiles_by_key: Default::default(),
         }))
+    }
+
+    pub(crate) fn destroy(&self) {
+        self.0.lock().destroy();
     }
 
     pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {

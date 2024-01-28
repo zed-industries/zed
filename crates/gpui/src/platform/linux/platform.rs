@@ -2,11 +2,13 @@
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxDisplay, LinuxTextSystem, LinuxWindow, Menu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, Task, WindowOptions,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxDisplay, LinuxTextSystem, LinuxWindow,
+    LinuxWindowState, LinuxWindowStatePtr, Menu, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformInput, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
+    WindowOptions,
 };
 
+use collections::{HashMap, HashSet};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 
@@ -17,16 +19,48 @@ use std::{
     time::Duration,
 };
 use time::UtcOffset;
-use x11rb::{connection::Connection as _, rust_connection::RustConnection};
+use x11rb::{
+    connection::Connection as _,
+    protocol::{
+        xproto::{Atom, ConnectionExt as _},
+        Event,
+    },
+    rust_connection::RustConnection,
+};
 
 pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
+
+pub(crate) struct WmAtoms {
+    pub protocols: Atom,
+    pub delete_window: Atom,
+}
+
+impl WmAtoms {
+    fn new(x11_connection: &RustConnection) -> Self {
+        Self {
+            protocols: x11_connection
+                .intern_atom(false, b"WM_PROTOCOLS")
+                .unwrap()
+                .reply()
+                .unwrap()
+                .atom,
+            delete_window: x11_connection
+                .intern_atom(false, b"WM_DELETE_WINDOW")
+                .unwrap()
+                .reply()
+                .unwrap()
+                .atom,
+        }
+    }
+}
 
 pub(crate) struct LinuxPlatformState {
     x11_connection: RustConnection,
     x11_root_index: usize,
-    gpu: Arc<blade::Context>,
+    atoms: WmAtoms,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
+    windows: HashMap<u32, LinuxWindowStatePtr>,
     text_system: Arc<LinuxTextSystem>,
 }
 
@@ -39,24 +73,17 @@ impl Default for LinuxPlatform {
 impl LinuxPlatform {
     pub(crate) fn new() -> Self {
         let (x11_connection, x11_root_index) = x11rb::connect(None).unwrap();
+        let atoms = WmAtoms::new(&x11_connection);
 
         let dispatcher = Arc::new(LinuxDispatcher::new());
-        let gpu = Arc::new(
-            unsafe {
-                blade::Context::init(blade::ContextDesc {
-                    validation: cfg!(debug_assertions),
-                    capture: false,
-                })
-            }
-            .unwrap(),
-        );
 
         Self(Mutex::new(LinuxPlatformState {
             x11_connection,
             x11_root_index,
-            gpu,
+            atoms,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
+            windows: HashMap::default(),
             text_system: Arc::new(LinuxTextSystem::new()),
         }))
     }
@@ -76,7 +103,58 @@ impl Platform for LinuxPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-        on_finish_launching()
+        on_finish_launching();
+
+        let mut need_repaint = HashSet::<u32>::default();
+
+        while !self.0.lock().windows.is_empty() {
+            let event = self.0.lock().x11_connection.wait_for_event().unwrap();
+            let mut event_option = Some(event);
+            while let Some(event) = event_option {
+                match event {
+                    Event::Expose(event) => {
+                        if event.count == 0 {
+                            need_repaint.insert(event.window);
+                        }
+                    }
+                    Event::ConfigureNotify(event) => {
+                        let lock = self.0.lock();
+                        let mut window = lock.windows[&event.window].lock();
+                        window.resize(event.width, event.height);
+                    }
+                    Event::MotionNotify(_event) => {
+                        //mouse_position = (event.event_x, event.event_y);
+                        //need_repaint.insert(event.window);
+                    }
+                    Event::MapNotify(_) => {}
+                    Event::ClientMessage(event) => {
+                        let mut lock = self.0.lock();
+                        let data = event.data.as_data32();
+                        if data[0] == lock.atoms.delete_window {
+                            {
+                                let mut window = lock.windows[&event.window].lock();
+                                window.destroy();
+                            }
+                            lock.windows.remove(&event.window);
+                        }
+                    }
+                    Event::Error(error) => {
+                        log::error!("X11 error {:?}", error);
+                    }
+                    _ => {}
+                }
+
+                let lock = self.0.lock();
+                event_option = lock.x11_connection.poll_for_event().unwrap();
+            }
+
+            for x11_window in need_repaint.drain() {
+                let lock = self.0.lock();
+                let mut window = lock.windows[&x11_window].lock();
+                window.paint();
+                lock.x11_connection.flush().unwrap();
+            }
+        }
     }
 
     fn quit(&self) {}
@@ -118,14 +196,19 @@ impl Platform for LinuxPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let lock = self.0.lock();
-        Box::new(LinuxWindow::new(
+        let mut lock = self.0.lock();
+        let win_id = lock.x11_connection.generate_id().unwrap();
+
+        let window_ptr = LinuxWindowState::new_ptr(
             options,
             handle,
             &lock.x11_connection,
             lock.x11_root_index,
-            &lock.gpu,
-        ))
+            win_id,
+            &lock.atoms,
+        );
+        lock.windows.insert(win_id, window_ptr.clone());
+        Box::new(LinuxWindow(window_ptr))
     }
 
     fn set_display_link_output_callback(
