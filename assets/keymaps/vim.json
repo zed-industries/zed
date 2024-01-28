@@ -400,7 +400,8 @@
   {
     "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
     "bindings": {
-      "u": "editor::Undo",
+      "u": "vim::ConvertToLowerCase",
+      "U": "vim::ConvertToUpperCase",
       "o": "vim::OtherEnd",
       "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
