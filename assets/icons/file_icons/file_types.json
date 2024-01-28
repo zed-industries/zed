@@ -98,6 +98,7 @@
         "tsv": "storage",
         "tsx": "code",
         "txt": "document",
+        "vue": "vue",
         "wav": "audio",
         "webm": "video",
         "xls": "document",
@@ -191,6 +192,9 @@
         },
         "video": {
             "icon": "icons/file_icons/video.svg"
+        },
+        "vue": {
+            "icon": "icons/file_icons/vue.svg"
         }
     }
 }
