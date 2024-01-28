@@ -106,6 +106,7 @@ pub struct EntryDetails {
 actions!(
     project_panel,
     [
+        ToggleExpandSelectedEntry,
         ExpandSelectedEntry,
         CollapseSelectedEntry,
         CollapseAllEntries,
@@ -526,6 +527,16 @@ impl ProjectPanel {
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
                 cx.focus(&self.focus_handle);
                 cx.notify();
+            }
+        }
+    }
+
+    fn toggle_expand_selected_entry(&mut self, _: &ToggleExpandSelectedEntry, cx: &mut ViewContext<Self>) {
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            if entry.is_dir() {
+                self.toggle_expanded(entry.id, cx)
+            } else {
+                self.open_entry(entry.id, true, cx);
             }
         }
     }
@@ -1473,6 +1484,7 @@ impl Render for ProjectPanel {
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::toggle_expand_selected_entry))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
