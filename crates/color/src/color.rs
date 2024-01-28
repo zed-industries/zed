@@ -34,7 +34,7 @@ pub enum BlendMode {
     Overlay,
     /// Selects the darker of the base or blend color as the resulting color. Useful for darkening images without affecting the overall contrast.
     Darken,
-    /// Selects the lighter of the base or blend color as the resulting color. Useful for lightening images without affecting the overall contrast.
+    /// Selects the lighter of the base or blend color as the resulting color. Useful for lightning images without affecting the overall contrast.
     Lighten,
     /// Brightens the base color to reflect the blend color. The result is a lightened image.
     Dodge,
