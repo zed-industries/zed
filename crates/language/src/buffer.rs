@@ -15,7 +15,7 @@ use crate::{
     },
     CodeLabel, LanguageScope, Outline,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
 use gpui::{AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel};
@@ -44,10 +44,10 @@ use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
-    Anchor, Bias, Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Edit, OffsetRangeExt,
-    OffsetUtf16, Patch, Point, PointUtf16, Rope, RopeFingerprint, Selection, SelectionGoal,
-    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
-    Transaction, TransactionId, Unclipped,
+    Anchor, Bias, Buffer as TextBuffer, BufferId, BufferSnapshot as TextBufferSnapshot, Edit,
+    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, RopeFingerprint, Selection,
+    SelectionGoal, Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint,
+    ToPointUtf16, Transaction, TransactionId, Unclipped,
 };
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
@@ -396,7 +396,7 @@ pub trait LocalFile: File {
     /// Called when the buffer is reloaded from disk.
     fn buffer_reloaded(
         &self,
-        buffer_id: u64,
+        buffer_id: BufferId,
         version: &clock::Global,
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
@@ -517,7 +517,7 @@ pub enum CharKind {
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: u64, base_text: T) -> Self {
+    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: BufferId, base_text: T) -> Self {
         Self::build(
             TextBuffer::new(replica_id, id, base_text.into()),
             None,
@@ -528,7 +528,7 @@ impl Buffer {
 
     /// Create a new buffer that is a replica of a remote buffer.
     pub fn remote(
-        remote_id: u64,
+        remote_id: BufferId,
         replica_id: ReplicaId,
         capability: Capability,
         base_text: String,
@@ -549,7 +549,9 @@ impl Buffer {
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
-        let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
+        let buffer_id = BufferId::new(message.id)
+            .with_context(|| anyhow!("Could not deserialize buffer_id"))?;
+        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(
             buffer,
             message.diff_base.map(|text| text.into_boxed_str().into()),
@@ -572,7 +574,7 @@ impl Buffer {
     /// Serialize the buffer's state to a protobuf message.
     pub fn to_proto(&self) -> proto::BufferState {
         proto::BufferState {
-            id: self.remote_id(),
+            id: self.remote_id().into(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),

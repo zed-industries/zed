@@ -1007,6 +1007,7 @@ pub mod tests {
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
+    use text::BufferId;
     use theme::{LoadThemes, SyntaxTheme};
     use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
@@ -1467,7 +1468,8 @@ pub mod tests {
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
         let buffer = cx.new_model(|cx| {
-            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+                .with_language(language, cx)
         });
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
@@ -1553,7 +1555,8 @@ pub mod tests {
         cx.update(|cx| init_test(cx, |_| {}));
 
         let buffer = cx.new_model(|cx| {
-            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+                .with_language(language, cx)
         });
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
@@ -1620,7 +1623,8 @@ pub mod tests {
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
         let buffer = cx.new_model(|cx| {
-            Buffer::new(0, cx.entity_id().as_u64(), text).with_language(language, cx)
+            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
+                .with_language(language, cx)
         });
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 

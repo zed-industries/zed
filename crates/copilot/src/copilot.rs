@@ -1023,12 +1023,15 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use language::BufferId;
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Hello"));
+        let buffer_1 = cx.new_model(|cx| {
+            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "Hello")
+        });
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1046,7 +1049,13 @@ mod tests {
             }
         );
 
-        let buffer_2 = cx.new_model(|cx| Buffer::new(0, cx.entity_id().as_u64(), "Goodbye"));
+        let buffer_2 = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                "Goodbye",
+            )
+        });
         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1235,7 +1244,7 @@ mod tests {
 
         fn buffer_reloaded(
             &self,
-            _: u64,
+            _: BufferId,
             _: &clock::Global,
             _: language::RopeFingerprint,
             _: language::LineEnding,
