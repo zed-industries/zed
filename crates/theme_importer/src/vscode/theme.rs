@@ -649,6 +649,13 @@ pub struct VsCodeColors {
 
     #[serde(
         default,
+        rename = "editor.lineHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_line_highlight_background: Option<String>,
+
+    #[serde(
+        default,
         rename = "editor.lineHighlightBorder",
         deserialize_with = "empty_string_as_none"
     )]

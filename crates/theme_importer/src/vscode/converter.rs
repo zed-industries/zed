@@ -158,6 +158,7 @@ impl VsCodeThemeConverter {
                 .or(vscode_token_colors_foreground.clone()),
             editor_background: vscode_editor_background.clone(),
             editor_gutter_background: vscode_editor_background.clone(),
+            editor_active_line_background: vscode_colors.editor_line_highlight_background.clone(),
             editor_line_number: vscode_colors.editor_line_number_foreground.clone(),
             editor_active_line_number: vscode_colors.editor_foreground.clone(),
             editor_wrap_guide: vscode_panel_border.clone(),
