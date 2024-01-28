@@ -2718,6 +2718,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                    }
+                },
+                "file_1.py": "# File contents",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        cx.executor().run_until_parked();
+        select_path(&panel, "project_root/dir_1", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        select_path(&panel, "project_root/dir_1/nested_dir", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    v dir_1",
+                "        > nested_dir  <== selected",
+                "      file_1.py",
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
