@@ -142,6 +142,7 @@ tree-sitter-uiua.workspace = true
 tree-sitter-vue.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-zig.workspace = true
+tree-sitter-angular.workspace = true
 tree-sitter.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"

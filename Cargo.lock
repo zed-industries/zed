@@ -8713,6 +8713,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-angular"
+version = "0.0.1"
+source = "git+https://github.com/nathansbradshaw/tree-sitter-angular?rev=f22409d87a05d3094766d9f51551d8d7f41f9a21#f22409d87a05d3094766d9f51551d8d7f41f9a21"
+dependencies = [
+ "cc",
+ "tree-sitter",
+ "tree-sitter-html",
+]
+
+[[package]]
 name = "tree-sitter-bash"
 version = "0.20.4"
 source = "git+https://github.com/tree-sitter/tree-sitter-bash?rev=7331995b19b8f8aba2d5e26deb51d2195c18bc94#7331995b19b8f8aba2d5e26deb51d2195c18bc94"
@@ -10356,6 +10366,7 @@ dependencies = [
  "tiny_http",
  "toml",
  "tree-sitter",
+ "tree-sitter-angular",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-c-sharp",

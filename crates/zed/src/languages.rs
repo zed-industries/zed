@@ -9,6 +9,7 @@ use util::{asset_str, paths::PLUGINS_DIR, ResultExt};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
+mod angular;
 mod c;
 mod csharp;
 mod css;
@@ -295,7 +296,15 @@ pub fn init(
     language(
         "vue",
         tree_sitter_vue::language(),
-        vec![Arc::new(vue::VueLspAdapter::new(node_runtime))],
+        vec![Arc::new(vue::VueLspAdapter::new(node_runtime.clone()))],
+    );
+    language(
+        "angular",
+        tree_sitter_angular::language(),
+        vec![
+            Arc::new(angular::AngularLspAdapter::new(node_runtime.clone())),
+            Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language(
         "uiua",
