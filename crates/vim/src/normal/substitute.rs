@@ -43,7 +43,7 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
                             count,
                             true,
                             &text_layout_details,
-                            &editor_clone
+                            &editor_clone,
                         );
                     }
                     if line_mode {

@@ -1,4 +1,3 @@
-
 use crate::{
     motion::Motion,
     object::Object,
@@ -10,8 +9,7 @@ use editor::{
     display_map::DisplaySnapshot,
     movement::{self, FindRange, TextLayoutDetails},
     scroll::Autoscroll,
-    DisplayPoint,
-    Editor,
+    DisplayPoint, Editor,
 };
 use gpui::WindowContext;
 use language::{char_kind, CharKind, Selection};
@@ -42,10 +40,17 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             times,
                             ignore_punctuation,
                             &text_layout_details,
-                            &editor_clone
+                            &editor_clone,
                         )
                     } else {
-                        motion.expand_selection(map, selection, times, false, &text_layout_details, &editor_clone)
+                        motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            false,
+                            &text_layout_details,
+                            &editor_clone,
+                        )
                     };
                 });
             });
@@ -127,7 +132,7 @@ fn expand_changed_word_selection(
                 None,
                 false,
                 &text_layout_details,
-                &editor
+                &editor,
             )
         }
     } else {
@@ -137,7 +142,7 @@ fn expand_changed_word_selection(
             times,
             false,
             &text_layout_details,
-            &editor
+            &editor,
         )
     }
 }

@@ -101,7 +101,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                             selection.goal,
                             times,
                             &text_layout_details,
-                            &editor_clone
+                            &editor_clone,
                         ) else {
                             return;
                         };

@@ -1,5 +1,7 @@
 use editor::{
-  display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint}, movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails}, Bias, DisplayPoint, Editor, ToOffset
+    display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
+    movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
+    Bias, DisplayPoint, Editor, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
@@ -382,7 +384,7 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
-        editor: &Editor
+        editor: &Editor,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -475,7 +477,7 @@ impl Motion {
             selection.goal,
             times,
             &text_layout_details,
-            &editor
+            &editor,
         ) {
             selection.set_head(new_head, goal);
 
@@ -962,21 +964,23 @@ pub(crate) fn next_line_end(
     end_of_line(map, false, point)
 }
 
-fn window_top(map: &DisplaySnapshot,
+fn window_top(
+    map: &DisplaySnapshot,
     point: DisplayPoint,
     _: &TextLayoutDetails,
-    editor: &Editor) -> (DisplayPoint, SelectionGoal) {
-      let top_anchor = editor.scroll_manager.anchor().anchor;
-      let top = top_anchor.to_display_point(map);
+    editor: &Editor,
+) -> (DisplayPoint, SelectionGoal) {
+    let top_anchor = editor.scroll_manager.anchor().anchor;
+    let top = top_anchor.to_display_point(map);
 
-      // new column will be min of current column or length of top row
-      let new_col = point.column().min(map.line_len(top.row()));
+    // new column will be min of current column or length of top row
+    let new_col = point.column().min(map.line_len(top.row()));
 
-      // shift back a character unless there are 0 characters
-      let new_col_shifted = (new_col-1).max(0);
-      let new_point = DisplayPoint::new(top.row(), new_col_shifted);
-      (new_point, SelectionGoal::None)
-    }
+    // shift back a character unless there are 0 characters
+    let new_col_shifted = (new_col - 1).max(0);
+    let new_point = DisplayPoint::new(top.row(), new_col_shifted);
+    (new_point, SelectionGoal::None)
+}
 
 #[cfg(test)]
 mod test {
@@ -1133,22 +1137,22 @@ mod test {
 
     #[gpui::test]
     async fn test_window_top(cx: &mut gpui::TestAppContext) {
-      let mut cx = NeovimBackedTestContext::new(cx).await;
-      let initial_state = indoc! {r"abc
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abc
           def
           paragraph
           the second
           third ˇand
           final"};
 
-      cx.set_shared_state(initial_state).await;
-      cx.simulate_shared_keystrokes(["shift-h"]).await;
-      cx.assert_shared_state(indoc! {r"abˇc
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"abˇc
           def
           paragraph
           the second
           third and
           final"})
-          .await;
+            .await;
     }
 }
