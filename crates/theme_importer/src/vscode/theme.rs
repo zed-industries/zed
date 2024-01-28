@@ -649,6 +649,13 @@ pub struct VsCodeColors {
 
     #[serde(
         default,
+        rename = "editor.lineHighlightBackground",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_line_highlight_background: Option<String>,
+
+    #[serde(
+        default,
         rename = "editor.lineHighlightBorder",
         deserialize_with = "empty_string_as_none"
     )]
@@ -859,10 +866,73 @@ pub struct VsCodeColors {
 
     #[serde(
         default,
+        rename = "editorError.border",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_error_border: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorError.background",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_error_background: Option<String>,
+
+    #[serde(
+        default,
         rename = "editorWarning.foreground",
         deserialize_with = "empty_string_as_none"
     )]
     pub editor_warning_foreground: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorWarning.border",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_warning_border: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorWarning.background",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_warning_background: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorInfo.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_info_foreground: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorInfo.border",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_info_border: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorInfo.background",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_info_background: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorHint.foreground",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_hint_foreground: Option<String>,
+
+    #[serde(
+        default,
+        rename = "editorHint.border",
+        deserialize_with = "empty_string_as_none"
+    )]
+    pub editor_hint_border: Option<String>,
 
     #[serde(
         default,
