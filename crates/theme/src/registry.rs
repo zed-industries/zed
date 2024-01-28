@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use gpui::{AssetSource, HighlightStyle, SharedString};
 use refineable::Refineable;
+use util::ResultExt;
 
 use crate::{
     try_parse_color, Appearance, AppearanceContent, PlayerColor, PlayerColors, StatusColors,
@@ -178,17 +179,21 @@ impl ThemeRegistry {
         let theme_paths = self
             .assets
             .list("themes/")
-            .unwrap()
+            .expect("failed to list theme assets")
             .into_iter()
             .filter(|path| path.ends_with(".json"));
 
         for path in theme_paths {
-            let theme = self
-                .assets
-                .load(&path)
-                .expect(&format!("Failed to load theme '{path}'"));
+            let Some(theme) = self.assets.load(&path).log_err() else {
+                continue;
+            };
 
-            let theme_family: ThemeFamilyContent = serde_json::from_slice(&theme).unwrap();
+            let Some(theme_family) = serde_json::from_slice(&theme)
+                .with_context(|| format!("failed to parse theme at path \"{path}\""))
+                .log_err()
+            else {
+                continue;
+            };
 
             self.insert_user_theme_families([theme_family]);
         }
