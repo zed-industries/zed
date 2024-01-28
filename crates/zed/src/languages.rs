@@ -256,7 +256,7 @@ pub fn init(
         vec![
             Arc::new(astro::AstroLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
+        ],
     );
     language(
         "php",
