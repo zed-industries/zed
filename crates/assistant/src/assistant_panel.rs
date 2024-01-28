@@ -1096,6 +1096,7 @@ impl AssistantPanel {
             let conversation =
                 Conversation::deserialize(saved_conversation, path.clone(), languages, &mut cx)
                     .await?;
+
             this.update(&mut cx, |this, cx| {
                 // If, by the time we've loaded the conversation, the user has already opened
                 // the same conversation, we don't want to open it again.
@@ -1507,7 +1508,9 @@ impl Conversation {
             )
             .await,
         );
-        cx.update(|cx| completion_provider.retrieve_credentials(cx))?;
+        cx.update(|cx| completion_provider.retrieve_credentials(cx))?
+            .await;
+
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
@@ -1676,6 +1679,7 @@ impl Conversation {
 
         if should_assist {
             if !self.completion_provider.has_credentials() {
+                log::info!("completion provider has no credentials");
                 return Default::default();
             }
 
