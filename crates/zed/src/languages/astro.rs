@@ -92,7 +92,10 @@ impl LspAdapter for AstroLspAdapter {
 
     fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
-            "provideFormatter": true
+            "provideFormatter": true,
+            "typescript": {
+                "tsdk": "node_modules/typescript/lib",
+            }
         }))
     }
 
