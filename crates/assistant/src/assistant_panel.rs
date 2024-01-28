@@ -1,5 +1,5 @@
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
+    assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAiModel},
     codegen::{self, Codegen, CodegenKind},
     prompts::generate_content_prompt,
     Assist, CycleMessageRole, InlineAssist, MessageId, MessageMetadata, MessageStatus,
@@ -10,7 +10,7 @@ use ai::prompts::repository_context::PromptCodeSnippet;
 use ai::{
     auth::ProviderCredential,
     completion::{CompletionProvider, CompletionRequest},
-    providers::open_ai::{OpenAICompletionProvider, OpenAIRequest, RequestMessage},
+    providers::open_ai::{OpenAiCompletionProvider, OpenAiRequest, RequestMessage},
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -123,7 +123,7 @@ impl AssistantPanel {
                 .unwrap_or_default();
             // Defaulting currently to GPT4, allow for this to be set via config.
             let completion_provider =
-                OpenAICompletionProvider::new("gpt-4".into(), cx.background_executor().clone())
+                OpenAiCompletionProvider::new("gpt-4".into(), cx.background_executor().clone())
                     .await;
 
             // TODO: deserialize state.
@@ -717,7 +717,7 @@ impl AssistantPanel {
                 content: prompt,
             });
 
-            let request = Box::new(OpenAIRequest {
+            let request = Box::new(OpenAiRequest {
                 model: model.full_name().into(),
                 messages,
                 stream: true,
@@ -1393,7 +1393,7 @@ struct Conversation {
     pending_summary: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    model: OpenAIModel,
+    model: OpenAiModel,
     token_count: Option<usize>,
     max_token_count: usize,
     pending_token_count: Task<Option<()>>,
@@ -1501,7 +1501,7 @@ impl Conversation {
         };
         let model = saved_conversation.model;
         let completion_provider: Arc<dyn CompletionProvider> = Arc::new(
-            OpenAICompletionProvider::new(
+            OpenAiCompletionProvider::new(
                 model.full_name().into(),
                 cx.background_executor().clone(),
             )
@@ -1626,7 +1626,7 @@ impl Conversation {
         Some(self.max_token_count as isize - self.token_count? as isize)
     }
 
-    fn set_model(&mut self, model: OpenAIModel, cx: &mut ModelContext<Self>) {
+    fn set_model(&mut self, model: OpenAiModel, cx: &mut ModelContext<Self>) {
         self.model = model;
         self.count_remaining_tokens(cx);
         cx.notify();
@@ -1679,7 +1679,7 @@ impl Conversation {
                 return Default::default();
             }
 
-            let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
+            let request: Box<dyn CompletionRequest> = Box::new(OpenAiRequest {
                 model: self.model.full_name().to_string(),
                 messages: self
                     .messages(cx)
@@ -1962,7 +1962,7 @@ impl Conversation {
                     content: "Summarize the conversation into a short title without punctuation"
                         .into(),
                 }));
-            let request: Box<dyn CompletionRequest> = Box::new(OpenAIRequest {
+            let request: Box<dyn CompletionRequest> = Box::new(OpenAiRequest {
                 model: self.model.full_name().to_string(),
                 messages: messages.collect(),
                 stream: true,

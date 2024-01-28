@@ -21,7 +21,7 @@ use crate::{
     models::LanguageModel,
 };
 
-use crate::providers::open_ai::{OpenAILanguageModel, OPENAI_API_URL};
+use crate::providers::open_ai::{OpenAiLanguageModel, OPEN_AI_API_URL};
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -58,7 +58,7 @@ pub struct RequestMessage {
 }
 
 #[derive(Debug, Default, Serialize)]
-pub struct OpenAIRequest {
+pub struct OpenAiRequest {
     pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
@@ -66,7 +66,7 @@ pub struct OpenAIRequest {
     pub temperature: f32,
 }
 
-impl CompletionRequest for OpenAIRequest {
+impl CompletionRequest for OpenAiRequest {
     fn data(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }
@@ -79,7 +79,7 @@ pub struct ResponseMessage {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OpenAIUsage {
+pub struct OpenAiUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
@@ -93,20 +93,20 @@ pub struct ChatChoiceDelta {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OpenAIResponseStreamEvent {
+pub struct OpenAiResponseStreamEvent {
     pub id: Option<String>,
     pub object: String,
     pub created: u32,
     pub model: String,
     pub choices: Vec<ChatChoiceDelta>,
-    pub usage: Option<OpenAIUsage>,
+    pub usage: Option<OpenAiUsage>,
 }
 
 pub async fn stream_completion(
     credential: ProviderCredential,
     executor: BackgroundExecutor,
     request: Box<dyn CompletionRequest>,
-) -> Result<impl Stream<Item = Result<OpenAIResponseStreamEvent>>> {
+) -> Result<impl Stream<Item = Result<OpenAiResponseStreamEvent>>> {
     let api_key = match credential {
         ProviderCredential::Credentials { api_key } => api_key,
         _ => {
@@ -114,10 +114,10 @@ pub async fn stream_completion(
         }
     };
 
-    let (tx, rx) = futures::channel::mpsc::unbounded::<Result<OpenAIResponseStreamEvent>>();
+    let (tx, rx) = futures::channel::mpsc::unbounded::<Result<OpenAiResponseStreamEvent>>();
 
     let json_data = request.data()?;
-    let mut response = Request::post(format!("{OPENAI_API_URL}/chat/completions"))
+    let mut response = Request::post(format!("{OPEN_AI_API_URL}/chat/completions"))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .body(json_data)?
@@ -132,7 +132,7 @@ pub async fn stream_completion(
 
                 fn parse_line(
                     line: Result<String, io::Error>,
-                ) -> Result<Option<OpenAIResponseStreamEvent>> {
+                ) -> Result<Option<OpenAiResponseStreamEvent>> {
                     if let Some(data) = line?.strip_prefix("data: ") {
                         let event = serde_json::from_str(data)?;
                         Ok(Some(event))
@@ -169,16 +169,16 @@ pub async fn stream_completion(
         response.body_mut().read_to_string(&mut body).await?;
 
         #[derive(Deserialize)]
-        struct OpenAIResponse {
-            error: OpenAIError,
+        struct OpenAiResponse {
+            error: OpenAiError,
         }
 
         #[derive(Deserialize)]
-        struct OpenAIError {
+        struct OpenAiError {
             message: String,
         }
 
-        match serde_json::from_str::<OpenAIResponse>(&body) {
+        match serde_json::from_str::<OpenAiResponse>(&body) {
             Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
                 "Failed to connect to OpenAI API: {}",
                 response.error.message,
@@ -194,16 +194,16 @@ pub async fn stream_completion(
 }
 
 #[derive(Clone)]
-pub struct OpenAICompletionProvider {
-    model: OpenAILanguageModel,
+pub struct OpenAiCompletionProvider {
+    model: OpenAiLanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
     executor: BackgroundExecutor,
 }
 
-impl OpenAICompletionProvider {
+impl OpenAiCompletionProvider {
     pub async fn new(model_name: String, executor: BackgroundExecutor) -> Self {
         let model = executor
-            .spawn(async move { OpenAILanguageModel::load(&model_name) })
+            .spawn(async move { OpenAiLanguageModel::load(&model_name) })
             .await;
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
         Self {
@@ -214,7 +214,7 @@ impl OpenAICompletionProvider {
     }
 }
 
-impl CredentialProvider for OpenAICompletionProvider {
+impl CredentialProvider for OpenAiCompletionProvider {
     fn has_credentials(&self) -> bool {
         match *self.credential.read() {
             ProviderCredential::Credentials { .. } => true,
@@ -232,7 +232,7 @@ impl CredentialProvider for OpenAICompletionProvider {
                 if let Some(api_key) = env::var("OPENAI_API_KEY").log_err() {
                     async move { ProviderCredential::Credentials { api_key } }.boxed()
                 } else {
-                    let credentials = cx.read_credentials(OPENAI_API_URL);
+                    let credentials = cx.read_credentials(OPEN_AI_API_URL);
                     async move {
                         if let Some(Some((_, api_key))) = credentials.await.log_err() {
                             if let Some(api_key) = String::from_utf8(api_key).log_err() {
@@ -266,7 +266,7 @@ impl CredentialProvider for OpenAICompletionProvider {
         let credential = credential.clone();
         let write_credentials = match credential {
             ProviderCredential::Credentials { api_key } => {
-                Some(cx.write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes()))
+                Some(cx.write_credentials(OPEN_AI_API_URL, "Bearer", api_key.as_bytes()))
             }
             _ => None,
         };
@@ -281,7 +281,7 @@ impl CredentialProvider for OpenAICompletionProvider {
 
     fn delete_credentials(&self, cx: &mut AppContext) -> BoxFuture<()> {
         *self.credential.write() = ProviderCredential::NoCredentials;
-        let delete_credentials = cx.delete_credentials(OPENAI_API_URL);
+        let delete_credentials = cx.delete_credentials(OPEN_AI_API_URL);
         async move {
             delete_credentials.await.log_err();
         }
@@ -289,7 +289,7 @@ impl CredentialProvider for OpenAICompletionProvider {
     }
 }
 
-impl CompletionProvider for OpenAICompletionProvider {
+impl CompletionProvider for OpenAiCompletionProvider {
     fn base_model(&self) -> Box<dyn LanguageModel> {
         let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
         model

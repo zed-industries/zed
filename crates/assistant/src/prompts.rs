@@ -4,7 +4,7 @@ use ai::prompts::file_context::FileContext;
 use ai::prompts::generate::GenerateInlineContent;
 use ai::prompts::preamble::EngineerPreamble;
 use ai::prompts::repository_context::{PromptCodeSnippet, RepositoryContext};
-use ai::providers::open_ai::OpenAILanguageModel;
+use ai::providers::open_ai::OpenAiLanguageModel;
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp::{self, Reverse};
 use std::ops::Range;
@@ -131,7 +131,7 @@ pub fn generate_content_prompt(
     project_name: Option<String>,
 ) -> anyhow::Result<String> {
     // Using new Prompt Templates
-    let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAILanguageModel::load(model));
+    let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAiLanguageModel::load(model));
     let lang_name = if let Some(language_name) = language_name {
         Some(language_name.to_string())
     } else {
