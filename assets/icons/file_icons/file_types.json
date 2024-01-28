@@ -79,7 +79,7 @@
         "ps1": "terminal",
         "psd": "image",
         "py": "python",
-        "rb": "code",
+        "rb": "ruby",
         "rkt": "code",
         "rs": "rust",
         "rtf": "document",
@@ -160,6 +160,9 @@
         },
         "python": {
             "icon": "icons/file_icons/python.svg"
+        },
+        "ruby": {
+            "icon": "icons/file_icons/ruby.svg"
         },
         "rust": {
             "icon": "icons/file_icons/rust.svg"
