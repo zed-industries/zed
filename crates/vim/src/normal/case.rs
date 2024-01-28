@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Workspace>) {
-    transform_case(cx, |c| {
+    manipulate_text(cx, |c| {
         if c.is_lowercase() {
             c.to_uppercase().collect::<Vec<char>>()
         } else {
@@ -22,7 +22,7 @@ pub fn convert_to_upper_case(
     _: &ConvertToUpperCase,
     cx: &mut ViewContext<Workspace>,
 ) {
-    transform_case(cx, |c| c.to_uppercase().collect::<Vec<char>>())
+    manipulate_text(cx, |c| c.to_uppercase().collect::<Vec<char>>())
 }
 
 pub fn convert_to_lower_case(
@@ -30,10 +30,10 @@ pub fn convert_to_lower_case(
     _: &ConvertToLowerCase,
     cx: &mut ViewContext<Workspace>,
 ) {
-    transform_case(cx, |c| c.to_lowercase().collect::<Vec<char>>())
+    manipulate_text(cx, |c| c.to_lowercase().collect::<Vec<char>>())
 }
 
-fn transform_case<F>(cx: &mut ViewContext<Workspace>, transform: F)
+fn manipulate_text<F>(cx: &mut ViewContext<Workspace>, transform: F)
 where
     F: Fn(char) -> Vec<char> + Copy,
 {
