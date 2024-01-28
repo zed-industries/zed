@@ -284,7 +284,16 @@ impl TerminalBuilder {
     ) -> Result<TerminalBuilder> {
         let pty_options = {
             let alac_shell = match shell.clone() {
-                Shell::System => None,
+                Shell::System => {
+                    // by default alacritty does not use $SHELL as the default shell,
+                    // so we make it use it here if it's specified
+                    if std::env::var("SHELL").is_ok() {
+                        let shell = std::env::var("SHELL").unwrap();
+                        Some(alacritty_terminal::tty::Shell::new(shell, Vec::new()))
+                    } else {
+                        None
+                    }
+                }
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }
