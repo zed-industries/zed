@@ -7,9 +7,9 @@
   (#set! "language" "css"))
 
 (frontmatter
-    (raw_text) @content
-    (#set! "language" "typescript"))
+  (raw_text) @content
+  (#set! "language" "typescript"))
 
 (interpolation
-    (raw_text) @content
-    (#set! "language" "tsx"))
+  (raw_text) @content
+  (#set! "language" "tsx"))
