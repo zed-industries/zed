@@ -964,7 +964,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let server_path = version_dir.join(SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            // Copilot LSP looks for this dist dir specifcially, so lets add it in.
+            // Copilot LSP looks for this dist dir specifically, so lets add it in.
             let dist_dir = version_dir.join("dist");
             fs::create_dir_all(dist_dir.as_path()).await?;
 
