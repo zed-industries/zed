@@ -54,9 +54,9 @@ use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::diff_hunk_to_display;
 use gpui::{
-    div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    div, impl_actions, point, prelude::*, px, red, relative, rems, size, uniform_list, Action,
+    AnyElement, AnyView, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem,
+    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
     FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
     ParentElement, Pixels, Render, SharedString, Styled, StyledText, Subscription, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakView,
@@ -411,6 +411,7 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     show_copilot_suggestions: bool,
     use_autoclose: bool,
+    split_view: Option<AnyView>,
 }
 
 pub struct EditorSnapshot {
@@ -1464,6 +1465,19 @@ impl Editor {
                     });
                 }),
             ],
+            split_view: Some(
+                cx.new_view(|_cx| {
+                    struct TestView;
+                    impl Render for TestView {
+                        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+                            div().size_full().bg(red())
+                        }
+                    }
+
+                    TestView {}
+                })
+                .into(),
+            ),
         };
 
         this._subscriptions.extend(project_subscriptions);
@@ -9270,7 +9284,7 @@ impl Render for Editor {
             EditorMode::Full => cx.theme().colors().editor_background,
         };
 
-        EditorElement::new(
+        let editor_element = EditorElement::new(
             cx.view(),
             EditorStyle {
                 background,
@@ -9289,7 +9303,23 @@ impl Render for Editor {
                     ..HighlightStyle::default()
                 },
             },
-        )
+        );
+
+        if let Some(view) = &self.split_view {
+            div()
+                .size_full()
+                .child(div().w(relative(0.5)).h_full().child(editor_element))
+                .child(
+                    div()
+                        .w(relative(0.5))
+                        .h_full()
+                        .debug_below()
+                        .child(view.clone()),
+                )
+                .into_any()
+        } else {
+            editor_element.into_any()
+        }
     }
 }
 
