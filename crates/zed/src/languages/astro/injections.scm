@@ -1,15 +1,15 @@
-((script_element
-  (raw_text) @injection.content)
- (#set! injection.language "javascript"))
+(script_element
+  (raw_text) @content
+  (#set! "language" "javascript"))
 
-((style_element
-  (raw_text) @injection.content)
- (#set! injection.language "css"))
+(style_element
+  (raw_text) @content
+  (#set! "language" "css"))
 
-((frontmatter
-   (raw_text) @injection.content)
- (#set! injection.language "typescript"))
+(frontmatter
+    (raw_text) @content
+    (#set! "language" "typescript"))
 
-((interpolation
-   (raw_text) @injection.content)
- (#set! injection.language "tsx"))
+(interpolation
+    (raw_text) @content
+    (#set! "language" "tsx"))
