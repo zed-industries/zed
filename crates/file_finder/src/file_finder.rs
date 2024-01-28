@@ -140,6 +140,7 @@ pub struct FileFinderDelegate {
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
     selected_index: Option<usize>,
+    first_search: bool,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
 }
@@ -362,6 +363,13 @@ impl FileFinderDelegate {
         })
         .detach();
 
+        // Select the second history item (the first one is the opened buffer if it exists)
+        let selected_index = if currently_opened_path.is_some() && history_items.len() > 1 {
+            Some(1)
+        } else {
+            None
+        };
+
         Self {
             file_finder,
             workspace,
@@ -372,7 +380,8 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Matches::default(),
-            selected_index: None,
+            selected_index,
+            first_search: true,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
         }
@@ -670,7 +679,11 @@ impl PickerDelegate for FileFinderDelegate {
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
-            self.selected_index.take();
+            if self.first_search {
+                self.first_search = false;
+            } else {
+                self.selected_index.take();
+            }
             self.matches = Matches {
                 history: self
                     .history_items

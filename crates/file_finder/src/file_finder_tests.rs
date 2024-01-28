@@ -1062,6 +1062,70 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_first_history_file_by_default(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "test": {
+                    "1_qw": "// First file that matches the query",
+                    "2_second": "// Second file",
+                    "3_third": "// Third file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+    // generate some history to select from, but leave the last buffer open
+    open_close_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
+    open_close_queried_buffer("2", 1, "2_second", &workspace, cx).await;
+    open_queried_buffer("3", 1, "3_third", &workspace, cx).await;
+
+    let pricker = open_file_picker(&workspace, cx);
+    pricker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.selected_index(), 1);
+    });
+
+    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
+}
+
+#[gpui::test]
+async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "test": {
+                    "1_qw": "",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+    // Open new buffer
+    open_queried_buffer("1", 1, "1_qw", &workspace, cx).await;
+
+    let pricker = open_file_picker(&workspace, cx);
+    pricker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.selected_index(), 0);
+    });
+
+    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
+}
+
+#[gpui::test]
 async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
@@ -1172,6 +1236,27 @@ async fn open_close_queried_buffer(
     workspace: &View<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<FoundPath> {
+    let history_items = open_queried_buffer(
+        input,
+        expected_matches,
+        expected_editor_title,
+        workspace,
+        cx,
+    )
+    .await;
+
+    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
+
+    history_items
+}
+
+async fn open_queried_buffer(
+    input: &str,
+    expected_matches: usize,
+    expected_editor_title: &str,
+    workspace: &View<Workspace>,
+    cx: &mut gpui::VisualTestContext,
+) -> Vec<FoundPath> {
     let picker = open_file_picker(&workspace, cx);
     cx.simulate_input(input);
 
@@ -1185,7 +1270,6 @@ async fn open_close_queried_buffer(
         finder.delegate.history_items.clone()
     });
 
-    cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
 
     cx.read(|cx| {
@@ -1196,8 +1280,6 @@ async fn open_close_queried_buffer(
             "Unexpected editor title for query `{input}`"
         );
     });
-
-    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
 
     history_items
 }
