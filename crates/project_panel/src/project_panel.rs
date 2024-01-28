@@ -561,10 +561,12 @@ impl ProjectPanel {
         }
     }
 
-    fn open_file(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+    fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, true, cx);
+            } else {
+                self.toggle_expanded(entry.id, cx);
             }
         }
     }
@@ -1476,7 +1478,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
-                .on_action(cx.listener(Self::open_file))
+                .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
@@ -2481,7 +2483,7 @@ mod tests {
 
         toggle_expand_dir(&panel, "src/test", cx);
         select_path(&panel, "src/test/first.rs", cx);
-        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -2509,7 +2511,7 @@ mod tests {
         ensure_no_open_items_and_panes(&workspace, cx);
 
         select_path(&panel, "src/test/second.rs", cx);
-        panel.update(cx, |panel, cx| panel.open_file(&Open, cx));
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
