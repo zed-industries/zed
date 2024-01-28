@@ -1,7 +1,8 @@
 use crate::{
     px, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, BladeAtlas, Bounds, KeyDownEvent,
-    Keystroke, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, Size, TileId, WindowAppearance, WindowBounds, WindowOptions,
+    Keystroke, LinuxDisplay, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, Size, TileId, WindowAppearance, WindowBounds,
+    WindowOptions,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -9,9 +10,18 @@ use std::{
     rc::{Rc, Weak},
     sync::{self, Arc},
 };
+use x11rb::{
+    connection::Connection as _,
+    protocol::xproto::{
+        AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, WindowClass,
+    },
+    rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
+};
 
 pub(crate) struct LinuxWindowState {
-    display: Rc<dyn crate::PlatformDisplay>,
+    display: Rc<dyn PlatformDisplay>,
+    win_id: u32,
     sprite_atlas: Arc<BladeAtlas>,
 }
 
@@ -22,11 +32,90 @@ impl LinuxWindow {
     pub fn new(
         options: WindowOptions,
         handle: AnyWindowHandle,
-        display: Rc<dyn PlatformDisplay>,
+        x11_connection: &RustConnection,
+        x11_main_screen_index: usize,
         gpu: &Arc<blade::Context>,
     ) -> Self {
+        let x11_screen_index = options
+            .display_id
+            .map_or(x11_main_screen_index, |did| did.0 as usize);
+        let screen = &x11_connection.setup().roots[x11_screen_index];
+
+        let win_id = x11_connection.generate_id().unwrap();
+        let win_aux = CreateWindowAux::new()
+            .event_mask(
+                EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY | EventMask::POINTER_MOTION,
+            )
+            .background_pixel(screen.white_pixel);
+
+        let wm_protocols = x11_connection
+            .intern_atom(false, b"WM_PROTOCOLS")
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom;
+        let wm_delete_window = x11_connection
+            .intern_atom(false, b"WM_DELETE_WINDOW")
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom;
+        let (bound_x, bound_y, bound_width, bound_height) = match options.bounds {
+            WindowBounds::Fullscreen | WindowBounds::Maximized => {
+                (0, 0, screen.width_in_pixels, screen.height_in_pixels)
+            }
+            WindowBounds::Fixed(bounds) => (
+                bounds.origin.x.0 as i16,
+                bounds.origin.y.0 as i16,
+                bounds.size.width.0 as u16,
+                bounds.size.height.0 as u16,
+            ),
+        };
+
+        x11_connection
+            .create_window(
+                x11rb::COPY_DEPTH_FROM_PARENT,
+                win_id,
+                screen.root,
+                bound_x,
+                bound_y,
+                bound_width,
+                bound_height,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &win_aux,
+            )
+            .unwrap();
+
+        if let Some(titlebar) = options.titlebar {
+            if let Some(title) = titlebar.title {
+                x11_connection
+                    .change_property8(
+                        PropMode::REPLACE,
+                        win_id,
+                        AtomEnum::WM_NAME,
+                        AtomEnum::STRING,
+                        title.as_bytes(),
+                    )
+                    .unwrap();
+            }
+        }
+        x11_connection
+            .change_property32(
+                PropMode::REPLACE,
+                win_id,
+                wm_protocols,
+                AtomEnum::ATOM,
+                &[wm_delete_window],
+            )
+            .unwrap();
+
+        x11_connection.map_window(win_id).unwrap();
+
         Self(Arc::new(Mutex::new(LinuxWindowState {
-            display,
+            display: Rc::new(LinuxDisplay::new(x11_connection, x11_screen_index)),
+            win_id,
             sprite_atlas: Arc::new(BladeAtlas::new(gpu)),
         })))
     }
@@ -53,7 +142,7 @@ impl PlatformWindow for LinuxWindow {
         unimplemented!()
     }
 
-    fn display(&self) -> Rc<dyn crate::PlatformDisplay> {
+    fn display(&self) -> Rc<dyn PlatformDisplay> {
         Rc::clone(&self.0.lock().display)
     }
 

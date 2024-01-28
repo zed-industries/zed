@@ -96,3 +96,4 @@ objc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 flume = "0.11"
+x11rb = "0.13"

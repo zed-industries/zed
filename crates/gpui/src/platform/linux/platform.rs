@@ -17,10 +17,13 @@ use std::{
     time::Duration,
 };
 use time::UtcOffset;
+use x11rb::{connection::Connection as _, rust_connection::RustConnection};
 
 pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
 
 pub(crate) struct LinuxPlatformState {
+    x11_connection: RustConnection,
+    x11_root_index: usize,
     gpu: Arc<blade::Context>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
@@ -35,17 +38,22 @@ impl Default for LinuxPlatform {
 
 impl LinuxPlatform {
     pub(crate) fn new() -> Self {
+        let (x11_connection, x11_root_index) = x11rb::connect(None).unwrap();
+
         let dispatcher = Arc::new(LinuxDispatcher::new());
         let gpu = Arc::new(
             unsafe {
                 blade::Context::init(blade::ContextDesc {
-                    validation: true, //FIXME
+                    validation: cfg!(debug_assertions),
                     capture: false,
                 })
             }
             .unwrap(),
         );
+
         Self(Mutex::new(LinuxPlatformState {
+            x11_connection,
+            x11_root_index,
             gpu,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
@@ -84,11 +92,21 @@ impl Platform for LinuxPlatform {
     fn unhide_other_apps(&self) {}
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        Vec::new()
+        let lock = self.0.lock();
+        let setup = lock.x11_connection.setup();
+        (0..setup.roots.len())
+            .map(|id| {
+                Rc::new(LinuxDisplay::new(&lock.x11_connection, id)) as Rc<dyn PlatformDisplay>
+            })
+            .collect()
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        None
+        let lock = self.0.lock();
+        Some(Rc::new(LinuxDisplay::new(
+            &lock.x11_connection,
+            id.0 as usize,
+        )))
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -104,7 +122,8 @@ impl Platform for LinuxPlatform {
         Box::new(LinuxWindow::new(
             options,
             handle,
-            Rc::new(LinuxDisplay),
+            &lock.x11_connection,
+            lock.x11_root_index,
             &lock.gpu,
         ))
     }
