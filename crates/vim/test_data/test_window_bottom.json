@@ -1,0 +1,3 @@
+{"Put":{"state":"abc\ndeˇf\nparagraph\nthe second\nthird and\nfinal"}}
+{"Key":"shift-l"}
+{"Get":{"state":"abc\ndef\nparagraph\nthe second\nthird and\nfiˇnal","mode":"Normal"}}

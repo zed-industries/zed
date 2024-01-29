@@ -468,7 +468,7 @@ impl Motion {
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
-            WindowTop => window_top(map, &text_layout_details),
+            WindowTop => window_top(map, point, &text_layout_details),
             WindowMiddle => window_middle(map, point, &text_layout_details),
             WindowBottom => window_bottom(map, point, &text_layout_details),
         };
@@ -979,11 +979,18 @@ pub(crate) fn next_line_end(
 
 fn window_top(
     map: &DisplaySnapshot,
+    point: DisplayPoint,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let first_visible_line = text_layout_details.anchor.to_display_point(map);
-    println!("visible rows: {:?}", text_layout_details.visible_rows);
-    (first_visible_line, SelectionGoal::None)
+    let new_col = point.column().min(map.line_len(first_visible_line.row()));
+    // shift back a character unless there are 0 characters
+    let new_col_shifted = match new_col {
+        0 => 0,
+        _ => new_col - 1,
+    };
+    let new_point = DisplayPoint::new(first_visible_line.row(), new_col_shifted);
+    (new_point, SelectionGoal::None)
 }
 
 fn window_middle(
@@ -993,10 +1000,11 @@ fn window_middle(
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let first_visible_line = text_layout_details.anchor.to_display_point(map);
-        let middle_row = first_visible_line.row() + (visible_rows.div_euclid(2f32)) as u32;
-        let middle_display_point = DisplayPoint::new(middle_row, 0);
-        println!("middle row: {:?}", middle_display_point);
-        (middle_display_point, SelectionGoal::None)
+        let max_rows = (visible_rows as u32).min(map.max_buffer_row());
+        let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
+        let new_col = point.column().min(map.line_len(new_row));
+        let new_display_point = DisplayPoint::new(new_row, new_col);
+        (new_display_point, SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
     }
@@ -1010,8 +1018,9 @@ fn window_bottom(
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let first_visible_line = text_layout_details.anchor.to_display_point(map);
         let bottom_row = first_visible_line.row() + (visible_rows) as u32;
-        let bottom_display_point = DisplayPoint::new(bottom_row, 0);
-        println!("bottom row: {:?}", bottom_display_point);
+        let bottom_row_capped = bottom_row.min(map.max_buffer_row());
+        let new_col = point.column().min(map.line_len(bottom_row_capped));
+        let bottom_display_point = DisplayPoint::new(bottom_row_capped, new_col);
         (bottom_display_point, SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
@@ -1189,6 +1198,48 @@ mod test {
           the second
           third and
           final"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_window_middle(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abˇc
+          def
+          paragraph
+          the second
+          third and
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+          def
+          paˇragraph
+          the second
+          third and
+          final"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_window_bottom(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let initial_state = indoc! {r"abc
+          deˇf
+          paragraph
+          the second
+          third and
+          final"};
+
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"abc
+          def
+          paragraph
+          the second
+          third and
+          fiˇnal"})
             .await;
     }
 }
