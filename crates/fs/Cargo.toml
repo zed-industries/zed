@@ -20,7 +20,6 @@ anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 tempfile = "3"
-fsevent = { path = "../fsevent" }
 lazy_static.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
@@ -34,6 +33,12 @@ libc = "0.2"
 time.workspace = true
 
 gpui = { path = "../gpui", optional = true}
+
+[target.'cfg(target_os = "macos")'.dependencies]
+fsevent = { path = "../fsevent" }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify = "6.1.1"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
