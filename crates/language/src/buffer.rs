@@ -2877,6 +2877,27 @@ impl BufferSnapshot {
         })
     }
 
+    /// Returns anchor ranges for any matches of the redaction query.
+    /// The buffer can be associated with multiple languages, and the redaction query associated with each
+    /// will be run on the relevant section of the buffer.
+    pub fn redacted_ranges<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar.redaction_query.as_ref()
+        });
+
+        iter::from_fn(move || {
+            let redacted_range = syntax_matches
+                .peek()
+                .map(|mat| mat.captures[0].node.byte_range());
+            syntax_matches.advance();
+            redacted_range
+        })
+    }
+
     /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
     pub fn remote_selections_in_range(

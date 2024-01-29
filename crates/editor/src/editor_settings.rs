@@ -12,6 +12,7 @@ pub struct EditorSettings {
     pub scrollbar: Scrollbar,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub redact_env_values: bool,
 }
 
 /// When to populate a new search's query based on the text under the cursor.
@@ -86,6 +87,13 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+
+    /// Hide the values of enviroment variables when opening `.env` files
+    /// This only changes the visual representation, the values are still present
+    /// in the file and can be selected / copied / pasted
+    ///
+    /// Default: false
+    pub redact_env_values: Option<bool>,
 }
 
 /// Scrollbar related settings

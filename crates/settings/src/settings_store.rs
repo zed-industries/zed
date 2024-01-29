@@ -86,6 +86,7 @@ pub trait Settings: 'static + Send + Sync {
         });
     }
 
+    /// path is a (worktree ID, Path)
     #[track_caller]
     fn get<'a>(path: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a Self
     where

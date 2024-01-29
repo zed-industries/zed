@@ -450,6 +450,7 @@ pub struct LanguageQueries {
     pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
+    pub redactions: Option<Cow<'static, str>>,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -619,6 +620,7 @@ pub struct Grammar {
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
+    pub(crate) redaction_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
@@ -1287,6 +1289,7 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
+                    redaction_query: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1342,6 +1345,11 @@ impl Language {
             self = self
                 .with_override_query(query.as_ref())
                 .context("Error loading override query")?;
+        }
+        if let Some(query) = queries.redactions {
+            self = self
+                .with_redaction_query(query.as_ref())
+                .context("Error loading redaction query")?;
         }
         Ok(self)
     }
@@ -1570,6 +1578,12 @@ impl Language {
             query,
             values: override_configs_by_id,
         });
+        Ok(self)
+    }
+
+    pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
+        let grammar = self.grammar_mut();
+        grammar.redaction_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 

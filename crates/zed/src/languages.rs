@@ -347,6 +347,7 @@ fn load_queries(name: &str) -> LanguageQueries {
         embedding: load_query(name, "/embedding"),
         injections: load_query(name, "/injections"),
         overrides: load_query(name, "/overrides"),
+        redactions: load_query(name, "/redactions"),
     }
 }
 
