@@ -8611,6 +8611,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-odin"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c548f6f7132a007f4cb11b05b58215a90008ba443f68373c823f7ba404cad7fa"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-php"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9827,6 +9837,7 @@ dependencies = [
  "tree-sitter-markdown",
  "tree-sitter-nix",
  "tree-sitter-nu",
+ "tree-sitter-odin",
  "tree-sitter-php",
  "tree-sitter-purescript",
  "tree-sitter-python",

@@ -22,6 +22,7 @@ mod json;
 mod language_plugin;
 mod lua;
 mod nu;
+mod odin;
 mod php;
 mod purescript;
 mod python;
@@ -137,6 +138,11 @@ pub fn init(
         ))],
     );
     language("markdown", tree_sitter_markdown::language(), vec![]);
+    language(
+        "odin",
+        tree_sitter_odin::language(),
+        vec![Arc::new(odin::OlsAdapter)],
+    );
     language(
         "python",
         tree_sitter_python::language(),

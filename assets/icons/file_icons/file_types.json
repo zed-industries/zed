@@ -66,6 +66,7 @@
         "mp4": "video",
         "myd": "storage",
         "myi": "storage",
+        "odin": "odin",
         "odp": "document",
         "ods": "document",
         "odt": "document",
@@ -158,6 +159,9 @@
         },
         "log": {
             "icon": "icons/file_icons/info.svg"
+        },
+        "odin": {
+            "icon": "icons/file_icons/odin.svg"
         },
         "phoenix": {
             "icon": "icons/file_icons/phoenix.svg"
