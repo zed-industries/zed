@@ -2372,6 +2372,7 @@ impl CollabPanel {
                 h_flex()
                     .absolute()
                     .right(rems(0.))
+                    .z_index(1)
                     .h_full()
                     .child(
                         h_flex()
