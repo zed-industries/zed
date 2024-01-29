@@ -722,7 +722,7 @@ impl Project {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
                 loading_buffers_by_path: Default::default(),
-                next_buffer_id: BufferId::default(),
+                next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffer: watch::channel(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
