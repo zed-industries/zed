@@ -62,8 +62,7 @@ impl ThemeRegistry {
         }
     }
 
-    #[allow(unused)]
-    fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = ThemeContent>) {
+    pub fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = ThemeContent>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
                 AppearanceContent::Light => ThemeColors::light(),

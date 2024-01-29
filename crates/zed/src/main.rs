@@ -9,7 +9,7 @@ use client::{Client, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use fs::RealFs;
+use fs::{Fs, RealFs};
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
@@ -38,7 +38,7 @@ use std::{
     },
     thread,
 };
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeRegistry};
 use util::{
     async_maybe,
     channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
@@ -163,6 +163,53 @@ fn main() {
             cx,
         );
         assistant::init(cx);
+
+        // if let Some(mut subfiles) = fs
+        //     .read_dir(&ignored_abs_path)
+        //     .await
+        //     .with_context(|| {
+        //         format!(
+        //             "listing ignored path {ignored_abs_path:?}"
+        //         )
+        //     })
+        //     .log_err()
+        // {
+        //     while let Some(subfile) = subfiles.next().await {
+        //         if let Some(subfile) = subfile.log_err() {
+        //             ignored_paths_to_process.push_back(subfile);
+        //         }
+        //     }
+        // }
+
+        // TODO: This should almost certainly happen somewhere else.
+        cx.spawn({
+            let fs = fs.clone();
+            |cx| async move {
+                if let Some(mut theme_paths) =
+                    fs.read_dir(&paths::THEMES_DIR.clone()).await.log_err()
+                {
+                    while let Some(theme_path) = theme_paths.next().await {
+                        let Some(theme_path) = theme_path.log_err() else {
+                            continue;
+                        };
+
+                        let Some(reader) = fs.open_sync(&theme_path).await.log_err() else {
+                            continue;
+                        };
+
+                        let Some(theme) = serde_json::from_reader(reader).log_err() else {
+                            continue;
+                        };
+
+                        cx.update(|cx| {
+                            cx.global_mut::<ThemeRegistry>().insert_user_themes([theme]);
+                        })
+                        .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
 
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
             .detach();
