@@ -328,7 +328,13 @@ impl Element for AnyView {
                 element.draw(bounds.origin, bounds.size.into(), cx);
             }
 
-            state.next_stacking_order_id = cx.window.next_frame.next_stacking_order_id;
+            state.next_stacking_order_id = cx
+                .window
+                .next_frame
+                .next_stacking_order_ids
+                .last()
+                .copied()
+                .unwrap();
             state.cache_key = Some(ViewCacheKey {
                 bounds,
                 stacking_order: cx.stacking_order().clone(),
