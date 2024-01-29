@@ -34,6 +34,18 @@ pub struct ThemeSettings {
 pub(crate) struct AdjustedBufferFontSize(Pixels);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThemeFeatures {
+    #[serde(default)]
+    pub light: Option<String>,
+    #[serde(default)]
+    pub dark: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub auto_switch: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
     #[serde(default)]
     pub ui_font_size: Option<f32>,
@@ -52,15 +64,62 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
-    pub theme_dark: Option<String>,
-    #[serde(default)]
-    pub theme_mode: Option<String>,
+    pub themes: Option<ThemeFeatures>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeContent>,
+}
+
+impl ThemeSettingsContent {
+    /// Returns whether the current theme setting requires to use the dark theme.
+    pub(crate) fn is_dark_mode(&self) -> bool {
+        if let Some(themes) = &self.themes {
+            return themes.is_dark_mode();
+        }
+
+        false
+    }
+
+    pub(crate) fn theme_to_use(&self) -> Option<&str> {
+        if let Some(themes) = &self.themes {
+            if self.is_dark_mode() {
+                if let Some(theme) = &themes.dark {
+                    return Some(theme.as_str());
+                }
+            } else {
+                if let Some(theme) = &themes.light {
+                    return Some(theme.as_str());
+                }
+            }
+        }
+
+        self.theme.as_deref()
+    }
+}
+
+impl ThemeFeatures {
+    pub fn is_dark_mode(&self) -> bool {
+        match &self.mode.as_deref() {
+            Some("dark") => true,
+            _ => false,
+        }
+    }
+
+    pub fn update_theme_mode(&mut self, is_dark: bool) {
+        let mode = if is_dark { "dark" } else { "light" };
+        self.mode = Some(mode.to_string());
+    }
+
+    pub fn update_theme(&mut self, theme_name: String) {
+        if self.is_dark_mode() {
+            self.dark = Some(theme_name);
+        } else {
+            self.light = Some(theme_name);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
@@ -170,13 +229,6 @@ impl settings::Settings for ThemeSettings {
     ) -> Result<Self> {
         let themes = cx.default_global::<ThemeRegistry>();
 
-        let mut is_dark_mode = defaults.theme_mode.as_deref() == Some("dark");
-        for value in user_values.into_iter().copied().cloned() {
-            if let Some(theme_mode) = value.theme_mode.as_ref() {
-                is_dark_mode = theme_mode == "dark"
-            }
-        }
-
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
@@ -194,17 +246,19 @@ impl settings::Settings for ThemeSettings {
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             active_theme: themes
-                .get(if is_dark_mode {
-                    defaults.theme_dark.as_ref().unwrap()
-                } else {
-                    defaults.theme.as_ref().unwrap()
-                })
+                .get(defaults.theme_to_use().unwrap())
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
         };
 
         for value in user_values.into_iter().copied().cloned() {
+            if let Some(value) = value.theme_to_use().map(str::to_string) {
+                if let Some(theme) = themes.get(&value).log_err() {
+                    this.active_theme = theme;
+                }
+            }
+
             if let Some(value) = value.buffer_font_family {
                 this.buffer_font.family = value.into();
             }
@@ -217,16 +271,6 @@ impl settings::Settings for ThemeSettings {
             }
             if let Some(value) = value.ui_font_features {
                 this.ui_font.features = value;
-            }
-
-            if let Some(value) = if is_dark_mode {
-                &value.theme_dark
-            } else {
-                &value.theme
-            } {
-                if let Some(theme) = themes.get(value).log_err() {
-                    this.active_theme = theme;
-                }
             }
 
             this.theme_overrides = value.theme_overrides;

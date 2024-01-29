@@ -669,8 +669,11 @@ impl Workspace {
                 let is_dark_mode = cx.is_dark_mode();
                 let fs = this.app_state().fs.clone();
                 update_settings_file::<ThemeSettings>(fs, cx, move |settings| {
-                    let new_theme_mode = if is_dark_mode { "dark" } else { "light" };
-                    settings.theme_mode = Some(new_theme_mode.to_string());
+                    if let Some(themes) = &mut settings.themes {
+                        if themes.auto_switch {
+                            themes.update_theme_mode(is_dark_mode);
+                        }
+                    }
                 })
             }),
         ];
