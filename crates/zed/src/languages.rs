@@ -268,6 +268,7 @@ pub fn init(
     );
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
+    language("nickel", tree_sitter_nickel::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
     language(
         "nu",

@@ -1,0 +1,11 @@
+name = "Nickel"
+path_suffixes = ["ncl"]
+line_comments = ["# "]
+autoclose_before = ":.,=}])> \n\t\""
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = true, newline = true },
+    { start = "[|", end = "|", close = true, newline = true },
+]
