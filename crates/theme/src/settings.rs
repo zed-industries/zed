@@ -232,6 +232,11 @@ pub fn get_system_is_dark_mode(cx: &AppContext) -> bool {
         .unwrap_or_default()
 }
 
+pub fn set_system_is_dark_mode<V>(cx: &mut ViewContext<V>) {
+    let is_dark_mode = cx.is_dark_mode();
+    cx.set_global(SystemAppearance::new(is_dark_mode));
+}
+
 impl settings::Settings for ThemeSettings {
     const KEY: Option<&'static str> = None;
 

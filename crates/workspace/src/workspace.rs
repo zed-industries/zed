@@ -62,7 +62,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
+use theme::{set_system_is_dark_mode, ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::Label;
@@ -623,8 +623,7 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
-        let is_dark_mode = cx.is_dark_mode();
-        cx.set_global(SystemAppearance::new(is_dark_mode));
+        set_system_is_dark_mode(cx);
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
@@ -669,8 +668,7 @@ impl Workspace {
                 })
             }),
             cx.observe_appearance_change(|this, cx| {
-                let is_dark_mode = cx.is_dark_mode();
-                cx.set_global(SystemAppearance::new(is_dark_mode));
+                set_system_is_dark_mode(cx);
 
                 let fs = this.app_state().fs.clone();
                 update_settings_file::<ThemeSettings>(fs, cx, |_| {})
