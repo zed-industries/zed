@@ -49,7 +49,12 @@ pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Displa
 /// Returns a column to the right of the current point, wrapping
 /// to the next line if that point is at the end of line.
 pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let max_column = map.line_len(point.row());
+    let line_len = map.line_len(point.row());
+    let max_column = if line_len == 0 {
+        line_len
+    } else {
+        line_len - 1
+    };
     if point.column() < max_column {
         *point.column_mut() += 1;
     } else if point.row() < map.max_point().row() {

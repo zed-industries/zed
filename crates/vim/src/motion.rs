@@ -23,6 +23,7 @@ pub enum Motion {
     Down { display_lines: bool },
     Up { display_lines: bool },
     Right,
+    Space,
     NextWordStart { ignore_punctuation: bool },
     NextWordEnd { ignore_punctuation: bool },
     PreviousWordStart { ignore_punctuation: bool },
@@ -126,6 +127,7 @@ actions!(
         Left,
         Backspace,
         Right,
+        Space,
         CurrentLine,
         StartOfParagraph,
         EndOfParagraph,
@@ -160,6 +162,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         )
     });
     workspace.register_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
+    workspace.register_action(|_: &mut Workspace, _: &Space, cx: _| motion(Motion::Space, cx));
     workspace.register_action(|_: &mut Workspace, action: &FirstNonWhitespace, cx: _| {
         motion(
             Motion::FirstNonWhitespace {
@@ -303,6 +306,7 @@ impl Motion {
             | Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | EndOfLineDownward
             | GoToColumn
@@ -326,6 +330,7 @@ impl Motion {
             | Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
@@ -357,6 +362,7 @@ impl Motion {
             Left
             | Backspace
             | Right
+            | Space
             | StartOfLine { .. }
             | StartOfLineDownward
             | StartOfParagraph
@@ -396,6 +402,7 @@ impl Motion {
                 display_lines: true,
             } => up_display(map, point, goal, times, &text_layout_details),
             Right => (right(map, point, times), SelectionGoal::None),
+            Space => (space(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
                 next_word_start(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
@@ -550,6 +557,13 @@ fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Display
 fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
     for _ in 0..times {
         point = movement::left(map, point);
+    }
+    point
+}
+
+fn space(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+    for _ in 0..times {
+        point = movement::right(map, point);
     }
     point
 }
