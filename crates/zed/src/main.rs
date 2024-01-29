@@ -148,6 +148,8 @@ fn main() {
 
         cx.set_global(client.clone());
 
+        // A test change.
+
         zed::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         project::Project::init(&client, cx);
