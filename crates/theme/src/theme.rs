@@ -63,7 +63,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::new(assets));
 
     if load_user_themes {
-        cx.global_mut::<ThemeRegistry>().load_user_themes();
+        ThemeRegistry::global_mut(cx).load_user_themes();
     }
 
     ThemeSettings::register(cx);

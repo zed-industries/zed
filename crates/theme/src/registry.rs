@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use gpui::{AssetSource, HighlightStyle, SharedString};
+use gpui::{AppContext, AssetSource, HighlightStyle, SharedString};
 use refineable::Refineable;
 use util::ResultExt;
 
@@ -24,6 +24,23 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
+    /// Returns the global [`ThemeRegistry`].
+    pub fn global(cx: &AppContext) -> &Self {
+        cx.global::<ThemeRegistry>()
+    }
+
+    /// Returns a mutable reference to the global [`ThemeRegistry`].
+    pub fn global_mut(cx: &mut AppContext) -> &mut Self {
+        cx.global_mut::<ThemeRegistry>()
+    }
+
+    /// Returns a mutable reference to the global [`ThemeRegistry`].
+    ///
+    /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
+    pub fn default_global(cx: &mut AppContext) -> &mut Self {
+        cx.default_global::<ThemeRegistry>()
+    }
+
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let mut registry = Self {
             assets,
