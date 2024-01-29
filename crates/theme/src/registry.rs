@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
+use fs::Fs;
+use futures::StreamExt;
 use gpui::{AssetSource, HighlightStyle, SharedString};
+use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
 
@@ -18,16 +22,22 @@ pub struct ThemeMeta {
     pub appearance: Appearance,
 }
 
-pub struct ThemeRegistry {
-    assets: Box<dyn AssetSource>,
+struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
+}
+
+pub struct ThemeRegistry {
+    state: RwLock<ThemeRegistryState>,
+    assets: Box<dyn AssetSource>,
 }
 
 impl ThemeRegistry {
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let mut registry = Self {
+            state: RwLock::new(ThemeRegistryState {
+                themes: HashMap::new(),
+            }),
             assets,
-            themes: HashMap::new(),
         };
 
         // We're loading our new versions of the One themes by default, as
@@ -46,9 +56,10 @@ impl ThemeRegistry {
         }
     }
 
-    fn insert_themes(&mut self, themes: impl IntoIterator<Item = Theme>) {
+    fn insert_themes(&self, themes: impl IntoIterator<Item = Theme>) {
+        let mut state = self.state.write();
         for theme in themes.into_iter() {
-            self.themes.insert(theme.name.clone(), Arc::new(theme));
+            state.themes.insert(theme.name.clone(), Arc::new(theme));
         }
     }
 
@@ -62,7 +73,7 @@ impl ThemeRegistry {
         }
     }
 
-    pub fn insert_user_themes(&mut self, themes: impl IntoIterator<Item = ThemeContent>) {
+    pub fn insert_user_themes(&self, themes: impl IntoIterator<Item = ThemeContent>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
                 AppearanceContent::Light => ThemeColors::light(),
@@ -153,22 +164,29 @@ impl ThemeRegistry {
     }
 
     pub fn clear(&mut self) {
-        self.themes.clear();
+        self.state.write().themes.clear();
     }
 
-    pub fn list_names(&self, _staff: bool) -> impl Iterator<Item = SharedString> + '_ {
-        self.themes.keys().cloned()
+    pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+        self.state.read().themes.keys().cloned().collect()
     }
 
-    pub fn list(&self, _staff: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
-        self.themes.values().map(|theme| ThemeMeta {
-            name: theme.name.clone(),
-            appearance: theme.appearance(),
-        })
+    pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+        self.state
+            .read()
+            .themes
+            .values()
+            .map(|theme| ThemeMeta {
+                name: theme.name.clone(),
+                appearance: theme.appearance(),
+            })
+            .collect()
     }
 
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
-        self.themes
+        self.state
+            .read()
+            .themes
             .get(name)
             .ok_or_else(|| anyhow!("theme not found: {}", name))
             .cloned()
@@ -196,6 +214,31 @@ impl ThemeRegistry {
 
             self.insert_user_theme_families([theme_family]);
         }
+    }
+
+    pub async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+        let mut theme_paths = fs
+            .read_dir(themes_path)
+            .await
+            .with_context(|| format!("reading themes from {themes_path:?}"))?;
+
+        while let Some(theme_path) = theme_paths.next().await {
+            let Some(theme_path) = theme_path.log_err() else {
+                continue;
+            };
+
+            let Some(reader) = fs.open_sync(&theme_path).await.log_err() else {
+                continue;
+            };
+
+            let Some(theme) = serde_json::from_reader(reader).log_err() else {
+                continue;
+            };
+
+            self.insert_user_themes([theme]);
+        }
+
+        Ok(())
     }
 }
 

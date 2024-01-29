@@ -133,6 +133,9 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
+        let theme_registry = ThemeRegistry::new(Box::new(Assets));
+        let theme_registry = Arc::new(theme_registry);
+
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
@@ -167,29 +170,12 @@ fn main() {
         // TODO: This should almost certainly happen somewhere else.
         cx.spawn({
             let fs = fs.clone();
+            let theme_registry = theme_registry.clone();
             |cx| async move {
-                if let Some(mut theme_paths) =
-                    fs.read_dir(&paths::THEMES_DIR.clone()).await.log_err()
-                {
-                    while let Some(theme_path) = theme_paths.next().await {
-                        let Some(theme_path) = theme_path.log_err() else {
-                            continue;
-                        };
-
-                        let Some(reader) = fs.open_sync(&theme_path).await.log_err() else {
-                            continue;
-                        };
-
-                        let Some(theme) = serde_json::from_reader(reader).log_err() else {
-                            continue;
-                        };
-
-                        cx.update(|cx| {
-                            cx.global_mut::<ThemeRegistry>().insert_user_themes([theme]);
-                        })
-                        .log_err();
-                    }
-                }
+                theme_registry
+                    .load_user_themes(&paths::THEMES_DIR.clone(), fs)
+                    .await
+                    .log_err();
             }
         })
         .detach();

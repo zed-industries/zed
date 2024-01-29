@@ -233,6 +233,7 @@ impl settings::Settings for ThemeSettings {
         let theme_names = cx
             .global::<ThemeRegistry>()
             .list_names(params.staff_mode)
+            .into_iter()
             .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();
 
