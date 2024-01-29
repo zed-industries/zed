@@ -1,4 +1,12 @@
-import { message, danger } from "danger";
+import { danger, warn } from "danger";
 
-const modifiedMd = danger.git.modified_files.join("- ");
-message("Changed Files in this PR: \n - " + modifiedMd);
+const RELEASE_NOTES_PATTERN = new RegExp("Release Notes:\ns+-", "gm");
+
+const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(danger.github.pr.body);
+if (!hasReleaseNotes) {
+  warn(
+    "This PR is missing release notes. " +
+      'Please add a "Release Notes" section that describes the change. ' +
+      'If your change is not user-facing, you can use "N/A" for the release notes.',
+  );
+}
