@@ -27,6 +27,6 @@ ui = { path = "../ui" }
 anyhow.workspace = true
 futures.workspace = true
 lazy_static.workspace = true
-pulldown-cmark = { version = "0.9.2", default-features = false }
+pulldown-cmark.workspace = true
 smallvec.workspace = true
 smol.workspace = true

@@ -39,8 +39,7 @@ serde_json.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
-tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-pulldown-cmark = { version = "0.9.2", default-features = false }
+pulldown-cmark.workspace = true
 urlencoding = "2.1.2"
 
 [dev-dependencies]
