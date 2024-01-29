@@ -151,9 +151,6 @@ impl Render for MarkdownPreviewView {
             .bg(cx.theme().colors().editor_background)
             .p_4();
 
-        // TODO: render_markdown() doesn't need to be called every time,
-        // only when the contents change.
-        // Unable to do this because `Div` doesn't implement `clone`.
         for item in render_markdown(&self.contents, cx, &self.languages).into_iter() {
             container = container.child(item.mb_2());
         }
