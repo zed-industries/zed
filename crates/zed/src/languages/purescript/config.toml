@@ -1,7 +1,7 @@
 name = "PureScript"
 path_suffixes = ["purs"]
 autoclose_before = ",=)}]"
-line_comment = "-- "
+line_comments = ["-- "]
 block_comment = ["{- ", " -}"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
