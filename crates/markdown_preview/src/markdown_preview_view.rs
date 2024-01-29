@@ -1,7 +1,7 @@
 use editor::{Editor, EditorEvent};
 use gpui::{
-    div, list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, View, ViewContext,
+    AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    IntoElement, ParentElement, Render, Styled, View, ViewContext,
 };
 use language::LanguageRegistry;
 use std::sync::Arc;
@@ -9,11 +9,12 @@ use ui::prelude::*;
 use workspace::item::Item;
 use workspace::Workspace;
 
-use crate::OpenPreview;
+use crate::{markdown_renderer::render_markdown, OpenPreview};
 
 pub struct MarkdownPreviewView {
     focus_handle: FocusHandle,
-    list_state: ListState,
+    languages: Arc<LanguageRegistry>,
+    contents: String,
 }
 
 impl MarkdownPreviewView {
@@ -39,31 +40,23 @@ impl MarkdownPreviewView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        cx.subscribe(&active_editor, |_this, _editor, event: &EditorEvent, cx| {
+        cx.subscribe(&active_editor, |this, editor, event: &EditorEvent, cx| {
             if *event == EditorEvent::Edited {
+                let editor = editor.read(cx);
+                let contents = editor.buffer().read(cx).snapshot(cx).text();
+                this.contents = contents;
                 cx.notify();
             }
         })
         .detach();
 
-        let list_state = ListState::new(1, gpui::ListAlignment::Top, px(1000.), move |_ix, cx| {
-            let editor = active_editor.read(cx);
-            let contents = editor.buffer().read(cx).snapshot(cx).text();
-
-            let mentions = vec![];
-            let text = rich_text::render_markdown(contents, &mentions, &languages, None);
-
-            v_flex()
-                .w_full()
-                .id("markdown_preview_container")
-                .group("")
-                .child(text.element("body".into(), cx))
-                .into_any()
-        });
+        let editor = active_editor.read(cx);
+        let contents = editor.buffer().read(cx).snapshot(cx).text();
 
         Self {
-            list_state,
             focus_handle,
+            languages,
+            contents,
         }
     }
 
@@ -97,7 +90,7 @@ impl MarkdownPreviewView {
             let view: View<MarkdownPreviewView> =
                 cx.new_view(|cx| MarkdownPreviewView::new(active_editor, languages, cx));
 
-            workspace.add_item(Box::new(view.clone()), cx);
+            workspace.split_item(workspace::SplitDirection::Right, Box::new(view.clone()), cx);
             view
         };
     }
@@ -147,20 +140,30 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
+        // TODO: This is wrong but I'm unsure how
+        // to make the preview scrollable without specifying
+        // a real height as max_h_full does not work.
+        let viewport_height = cx.viewport_size().height;
+
+        let mut container = v_flex()
+            .items_start()
+            .justify_start()
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle)
-            .full()
+            .max_h(viewport_height)
+            .id("MarkdownPreview")
+            .overflow_scroll()
+            .size_full()
             .bg(cx.theme().colors().editor_background)
-            .child(
-                div()
-                    .flex_grow()
-                    .px_2()
-                    .pt_1()
-                    .map(|this| this.child(list(self.list_state.clone()).full())),
-            )
-            .into_any()
+            .p_4();
+
+        // TODO: render_markdown() doesn't need to be called every time,
+        // only when the contents change.
+        // Unable to do this because `Div` doesn't implement `clone`.
+        for item in render_markdown(&self.contents, cx, &self.languages).into_iter() {
+            container = container.child(item.mb_2());
+        }
+
+        container.into_any()
     }
 }
-
-// TODO: Testing

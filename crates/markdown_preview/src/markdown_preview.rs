@@ -2,6 +2,7 @@ use gpui::{actions, AppContext};
 use workspace::Workspace;
 
 pub mod markdown_preview_view;
+pub mod markdown_renderer;
 
 actions!(markdown, [OpenPreview, SubmitFeedback]);
 
