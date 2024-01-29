@@ -21,6 +21,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+derive_more.workspace = true
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 indexmap = { version = "1.6.2", features = ["serde"] }
