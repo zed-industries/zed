@@ -231,7 +231,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             .workspace_state
             .last_find
             .clone()
-            .map(|f| Box::new(f))
+            .map(Box::new)
         {
             motion(Motion::RepeatFind { last_find }, cx);
         }
@@ -242,7 +242,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             .workspace_state
             .last_find
             .clone()
-            .map(|f| Box::new(f))
+            .map(Box::new)
         {
             motion(Motion::RepeatFindReversed { last_find }, cx);
         }
