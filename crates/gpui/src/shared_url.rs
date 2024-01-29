@@ -11,6 +11,18 @@ pub enum SharedUrl {
     Network(SharedString),
 }
 
+impl SharedUrl {
+    /// Create a URL pointing to a local file.
+    pub fn file<S: Into<SharedString>>(s: S) -> Self {
+        Self::File(s.into())
+    }
+
+    /// Create a URL pointing to a remote resource.
+    pub fn network<S: Into<SharedString>>(s: S) -> Self {
+        Self::Network(s.into())
+    }
+}
+
 impl Default for SharedUrl {
     fn default() -> Self {
         Self::Network(SharedString::default())
