@@ -339,7 +339,7 @@ impl ChatPanel {
         let mentioning_you = message
             .mentions
             .iter()
-            .any(|m| m.1 == self.client.user_id().unwrap());
+            .any(|m| Some(m.1) == self.client.user_id());
 
         v_flex().w_full().relative().child(
             div()
