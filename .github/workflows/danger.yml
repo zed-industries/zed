@@ -20,6 +20,7 @@ jobs:
         with:
           node-version: "20"
           cache: "pnpm"
+          cache-dependency-path: "script/danger/pnpm-lock.yaml"
 
       - run: pnpm install --dir script/danger
 
