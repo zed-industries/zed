@@ -3,7 +3,7 @@ name = "markdown_preview"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
+license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/markdown_preview.rs"
@@ -20,7 +20,7 @@ project = { path = "../project" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
-workspace = { path = "../workspace"}
+workspace = { path = "../workspace" }
 rich_text = { path = "../rich_text" }
 
 anyhow.workspace = true
