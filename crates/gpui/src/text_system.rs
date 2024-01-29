@@ -19,6 +19,7 @@ use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{smallvec, SmallVec};
 use std::{
+    borrow::Cow,
     cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
@@ -85,7 +86,7 @@ impl TextSystem {
     }
 
     /// Add a font's data to the text system.
-    pub fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
+    pub fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.platform_text_system.add_fonts(fonts)
     }
 

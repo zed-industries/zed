@@ -39,6 +39,10 @@ impl Model {
     pub fn path(&self) -> String {
         format!("{}{}/", self.parent_path, self.id)
     }
+
+    pub fn descendant_path_filter(&self) -> String {
+        format!("{}{}/%", self.parent_path, self.id)
+    }
 }
 
 impl ActiveModelBehavior for ActiveModel {}

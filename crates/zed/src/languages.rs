@@ -24,6 +24,7 @@ mod language_plugin;
 mod lua;
 mod nu;
 mod php;
+mod purescript;
 mod python;
 mod ruby;
 mod rust;
@@ -260,13 +261,20 @@ pub fn init(
     );
     language(
         "php",
-        tree_sitter_php::language(),
+        tree_sitter_php::language_php(),
         vec![
             Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
 
+    language(
+        "purescript",
+        tree_sitter_purescript::language(),
+        vec![Arc::new(purescript::PurescriptLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);

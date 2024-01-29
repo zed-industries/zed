@@ -28,7 +28,7 @@ use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
-use text::{ToOffset, ToPoint};
+use text::{BufferId, ToOffset, ToPoint};
 use util::post_inc;
 
 pub struct InlayHintCache {
@@ -50,7 +50,7 @@ struct TasksForRanges {
 struct CachedExcerptHints {
     version: usize,
     buffer_version: Global,
-    buffer_id: u64,
+    buffer_id: BufferId,
     ordered_hints: Vec<InlayId>,
     hints_by_id: HashMap<InlayId, InlayHint>,
 }
@@ -93,7 +93,7 @@ struct ExcerptHintsUpdate {
 
 #[derive(Debug, Clone, Copy)]
 struct ExcerptQuery {
-    buffer_id: u64,
+    buffer_id: BufferId,
     excerpt_id: ExcerptId,
     cache_version: usize,
     invalidate: InvalidationStrategy,
@@ -553,7 +553,7 @@ impl InlayHintCache {
     /// Queries a certain hint from the cache for extra data via the LSP <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHint_resolve">resolve</a> request.
     pub(super) fn spawn_hint_resolve(
         &self,
-        buffer_id: u64,
+        buffer_id: BufferId,
         excerpt_id: ExcerptId,
         id: InlayId,
         cx: &mut ViewContext<'_, Editor>,
