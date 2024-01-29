@@ -34,7 +34,7 @@ use pathfinder_geometry::{
     vector::{Vector2F, Vector2I},
 };
 use smallvec::SmallVec;
-use std::{char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
+use std::{borrow::Cow, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
 
 use super::open_type;
 
@@ -74,7 +74,7 @@ impl Default for MacTextSystem {
 }
 
 impl PlatformTextSystem for MacTextSystem {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
     }
 
@@ -183,12 +183,23 @@ impl PlatformTextSystem for MacTextSystem {
 }
 
 impl MacTextSystemState {
-    fn add_fonts(&mut self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
-        self.memory_source.add_fonts(
-            fonts
-                .iter()
-                .map(|bytes| Handle::from_memory(bytes.clone(), 0)),
-        )?;
+    fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+        let fonts = fonts
+            .into_iter()
+            .map(|bytes| match bytes {
+                Cow::Borrowed(embedded_font) => {
+                    let data_provider = unsafe {
+                        core_graphics::data_provider::CGDataProvider::from_slice(embedded_font)
+                    };
+                    let font = core_graphics::font::CGFont::from_data_provider(data_provider)
+                        .map_err(|_| anyhow!("Could not load an embedded font."))?;
+                    let font = font_kit::loaders::core_text::Font::from_core_graphics_font(font);
+                    Ok(Handle::from_native(&font))
+                }
+                Cow::Owned(bytes) => Ok(Handle::from_memory(Arc::new(bytes), 0)),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.memory_source.add_fonts(fonts.into_iter())?;
         Ok(())
     }
 

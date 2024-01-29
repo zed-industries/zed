@@ -2,8 +2,6 @@ mod assets;
 mod stories;
 mod story_selector;
 
-use std::sync::Arc;
-
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
@@ -128,10 +126,10 @@ fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
     let mut embedded_fonts = Vec::new();
     for font_path in font_paths {
         if font_path.ends_with(".ttf") {
-            let font_bytes = cx.asset_source().load(&font_path)?.to_vec();
-            embedded_fonts.push(Arc::from(font_bytes));
+            let font_bytes = cx.asset_source().load(&font_path)?;
+            embedded_fonts.push(font_bytes);
         }
     }
 
-    cx.text_system().add_fonts(&embedded_fonts)
+    cx.text_system().add_fonts(embedded_fonts)
 }
