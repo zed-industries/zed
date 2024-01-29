@@ -19,48 +19,28 @@ use std::{
     time::Duration,
 };
 use time::UtcOffset;
-use x11rb::{
-    connection::Connection as _,
-    protocol::{
-        xproto::{Atom, ConnectionExt as _},
-        Event,
-    },
-    rust_connection::RustConnection,
-};
+use xcb::{x, Xid as _};
 
-pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
-
-pub(crate) struct WmAtoms {
-    pub protocols: Atom,
-    pub delete_window: Atom,
-}
-
-impl WmAtoms {
-    fn new(x11_connection: &RustConnection) -> Self {
-        Self {
-            protocols: x11_connection
-                .intern_atom(false, b"WM_PROTOCOLS")
-                .unwrap()
-                .reply()
-                .unwrap()
-                .atom,
-            delete_window: x11_connection
-                .intern_atom(false, b"WM_DELETE_WINDOW")
-                .unwrap()
-                .reply()
-                .unwrap()
-                .atom,
-        }
+xcb::atoms_struct! {
+    #[derive(Debug)]
+    pub(crate) struct XcbAtoms {
+        pub wm_protocols    => b"WM_PROTOCOLS",
+        pub wm_del_window   => b"WM_DELETE_WINDOW",
+        wm_state        => b"_NET_WM_STATE",
+        wm_state_maxv   => b"_NET_WM_STATE_MAXIMIZED_VERT",
+        wm_state_maxh   => b"_NET_WM_STATE_MAXIMIZED_HORZ",
     }
 }
 
+pub(crate) struct LinuxPlatform(Mutex<LinuxPlatformState>);
+
 pub(crate) struct LinuxPlatformState {
-    x11_connection: RustConnection,
-    x11_root_index: usize,
-    atoms: WmAtoms,
+    xcb_connection: xcb::Connection,
+    x_root_index: i32,
+    atoms: XcbAtoms,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    windows: HashMap<u32, LinuxWindowStatePtr>,
+    windows: HashMap<x::Window, LinuxWindowStatePtr>,
     text_system: Arc<LinuxTextSystem>,
 }
 
@@ -72,14 +52,14 @@ impl Default for LinuxPlatform {
 
 impl LinuxPlatform {
     pub(crate) fn new() -> Self {
-        let (x11_connection, x11_root_index) = x11rb::connect(None).unwrap();
-        let atoms = WmAtoms::new(&x11_connection);
+        let (xcb_connection, x_root_index) = xcb::Connection::connect(None).unwrap();
+        let atoms = XcbAtoms::intern_all(&xcb_connection).unwrap();
 
         let dispatcher = Arc::new(LinuxDispatcher::new());
 
         Self(Mutex::new(LinuxPlatformState {
-            x11_connection,
-            x11_root_index,
+            xcb_connection,
+            x_root_index,
             atoms,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
@@ -105,54 +85,44 @@ impl Platform for LinuxPlatform {
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
-        let mut need_repaint = HashSet::<u32>::default();
+        let mut need_repaint = HashSet::<x::Window>::default();
 
         while !self.0.lock().windows.is_empty() {
-            let event = self.0.lock().x11_connection.wait_for_event().unwrap();
-            let mut event_option = Some(event);
-            while let Some(event) = event_option {
-                match event {
-                    Event::Expose(event) => {
-                        if event.count == 0 {
-                            need_repaint.insert(event.window);
-                        }
-                    }
-                    Event::ConfigureNotify(event) => {
-                        let lock = self.0.lock();
-                        let mut window = lock.windows[&event.window].lock();
-                        window.resize(event.width, event.height);
-                    }
-                    Event::MotionNotify(_event) => {
-                        //mouse_position = (event.event_x, event.event_y);
-                        //need_repaint.insert(event.window);
-                    }
-                    Event::MapNotify(_) => {}
-                    Event::ClientMessage(event) => {
+            let event = self.0.lock().xcb_connection.wait_for_event().unwrap();
+            match event {
+                xcb::Event::X(x::Event::ClientMessage(ev)) => {
+                    if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
                         let mut lock = self.0.lock();
-                        let data = event.data.as_data32();
-                        if data[0] == lock.atoms.delete_window {
+                        if atom == lock.atoms.wm_del_window.resource_id() {
+                            // window "x" button clicked by user, we gracefully exit
                             {
-                                let mut window = lock.windows[&event.window].lock();
+                                let mut window = lock.windows[&ev.window()].lock();
                                 window.destroy();
                             }
-                            lock.windows.remove(&event.window);
+                            lock.windows.remove(&ev.window());
+                            break;
                         }
                     }
-                    Event::Error(error) => {
-                        log::error!("X11 error {:?}", error);
-                    }
-                    _ => {}
                 }
-
-                let lock = self.0.lock();
-                event_option = lock.x11_connection.poll_for_event().unwrap();
+                _ => {} /*
+                        Event::Expose(event) => {
+                            if event.count == 0 {
+                                need_repaint.insert(event.window);
+                            }
+                        }
+                        Event::ConfigureNotify(event) => {
+                            let lock = self.0.lock();
+                            let mut window = lock.windows[&event.window].lock();
+                            window.resize(event.width, event.height);
+                        }
+                        _ => {}*/
             }
 
-            for x11_window in need_repaint.drain() {
+            for x_window in need_repaint.drain() {
                 let lock = self.0.lock();
-                let mut window = lock.windows[&x11_window].lock();
+                let mut window = lock.windows[&x_window].lock();
                 window.paint();
-                lock.x11_connection.flush().unwrap();
+                lock.xcb_connection.flush();
             }
         }
     }
@@ -171,10 +141,13 @@ impl Platform for LinuxPlatform {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let lock = self.0.lock();
-        let setup = lock.x11_connection.setup();
-        (0..setup.roots.len())
-            .map(|id| {
-                Rc::new(LinuxDisplay::new(&lock.x11_connection, id)) as Rc<dyn PlatformDisplay>
+        let setup = lock.xcb_connection.get_setup();
+        setup
+            .roots()
+            .enumerate()
+            .map(|(root_id, _)| {
+                Rc::new(LinuxDisplay::new(&lock.xcb_connection, root_id as i32))
+                    as Rc<dyn PlatformDisplay>
             })
             .collect()
     }
@@ -182,8 +155,8 @@ impl Platform for LinuxPlatform {
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         let lock = self.0.lock();
         Some(Rc::new(LinuxDisplay::new(
-            &lock.x11_connection,
-            id.0 as usize,
+            &lock.xcb_connection,
+            id.0 as i32,
         )))
     }
 
@@ -197,17 +170,17 @@ impl Platform for LinuxPlatform {
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
         let mut lock = self.0.lock();
-        let win_id = lock.x11_connection.generate_id().unwrap();
+        let x_window = lock.xcb_connection.generate_id();
 
         let window_ptr = LinuxWindowState::new_ptr(
             options,
             handle,
-            &lock.x11_connection,
-            lock.x11_root_index,
-            win_id,
+            &lock.xcb_connection,
+            lock.x_root_index,
+            x_window,
             &lock.atoms,
         );
-        lock.windows.insert(win_id, window_ptr.clone());
+        lock.windows.insert(x_window, window_ptr.clone());
         Box::new(LinuxWindow(window_ptr))
     }
 

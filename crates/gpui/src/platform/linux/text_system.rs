@@ -15,7 +15,7 @@ use font_kit::{
 };
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::{borrow::Cow};
 
 pub(crate) struct LinuxTextSystem(RwLock<LinuxTextSystemState>);
 
@@ -54,7 +54,7 @@ impl Default for LinuxTextSystem {
 
 #[allow(unused)]
 impl PlatformTextSystem for LinuxTextSystem {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         Ok(()) //TODO
     }
     fn all_font_names(&self) -> Vec<String> {

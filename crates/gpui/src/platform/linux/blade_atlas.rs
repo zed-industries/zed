@@ -5,7 +5,6 @@ use crate::{
 };
 use anyhow::Result;
 use collections::FxHashMap;
-use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
 use std::{borrow::Cow, sync::Arc};
