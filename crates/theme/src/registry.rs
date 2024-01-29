@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AssetSource, HighlightStyle, SharedString};
+use gpui::{AppContext, AssetSource, HighlightStyle, SharedString};
 use parking_lot::RwLock;
 use refineable::Refineable;
 use util::ResultExt;
@@ -32,6 +32,18 @@ pub struct ThemeRegistry {
 }
 
 impl ThemeRegistry {
+    pub fn global(cx: &AppContext) -> &Self {
+        cx.global::<ThemeRegistry>()
+    }
+
+    pub fn global_mut(cx: &mut AppContext) -> &mut Self {
+        cx.global_mut::<ThemeRegistry>()
+    }
+
+    pub fn default_global(cx: &mut AppContext) -> &mut Self {
+        cx.default_global::<ThemeRegistry>()
+    }
+
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let mut registry = Self {
             state: RwLock::new(ThemeRegistryState {
