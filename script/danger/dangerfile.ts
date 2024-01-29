@@ -1,6 +1,6 @@
 import { danger, warn } from "danger";
 
-const RELEASE_NOTES_PATTERN = new RegExp("Release Notes:\ns+-", "gm");
+const RELEASE_NOTES_PATTERN = new RegExp("Release Notes:\\n\\s+-", "gm");
 
 const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(danger.github.pr.body);
 if (!hasReleaseNotes) {
