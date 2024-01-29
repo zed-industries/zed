@@ -310,8 +310,6 @@ impl settings::Settings for ThemeSettings {
             merge(&mut this.buffer_line_height, value.buffer_line_height);
         }
 
-        if auto_switch {}
-
         Ok(this)
     }
 
