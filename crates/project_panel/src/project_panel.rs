@@ -1380,7 +1380,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                        div().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
                         div().size(IconSize::default().rems()).invisible()
                     })
