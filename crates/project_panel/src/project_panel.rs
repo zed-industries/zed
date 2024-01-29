@@ -2456,6 +2456,101 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "a": {
+                    "one.txt": "",
+                    "two.txt": "",
+                    "inner_dir": {
+                        "three.txt": "",
+                        "four.txt": "",
+                    }
+                },
+                "b": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root/a", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        let pasted_dir = find_project_entry(&panel, "root/b/a", cx);
+        assert_ne!(pasted_dir, None, "Pasted directory should have an entry");
+
+        let pasted_dir_file = find_project_entry(&panel, "root/b/a/one.txt", cx);
+        assert_ne!(
+            pasted_dir_file, None,
+            "Pasted directory file should have an entry"
+        );
+
+        let pasted_dir_inner_dir = find_project_entry(&panel, "root/b/a/inner_dir", cx);
+        assert_ne!(
+            pasted_dir_inner_dir, None,
+            "Directories inside pasted directory should have an entry"
+        );
+
+        toggle_expand_dir(&panel, "root/b", cx);
+        toggle_expand_dir(&panel, "root/b/a", cx);
+        toggle_expand_dir(&panel, "root/b/a/inner_dir", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root",
+                "    > a",
+                "    v b",
+                "        v a",
+                "            v inner_dir  <== selected",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt",
+            ]
+        );
+
+        select_path(&panel, "root", cx);
+        panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
+        cx.executor().run_until_parked();
+        panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root  <== selected",
+                "    > a",
+                "    > a copy",
+                "    > a copy 1",
+                "    v b",
+                "        v a",
+                "            v inner_dir",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt"
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
