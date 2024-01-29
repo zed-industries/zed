@@ -164,7 +164,7 @@ impl settings::Settings for ThemeSettings {
         user_values: &[&Self::FileContent],
         cx: &mut AppContext,
     ) -> Result<Self> {
-        let themes = cx.default_global::<ThemeRegistry>();
+        let themes = ThemeRegistry::default_global(cx);
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
@@ -230,8 +230,7 @@ impl settings::Settings for ThemeSettings {
         cx: &AppContext,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
-        let theme_names = cx
-            .global::<ThemeRegistry>()
+        let theme_names = ThemeRegistry::global(cx)
             .list_names(params.staff_mode)
             .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();
