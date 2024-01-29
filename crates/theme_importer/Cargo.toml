@@ -25,3 +25,4 @@ simplelog = "0.9"
 strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
 uuid.workspace = true
+vscode_theme = "0.2.0"
