@@ -9,7 +9,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};
 use std::sync::Arc;
-use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{get_system_is_dark_mode, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
@@ -181,13 +181,14 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.selection_completed = true;
 
         let theme_name = cx.theme().name.clone();
+        let system_is_dark_mode = get_system_is_dark_mode(cx);
 
         self.telemetry
             .report_setting_event("theme", theme_name.to_string());
 
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings| {
             if let Some(themes) = &mut settings.themes {
-                themes.update_theme(theme_name.to_string());
+                themes.update_theme(theme_name.to_string(), system_is_dark_mode);
             } else {
                 settings.theme = Some(theme_name.to_string());
             }

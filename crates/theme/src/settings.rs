@@ -1,5 +1,5 @@
 use crate::one_themes::one_dark;
-use crate::{Appearance, SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
+use crate::{SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
@@ -49,8 +49,6 @@ pub struct ThemeFeatures {
     pub dark: Option<String>,
     #[serde(default)]
     pub mode: Option<String>,
-    #[serde(default)]
-    pub auto_switch: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -110,30 +108,25 @@ impl ThemeSettingsContent {
 
 impl ThemeFeatures {
     pub fn is_dark_mode(&self, system_is_dark: bool) -> bool {
-        if self.auto_switch {
-            system_is_dark
-        } else {
-            self.is_mode_configured_to_dark()
+        match self.mode.as_deref() {
+            Some("auto") => system_is_dark,
+            Some("dark") => true,
+            Some("light") | _ => false,
         }
     }
 
-    fn is_mode_configured_to_dark(&self) -> bool {
-        match &self.mode.as_deref() {
-            Some("dark") => true,
+    pub fn auto_switch(&self) -> bool {
+        match self.mode.as_deref() {
+            Some("auto") => true,
             _ => false,
         }
     }
 
-    pub fn update_theme_mode(&mut self, is_dark: bool) {
-        let mode = if is_dark { "dark" } else { "light" };
-        self.mode = Some(mode.to_string());
-    }
-
-    pub fn update_theme(&mut self, theme_name: String) {
-        if self.is_mode_configured_to_dark() {
-            self.dark = Some(theme_name);
-        } else {
-            self.light = Some(theme_name);
+    pub fn update_theme(&mut self, theme_name: String, system_is_dark: bool) {
+        match (self.mode.as_deref(), system_is_dark) {
+            (Some("dark"), _) | (Some("auto"), true) => self.dark = Some(theme_name),
+            (Some("light"), _) | (Some("auto"), false) => self.light = Some(theme_name),
+            _ => {}
         }
     }
 }
@@ -233,6 +226,12 @@ pub fn reset_font_size(cx: &mut AppContext) {
     }
 }
 
+pub fn get_system_is_dark_mode(cx: &AppContext) -> bool {
+    cx.try_global::<SystemAppearance>()
+        .map(|r| r.0)
+        .unwrap_or_default()
+}
+
 impl settings::Settings for ThemeSettings {
     const KEY: Option<&'static str> = None;
 
@@ -243,17 +242,14 @@ impl settings::Settings for ThemeSettings {
         user_values: &[&Self::FileContent],
         cx: &mut AppContext,
     ) -> Result<Self> {
-        let is_system_in_dark_mode = cx
-            .try_global::<SystemAppearance>()
-            .map(|r| r.0)
-            .unwrap_or_default();
+        let is_system_in_dark_mode = get_system_is_dark_mode(cx);
 
         let themes = cx.default_global::<ThemeRegistry>();
 
         let mut auto_switch = false;
         for value in user_values.iter() {
             if let Some(value) = &value.themes {
-                auto_switch = value.auto_switch;
+                auto_switch = value.auto_switch();
             }
         }
 
