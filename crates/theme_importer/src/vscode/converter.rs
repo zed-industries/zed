@@ -74,31 +74,34 @@ impl VsCodeThemeConverter {
 
         Ok(StatusColorsContent {
             conflict: vscode_colors
-                .git_decoration_conflicting_resource_foreground
+                .git_decoration
+                .conflicting_resource_foreground
                 .clone(),
-            created: vscode_colors.editor_gutter_added_background.clone(),
-            deleted: vscode_colors.editor_gutter_deleted_background.clone(),
-            error: vscode_colors.editor_error_foreground.clone(),
-            error_background: vscode_colors.editor_error_background.clone(),
-            error_border: vscode_colors.editor_error_border.clone(),
-            hidden: vscode_colors.tab_inactive_foreground.clone(),
+            created: vscode_colors.editor_gutter.added_background.clone(),
+            deleted: vscode_colors.editor_gutter.deleted_background.clone(),
+            error: vscode_colors.editor_error.foreground.clone(),
+            error_background: vscode_colors.editor_error.background.clone(),
+            error_border: vscode_colors.editor_error.border.clone(),
+            hidden: vscode_colors.tab.inactive_foreground.clone(),
             hint: vscode_colors
-                .editor_inlay_hint_foreground
+                .editor_inlay_hint
+                .foreground
                 .clone()
                 .or(vscode_base_status_colors.hint),
-            hint_border: vscode_colors.editor_hint_border.clone(),
+            hint_border: vscode_colors.editor_hint.border.clone(),
             ignored: vscode_colors
-                .git_decoration_ignored_resource_foreground
+                .git_decoration
+                .ignored_resource_foreground
                 .clone(),
-            info: vscode_colors.editor_info_foreground.clone(),
-            info_background: vscode_colors.editor_info_background.clone(),
-            info_border: vscode_colors.editor_info_border.clone(),
-            modified: vscode_colors.editor_gutter_modified_background.clone(),
+            info: vscode_colors.editor_info.foreground.clone(),
+            info_background: vscode_colors.editor_info.background.clone(),
+            info_border: vscode_colors.editor_info.border.clone(),
+            modified: vscode_colors.editor_gutter.modified_background.clone(),
             // renamed: None,
             // success: None,
-            warning: vscode_colors.editor_warning_foreground.clone(),
-            warning_background: vscode_colors.editor_warning_background.clone(),
-            warning_border: vscode_colors.editor_warning_border.clone(),
+            warning: vscode_colors.editor_warning.foreground.clone(),
+            warning_background: vscode_colors.editor_warning.background.clone(),
+            warning_border: vscode_colors.editor_warning.border.clone(),
             ..Default::default()
         })
     }
@@ -106,11 +109,11 @@ impl VsCodeThemeConverter {
     fn convert_theme_colors(&self) -> Result<ThemeColorsContent> {
         let vscode_colors = &self.theme.colors;
 
-        let vscode_panel_border = vscode_colors.panel_border.clone();
-        let vscode_tab_inactive_background = vscode_colors.tab_inactive_background.clone();
-        let vscode_editor_foreground = vscode_colors.editor_foreground.clone();
-        let vscode_editor_background = vscode_colors.editor_background.clone();
-        let vscode_scrollbar_slider_background = vscode_colors.scrollbar_slider_background.clone();
+        let vscode_panel_border = vscode_colors.panel.border.clone();
+        let vscode_tab_inactive_background = vscode_colors.tab.inactive_background.clone();
+        let vscode_editor_foreground = vscode_colors.editor.foreground.clone();
+        let vscode_editor_background = vscode_colors.editor.background.clone();
+        let vscode_scrollbar_slider_background = vscode_colors.scrollbar_slider.background.clone();
         let vscode_token_colors_foreground = self
             .theme
             .token_colors
@@ -126,68 +129,71 @@ impl VsCodeThemeConverter {
             border_selected: vscode_panel_border.clone(),
             border_transparent: vscode_panel_border.clone(),
             border_disabled: vscode_panel_border.clone(),
-            elevated_surface_background: vscode_colors.dropdown_background.clone(),
-            surface_background: vscode_colors.panel_background.clone(),
+            elevated_surface_background: vscode_colors.dropdown.background.clone(),
+            surface_background: vscode_colors.panel.background.clone(),
             background: vscode_editor_background.clone(),
-            element_background: vscode_colors.button_background.clone(),
-            element_hover: vscode_colors.list_hover_background.clone(),
-            element_selected: vscode_colors.list_active_selection_background.clone(),
-            drop_target_background: vscode_colors.list_drop_background.clone(),
-            ghost_element_hover: vscode_colors.list_hover_background.clone(),
-            ghost_element_selected: vscode_colors.list_active_selection_background.clone(),
+            element_background: vscode_colors.button.background.clone(),
+            element_hover: vscode_colors.list.hover_background.clone(),
+            element_selected: vscode_colors.list.active_selection_background.clone(),
+            drop_target_background: vscode_colors.list.drop_background.clone(),
+            ghost_element_hover: vscode_colors.list.hover_background.clone(),
+            ghost_element_selected: vscode_colors.list.active_selection_background.clone(),
             text: vscode_colors
                 .foreground
                 .clone()
                 .or(vscode_token_colors_foreground.clone()),
-            text_muted: vscode_colors.tab_inactive_foreground.clone(),
-            status_bar_background: vscode_colors.status_bar_background.clone(),
-            title_bar_background: vscode_colors.title_bar_active_background.clone(),
+            text_muted: vscode_colors.tab.inactive_foreground.clone(),
+            status_bar_background: vscode_colors.status_bar.background.clone(),
+            title_bar_background: vscode_colors.title_bar.active_background.clone(),
             toolbar_background: vscode_colors
-                .breadcrumb_background
+                .breadcrumb
+                .background
                 .clone()
                 .or(vscode_editor_background.clone()),
-            tab_bar_background: vscode_colors.editor_group_header_tabs_background.clone(),
+            tab_bar_background: vscode_colors.editor_group_header.tabs_background.clone(),
             tab_inactive_background: vscode_tab_inactive_background.clone(),
             tab_active_background: vscode_colors
-                .tab_active_background
+                .tab
+                .active_background
                 .clone()
                 .or(vscode_tab_inactive_background.clone()),
-            panel_background: vscode_colors.panel_background.clone(),
+            panel_background: vscode_colors.panel.background.clone(),
             scrollbar_thumb_background: vscode_scrollbar_slider_background.clone(),
             scrollbar_thumb_hover_background: vscode_colors
-                .scrollbar_slider_hover_background
+                .scrollbar_slider
+                .hover_background
                 .clone(),
             scrollbar_thumb_border: vscode_scrollbar_slider_background.clone(),
             scrollbar_track_background: vscode_editor_background.clone(),
-            scrollbar_track_border: vscode_colors.editor_overview_ruler_border.clone(),
+            scrollbar_track_border: vscode_colors.editor_overview_ruler.border.clone(),
             editor_foreground: vscode_editor_foreground
                 .clone()
                 .or(vscode_token_colors_foreground.clone()),
             editor_background: vscode_editor_background.clone(),
             editor_gutter_background: vscode_editor_background.clone(),
-            editor_active_line_background: vscode_colors.editor_line_highlight_background.clone(),
-            editor_line_number: vscode_colors.editor_line_number_foreground.clone(),
-            editor_active_line_number: vscode_colors.editor_foreground.clone(),
+            editor_active_line_background: vscode_colors.editor.line_highlight_background.clone(),
+            editor_line_number: vscode_colors.editor_line_number.foreground.clone(),
+            editor_active_line_number: vscode_colors.editor.foreground.clone(),
             editor_wrap_guide: vscode_panel_border.clone(),
             editor_active_wrap_guide: vscode_panel_border.clone(),
-            terminal_background: vscode_colors.terminal_background.clone(),
-            terminal_ansi_black: vscode_colors.terminal_ansi_black.clone(),
-            terminal_ansi_bright_black: vscode_colors.terminal_ansi_bright_black.clone(),
-            terminal_ansi_red: vscode_colors.terminal_ansi_red.clone(),
-            terminal_ansi_bright_red: vscode_colors.terminal_ansi_bright_red.clone(),
-            terminal_ansi_green: vscode_colors.terminal_ansi_green.clone(),
-            terminal_ansi_bright_green: vscode_colors.terminal_ansi_bright_green.clone(),
-            terminal_ansi_yellow: vscode_colors.terminal_ansi_yellow.clone(),
-            terminal_ansi_bright_yellow: vscode_colors.terminal_ansi_bright_yellow.clone(),
-            terminal_ansi_blue: vscode_colors.terminal_ansi_blue.clone(),
-            terminal_ansi_bright_blue: vscode_colors.terminal_ansi_bright_blue.clone(),
-            terminal_ansi_magenta: vscode_colors.terminal_ansi_magenta.clone(),
-            terminal_ansi_bright_magenta: vscode_colors.terminal_ansi_bright_magenta.clone(),
-            terminal_ansi_cyan: vscode_colors.terminal_ansi_cyan.clone(),
-            terminal_ansi_bright_cyan: vscode_colors.terminal_ansi_bright_cyan.clone(),
-            terminal_ansi_white: vscode_colors.terminal_ansi_white.clone(),
-            terminal_ansi_bright_white: vscode_colors.terminal_ansi_bright_white.clone(),
-            link_text_hover: vscode_colors.text_link_active_foreground.clone(),
+            terminal_background: vscode_colors.terminal.background.clone(),
+            terminal_ansi_black: vscode_colors.terminal.ansi_black.clone(),
+            terminal_ansi_bright_black: vscode_colors.terminal.ansi_bright_black.clone(),
+            terminal_ansi_red: vscode_colors.terminal.ansi_red.clone(),
+            terminal_ansi_bright_red: vscode_colors.terminal.ansi_bright_red.clone(),
+            terminal_ansi_green: vscode_colors.terminal.ansi_green.clone(),
+            terminal_ansi_bright_green: vscode_colors.terminal.ansi_bright_green.clone(),
+            terminal_ansi_yellow: vscode_colors.terminal.ansi_yellow.clone(),
+            terminal_ansi_bright_yellow: vscode_colors.terminal.ansi_bright_yellow.clone(),
+            terminal_ansi_blue: vscode_colors.terminal.ansi_blue.clone(),
+            terminal_ansi_bright_blue: vscode_colors.terminal.ansi_bright_blue.clone(),
+            terminal_ansi_magenta: vscode_colors.terminal.ansi_magenta.clone(),
+            terminal_ansi_bright_magenta: vscode_colors.terminal.ansi_bright_magenta.clone(),
+            terminal_ansi_cyan: vscode_colors.terminal.ansi_cyan.clone(),
+            terminal_ansi_bright_cyan: vscode_colors.terminal.ansi_bright_cyan.clone(),
+            terminal_ansi_white: vscode_colors.terminal.ansi_white.clone(),
+            terminal_ansi_bright_white: vscode_colors.terminal.ansi_bright_white.clone(),
+            link_text_hover: vscode_colors.text_link.active_foreground.clone(),
             ..Default::default()
         })
     }
