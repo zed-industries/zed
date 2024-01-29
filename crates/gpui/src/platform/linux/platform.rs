@@ -114,16 +114,14 @@ impl Platform for LinuxPlatform {
                 }
                 xcb::Event::X(x::Event::ResizeRequest(ev)) => {
                     let this = self.0.lock();
-                    let mut window = this.windows[&ev.window()].lock();
-                    window.resize(ev.width(), ev.height());
+                    LinuxWindowState::resize(&this.windows[&ev.window()], ev.width(), ev.height());
                 }
                 _ => {}
             }
 
             if let Some(x_window) = repaint_x_window {
                 let this = self.0.lock();
-                let mut window = this.windows[&x_window].lock();
-                window.request_frame();
+                LinuxWindowState::request_frame(&this.windows[&x_window]);
                 this.xcb_connection.flush();
             }
         }

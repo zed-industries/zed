@@ -64,7 +64,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         Vec::new()
     }
     fn font_id(&self, descriptor: &Font) -> Result<FontId> {
-        unimplemented!()
+        Ok(FontId(0)) //TODO
     }
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
         unimplemented!()
@@ -89,7 +89,7 @@ impl PlatformTextSystem for LinuxTextSystem {
         unimplemented!()
     }
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        unimplemented!()
+        LineLayout::default() //TODO
     }
     fn wrap_line(
         &self,

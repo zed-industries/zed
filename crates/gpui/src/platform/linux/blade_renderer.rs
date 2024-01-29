@@ -33,7 +33,16 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
+    fn wait_for_gpu(&mut self) {
+        if let Some(last_sp) = self.last_sync_point.take() {
+            if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
+                panic!("GPU hung");
+            }
+        }
+    }
+
     pub fn resize(&mut self, size: blade::Extent) {
+        self.wait_for_gpu();
         self.gpu.resize(blade::SurfaceConfig {
             size,
             usage: blade::TextureUsage::TARGET,
@@ -44,15 +53,12 @@ impl BladeRenderer {
     pub fn draw(&mut self, scene: &Scene) {
         let frame = self.gpu.acquire_frame();
         self.command_encoder.start();
+        self.command_encoder.init_texture(frame.texture());
 
         self.command_encoder.present(frame);
 
         let sync_point = self.gpu.submit(&mut self.command_encoder);
-        if let Some(ref last_sp) = self.last_sync_point {
-            if !self.gpu.wait_for(last_sp, MAX_FRAME_TIME_MS) {
-                panic!("GPU hung");
-            }
-        }
+        self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
     }
 }

@@ -166,30 +166,41 @@ impl LinuxWindowState {
         }))
     }
 
-    pub fn resize(&mut self, width: u16, height: u16) {
-        self.content_size = Size {
+    pub fn destroy(&mut self) {
+        self.sprite_atlas.destroy();
+        self.renderer.destroy();
+    }
+
+    pub fn resize(self_ptr: &LinuxWindowStatePtr, width: u16, height: u16) {
+        let content_size = Size {
             width: Pixels(width as f32),
             height: Pixels(height as f32),
         };
-        self.renderer.resize(blade::Extent {
+
+        let mut fun = match self_ptr.lock().callbacks.resize.take() {
+            Some(fun) => fun,
+            None => return,
+        };
+        fun(content_size, 1.0);
+
+        let mut this = self_ptr.lock();
+        this.callbacks.resize = Some(fun);
+        this.content_size = content_size;
+        this.renderer.resize(blade::Extent {
             width: width as u32,
             height: height as u32,
             depth: 1,
         });
-        if let Some(ref mut fun) = self.callbacks.resize {
-            fun(self.content_size, 1.0);
-        }
     }
 
-    pub fn request_frame(&mut self) {
-        if let Some(ref mut fun) = self.callbacks.request_frame {
-            fun();
-        }
-    }
+    pub fn request_frame(self_ptr: &LinuxWindowStatePtr) {
+        let mut fun = match self_ptr.lock().callbacks.request_frame.take() {
+            Some(fun) => fun,
+            None => return,
+        };
+        fun();
 
-    pub fn destroy(&mut self) {
-        self.sprite_atlas.destroy();
-        self.renderer.destroy();
+        self_ptr.lock().callbacks.request_frame = Some(fun);
     }
 }
 
