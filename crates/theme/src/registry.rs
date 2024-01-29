@@ -174,7 +174,7 @@ impl ThemeRegistry {
             .cloned()
     }
 
-    pub fn load_user_themes(&mut self) {
+    pub fn load_bundled_themes(&mut self) {
         let theme_paths = self
             .assets
             .list("themes/")
