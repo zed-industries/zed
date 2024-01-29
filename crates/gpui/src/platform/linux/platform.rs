@@ -85,44 +85,46 @@ impl Platform for LinuxPlatform {
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
-        let mut need_repaint = HashSet::<x::Window>::default();
-
         while !self.0.lock().windows.is_empty() {
             let event = self.0.lock().xcb_connection.wait_for_event().unwrap();
+            let mut repaint_x_window = None;
             match event {
                 xcb::Event::X(x::Event::ClientMessage(ev)) => {
                     if let x::ClientMessageData::Data32([atom, ..]) = ev.data() {
-                        let mut lock = self.0.lock();
-                        if atom == lock.atoms.wm_del_window.resource_id() {
+                        let mut this = self.0.lock();
+                        if atom == this.atoms.wm_del_window.resource_id() {
                             // window "x" button clicked by user, we gracefully exit
                             {
-                                let mut window = lock.windows[&ev.window()].lock();
+                                let mut window = this.windows[&ev.window()].lock();
                                 window.destroy();
                             }
-                            lock.windows.remove(&ev.window());
+                            this.xcb_connection.send_request(&x::UnmapWindow {
+                                window: ev.window(),
+                            });
+                            this.xcb_connection.send_request(&x::DestroyWindow {
+                                window: ev.window(),
+                            });
+                            this.windows.remove(&ev.window());
                             break;
                         }
                     }
                 }
-                _ => {} /*
-                        Event::Expose(event) => {
-                            if event.count == 0 {
-                                need_repaint.insert(event.window);
-                            }
-                        }
-                        Event::ConfigureNotify(event) => {
-                            let lock = self.0.lock();
-                            let mut window = lock.windows[&event.window].lock();
-                            window.resize(event.width, event.height);
-                        }
-                        _ => {}*/
+                xcb::Event::X(x::Event::Expose(ev)) => {
+                    repaint_x_window = Some(ev.window());
+                }
+                xcb::Event::X(x::Event::ResizeRequest(ev)) => {
+                    let this = self.0.lock();
+                    let mut window = this.windows[&ev.window()].lock();
+                    window.resize(ev.width(), ev.height());
+                }
+                _ => {}
             }
 
-            for x_window in need_repaint.drain() {
-                let lock = self.0.lock();
-                let mut window = lock.windows[&x_window].lock();
-                window.paint();
-                lock.xcb_connection.flush();
+            if let Some(x_window) = repaint_x_window {
+                let this = self.0.lock();
+                let mut window = this.windows[&x_window].lock();
+                window.request_frame();
+                this.xcb_connection.flush();
             }
         }
     }
@@ -140,22 +142,22 @@ impl Platform for LinuxPlatform {
     fn unhide_other_apps(&self) {}
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        let lock = self.0.lock();
-        let setup = lock.xcb_connection.get_setup();
+        let this = self.0.lock();
+        let setup = this.xcb_connection.get_setup();
         setup
             .roots()
             .enumerate()
             .map(|(root_id, _)| {
-                Rc::new(LinuxDisplay::new(&lock.xcb_connection, root_id as i32))
+                Rc::new(LinuxDisplay::new(&this.xcb_connection, root_id as i32))
                     as Rc<dyn PlatformDisplay>
             })
             .collect()
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        let lock = self.0.lock();
+        let this = self.0.lock();
         Some(Rc::new(LinuxDisplay::new(
-            &lock.xcb_connection,
+            &this.xcb_connection,
             id.0 as i32,
         )))
     }
@@ -169,18 +171,18 @@ impl Platform for LinuxPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let mut lock = self.0.lock();
-        let x_window = lock.xcb_connection.generate_id();
+        let mut this = self.0.lock();
+        let x_window = this.xcb_connection.generate_id();
 
         let window_ptr = LinuxWindowState::new_ptr(
             options,
             handle,
-            &lock.xcb_connection,
-            lock.x_root_index,
+            &this.xcb_connection,
+            this.x_root_index,
             x_window,
-            &lock.atoms,
+            &this.atoms,
         );
-        lock.windows.insert(x_window, window_ptr.clone());
+        this.windows.insert(x_window, window_ptr.clone());
         Box::new(LinuxWindow(window_ptr))
     }
 

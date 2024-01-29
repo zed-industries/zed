@@ -11,6 +11,12 @@ use std::{
 };
 use xcb::{x, Xid as _};
 
+#[derive(Default)]
+struct Callbacks {
+    request_frame: Option<Box<dyn FnMut()>>,
+    resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+}
+
 pub(crate) struct LinuxWindowState {
     display: Rc<dyn PlatformDisplay>,
     x_window: x::Window,
@@ -18,6 +24,7 @@ pub(crate) struct LinuxWindowState {
     content_size: Size<Pixels>,
     sprite_atlas: Arc<BladeAtlas>,
     renderer: BladeRenderer,
+    callbacks: Callbacks,
 }
 
 pub(crate) type LinuxWindowStatePtr = Arc<Mutex<LinuxWindowState>>;
@@ -65,7 +72,9 @@ impl LinuxWindowState {
 
         let xcb_values = [
             x::Cw::BackPixel(screen.white_pixel()),
-            x::Cw::EventMask(x::EventMask::EXPOSURE | x::EventMask::KEY_PRESS),
+            x::Cw::EventMask(
+                x::EventMask::EXPOSURE | x::EventMask::RESIZE_REDIRECT | x::EventMask::KEY_PRESS,
+            ),
         ];
 
         let (bound_x, bound_y, bound_width, bound_height) = match options.bounds {
@@ -137,6 +146,11 @@ impl LinuxWindowState {
             }
             .unwrap(),
         );
+        let gpu_extent = blade::Extent {
+            width: bound_width as u32,
+            height: bound_height as u32,
+            depth: 1,
+        };
 
         Arc::new(Mutex::new(Self {
             display: Rc::new(LinuxDisplay::new(xcb_connection, x_screen_index)),
@@ -147,7 +161,8 @@ impl LinuxWindowState {
                 height: Pixels(bound_height as f32),
             },
             sprite_atlas: Arc::new(BladeAtlas::new(&gpu)),
-            renderer: BladeRenderer::new(gpu),
+            renderer: BladeRenderer::new(gpu, gpu_extent),
+            callbacks: Callbacks::default(),
         }))
     }
 
@@ -156,14 +171,25 @@ impl LinuxWindowState {
             width: Pixels(width as f32),
             height: Pixels(height as f32),
         };
+        self.renderer.resize(blade::Extent {
+            width: width as u32,
+            height: height as u32,
+            depth: 1,
+        });
+        if let Some(ref mut fun) = self.callbacks.resize {
+            fun(self.content_size, 1.0);
+        }
+    }
+
+    pub fn request_frame(&mut self) {
+        if let Some(ref mut fun) = self.callbacks.request_frame {
+            fun();
+        }
     }
 
     pub fn destroy(&mut self) {
         self.sprite_atlas.destroy();
-    }
-
-    pub fn paint(&mut self) {
-        //TODO
+        self.renderer.destroy();
     }
 }
 
@@ -243,27 +269,27 @@ impl PlatformWindow for LinuxWindow {
         unimplemented!()
     }
 
-    fn on_request_frame(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().callbacks.request_frame = Some(callback);
+    }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> bool>) {}
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {}
 
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {}
+    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
+        self.0.lock().callbacks.resize = Some(callback);
+    }
 
     fn on_fullscreen(&self, _callback: Box<dyn FnMut(bool)>) {}
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {}
 
-    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {}
+    fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
 
-    fn on_close(&self, _callback: Box<dyn FnOnce()>) {
-        unimplemented!()
-    }
+    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
 
-    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn is_topmost_for_position(&self, _position: crate::Point<Pixels>) -> bool {
         unimplemented!()
@@ -271,7 +297,9 @@ impl PlatformWindow for LinuxWindow {
 
     fn invalidate(&self) {}
 
-    fn draw(&self, _scene: &crate::Scene) {}
+    fn draw(&self, scene: &crate::Scene) {
+        self.0.lock().renderer.draw(scene);
+    }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
