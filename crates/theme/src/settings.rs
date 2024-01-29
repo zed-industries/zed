@@ -107,13 +107,6 @@ impl ThemeFeatures {
         }
     }
 
-    pub fn auto_switch(&self) -> bool {
-        match self.mode.as_deref() {
-            Some("auto") => true,
-            _ => false,
-        }
-    }
-
     pub fn update_theme(&mut self, theme_name: String, system_is_dark: bool) {
         match (self.mode.as_deref(), system_is_dark) {
             (Some("dark"), _) | (Some("auto"), true) => self.dark = Some(theme_name),
@@ -244,13 +237,6 @@ impl settings::Settings for ThemeSettings {
         let is_system_in_dark_mode = get_system_is_dark_mode(cx);
 
         let themes = cx.default_global::<ThemeRegistry>();
-
-        let mut auto_switch = false;
-        for value in user_values.iter() {
-            if let Some(value) = &value.themes {
-                auto_switch = value.auto_switch();
-            }
-        }
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
