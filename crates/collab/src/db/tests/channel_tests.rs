@@ -742,6 +742,83 @@ async fn test_guest_access(db: &Arc<Database>) {
         .is_ok())
 }
 
+test_both_dbs!(
+    test_channel_descendants,
+    test_channel_descendants_postgres,
+    test_channel_descendants_sqlite
+);
+
+async fn test_channel_descendants(db: &Arc<Database>) {
+    async fn get_descendant_ids(db: &Arc<Database>, channel_id: ChannelId) -> Vec<ChannelId> {
+        db.transaction(|tx| async move {
+            Ok(db
+                .get_channel_descendants_including_self([channel_id], &*tx)
+                .await?
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>())
+        })
+        .await
+        .unwrap()
+    }
+
+    let user_id = new_test_user(db, "user1@example.com").await;
+
+    let parent1_id = db.create_root_channel("parent", user_id).await.unwrap();
+    let parent1_child1_id = db
+        .create_sub_channel("zed_child_1_id", parent1_id, user_id)
+        .await
+        .unwrap();
+    let parent1_child1_child1_id = db
+        .create_sub_channel("zed_child_1_child1_id", parent1_child1_id, user_id)
+        .await
+        .unwrap();
+    let parent1_child1_child2_id = db
+        .create_sub_channel("zed_child_1_child2_id", parent1_child1_id, user_id)
+        .await
+        .unwrap();
+    let parent1_child2_id = db
+        .create_sub_channel("zed_child_2_id", parent1_id, user_id)
+        .await
+        .unwrap();
+    let parent1_child2_child1_id = db
+        .create_sub_channel("zed_child_2_child1_id", parent1_child2_id, user_id)
+        .await
+        .unwrap();
+
+    let parent1_descendants = get_descendant_ids(db, parent1_id).await;
+    assert_eq!(
+        parent1_descendants,
+        [
+            parent1_id,
+            parent1_child1_id,
+            parent1_child1_child1_id,
+            parent1_child1_child2_id,
+            parent1_child2_id,
+            parent1_child2_child1_id
+        ]
+    );
+
+    let child1_descendants = get_descendant_ids(db, parent1_child1_id).await;
+    assert_eq!(
+        child1_descendants,
+        [
+            parent1_child1_id,
+            parent1_child1_child1_id,
+            parent1_child1_child2_id,
+        ]
+    );
+
+    let child1_child1_descendants = get_descendant_ids(db, parent1_child1_child1_id).await;
+    assert_eq!(child1_child1_descendants, [parent1_child1_child1_id,]);
+
+    let child2_descendants = get_descendant_ids(db, parent1_child2_id).await;
+    assert_eq!(
+        child2_descendants,
+        [parent1_child2_id, parent1_child2_child1_id,]
+    );
+}
+
 #[track_caller]
 fn assert_channel_tree(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId])]) {
     let actual = actual

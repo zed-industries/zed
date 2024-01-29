@@ -880,7 +880,7 @@ impl Database {
 
     // Get the descendants of the given set if channels, ordered by their
     // path.
-    async fn get_channel_descendants_including_self(
+    pub(crate) async fn get_channel_descendants_including_self(
         &self,
         channel_ids: impl IntoIterator<Item = ChannelId>,
         tx: &DatabaseTransaction,
@@ -899,19 +899,26 @@ impl Database {
 
         let sql = format!(
             r#"
-            SELECT DISTINCT
-                descendant_channels.*,
-                descendant_channels.parent_path || descendant_channels.id as full_path
-            FROM
-                channels parent_channels, channels descendant_channels
-            WHERE
-                descendant_channels.id IN ({values}) OR
-                (
-                    parent_channels.id IN ({values}) AND
-                    descendant_channels.parent_path LIKE (parent_channels.parent_path || parent_channels.id || '/%')
-                )
-            ORDER BY
-                full_path ASC
+            WITH parent_channel AS (
+                SELECT *, parent_path || id AS full_path
+                FROM channels
+                WHERE id IN ({values})
+            ),
+            descendants AS (
+                SELECT
+                    d.*,
+                    d.parent_path || d.id AS full_path
+                FROM
+                    channels d
+                INNER JOIN
+                    parent_channel pc
+                ON
+                    d.parent_path LIKE (pc.parent_path || pc.id || '/%')
+            )
+            SELECT * FROM parent_channel
+            UNION ALL
+            SELECT * FROM descendants
+            ORDER BY full_path ASC
             "#
         );
 
