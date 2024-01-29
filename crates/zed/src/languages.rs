@@ -28,6 +28,7 @@ mod python;
 mod ruby;
 mod rust;
 mod svelte;
+mod scala;
 mod tailwind;
 mod typescript;
 mod uiua;
@@ -231,6 +232,7 @@ pub fn init(
         ],
     );
     language("scheme", tree_sitter_scheme::language(), vec![]);
+    language("scala", tree_sitter_scala::language(), vec![Arc::new(scala::ScalaLanguageServer {})]);
     language("racket", tree_sitter_racket::language(), vec![]);
     language(
         "lua",
