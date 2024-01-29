@@ -1,5 +1,6 @@
 use gpui::*;
 
+#[derive(IntoElement)]
 struct ImageFromResource {
     text: SharedString,
     resource: SharedUrl,
@@ -13,7 +14,7 @@ impl RenderOnce for ImageFromResource {
                 .size_full()
                 .gap_4()
                 .child(self.text)
-                .child(img(self.resource).w(px(320.0)).h(px(80.0))),
+                .child(img(self.resource).w(px(512.0)).h(px(512.0))),
         )
     }
 }
@@ -24,7 +25,7 @@ struct ImageShowcase {
 }
 
 impl Render for ImageShowcase {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -33,20 +34,14 @@ impl Render for ImageShowcase {
             .items_center()
             .gap_8()
             .bg(rgb(0xFFFFFF))
-            .child(
-                ImageFromResource {
-                    text: "Image loaded from a local file".into(),
-                    resource: self.local_resource.clone(),
-                }
-                .render(cx),
-            )
-            .child(
-                ImageFromResource {
-                    text: "Image loaded from a remote resource".into(),
-                    resource: self.remote_resource.clone(),
-                }
-                .render(cx),
-            )
+            .child(ImageFromResource {
+                text: "Image loaded from a local file".into(),
+                resource: self.local_resource.clone(),
+            })
+            .child(ImageFromResource {
+                text: "Image loaded from a remote resource".into(),
+                resource: self.remote_resource.clone(),
+            })
     }
 }
 
@@ -56,8 +51,8 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| ImageShowcase {
-                local_resource: SharedUrl::file("examples/assets/zed_logo.png"),
-                remote_resource: SharedUrl::network("https://picsum.photos/320/72"),
+                local_resource: SharedUrl::file("../zed/resources/app-icon.png"),
+                remote_resource: SharedUrl::network("https://picsum.photos/512/512"),
             })
         });
     });
