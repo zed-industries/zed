@@ -15,13 +15,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                 s.move_with(|map, selection| {
                     let original_head = selection.head();
                     original_columns.insert(selection.id, original_head.column());
-                    motion.expand_selection(
-                        map,
-                        selection,
-                        times,
-                        true,
-                        &text_layout_details,
-                    );
+                    motion.expand_selection(map, selection, times, true, &text_layout_details);
 
                     // Motion::NextWordStart on an empty line should delete it.
                     if let Motion::NextWordStart {

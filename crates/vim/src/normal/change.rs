@@ -41,13 +41,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             &text_layout_details,
                         )
                     } else {
-                        motion.expand_selection(
-                            map,
-                            selection,
-                            times,
-                            false,
-                            &text_layout_details,
-                        )
+                        motion.expand_selection(map, selection, times, false, &text_layout_details)
                     };
                 });
             });
