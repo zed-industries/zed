@@ -197,7 +197,7 @@ impl Database {
                 }
             } else if visibility == ChannelVisibility::Members {
                 if self
-                    .get_channel_descendants_including_self(vec![channel_id], &*tx)
+                    .get_channel_descendants_including_self(vec![&channel], &*tx)
                     .await?
                     .into_iter()
                     .any(|channel| {
@@ -261,7 +261,7 @@ impl Database {
                 .await?;
 
             let channels_to_remove = self
-                .get_channel_descendants_including_self(vec![channel.id], &*tx)
+                .get_channel_descendants_including_self(vec![&channel], &*tx)
                 .await?
                 .into_iter()
                 .map(|channel| channel.id)
@@ -445,7 +445,7 @@ impl Database {
     ) -> Result<MembershipUpdated> {
         let new_channels = self.get_user_channels(user_id, Some(channel), &*tx).await?;
         let removed_channels = self
-            .get_channel_descendants_including_self(vec![channel.id], &*tx)
+            .get_channel_descendants_including_self(vec![&channel], &*tx)
             .await?
             .into_iter()
             .filter_map(|channel| {
@@ -554,6 +554,7 @@ impl Database {
                 .filter(channel_member::Column::UserId.eq(user_id))
                 .all(&*tx)
                 .await?;
+            // let channels = channel::Entity::find().filter()
             let channels = self
                 .get_channel_descendants_including_self(
                     memberships.iter().map(|m| m.channel_id),
@@ -882,44 +883,23 @@ impl Database {
     // path.
     async fn get_channel_descendants_including_self(
         &self,
-        channel_ids: impl IntoIterator<Item = ChannelId>,
+        channels: impl Iterator<Item = &channel::Model>,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<channel::Model>> {
-        let mut values = String::new();
-        for id in channel_ids {
-            if !values.is_empty() {
-                values.push_str(", ");
-            }
-            write!(&mut values, "({})", id).unwrap();
+        let mut filter = Condition::any();
+        for channel in channels.iter() {
+            filter = filter.add(channel::Column::ParentPath.like(format!("{}%", channel.path())));
+            filter = filter.add(channel::Column::Id.eq(channel.id));
         }
 
-        if values.is_empty() {
+        if filter.is_empty() {
             return Ok(vec![]);
         }
 
-        let sql = format!(
-            r#"
-            SELECT DISTINCT
-                descendant_channels.*,
-                descendant_channels.parent_path || descendant_channels.id as full_path
-            FROM
-                channels parent_channels, channels descendant_channels
-            WHERE
-                descendant_channels.id IN ({values}) OR
-                (
-                    parent_channels.id IN ({values}) AND
-                    descendant_channels.parent_path LIKE (parent_channels.parent_path || parent_channels.id || '/%')
-                )
-            ORDER BY
-                full_path ASC
-            "#
-        );
-
-        Ok(channel::Entity::find()
-            .from_raw_sql(Statement::from_string(
-                self.pool.get_database_backend(),
-                sql,
-            ))
+        Ok(channel::Entity
+            .find()
+            .filter(filter)
+            .order_by(channel::Column::ParentPath)
             .all(tx)
             .await?)
     }
