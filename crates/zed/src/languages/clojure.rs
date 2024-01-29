@@ -18,7 +18,7 @@ pub struct ClojureLspAdapter;
 
 #[async_trait]
 impl super::LspAdapter for ClojureLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("clojure-lsp".into())
     }
 
@@ -61,8 +61,6 @@ impl super::LspAdapter for ClojureLspAdapter {
         let zip_path = container_dir.join(format!("clojure-lsp_{}.zip", version.name));
         let folder_path = container_dir.join("bin");
         let binary_path = folder_path.join("clojure-lsp");
-        // print binary path
-        println!("binary path: {}", binary_path.display());
 
         if fs::metadata(&binary_path).await.is_err() {
           let mut response = delegate

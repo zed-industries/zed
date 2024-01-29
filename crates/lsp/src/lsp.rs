@@ -33,7 +33,7 @@ use util::{ResultExt, TryFutureExt};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 4);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
