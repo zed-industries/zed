@@ -1,5 +1,5 @@
 name = "HTML"
-path_suffixes = ["html"]
+path_suffixes = ["html", "htm", "shtml"]
 autoclose_before = ">})"
 block_comment = ["<!-- ", " -->"]
 brackets = [

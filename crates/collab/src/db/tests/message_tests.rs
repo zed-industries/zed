@@ -15,22 +15,18 @@ test_both_dbs!(
 
 async fn test_channel_message_retrieval(db: &Arc<Database>) {
     let user = new_test_user(db, "user@example.com").await;
-    let result = db.create_channel("channel", None, user).await.unwrap();
+    let channel = db.create_channel("channel", None, user).await.unwrap().0;
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
-    db.join_channel_chat(
-        result.channel.id,
-        rpc::ConnectionId { owner_id, id: 0 },
-        user,
-    )
-    .await
-    .unwrap();
+    db.join_channel_chat(channel.id, rpc::ConnectionId { owner_id, id: 0 }, user)
+        .await
+        .unwrap();
 
     let mut all_messages = Vec::new();
     for i in 0..10 {
         all_messages.push(
             db.create_channel_message(
-                result.channel.id,
+                channel.id,
                 user,
                 &i.to_string(),
                 &[],
@@ -45,7 +41,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
     }
 
     let messages = db
-        .get_channel_messages(result.channel.id, user, 3, None)
+        .get_channel_messages(channel.id, user, 3, None)
         .await
         .unwrap()
         .into_iter()
@@ -55,7 +51,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
 
     let messages = db
         .get_channel_messages(
-            result.channel.id,
+            channel.id,
             user,
             4,
             Some(MessageId::from_proto(all_messages[6])),
@@ -100,7 +96,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    // As user A, create messages that re-use the same nonces. The requests
+    // As user A, create messages that reuse the same nonces. The requests
     // succeed, but return the same ids.
     let id1 = db
         .create_channel_message(
@@ -239,11 +235,10 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let second_message = db
+    let _ = db
         .create_channel_message(channel_1, user, "1_2", &[], OffsetDateTime::now_utc(), 2)
         .await
-        .unwrap()
-        .message_id;
+        .unwrap();
 
     let third_message = db
         .create_channel_message(channel_1, user, "1_3", &[], OffsetDateTime::now_utc(), 3)
@@ -262,96 +257,26 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
         .message_id;
 
     // Check that observer has new messages
-    let unseen_messages = db
+    let latest_messages = db
         .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
+            db.latest_channel_messages(&[channel_1, channel_2], &*tx)
                 .await
         })
         .await
         .unwrap();
 
     assert_eq!(
-        unseen_messages,
+        latest_messages,
         [
-            rpc::proto::UnseenChannelMessage {
+            rpc::proto::ChannelMessageId {
                 channel_id: channel_1.to_proto(),
                 message_id: third_message.to_proto(),
             },
-            rpc::proto::UnseenChannelMessage {
+            rpc::proto::ChannelMessageId {
                 channel_id: channel_2.to_proto(),
                 message_id: fourth_message.to_proto(),
             },
         ]
-    );
-
-    // Observe the second message
-    db.observe_channel_message(channel_1, observer, second_message)
-        .await
-        .unwrap();
-
-    // Make sure the observer still has a new message
-    let unseen_messages = db
-        .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
-                .await
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        unseen_messages,
-        [
-            rpc::proto::UnseenChannelMessage {
-                channel_id: channel_1.to_proto(),
-                message_id: third_message.to_proto(),
-            },
-            rpc::proto::UnseenChannelMessage {
-                channel_id: channel_2.to_proto(),
-                message_id: fourth_message.to_proto(),
-            },
-        ]
-    );
-
-    // Observe the third message,
-    db.observe_channel_message(channel_1, observer, third_message)
-        .await
-        .unwrap();
-
-    // Make sure the observer does not have a new method
-    let unseen_messages = db
-        .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
-                .await
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(
-        unseen_messages,
-        [rpc::proto::UnseenChannelMessage {
-            channel_id: channel_2.to_proto(),
-            message_id: fourth_message.to_proto(),
-        }]
-    );
-
-    // Observe the second message again, should not regress our observed state
-    db.observe_channel_message(channel_1, observer, second_message)
-        .await
-        .unwrap();
-
-    // Make sure the observer does not have a new message
-    let unseen_messages = db
-        .transaction(|tx| async move {
-            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
-                .await
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        unseen_messages,
-        [rpc::proto::UnseenChannelMessage {
-            channel_id: channel_2.to_proto(),
-            message_id: fourth_message.to_proto(),
-        }]
     );
 }
 
@@ -370,7 +295,7 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
         .create_channel("channel", None, user_a)
         .await
         .unwrap()
-        .channel
+        .0
         .id;
     db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
         .await

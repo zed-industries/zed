@@ -1657,7 +1657,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         let language = Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
-                line_comment: Some("// ".into()),
+                line_comments: vec!["// ".into()],
                 brackets: BracketPairConfig {
                     pairs: vec![
                         BracketPair {
@@ -1681,7 +1681,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
-                        line_comment: Override::Remove { remove: true },
+                        line_comments: Override::Remove { remove: true },
                         block_comment: Override::Set(("{/*".into(), "*/}".into())),
                         ..Default::default()
                     },
@@ -1718,7 +1718,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         let snapshot = buffer.snapshot();
 
         let config = snapshot.language_scope_at(0).unwrap();
-        assert_eq!(config.line_comment_prefix().unwrap().as_ref(), "// ");
+        assert_eq!(config.line_comment_prefixes().unwrap(), &[Arc::from("// ")]);
         // Both bracket pairs are enabled
         assert_eq!(
             config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -1728,7 +1728,10 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         let string_config = snapshot
             .language_scope_at(text.find("b\"").unwrap())
             .unwrap();
-        assert_eq!(string_config.line_comment_prefix().unwrap().as_ref(), "// ");
+        assert_eq!(
+            string_config.line_comment_prefixes().unwrap(),
+            &[Arc::from("// ")]
+        );
         // Second bracket pair is disabled
         assert_eq!(
             string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -1739,7 +1742,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         let element_config = snapshot
             .language_scope_at(text.find("<F>").unwrap())
             .unwrap();
-        assert_eq!(element_config.line_comment_prefix(), None);
+        assert_eq!(element_config.line_comment_prefixes(), None);
         assert_eq!(
             element_config.block_comment_delimiters(),
             Some((&"{/*".into(), &"*/}".into()))
@@ -1753,7 +1756,10 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         let tag_config = snapshot
             .language_scope_at(text.find(" d=").unwrap() + 1)
             .unwrap();
-        assert_eq!(tag_config.line_comment_prefix().unwrap().as_ref(), "// ");
+        assert_eq!(
+            tag_config.line_comment_prefixes().unwrap(),
+            &[Arc::from("// ")]
+        );
         assert_eq!(
             tag_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
@@ -1765,10 +1771,9 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             .unwrap();
         assert_eq!(
             expression_in_element_config
-                .line_comment_prefix()
-                .unwrap()
-                .as_ref(),
-            "// "
+                .line_comment_prefixes()
+                .unwrap(),
+            &[Arc::from("// ")]
         );
         assert_eq!(
             expression_in_element_config
@@ -1884,14 +1889,17 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
 
         let snapshot = buffer.snapshot();
         let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
-        assert_eq!(html_config.line_comment_prefix(), None);
+        assert_eq!(html_config.line_comment_prefixes(), Some(&vec![]));
         assert_eq!(
             html_config.block_comment_delimiters(),
             Some((&"<!--".into(), &"-->".into()))
         );
 
         let ruby_config = snapshot.language_scope_at(Point::new(3, 12)).unwrap();
-        assert_eq!(ruby_config.line_comment_prefix().unwrap().as_ref(), "# ");
+        assert_eq!(
+            ruby_config.line_comment_prefixes().unwrap(),
+            &[Arc::from("# ")]
+        );
         assert_eq!(ruby_config.block_comment_delimiters(), None);
 
         buffer
@@ -2293,7 +2301,7 @@ fn ruby_lang() -> Language {
         LanguageConfig {
             name: "Ruby".into(),
             path_suffixes: vec!["rb".to_string()],
-            line_comment: Some("# ".into()),
+            line_comments: vec!["# ".into()],
             ..Default::default()
         },
         Some(tree_sitter_ruby::language()),

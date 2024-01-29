@@ -870,7 +870,7 @@ impl Pane {
         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
         all_dirty_items: usize,
         cx: &AppContext,
-    ) -> String {
+    ) -> (String, String) {
         /// Quantity of item paths displayed in prompt prior to cutoff..
         const FILE_NAMES_CUTOFF_POINT: usize = 10;
         let mut file_names: Vec<_> = items
@@ -894,10 +894,12 @@ impl Pane {
                 file_names.push(format!(".. {} files not shown", not_shown_files).into());
             }
         }
-        let file_names = file_names.join("\n");
-        format!(
-            "Do you want to save changes to the following {} files?\n{file_names}",
-            all_dirty_items
+        (
+            format!(
+                "Do you want to save changes to the following {} files?",
+                all_dirty_items
+            ),
+            file_names.join("\n"),
         )
     }
 
@@ -929,11 +931,12 @@ impl Pane {
         cx.spawn(|pane, mut cx| async move {
             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
                 let answer = pane.update(&mut cx, |_, cx| {
-                    let prompt =
+                    let (prompt, detail) =
                         Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
                     cx.prompt(
                         PromptLevel::Warning,
                         &prompt,
+                        Some(&detail),
                         &["Save all", "Discard all", "Cancel"],
                     )
                 })?;
@@ -1131,6 +1134,7 @@ impl Pane {
                 cx.prompt(
                     PromptLevel::Warning,
                     CONFLICT_MESSAGE,
+                    None,
                     &["Overwrite", "Discard", "Cancel"],
                 )
             })?;
@@ -1154,6 +1158,7 @@ impl Pane {
                         cx.prompt(
                             PromptLevel::Warning,
                             &prompt,
+                            None,
                             &["Save", "Don't Save", "Cancel"],
                         )
                     })?;
@@ -1329,8 +1334,12 @@ impl Pane {
                 },
                 |tab, cx| cx.new_view(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(|tab| tab.bg(cx.theme().colors().drop_target_background))
-            .drag_over::<ProjectEntryId>(|tab| tab.bg(cx.theme().colors().drop_target_background))
+            .drag_over::<DraggedTab>(|tab, _, cx| {
+                tab.bg(cx.theme().colors().drop_target_background)
+            })
+            .drag_over::<ProjectEntryId>(|tab, _, cx| {
+                tab.bg(cx.theme().colors().drop_target_background)
+            })
             .when_some(self.can_drop_predicate.clone(), |this, p| {
                 this.can_drop(move |a, cx| p(a, cx))
             })
@@ -1500,10 +1509,10 @@ impl Pane {
                     .child("")
                     .h_full()
                     .flex_grow()
-                    .drag_over::<DraggedTab>(|bar| {
+                    .drag_over::<DraggedTab>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
-                    .drag_over::<ProjectEntryId>(|bar| {
+                    .drag_over::<ProjectEntryId>(|bar, _, cx| {
                         bar.bg(cx.theme().colors().drop_target_background)
                     })
                     .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {

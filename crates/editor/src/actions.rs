@@ -14,12 +14,6 @@ pub struct SelectPrevious {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct SelectAllMatches {
-    #[serde(default)]
-    pub replace_newest: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
@@ -81,7 +75,6 @@ impl_actions!(
     [
         SelectNext,
         SelectPrevious,
-        SelectAllMatches,
         SelectToBeginningOfLine,
         MovePageUp,
         MovePageDown,
@@ -128,6 +121,7 @@ gpui::actions!(
         DeleteToNextWordEnd,
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
+        DisplayCursorNames,
         DuplicateLine,
         ExpandMacroRecursively,
         FindAllReferences,
@@ -185,6 +179,7 @@ gpui::actions!(
         ScrollCursorCenter,
         ScrollCursorTop,
         SelectAll,
+        SelectAllMatches,
         SelectDown,
         SelectLargerSyntaxNode,
         SelectLeft,
@@ -214,6 +209,5 @@ gpui::actions!(
         Undo,
         UndoSelection,
         UnfoldLines,
-        DisplayCursorNames
     ]
 );

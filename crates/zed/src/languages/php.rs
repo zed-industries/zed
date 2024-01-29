@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{async_maybe, ResultExt};
 
 fn intelephense_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -36,7 +36,7 @@ impl IntelephenseLspAdapter {
 
 #[async_trait]
 impl LspAdapter for IntelephenseLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("intelephense".into())
     }
 
@@ -96,10 +96,10 @@ impl LspAdapter for IntelephenseLspAdapter {
         None
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         None
     }
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([("PHP".into(), "php".into())])
     }
 }
@@ -108,7 +108,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -130,7 +130,7 @@ async fn get_cached_server_binary(
                 last_version_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }

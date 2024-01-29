@@ -1183,7 +1183,7 @@ pub fn copy_recursive<'a>(
             .await?
             .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
         if metadata.is_dir {
-            if !options.overwrite && fs.metadata(target).await.is_ok() {
+            if !options.overwrite && fs.metadata(target).await.is_ok_and(|m| m.is_some()) {
                 if options.ignore_if_exists {
                     return Ok(());
                 } else {

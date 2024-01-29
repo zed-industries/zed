@@ -150,7 +150,13 @@ pub(crate) trait PlatformWindow {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
-    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
+    fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
@@ -198,7 +204,7 @@ pub trait PlatformDispatcher: Send + Sync {
 }
 
 pub(crate) trait PlatformTextSystem: Send + Sync {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
     fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;

@@ -3,7 +3,7 @@ name = "project"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
+license = "GPL-3.0-or-later"
 
 
 [lib]
@@ -83,5 +83,5 @@ prettier = { path = "../prettier", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 git2.workspace = true
-tempdir.workspace = true
+tempfile.workspace = true
 unindent.workspace = true

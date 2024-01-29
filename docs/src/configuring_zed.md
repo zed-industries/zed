@@ -24,7 +24,7 @@ The following global settings can be overridden with a folder-specific configura
 
 ## Global settings
 
-To get started with editing Zed's global settings, open `~/.config/zed/settings.json` via `cmd-,`, the command palette (`zed: open settings`), or the `Zed > Settings > Open Settings` application menu item.
+To get started with editing Zed's global settings, open `~/.config/zed/settings.json` via `⌘` + `,`, the command palette (`zed: open settings`), or the `Zed > Settings > Open Settings` application menu item.
 
 Here are all the currently available settings.
 

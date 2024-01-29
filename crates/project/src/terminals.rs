@@ -60,9 +60,11 @@ impl Project {
                 .detach();
 
                 if let Some(python_settings) = &python_settings.as_option() {
+                    let activate_command = Project::get_activate_command(python_settings);
                     let activate_script_path =
                         self.find_activate_script_path(python_settings, working_directory);
                     self.activate_python_virtual_environment(
+                        activate_command,
                         activate_script_path,
                         &terminal_handle,
                         cx,
@@ -104,15 +106,24 @@ impl Project {
         None
     }
 
+    fn get_activate_command(settings: &VenvSettingsContent) -> &'static str {
+        match settings.activate_script {
+            terminal_settings::ActivateScript::Nushell => "overlay use",
+            _ => "source",
+        }
+    }
+
     fn activate_python_virtual_environment(
         &mut self,
+        activate_command: &'static str,
         activate_script: Option<PathBuf>,
         terminal_handle: &Model<Terminal>,
         cx: &mut ModelContext<Project>,
     ) {
         if let Some(activate_script) = activate_script {
             // Paths are not strings so we need to jump through some hoops to format the command without `format!`
-            let mut command = Vec::from("source ".as_bytes());
+            let mut command = Vec::from(activate_command.as_bytes());
+            command.push(b' ');
             command.extend_from_slice(activate_script.as_os_str().as_bytes());
             command.push(b'\n');
 

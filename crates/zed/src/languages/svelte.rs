@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{async_maybe, ResultExt};
 
 const SERVER_PATH: &'static str = "node_modules/svelte-language-server/bin/server.js";
 
@@ -32,7 +32,7 @@ impl SvelteLspAdapter {
 
 #[async_trait]
 impl LspAdapter for SvelteLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("svelte-language-server".into())
     }
 
@@ -90,7 +90,7 @@ impl LspAdapter for SvelteLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
         }))
@@ -105,7 +105,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -127,7 +127,7 @@ async fn get_cached_server_binary(
                 last_version_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }

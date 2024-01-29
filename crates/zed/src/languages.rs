@@ -7,13 +7,16 @@ use settings::Settings;
 use std::{borrow::Cow, str, sync::Arc};
 use util::{asset_str, paths::PLUGINS_DIR};
 
-use self::elixir::ElixirSettings;
+use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
 mod clojure;
 mod css;
+mod deno;
 mod elixir;
+mod gleam;
 mod go;
+mod haskell;
 mod html;
 mod json;
 #[cfg(feature = "plugin_runtime")]
@@ -21,6 +24,7 @@ mod language_plugin;
 mod lua;
 mod nu;
 mod php;
+mod purescript;
 mod python;
 mod ruby;
 mod rust;
@@ -30,6 +34,7 @@ mod typescript;
 mod uiua;
 mod vue;
 mod yaml;
+mod zig;
 
 // 1. Add tree-sitter-{language} parser to zed crate
 // 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
@@ -51,6 +56,7 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     ElixirSettings::register(cx);
+    DenoSettings::register(cx);
 
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
@@ -106,9 +112,19 @@ pub fn init(
     }
 
     language(
+        "gleam",
+        tree_sitter_gleam::language(),
+        vec![Arc::new(gleam::GleamLspAdapter)],
+    );
+    language(
         "go",
         tree_sitter_go::language(),
         vec![Arc::new(go::GoLspAdapter)],
+    );
+    language(
+        "zig",
+        tree_sitter_zig::language(),
+        vec![Arc::new(zig::ZlsAdapter)],
     );
     language(
         "heex",
@@ -140,31 +156,64 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
     );
     language("toml", tree_sitter_toml::language(), vec![]);
+    match &DenoSettings::get(None, cx).enable {
+        true => {
+            language(
+                "tsx",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(deno::DenoLspAdapter::new()),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+            language(
+                "typescript",
+                tree_sitter_typescript::language_typescript(),
+                vec![Arc::new(deno::DenoLspAdapter::new())],
+            );
+            language(
+                "javascript",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(deno::DenoLspAdapter::new()),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+        }
+        false => {
+            language(
+                "tsx",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+            language(
+                "typescript",
+                tree_sitter_typescript::language_typescript(),
+                vec![
+                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+            language(
+                "javascript",
+                tree_sitter_typescript::language_tsx(),
+                vec![
+                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+                ],
+            );
+        }
+    }
+
     language(
-        "tsx",
-        tree_sitter_typescript::language_tsx(),
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
-    );
-    language(
-        "typescript",
-        tree_sitter_typescript::language_typescript(),
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-        ],
-    );
-    language(
-        "javascript",
-        tree_sitter_typescript::language_tsx(),
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ],
+        "haskell",
+        tree_sitter_haskell::language(),
+        vec![Arc::new(haskell::HaskellLanguageServer {})],
     );
     language(
         "html",
@@ -209,13 +258,20 @@ pub fn init(
     );
     language(
         "php",
-        tree_sitter_php::language(),
+        tree_sitter_php::language_php(),
         vec![
             Arc::new(php::IntelephenseLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
 
+    language(
+        "purescript",
+        tree_sitter_purescript::language(),
+        vec![Arc::new(purescript::PurescriptLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);

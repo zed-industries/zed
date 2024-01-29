@@ -7,16 +7,16 @@ use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
-use serde_json::json;
+use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
 use std::{
     any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
-use util::{paths, ResultExt};
+use util::{async_maybe, paths, ResultExt};
 
 const SERVER_PATH: &'static str =
     "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
@@ -28,17 +28,58 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 pub struct JsonLspAdapter {
     node: Arc<dyn NodeRuntime>,
     languages: Arc<LanguageRegistry>,
+    workspace_config: OnceLock<Value>,
 }
 
 impl JsonLspAdapter {
     pub fn new(node: Arc<dyn NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
-        JsonLspAdapter { node, languages }
+        Self {
+            node,
+            languages,
+            workspace_config: Default::default(),
+        }
+    }
+
+    fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
+        let action_names = cx.all_action_names();
+        let staff_mode = cx.is_staff();
+
+        let font_names = &cx.text_system().all_font_names();
+        let settings_schema = cx.global::<SettingsStore>().json_schema(
+            &SettingsJsonSchemaParams {
+                language_names: &language_names,
+                staff_mode,
+                font_names,
+            },
+            cx,
+        );
+
+        serde_json::json!({
+            "json": {
+                "format": {
+                    "enable": true,
+                },
+                "schemas": [
+                    {
+                        "fileMatch": [
+                            schema_file_match(&paths::SETTINGS),
+                            &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
+                        ],
+                        "schema": settings_schema,
+                    },
+                    {
+                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
+                        "schema": KeymapFile::generate_json_schema(&action_names),
+                    }
+                ]
+            }
+        })
     }
 }
 
 #[async_trait]
 impl LspAdapter for JsonLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("json-language-server".into())
     }
 
@@ -96,51 +137,19 @@ impl LspAdapter for JsonLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
         }))
     }
 
-    fn workspace_configuration(
-        &self,
-        _workspace_root: &Path,
-        cx: &mut AppContext,
-    ) -> serde_json::Value {
-        let action_names = cx.all_action_names();
-        let staff_mode = cx.is_staff();
-        let language_names = &self.languages.language_names();
-        let settings_schema = cx.global::<SettingsStore>().json_schema(
-            &SettingsJsonSchemaParams {
-                language_names,
-                staff_mode,
-            },
-            cx,
-        );
-
-        serde_json::json!({
-            "json": {
-                "format": {
-                    "enable": true,
-                },
-                "schemas": [
-                    {
-                        "fileMatch": [
-                            schema_file_match(&paths::SETTINGS),
-                            &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
-                        ],
-                        "schema": settings_schema,
-                    },
-                    {
-                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
-                        "schema": KeymapFile::generate_json_schema(&action_names),
-                    }
-                ]
-            }
-        })
+    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+        self.workspace_config
+            .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
+            .clone()
     }
 
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         [("JSON".into(), "jsonc".into())].into_iter().collect()
     }
 }
@@ -149,7 +158,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -172,7 +181,7 @@ async fn get_cached_server_binary(
                 last_version_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }

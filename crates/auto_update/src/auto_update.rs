@@ -18,7 +18,12 @@ use smol::io::AsyncReadExt;
 use settings::{Settings, SettingsStore};
 use smol::{fs::File, process::Command};
 
-use std::{ffi::OsString, sync::Arc, time::Duration};
+use std::{
+    env::consts::{ARCH, OS},
+    ffi::OsString,
+    sync::Arc,
+    time::Duration,
+};
 use update_notification::UpdateNotification;
 use util::channel::{AppCommitSha, ReleaseChannel};
 use util::http::HttpClient;
@@ -130,7 +135,8 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
     } else {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
-            "Auto-updates disabled for non-bundled app.",
+            "Could not check for updates",
+            Some("Auto-updates disabled for non-bundled app."),
             &["Ok"],
         ));
     }
@@ -248,7 +254,10 @@ impl AutoUpdater {
             )
         })?;
 
-        let mut url_string = format!("{server_url}/api/releases/latest?asset=Zed.dmg");
+        let mut url_string = format!(
+            "{server_url}/api/releases/latest?asset=Zed.dmg&os={}&arch={}",
+            OS, ARCH
+        );
         cx.update(|cx| {
             if let Some(param) = cx
                 .try_global::<ReleaseChannel>()
@@ -291,7 +300,9 @@ impl AutoUpdater {
             cx.notify();
         })?;
 
-        let temp_dir = tempdir::TempDir::new("zed-auto-update")?;
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-auto-update")
+            .tempdir()?;
         let dmg_path = temp_dir.path().join("Zed.dmg");
         let mount_path = temp_dir.path().join("Zed");
         let running_app_path = ZED_APP_PATH

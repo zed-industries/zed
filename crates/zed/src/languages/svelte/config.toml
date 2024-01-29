@@ -1,6 +1,6 @@
 name = "Svelte"
 path_suffixes = ["svelte"]
-line_comment = "// "
+block_comment = ["<!-- ", " -->"]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

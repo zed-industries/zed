@@ -196,7 +196,6 @@ mod tests {
 
     use sqlez::domain::Domain;
     use sqlez_macros::sql;
-    use tempdir::TempDir;
 
     use crate::open_db;
 
@@ -220,7 +219,10 @@ mod tests {
             }
         }
 
-        let tempdir = TempDir::new("DbTests").unwrap();
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbTests")
+            .tempdir()
+            .unwrap();
         let _bad_db = open_db::<BadDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
     }
 
@@ -253,7 +255,10 @@ mod tests {
             }
         }
 
-        let tempdir = TempDir::new("DbTests").unwrap();
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbTests")
+            .tempdir()
+            .unwrap();
         {
             let corrupt_db =
                 open_db::<CorruptedDB>(tempdir.path(), &util::channel::ReleaseChannel::Dev).await;
@@ -297,7 +302,10 @@ mod tests {
             }
         }
 
-        let tempdir = TempDir::new("DbTests").unwrap();
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbTests")
+            .tempdir()
+            .unwrap();
         {
             // Setup the bad database
             let corrupt_db =

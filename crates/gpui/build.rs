@@ -100,7 +100,6 @@ fn compile_metal_shaders(header_path: &Path) {
     let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
     let metallib_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
 
-    println!("cargo:rerun-if-changed={}", header_path.display());
     println!("cargo:rerun-if-changed={}", shader_path);
 
     let output = Command::new("xcrun")

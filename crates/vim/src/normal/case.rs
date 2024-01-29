@@ -3,9 +3,40 @@ use gpui::ViewContext;
 use language::{Bias, Point};
 use workspace::Workspace;
 
-use crate::{normal::ChangeCase, state::Mode, Vim};
+use crate::{
+    normal::ChangeCase, normal::ConvertToLowerCase, normal::ConvertToUpperCase, state::Mode, Vim,
+};
 
 pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Workspace>) {
+    manipulate_text(cx, |c| {
+        if c.is_lowercase() {
+            c.to_uppercase().collect::<Vec<char>>()
+        } else {
+            c.to_lowercase().collect::<Vec<char>>()
+        }
+    })
+}
+
+pub fn convert_to_upper_case(
+    _: &mut Workspace,
+    _: &ConvertToUpperCase,
+    cx: &mut ViewContext<Workspace>,
+) {
+    manipulate_text(cx, |c| c.to_uppercase().collect::<Vec<char>>())
+}
+
+pub fn convert_to_lower_case(
+    _: &mut Workspace,
+    _: &ConvertToLowerCase,
+    cx: &mut ViewContext<Workspace>,
+) {
+    manipulate_text(cx, |c| c.to_lowercase().collect::<Vec<char>>())
+}
+
+fn manipulate_text<F>(cx: &mut ViewContext<Workspace>, transform: F)
+where
+    F: Fn(char) -> Vec<char> + Copy,
+{
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1) as u32;
@@ -54,13 +85,7 @@ pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Works
                         let text = snapshot
                             .text_for_range(range.start..range.end)
                             .flat_map(|s| s.chars())
-                            .flat_map(|c| {
-                                if c.is_lowercase() {
-                                    c.to_uppercase().collect::<Vec<char>>()
-                                } else {
-                                    c.to_lowercase().collect::<Vec<char>>()
-                                }
-                            })
+                            .flat_map(|c| transform(c))
                             .collect::<String>();
 
                         buffer.edit([(range, text)], None, cx)
@@ -74,6 +99,7 @@ pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Works
         vim.switch_mode(Mode::Normal, true, cx)
     })
 }
+
 #[cfg(test)]
 mod test {
     use crate::{state::Mode, test::NeovimBackedTestContext};
@@ -112,5 +138,43 @@ mod test {
         cx.set_state("aˇßcdˇe\n", Mode::Normal);
         cx.simulate_keystroke("~");
         cx.assert_state("aSSˇcdˇE\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_convert_to_upper_case(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // works in visual mode
+        cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
+        cx.simulate_shared_keystrokes(["U"]).await;
+        cx.assert_shared_state("a😀CˇDÉ1*F\n").await;
+
+        // works with line selections
+        cx.set_shared_state("abˇC\n").await;
+        cx.simulate_shared_keystrokes(["shift-v", "U"]).await;
+        cx.assert_shared_state("ˇABC\n").await;
+
+        // works in visual block mode
+        cx.set_shared_state("ˇaa\nbb\ncc").await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "j", "U"]).await;
+        cx.assert_shared_state("ˇAa\nBb\ncc").await;
+    }
+
+    #[gpui::test]
+    async fn test_convert_to_lower_case(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // works in visual mode
+        cx.set_shared_state("A😀c«DÉ1*fˇ»\n").await;
+        cx.simulate_shared_keystrokes(["u"]).await;
+        cx.assert_shared_state("A😀cˇdé1*f\n").await;
+
+        // works with line selections
+        cx.set_shared_state("ABˇc\n").await;
+        cx.simulate_shared_keystrokes(["shift-v", "u"]).await;
+        cx.assert_shared_state("ˇabc\n").await;
+
+        // works in visual block mode
+        cx.set_shared_state("ˇAa\nBb\nCc").await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "j", "u"]).await;
+        cx.assert_shared_state("ˇaa\nbb\nCc").await;
     }
 }

@@ -3,12 +3,11 @@ name = "theme"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "GPL-3.0-only"
+license = "GPL-3.0-or-later"
 
 
 [features]
 default = []
-importing-themes = []
 stories = ["dep:itertools", "dep:story"]
 test-support = [
     "gpui/test-support",
@@ -24,13 +23,15 @@ doctest = false
 anyhow.workspace = true
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
-indexmap = "1.6.2"
+indexmap = { version = "1.6.2", features = ["serde"] }
+palette = { version = "0.7.3", default-features = false, features = ["std"] }
 parking_lot.workspace = true
 refineable.workspace = true
-schemars.workspace = true
+schemars = { workspace = true, features = ["indexmap"] }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+serde_repr.workspace = true
 settings = { path = "../settings" }
 story = { path = "../story", optional = true }
 toml.workspace = true

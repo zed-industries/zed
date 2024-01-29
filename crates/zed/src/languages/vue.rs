@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{async_maybe, ResultExt};
 
 pub struct VueLspVersion {
     vue_version: String,
@@ -40,7 +40,7 @@ impl VueLspAdapter {
 }
 #[async_trait]
 impl super::LspAdapter for VueLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("vue-language-server".into())
     }
 
@@ -60,7 +60,7 @@ impl super::LspAdapter for VueLspAdapter {
             ts_version: self.node.npm_package_latest_version("typescript").await?,
         }) as Box<_>)
     }
-    async fn initialization_options(&self) -> Option<Value> {
+    fn initialization_options(&self) -> Option<Value> {
         let typescript_sdk_path = self.typescript_install_path.lock();
         let typescript_sdk_path = typescript_sdk_path
             .as_ref()
@@ -188,7 +188,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: Arc<dyn NodeRuntime>,
 ) -> Option<(LanguageServerBinary, TypescriptPath)> {
-    (|| async move {
+    async_maybe!({
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -214,7 +214,7 @@ async fn get_cached_server_binary(
                 last_version_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }

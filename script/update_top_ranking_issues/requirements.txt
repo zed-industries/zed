@@ -1,0 +1,5 @@
+mypy==1.6.0
+PyGithub==1.55
+pytz==2022.1
+typer==0.9.0
+types-pytz==2023.3.1.1

@@ -15,8 +15,12 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, github::latest_github_release};
-use util::{github::GitHubLspBinaryVersion, ResultExt};
+use util::{
+    async_maybe,
+    fs::remove_matching,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -46,7 +50,7 @@ struct TypeScriptVersions {
 
 #[async_trait]
 impl LspAdapter for TypeScriptLspAdapter {
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("typescript-language-server".into())
     }
 
@@ -150,7 +154,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         })
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true,
             "tsserver": {
@@ -159,7 +163,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         }))
     }
 
-    async fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([
             ("TypeScript".into(), "typescript".into()),
             ("JavaScript".into(), "javascript".into()),
@@ -172,7 +176,7 @@ async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);
         let new_server_path = container_dir.join(TypeScriptLspAdapter::NEW_SERVER_PATH);
         if new_server_path.exists() {
@@ -191,7 +195,7 @@ async fn get_cached_ts_server_binary(
                 container_dir
             ))
         }
-    })()
+    })
     .await
     .log_err()
 }
@@ -227,7 +231,7 @@ impl LspAdapter for EsLintLspAdapter {
         })
     }
 
-    async fn name(&self) -> LanguageServerName {
+    fn name(&self) -> LanguageServerName {
         LanguageServerName("eslint".into())
     }
 
@@ -315,7 +319,7 @@ impl LspAdapter for EsLintLspAdapter {
         None
     }
 
-    async fn initialization_options(&self) -> Option<serde_json::Value> {
+    fn initialization_options(&self) -> Option<serde_json::Value> {
         None
     }
 }
@@ -324,7 +328,7 @@ async fn get_cached_eslint_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
+    async_maybe!({
         // This is unfortunate but we don't know what the version is to build a path directly
         let mut dir = fs::read_dir(&container_dir).await?;
         let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
@@ -337,7 +341,7 @@ async fn get_cached_eslint_server_binary(
             path: node.binary_path().await?,
             arguments: eslint_server_binary_arguments(&server_path),
         })
-    })()
+    })
     .await
     .log_err()
 }

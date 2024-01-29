@@ -63,7 +63,10 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     languages.add(rust_language);
     languages.add(toml_language);
 
-    let db_dir = tempdir::TempDir::new("vector-store").unwrap();
+    let db_dir = tempfile::Builder::new()
+        .prefix("vector-store")
+        .tempdir()
+        .unwrap();
     let db_path = db_dir.path().join("db.sqlite");
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
@@ -1543,7 +1546,7 @@ fn php_lang() -> Arc<Language> {
                 collapsed_placeholder: "/* ... */".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_php::language()),
+            Some(tree_sitter_php::language_php()),
         )
         .with_embedding_query(
             r#"

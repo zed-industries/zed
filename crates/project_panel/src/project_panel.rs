@@ -58,7 +58,6 @@ pub struct ProjectPanel {
     workspace: WeakView<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
-    was_deserialized: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -244,7 +243,6 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
-                was_deserialized: false,
             };
             this.update_visible_entries(None, cx);
 
@@ -324,7 +322,6 @@ impl ProjectPanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
-                    panel.was_deserialized = true;
                     cx.notify();
                 });
             }
@@ -781,6 +778,7 @@ impl ProjectPanel {
             let answer = cx.prompt(
                 PromptLevel::Info,
                 &format!("Delete {file_name:?}?"),
+                None,
                 &["Delete", "Cancel"],
             );
 
@@ -1370,7 +1368,7 @@ impl ProjectPanel {
                     entry_id: *entry_id,
                 })
             })
-            .drag_over::<ProjectEntryId>(|style| {
+            .drag_over::<ProjectEntryId>(|style, _, cx| {
                 style.bg(cx.theme().colors().drop_target_background)
             })
             .on_drop(cx.listener(move |this, dragged_id: &ProjectEntryId, cx| {
@@ -1382,7 +1380,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                        div().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
                         div().size(IconSize::default().rems()).invisible()
                     })
@@ -1459,9 +1457,6 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         }
-    }
-    pub fn was_deserialized(&self) -> bool {
-        self.was_deserialized
     }
 }
 
@@ -1636,6 +1631,14 @@ impl Panel for ProjectPanel {
 
     fn persistent_name() -> &'static str {
         "Project Panel"
+    }
+
+    fn starts_open(&self, cx: &WindowContext) -> bool {
+        self.project.read(cx).visible_worktrees(cx).any(|tree| {
+            tree.read(cx)
+                .root_entry()
+                .map_or(false, |entry| entry.is_dir())
+        })
     }
 }
 
@@ -1937,7 +1940,6 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let panel = ProjectPanel::new(workspace, cx);
                 workspace.add_panel(panel.clone(), cx);
-                workspace.toggle_dock(panel.read(cx).position(cx), cx);
                 panel
             })
             .unwrap();
@@ -2295,7 +2297,6 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let panel = ProjectPanel::new(workspace, cx);
                 workspace.add_panel(panel.clone(), cx);
-                workspace.toggle_dock(panel.read(cx).position(cx), cx);
                 panel
             })
             .unwrap();
@@ -2455,6 +2456,101 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "a": {
+                    "one.txt": "",
+                    "two.txt": "",
+                    "inner_dir": {
+                        "three.txt": "",
+                        "four.txt": "",
+                    }
+                },
+                "b": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root/a", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+
+        let pasted_dir = find_project_entry(&panel, "root/b/a", cx);
+        assert_ne!(pasted_dir, None, "Pasted directory should have an entry");
+
+        let pasted_dir_file = find_project_entry(&panel, "root/b/a/one.txt", cx);
+        assert_ne!(
+            pasted_dir_file, None,
+            "Pasted directory file should have an entry"
+        );
+
+        let pasted_dir_inner_dir = find_project_entry(&panel, "root/b/a/inner_dir", cx);
+        assert_ne!(
+            pasted_dir_inner_dir, None,
+            "Directories inside pasted directory should have an entry"
+        );
+
+        toggle_expand_dir(&panel, "root/b", cx);
+        toggle_expand_dir(&panel, "root/b/a", cx);
+        toggle_expand_dir(&panel, "root/b/a/inner_dir", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root",
+                "    > a",
+                "    v b",
+                "        v a",
+                "            v inner_dir  <== selected",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt",
+            ]
+        );
+
+        select_path(&panel, "root", cx);
+        panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
+        cx.executor().run_until_parked();
+        panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root  <== selected",
+                "    > a",
+                "    > a copy",
+                "    > a copy 1",
+                "    v b",
+                "        v a",
+                "            v inner_dir",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt"
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
@@ -2571,7 +2667,6 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let panel = ProjectPanel::new(workspace, cx);
                 workspace.add_panel(panel.clone(), cx);
-                workspace.toggle_dock(panel.read(cx).position(cx), cx);
                 panel
             })
             .unwrap();

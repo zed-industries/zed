@@ -772,7 +772,13 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().input_handler.take()
     }
 
-    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize> {
+    fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
         // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
@@ -808,6 +814,9 @@ impl PlatformWindow for MacWindow {
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
+            if let Some(detail) = detail {
+                let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
+            }
 
             for (ix, answer) in answers
                 .iter()
@@ -1009,7 +1018,7 @@ fn get_scale_factor(native_window: id) -> f32 {
     };
 
     // We are not certain what triggers this, but it seems that sometimes
-    // this method would return 0 (https://github.com/zed-industries/community/issues/2422)
+    // this method would return 0 (https://github.com/zed-industries/zed/issues/6412)
     // It seems most likely that this would happen if the window has no screen
     // (if it is off-screen), though we'd expect to see viewDidChangeBackingProperties before
     // it was rendered for real.

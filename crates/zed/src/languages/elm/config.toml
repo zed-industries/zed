@@ -1,6 +1,6 @@
 name = "Elm"
 path_suffixes = ["elm"]
-line_comment = "-- "
+line_comments = ["-- "]
 block_comment = ["{- ", " -}"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
