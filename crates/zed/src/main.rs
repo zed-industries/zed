@@ -9,7 +9,7 @@ use client::{Client, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use fs::{Fs, RealFs};
+use fs::RealFs;
 use futures::StreamExt;
 use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task};
 use isahc::{prelude::Configurable, Request};
@@ -133,9 +133,6 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        let theme_registry = ThemeRegistry::new(Box::new(Assets));
-        let theme_registry = Arc::new(theme_registry);
-
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let copilot_language_server_id = languages.next_language_server_id();
@@ -170,12 +167,15 @@ fn main() {
         // TODO: This should almost certainly happen somewhere else.
         cx.spawn({
             let fs = fs.clone();
-            let theme_registry = theme_registry.clone();
             |cx| async move {
-                theme_registry
-                    .load_user_themes(&paths::THEMES_DIR.clone(), fs)
-                    .await
-                    .log_err();
+                if let Some(theme_registry) =
+                    cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                {
+                    theme_registry
+                        .load_user_themes(&paths::THEMES_DIR.clone(), fs)
+                        .await
+                        .log_err();
+                }
             }
         })
         .detach();

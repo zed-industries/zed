@@ -30,11 +30,11 @@ pub struct ThemeMeta {
 ///
 /// This should not be exposed outside of this module.
 #[derive(Default, Deref, DerefMut)]
-struct GlobalThemeRegistry(ThemeRegistry);
+struct GlobalThemeRegistry(Arc<ThemeRegistry>);
 
 /// Initializes the theme registry.
 pub fn init(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
-    cx.set_global(GlobalThemeRegistry(ThemeRegistry::new(assets)));
+    cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
 }
 
 struct ThemeRegistryState {
@@ -48,24 +48,19 @@ pub struct ThemeRegistry {
 
 impl ThemeRegistry {
     /// Returns the global [`ThemeRegistry`].
-    pub fn global(cx: &AppContext) -> &Self {
-        cx.global::<GlobalThemeRegistry>()
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        cx.global::<GlobalThemeRegistry>().0.clone()
     }
 
-    /// Returns a mutable reference to the global [`ThemeRegistry`].
-    pub fn global_mut(cx: &mut AppContext) -> &mut Self {
-        cx.global_mut::<GlobalThemeRegistry>()
-    }
-
-    /// Returns a mutable reference to the global [`ThemeRegistry`].
+    /// Returns the global [`ThemeRegistry`].
     ///
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> &mut Self {
-        cx.default_global::<GlobalThemeRegistry>()
+    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+        cx.default_global::<GlobalThemeRegistry>().0.clone()
     }
 
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
-        let mut registry = Self {
+        let registry = Self {
             state: RwLock::new(ThemeRegistryState {
                 themes: HashMap::new(),
             }),
@@ -82,7 +77,7 @@ impl ThemeRegistry {
         registry
     }
 
-    fn insert_theme_families(&mut self, families: impl IntoIterator<Item = ThemeFamily>) {
+    fn insert_theme_families(&self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);
         }
@@ -96,10 +91,7 @@ impl ThemeRegistry {
     }
 
     #[allow(unused)]
-    fn insert_user_theme_families(
-        &mut self,
-        families: impl IntoIterator<Item = ThemeFamilyContent>,
-    ) {
+    fn insert_user_theme_families(&self, families: impl IntoIterator<Item = ThemeFamilyContent>) {
         for family in families.into_iter() {
             self.insert_user_themes(family.themes);
         }
@@ -224,7 +216,7 @@ impl ThemeRegistry {
             .cloned()
     }
 
-    pub fn load_bundled_themes(&mut self) {
+    pub fn load_bundled_themes(&self) {
         let theme_paths = self
             .assets
             .list("themes/")

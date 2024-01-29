@@ -65,7 +65,6 @@ pub struct Buffer {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
 pub struct BufferId(NonZeroU64);
 
-
 impl Display for BufferId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
