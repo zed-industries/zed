@@ -53,6 +53,7 @@
         "jpg": "image",
         "js": "code",
         "json": "storage",
+        "jsonc": "storage",
         "ldf": "storage",
         "lock": "lock",
         "log": "log",
