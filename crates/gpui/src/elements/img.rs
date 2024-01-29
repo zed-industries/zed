@@ -27,18 +27,6 @@ impl From<SharedUrl> for ImageSource {
     }
 }
 
-impl From<&'static str> for ImageSource {
-    fn from(uri: &'static str) -> Self {
-        Self::Uri(uri.into())
-    }
-}
-
-impl From<String> for ImageSource {
-    fn from(uri: String) -> Self {
-        Self::Uri(uri.into())
-    }
-}
-
 impl From<Arc<ImageData>> for ImageSource {
     fn from(value: Arc<ImageData>) -> Self {
         Self::Data(value)
