@@ -164,23 +164,6 @@ fn main() {
         );
         assistant::init(cx);
 
-        // if let Some(mut subfiles) = fs
-        //     .read_dir(&ignored_abs_path)
-        //     .await
-        //     .with_context(|| {
-        //         format!(
-        //             "listing ignored path {ignored_abs_path:?}"
-        //         )
-        //     })
-        //     .log_err()
-        // {
-        //     while let Some(subfile) = subfiles.next().await {
-        //         if let Some(subfile) = subfile.log_err() {
-        //             ignored_paths_to_process.push_back(subfile);
-        //         }
-        //     }
-        // }
-
         // TODO: This should almost certainly happen somewhere else.
         cx.spawn({
             let fs = fs.clone();
