@@ -42,6 +42,8 @@ pub enum Motion {
     EndOfLineDownward,
     GoToColumn,
     WindowTop,
+    WindowMiddle,
+    WindowBottom,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -138,6 +140,8 @@ actions!(
         EndOfLineDownward,
         GoToColumn,
         WindowTop,
+        WindowMiddle,
+        WindowBottom,
     ]
 );
 
@@ -234,6 +238,12 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         repeat_motion(action.backwards, cx)
     });
     workspace.register_action(|_: &mut Workspace, &WindowTop, cx: _| motion(Motion::WindowTop, cx));
+    workspace.register_action(|_: &mut Workspace, &WindowMiddle, cx: _| {
+        motion(Motion::WindowMiddle, cx)
+    });
+    workspace.register_action(|_: &mut Workspace, &WindowBottom, cx: _| {
+        motion(Motion::WindowBottom, cx)
+    });
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
@@ -299,6 +309,8 @@ impl Motion {
             | StartOfLineDownward
             | StartOfParagraph
             | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | EndOfParagraph => true,
             EndOfLine { .. }
             | NextWordEnd { .. }
@@ -341,6 +353,8 @@ impl Motion {
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
             | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | NextLineStart => false,
         }
     }
@@ -359,6 +373,8 @@ impl Motion {
             | Matching
             | FindForward { .. }
             | WindowTop
+            | WindowMiddle
+            | WindowBottom
             | NextLineStart => true,
             Left
             | Backspace
@@ -453,6 +469,8 @@ impl Motion {
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
             WindowTop => window_top(map, &text_layout_details),
+            WindowMiddle => window_middle(map, point, &text_layout_details),
+            WindowBottom => window_bottom(map, point, &text_layout_details),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -964,7 +982,40 @@ fn window_top(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let first_visible_line = text_layout_details.anchor.to_display_point(map);
+    println!("visible rows: {:?}", text_layout_details.visible_rows);
     (first_visible_line, SelectionGoal::None)
+}
+
+fn window_middle(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let middle_row = first_visible_line.row() + (visible_rows.div_euclid(2f32)) as u32;
+        let middle_display_point = DisplayPoint::new(middle_row, 0);
+        println!("middle row: {:?}", middle_display_point);
+        (middle_display_point, SelectionGoal::None)
+    } else {
+        (point, SelectionGoal::None)
+    }
+}
+
+fn window_bottom(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    if let Some(visible_rows) = text_layout_details.visible_rows {
+        let first_visible_line = text_layout_details.anchor.to_display_point(map);
+        let bottom_row = first_visible_line.row() + (visible_rows) as u32;
+        let bottom_display_point = DisplayPoint::new(bottom_row, 0);
+        println!("bottom row: {:?}", bottom_display_point);
+        (bottom_display_point, SelectionGoal::None)
+    } else {
+        (point, SelectionGoal::None)
+    }
 }
 
 #[cfg(test)]

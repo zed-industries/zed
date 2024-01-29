@@ -342,6 +342,8 @@
       "> >": "editor::Indent",
       "< <": "editor::Outdent",
       "shift-h": "vim::WindowTop",
+      "shift-m": "vim::WindowMiddle",
+      "shift-l": "vim::WindowBottom",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem"
     }
