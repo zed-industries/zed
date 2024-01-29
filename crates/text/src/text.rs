@@ -11,7 +11,7 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
@@ -29,6 +29,7 @@ use std::{
     fmt::Display,
     future::Future,
     iter::Iterator,
+    num::NonZeroU64,
     ops::{self, Deref, Range, Sub},
     str,
     sync::Arc,
@@ -61,8 +62,8 @@ pub struct Buffer {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, PartialOrd, Ord, Eq)]
-pub struct BufferId(u64);
+#[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
+pub struct BufferId(NonZeroU64);
 
 impl Display for BufferId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -73,19 +74,20 @@ impl Display for BufferId {
 impl BufferId {
     /// Returns Err if `id` is outside of BufferId domain.
     pub fn new(id: u64) -> anyhow::Result<Self> {
+        let id = NonZeroU64::new(id).context("Buffer id cannot be 0.")?;
         Ok(Self(id))
     }
     /// Increments this buffer id, returning the old value.
     /// So that's a post-increment operator in disguise.
     pub fn next(&mut self) -> Self {
         let old = *self;
-        self.0 += 1;
+        self.0 = self.0.saturating_add(1);
         old
     }
 }
 impl From<BufferId> for u64 {
     fn from(id: BufferId) -> Self {
-        id.0
+        id.0.get()
     }
 }
 

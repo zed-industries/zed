@@ -67,7 +67,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let mut buffer_a = Buffer::new(0, text::BufferId::new(0).unwrap(), "".to_string());
+    let mut buffer_a = Buffer::new(0, text::BufferId::new(1).unwrap(), "".to_string());
     let mut operations = Vec::new();
     operations.push(buffer_a.edit([(0..0, "hello world")]));
     operations.push(buffer_a.edit([(5..5, ", cruel")]));
@@ -92,7 +92,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     let mut buffer_b = Buffer::new(
         0,
-        text::BufferId::new(0).unwrap(),
+        text::BufferId::new(1).unwrap(),
         buffer_response_b.base_text,
     );
     buffer_b
