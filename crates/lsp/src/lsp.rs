@@ -479,6 +479,15 @@ impl LanguageServer {
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: None,
                     }),
+                    workspace_edit: Some(WorkspaceEditClientCapabilities {
+                        resource_operations: Some(vec![
+                            ResourceOperationKind::Create,
+                            ResourceOperationKind::Rename,
+                            ResourceOperationKind::Delete,
+                        ]),
+                        document_changes: Some(true),
+                        ..WorkspaceEditClientCapabilities::default()
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {

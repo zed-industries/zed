@@ -35,7 +35,10 @@ pub struct SwiftTarget {
 const MACOS_TARGET_VERSION: &str = "10.15.7";
 
 fn main() {
-    if cfg!(not(any(test, feature = "test-support"))) {
+    if cfg!(all(
+        target_os = "macos",
+        not(any(test, feature = "test-support"))
+    )) {
         let swift_target = get_swift_target();
 
         build_bridge(&swift_target);

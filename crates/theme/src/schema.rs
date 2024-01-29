@@ -1,13 +1,17 @@
 use anyhow::Result;
-use gpui::{HighlightStyle, Hsla};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
 use indexmap::IndexMap;
 use palette::FromColor;
+use schemars::gen::SchemaGenerator;
+use schemars::schema::{Schema, SchemaObject};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
-fn try_parse_color(color: &str) -> Result<Hsla> {
+pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     let rgba = gpui::Rgba::try_from(color)?;
     let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
     let hsla = palette::Hsla::from_color(rgba);
@@ -22,22 +26,48 @@ fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(hsla)
 }
 
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceContent {
+    Light,
+    Dark,
+}
+
+/// The content of a serialized theme family.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ThemeFamilyContent {
+    pub name: String,
+    pub author: String,
+    pub themes: Vec<ThemeContent>,
+}
+
+/// The content of a serialized theme.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ThemeContent {
+    pub name: String,
+    pub appearance: AppearanceContent,
+    pub style: ThemeStyleContent,
+}
+
 /// The content of a serialized theme.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
-pub struct ThemeContent {
+pub struct ThemeStyleContent {
     #[serde(flatten, default)]
     pub colors: ThemeColorsContent,
 
     #[serde(flatten, default)]
     pub status: StatusColorsContent,
 
+    #[serde(default)]
+    pub players: Vec<PlayerColorContent>,
+
     /// The styles for syntax nodes.
     #[serde(default)]
     pub syntax: IndexMap<String, HighlightStyleContent>,
 }
 
-impl ThemeContent {
+impl ThemeStyleContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeContent`].
     #[inline(always)]
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
@@ -226,7 +256,7 @@ pub struct ThemeColorsContent {
     /// Fill Color. Used for the accent fill color of an icon.
     ///
     /// This might be used to show when a toggleable icon button is selected.
-    #[serde(rename = "con.accent")]
+    #[serde(rename = "icon.accent")]
     pub icon_accent: Option<String>,
 
     #[serde(rename = "status_bar.background")]
@@ -1126,8 +1156,110 @@ impl StatusColorsContent {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PlayerColorContent {
+    pub cursor: Option<String>,
+    pub background: Option<String>,
+    pub selection: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FontStyleContent {
+    Normal,
+    Italic,
+    Oblique,
+}
+
+impl From<FontStyleContent> for FontStyle {
+    fn from(value: FontStyleContent) -> Self {
+        match value {
+            FontStyleContent::Normal => FontStyle::Normal,
+            FontStyleContent::Italic => FontStyle::Italic,
+            FontStyleContent::Oblique => FontStyle::Oblique,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[repr(u16)]
+pub enum FontWeightContent {
+    Thin = 100,
+    ExtraLight = 200,
+    Light = 300,
+    Normal = 400,
+    Medium = 500,
+    Semibold = 600,
+    Bold = 700,
+    ExtraBold = 800,
+    Black = 900,
+}
+
+impl JsonSchema for FontWeightContent {
+    fn schema_name() -> String {
+        "FontWeightContent".to_owned()
+    }
+
+    fn is_referenceable() -> bool {
+        false
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let mut schema_object = SchemaObject::default();
+        schema_object.enum_values = Some(vec![
+            100.into(),
+            200.into(),
+            300.into(),
+            400.into(),
+            500.into(),
+            600.into(),
+            700.into(),
+            800.into(),
+            900.into(),
+        ]);
+        schema_object.into()
+    }
+}
+
+impl From<FontWeightContent> for FontWeight {
+    fn from(value: FontWeightContent) -> Self {
+        match value {
+            FontWeightContent::Thin => FontWeight::THIN,
+            FontWeightContent::ExtraLight => FontWeight::EXTRA_LIGHT,
+            FontWeightContent::Light => FontWeight::LIGHT,
+            FontWeightContent::Normal => FontWeight::NORMAL,
+            FontWeightContent::Medium => FontWeight::MEDIUM,
+            FontWeightContent::Semibold => FontWeight::SEMIBOLD,
+            FontWeightContent::Bold => FontWeight::BOLD,
+            FontWeightContent::ExtraBold => FontWeight::EXTRA_BOLD,
+            FontWeightContent::Black => FontWeight::BLACK,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct HighlightStyleContent {
     pub color: Option<String>,
+
+    #[serde(deserialize_with = "treat_error_as_none")]
+    pub font_style: Option<FontStyleContent>,
+
+    #[serde(deserialize_with = "treat_error_as_none")]
+    pub font_weight: Option<FontWeightContent>,
+}
+
+impl HighlightStyleContent {
+    pub fn is_empty(&self) -> bool {
+        self.color.is_none() && self.font_style.is_none() && self.font_weight.is_none()
+    }
+}
+
+fn treat_error_as_none<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let value: Value = Deserialize::deserialize(deserializer)?;
+    Ok(T::deserialize(value).ok())
 }

@@ -28,7 +28,8 @@ use std::{
     sync::Arc,
 };
 use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
+    async_maybe, fs::remove_matching, github::latest_github_release, http::HttpClient, paths,
+    ResultExt,
 };
 
 actions!(
@@ -963,7 +964,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let server_path = version_dir.join(SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            // Copilot LSP looks for this dist dir specifcially, so lets add it in.
+            // Copilot LSP looks for this dist dir specifically, so lets add it in.
             let dist_dir = version_dir.join("dist");
             fs::create_dir_all(dist_dir.as_path()).await?;
 
@@ -992,7 +993,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         e @ Err(..) => {
             e.log_err();
             // Fetch a cached binary, if it exists
-            (|| async move {
+            async_maybe!({
                 let mut last_version_dir = None;
                 let mut entries = fs::read_dir(paths::COPILOT_DIR.as_path()).await?;
                 while let Some(entry) = entries.next().await {
@@ -1012,7 +1013,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                         last_version_dir
                     ))
                 }
-            })()
+            })
             .await
         }
     }

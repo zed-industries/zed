@@ -434,10 +434,13 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
-            FindForward { before, char } => (
-                find_forward(map, point, *before, *char, times),
-                SelectionGoal::None,
-            ),
+            FindForward { before, char } => {
+                if let Some(new_point) = find_forward(map, point, *before, *char, times) {
+                    return Some((new_point, SelectionGoal::None));
+                } else {
+                    return None;
+                }
+            }
             FindBackward { after, char } => (
                 find_backward(map, point, *after, *char, times),
                 SelectionGoal::None,
@@ -882,7 +885,7 @@ fn find_forward(
     before: bool,
     target: char,
     times: usize,
-) -> DisplayPoint {
+) -> Option<DisplayPoint> {
     let mut to = from;
     let mut found = false;
 
@@ -897,12 +900,12 @@ fn find_forward(
     if found {
         if before && to.column() > 0 {
             *to.column_mut() -= 1;
-            map.clip_point(to, Bias::Left)
+            Some(map.clip_point(to, Bias::Left))
         } else {
-            to
+            Some(to)
         }
     } else {
-        from
+        None
     }
 }
 

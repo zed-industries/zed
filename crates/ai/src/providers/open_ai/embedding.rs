@@ -25,17 +25,17 @@ use util::ResultExt;
 use crate::auth::{CredentialProvider, ProviderCredential};
 use crate::embedding::{Embedding, EmbeddingProvider};
 use crate::models::LanguageModel;
-use crate::providers::open_ai::OpenAILanguageModel;
+use crate::providers::open_ai::OpenAiLanguageModel;
 
-use crate::providers::open_ai::OPENAI_API_URL;
+use crate::providers::open_ai::OPEN_AI_API_URL;
 
 lazy_static! {
-    static ref OPENAI_BPE_TOKENIZER: CoreBPE = cl100k_base().unwrap();
+    static ref OPEN_AI_BPE_TOKENIZER: CoreBPE = cl100k_base().unwrap();
 }
 
 #[derive(Clone)]
-pub struct OpenAIEmbeddingProvider {
-    model: OpenAILanguageModel,
+pub struct OpenAiEmbeddingProvider {
+    model: OpenAiLanguageModel,
     credential: Arc<RwLock<ProviderCredential>>,
     pub client: Arc<dyn HttpClient>,
     pub executor: BackgroundExecutor,
@@ -44,42 +44,42 @@ pub struct OpenAIEmbeddingProvider {
 }
 
 #[derive(Serialize)]
-struct OpenAIEmbeddingRequest<'a> {
+struct OpenAiEmbeddingRequest<'a> {
     model: &'static str,
     input: Vec<&'a str>,
 }
 
 #[derive(Deserialize)]
-struct OpenAIEmbeddingResponse {
-    data: Vec<OpenAIEmbedding>,
-    usage: OpenAIEmbeddingUsage,
+struct OpenAiEmbeddingResponse {
+    data: Vec<OpenAiEmbedding>,
+    usage: OpenAiEmbeddingUsage,
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAIEmbedding {
+struct OpenAiEmbedding {
     embedding: Vec<f32>,
     index: usize,
     object: String,
 }
 
 #[derive(Deserialize)]
-struct OpenAIEmbeddingUsage {
+struct OpenAiEmbeddingUsage {
     prompt_tokens: usize,
     total_tokens: usize,
 }
 
-impl OpenAIEmbeddingProvider {
+impl OpenAiEmbeddingProvider {
     pub async fn new(client: Arc<dyn HttpClient>, executor: BackgroundExecutor) -> Self {
         let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with(None);
         let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
 
         // Loading the model is expensive, so ensure this runs off the main thread.
         let model = executor
-            .spawn(async move { OpenAILanguageModel::load("text-embedding-ada-002") })
+            .spawn(async move { OpenAiLanguageModel::load("text-embedding-ada-002") })
             .await;
         let credential = Arc::new(RwLock::new(ProviderCredential::NoCredentials));
 
-        OpenAIEmbeddingProvider {
+        OpenAiEmbeddingProvider {
             model,
             credential,
             client,
@@ -140,7 +140,7 @@ impl OpenAIEmbeddingProvider {
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", api_key))
             .body(
-                serde_json::to_string(&OpenAIEmbeddingRequest {
+                serde_json::to_string(&OpenAiEmbeddingRequest {
                     input: spans.clone(),
                     model: "text-embedding-ada-002",
                 })
@@ -152,7 +152,7 @@ impl OpenAIEmbeddingProvider {
     }
 }
 
-impl CredentialProvider for OpenAIEmbeddingProvider {
+impl CredentialProvider for OpenAiEmbeddingProvider {
     fn has_credentials(&self) -> bool {
         match *self.credential.read() {
             ProviderCredential::Credentials { .. } => true,
@@ -170,7 +170,7 @@ impl CredentialProvider for OpenAIEmbeddingProvider {
                 if let Some(api_key) = env::var("OPENAI_API_KEY").log_err() {
                     async move { ProviderCredential::Credentials { api_key } }.boxed()
                 } else {
-                    let credentials = cx.read_credentials(OPENAI_API_URL);
+                    let credentials = cx.read_credentials(OPEN_AI_API_URL);
                     async move {
                         if let Some(Some((_, api_key))) = credentials.await.log_err() {
                             if let Some(api_key) = String::from_utf8(api_key).log_err() {
@@ -204,7 +204,7 @@ impl CredentialProvider for OpenAIEmbeddingProvider {
         let credential = credential.clone();
         let write_credentials = match credential {
             ProviderCredential::Credentials { api_key } => {
-                Some(cx.write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes()))
+                Some(cx.write_credentials(OPEN_AI_API_URL, "Bearer", api_key.as_bytes()))
             }
             _ => None,
         };
@@ -219,7 +219,7 @@ impl CredentialProvider for OpenAIEmbeddingProvider {
 
     fn delete_credentials(&self, cx: &mut AppContext) -> BoxFuture<()> {
         *self.credential.write() = ProviderCredential::NoCredentials;
-        let delete_credentials = cx.delete_credentials(OPENAI_API_URL);
+        let delete_credentials = cx.delete_credentials(OPEN_AI_API_URL);
         async move {
             delete_credentials.await.log_err();
         }
@@ -228,7 +228,7 @@ impl CredentialProvider for OpenAIEmbeddingProvider {
 }
 
 #[async_trait]
-impl EmbeddingProvider for OpenAIEmbeddingProvider {
+impl EmbeddingProvider for OpenAiEmbeddingProvider {
     fn base_model(&self) -> Box<dyn LanguageModel> {
         let model: Box<dyn LanguageModel> = Box::new(self.model.clone());
         model
@@ -270,7 +270,7 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
                 StatusCode::OK => {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
-                    let response: OpenAIEmbeddingResponse = serde_json::from_str(&body)?;
+                    let response: OpenAiEmbeddingResponse = serde_json::from_str(&body)?;
 
                     log::trace!(
                         "openai embedding completed. tokens: {:?}",

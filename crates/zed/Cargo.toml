@@ -4,7 +4,7 @@ edition = "2021"
 name = "zed"
 version = "0.121.0"
 publish = false
-license = "GPL-3.0-only"
+license = "GPL-3.0-or-later"
 
 
 [lib]
@@ -134,6 +134,7 @@ tree-sitter-ruby.workspace = true
 tree-sitter-haskell.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-php.workspace = true
+tree-sitter-purescript.workspace = true
 tree-sitter-scheme.workspace = true
 tree-sitter-svelte.workspace = true
 tree-sitter-racket.workspace = true
