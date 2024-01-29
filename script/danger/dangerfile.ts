@@ -3,7 +3,7 @@ import { danger, warn } from "danger";
 const RELEASE_NOTES_PATTERN = new RegExp("Release Notes:\\n\\s+-", "gm");
 
 const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(danger.github.pr.body);
-console.log(danger.github.pr.body, hasReleaseNotes);
+console.log(JSON.stringify(danger.github.pr.body), hasReleaseNotes);
 if (!hasReleaseNotes) {
   warn(
     "This PR is missing release notes. " +
