@@ -714,7 +714,7 @@ fn format_timestamp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::HighlightStyle;
+    use gpui::{HighlightStyle, SharedUrl};
     use pretty_assertions::assert_eq;
     use rich_text::Highlight;
     use time::{Date, OffsetDateTime, Time, UtcOffset};
@@ -730,7 +730,7 @@ mod tests {
             timestamp: OffsetDateTime::now_utc(),
             sender: Arc::new(client::User {
                 github_login: "fgh".into(),
-                avatar_uri: "avatar_fgh".into(),
+                avatar_uri: SharedUrl::network("avatar_fgh"),
                 id: 103,
             }),
             nonce: 5,

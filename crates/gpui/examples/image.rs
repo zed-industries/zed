@@ -56,8 +56,8 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| ImageShowcase {
-                local_resource: SharedUrl::File("examples/assets/zed_logo.png".into()),
-                remote_resource: SharedUrl::Network("https://picsum.photos/320/72".into()),
+                local_resource: SharedUrl::file("examples/assets/zed_logo.png"),
+                remote_resource: SharedUrl::network("https://picsum.photos/320/72"),
             })
         });
     });
