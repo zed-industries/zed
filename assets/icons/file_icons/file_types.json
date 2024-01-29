@@ -45,6 +45,7 @@
         "heex": "elixir",
         "htm": "template",
         "html": "template",
+        "hs": "haskell",
         "ib": "storage",
         "ico": "image",
         "ini": "settings",
@@ -145,6 +146,9 @@
         },
         "expanded_folder": {
             "icon": "icons/file_icons/folder_open.svg"
+        },
+        "haskell": {
+            "icon": "icons/file_icons/haskell.svg"
         },
         "image": {
             "icon": "icons/file_icons/image.svg"
