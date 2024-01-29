@@ -6,7 +6,13 @@
 (comment) @comment
 
 [
+  "{"
+  "}"
+] @punctuation.bracket
+
+[
   "<"
   ">"
   "</"
-] @punctuation.bracket
+  "/>"
+] @tag.delimiter
