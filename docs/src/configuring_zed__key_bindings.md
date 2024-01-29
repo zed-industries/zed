@@ -66,7 +66,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Close clean items                | Pane           | `⌘` + `K`, `U`               |
 | Close inactive items             | Pane           | `Alt` + `⌘` + `T`            |
 | Open recent                      | Projects       | `Alt` + `⌘` + `O`            |
-| Toggle focus                     | Terminal Panel | ``Control` + ````                  |
+| Toggle focus                     | Terminal Panel | `Control` + ```                   |
 | Activate pane in direction down  | Workspace      | `⌘` + `K`, `⌘` + `Down`|
 | Activate pane in direction left  | Workspace      | `⌘` + `K`, `⌘` + `Left`|
 | Activate pane in direction right | Workspace      | `⌘` + `K`, `⌘` + `Right`|
@@ -86,7 +86,7 @@ _There are some key bindings that can't be overridden; we are working on an issu
 | Swap pane in direction           | Workspace      | `⌘` + `K`, `Shift` + `Up`    |
 | Toggle zoom                      | Workspace      | `Shift` + `Escape`                 |
 | Debug elements                   | Zed            | `⌘` + `Alt` + `I`            |
-| Decrease buffer font size        | Zed            | `⌘` + ````                   |
+| Decrease buffer font size        | Zed            | `⌘` + ```                    |
 | Hide                             | Zed            | `⌘` + `H`                    |
 | Hide others                      | Zed            | `Alt` + `⌘` + `H`            |
 | Increase buffer font size        | Zed            | `⌘` + `+`                    |
