@@ -18,7 +18,12 @@ use smol::io::AsyncReadExt;
 use settings::{Settings, SettingsStore};
 use smol::{fs::File, process::Command};
 
-use std::{ffi::OsString, sync::Arc, time::Duration};
+use std::{
+    env::consts::{ARCH, OS},
+    ffi::OsString,
+    sync::Arc,
+    time::Duration,
+};
 use update_notification::UpdateNotification;
 use util::channel::{AppCommitSha, ReleaseChannel};
 use util::http::HttpClient;
@@ -249,7 +254,10 @@ impl AutoUpdater {
             )
         })?;
 
-        let mut url_string = format!("{server_url}/api/releases/latest?asset=Zed.dmg");
+        let mut url_string = format!(
+            "{server_url}/api/releases/latest?asset=Zed.dmg&os={}&arch={}",
+            OS, ARCH
+        );
         cx.update(|cx| {
             if let Some(param) = cx
                 .try_global::<ReleaseChannel>()
