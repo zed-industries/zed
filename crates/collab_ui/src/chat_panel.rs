@@ -348,9 +348,10 @@ impl ChatPanel {
                 } else {
                     Fill::default()
                 })
-                .p_1()
                 .rounded_md()
                 .overflow_hidden()
+                .px_1()
+                .py_0p5()
                 .when(!is_continuation_from_previous, |this| {
                     this.mt_1().child(
                         h_flex()
@@ -376,7 +377,7 @@ impl ChatPanel {
                             ),
                     )
                 })
-                .when(is_continuation_from_previous, |this| this.pt_1())
+                .when(mentioning_you, |this| this.mt_1())
                 .child(
                     v_flex()
                         .w_full()
