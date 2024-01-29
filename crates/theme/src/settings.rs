@@ -1,5 +1,5 @@
 use crate::one_themes::one_dark;
-use crate::{SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
+use crate::{Appearance, SyntaxTheme, Theme, ThemeContent, ThemeRegistry};
 use anyhow::Result;
 use gpui::{
     px, AppContext, Font, FontFeatures, FontStyle, FontWeight, Pixels, Subscription, ViewContext,
@@ -32,6 +32,14 @@ pub struct ThemeSettings {
 
 #[derive(Default)]
 pub(crate) struct AdjustedBufferFontSize(Pixels);
+
+pub struct SystemAppearance(bool);
+
+impl SystemAppearance {
+    pub fn new(is_dark: bool) -> Self {
+        Self(is_dark)
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFeatures {
@@ -75,17 +83,17 @@ pub struct ThemeSettingsContent {
 
 impl ThemeSettingsContent {
     /// Returns whether the current theme setting requires to use the dark theme.
-    pub(crate) fn is_dark_mode(&self) -> bool {
+    pub(crate) fn is_dark_mode(&self, system_is_dark: bool) -> bool {
         if let Some(themes) = &self.themes {
-            return themes.is_dark_mode();
+            return themes.is_dark_mode(system_is_dark);
         }
 
         false
     }
 
-    pub(crate) fn theme_to_use(&self) -> Option<&str> {
+    pub(crate) fn theme_to_use(&self, system_is_dark: bool) -> Option<&str> {
         if let Some(themes) = &self.themes {
-            if self.is_dark_mode() {
+            if self.is_dark_mode(system_is_dark) {
                 if let Some(theme) = &themes.dark {
                     return Some(theme.as_str());
                 }
@@ -101,7 +109,15 @@ impl ThemeSettingsContent {
 }
 
 impl ThemeFeatures {
-    pub fn is_dark_mode(&self) -> bool {
+    pub fn is_dark_mode(&self, system_is_dark: bool) -> bool {
+        if self.auto_switch {
+            system_is_dark
+        } else {
+            self.is_mode_configured_to_dark()
+        }
+    }
+
+    fn is_mode_configured_to_dark(&self) -> bool {
         match &self.mode.as_deref() {
             Some("dark") => true,
             _ => false,
@@ -114,7 +130,7 @@ impl ThemeFeatures {
     }
 
     pub fn update_theme(&mut self, theme_name: String) {
-        if self.is_dark_mode() {
+        if self.is_mode_configured_to_dark() {
             self.dark = Some(theme_name);
         } else {
             self.light = Some(theme_name);
@@ -227,7 +243,19 @@ impl settings::Settings for ThemeSettings {
         user_values: &[&Self::FileContent],
         cx: &mut AppContext,
     ) -> Result<Self> {
+        let is_system_in_dark_mode = cx
+            .try_global::<SystemAppearance>()
+            .map(|r| r.0)
+            .unwrap_or_default();
+
         let themes = cx.default_global::<ThemeRegistry>();
+
+        let mut auto_switch = false;
+        for value in user_values.iter() {
+            if let Some(value) = &value.themes {
+                auto_switch = value.auto_switch;
+            }
+        }
 
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
@@ -246,14 +274,17 @@ impl settings::Settings for ThemeSettings {
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             active_theme: themes
-                .get(defaults.theme_to_use().unwrap())
+                .get(defaults.theme_to_use(true).unwrap())
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
         };
 
         for value in user_values.into_iter().copied().cloned() {
-            if let Some(value) = value.theme_to_use().map(str::to_string) {
+            if let Some(value) = value
+                .theme_to_use(is_system_in_dark_mode)
+                .map(str::to_string)
+            {
                 if let Some(theme) = themes.get(&value).log_err() {
                     this.active_theme = theme;
                 }
@@ -283,6 +314,8 @@ impl settings::Settings for ThemeSettings {
             );
             merge(&mut this.buffer_line_height, value.buffer_line_height);
         }
+
+        if auto_switch {}
 
         Ok(this)
     }
