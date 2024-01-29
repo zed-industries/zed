@@ -1333,7 +1333,6 @@ impl EditorElement {
                 cx.theme().colors().scrollbar_track_border,
             ));
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-
             if layout.is_singleton && scrollbar_settings.selections {
                 let start_anchor = Anchor::min();
                 let end_anchor = Anchor::max();
@@ -1367,17 +1366,13 @@ impl EditorElement {
                 }
             }
 
-            if layout.is_singleton {
-                let snapshot = &layout.position_map.snapshot;
-                // let buffer = &snapshot.buffer_snapshot;
-                // let start = buffer.anchor_before(0);
-                // let end = buffer.anchor_after(buffer.len());
-                let aa = self.editor.read(cx).background_highlights_in_range(
+            if layout.is_singleton && scrollbar_settings.symbols_selections {
+                let selection_ranges = self.editor.read(cx).background_highlights_in_range(
                     Anchor::min()..Anchor::max(),
-                    &snapshot,
+                    &layout.position_map.snapshot,
                     cx.theme().colors(),
                 );
-                for hunk in &aa {
+                for hunk in selection_ranges {
                     let start_display = Point::new(hunk.0.start.row(), 0)
                         .to_display_point(&layout.position_map.snapshot.display_snapshot);
                     let end_display = Point::new(hunk.0.end.row(), 0)
