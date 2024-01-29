@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-only"
 
-
 [lib]
 path = "src/markdown_preview.rs"
 
@@ -13,14 +12,11 @@ path = "src/markdown_preview.rs"
 test-support = []
 
 [dependencies]
-client = { path = "../client" }
-db = { path = "../db" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
 project = { path = "../project" }
-settings = { path = "../settings" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 util = { path = "../util" }
@@ -28,19 +24,9 @@ workspace = { path = "../workspace"}
 rich_text = { path = "../rich_text" }
 
 anyhow.workspace = true
-futures.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-postage.workspace = true
-regex.workspace = true
-serde.workspace = true
-serde_derive.workspace = true
-serde_json.workspace = true
-smallvec.workspace = true
-smol.workspace = true
-sysinfo.workspace = true
 pulldown-cmark.workspace = true
-urlencoding = "2.1.2"
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

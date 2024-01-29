@@ -47,20 +47,18 @@ impl MarkdownTable {
     }
 
     fn add_cell(&mut self, contents: AnyElement) {
+        let cell = div()
+            .child(contents)
+            .w_full()
+            .px_2()
+            .py_1()
+            .border_color(self.border_color);
+
         let cell = match self.state {
-            TableState::Header => div()
-                .child(contents)
-                .w_full()
-                .border_2()
-                .p_1()
-                .border_color(self.border_color),
-            TableState::Body => div()
-                .child(contents)
-                .w_full()
-                .border_1()
-                .p_1()
-                .border_color(self.border_color),
+            TableState::Header => cell.border_2(),
+            TableState::Body => cell.border_1(),
         };
+
         self.current_row.push(cell);
     }
 
@@ -253,7 +251,7 @@ where
                 let contents = SharedString::from(contents);
 
                 let code_block = div()
-                    .px_3()
+                    .px_4()
                     .bg(self.ui_code_background)
                     .child(StyledText::new(contents));
 
