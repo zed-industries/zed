@@ -1,6 +1,6 @@
 name = "Clojure"
 path_suffixes = ["clj", "cljs"]
-line_comments = ["# "]
+line_comments = [";; "]
 autoclose_before = "}])"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
