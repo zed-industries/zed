@@ -10,6 +10,7 @@ use util::{asset_str, paths::PLUGINS_DIR};
 use self::elixir::ElixirSettings;
 
 mod c;
+mod clojure;
 mod css;
 mod elixir;
 mod go;
@@ -54,12 +55,17 @@ pub fn init(
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };
-
     language("bash", tree_sitter_bash::language(), vec![]);
     language(
         "c",
         tree_sitter_c::language(),
         vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>],
+    );
+
+    language(
+      "clojure",
+      tree_sitter_clojure::language(),
+      vec![Arc::new(clojure::ClojureLspAdapter) as Arc<dyn LspAdapter>]
     );
     language(
         "cpp",
