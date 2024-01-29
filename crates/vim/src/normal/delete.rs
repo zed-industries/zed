@@ -11,7 +11,6 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
-            let editor_clone = editor.clone(cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     let original_head = selection.head();
@@ -22,7 +21,6 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                         times,
                         true,
                         &text_layout_details,
-                        &editor_clone,
                     );
 
                     // Motion::NextWordStart on an empty line should delete it.

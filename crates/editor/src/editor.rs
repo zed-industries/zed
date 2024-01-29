@@ -3034,6 +3034,8 @@ impl Editor {
             text_system: cx.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
             rem_size: cx.rem_size(),
+            anchor: self.scroll_manager.anchor().anchor,
+            visible_rows: self.visible_line_count(),
         }
     }
 

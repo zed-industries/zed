@@ -1,7 +1,7 @@
 use editor::{
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
-    Bias, DisplayPoint, Editor, ToOffset,
+    Bias, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
@@ -233,9 +233,7 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
         repeat_motion(action.backwards, cx)
     });
-    workspace.register_action(|_: &mut Workspace, &WindowTop, cx: _| {
-        motion(Motion::WindowTop, cx);
-    });
+    workspace.register_action(|_: &mut Workspace, &WindowTop, cx: _| motion(Motion::WindowTop, cx));
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
@@ -384,7 +382,6 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
-        editor: &Editor,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -455,7 +452,7 @@ impl Motion {
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
-            WindowTop => window_top(map, point, &text_layout_details, editor),
+            WindowTop => window_top(map, &text_layout_details),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -469,7 +466,6 @@ impl Motion {
         times: Option<usize>,
         expand_to_surrounding_newline: bool,
         text_layout_details: &TextLayoutDetails,
-        editor: &Editor,
     ) -> bool {
         if let Some((new_head, goal)) = self.move_point(
             map,
@@ -477,7 +473,6 @@ impl Motion {
             selection.goal,
             times,
             &text_layout_details,
-            &editor,
         ) {
             selection.set_head(new_head, goal);
 
@@ -966,20 +961,10 @@ pub(crate) fn next_line_end(
 
 fn window_top(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
-    _: &TextLayoutDetails,
-    editor: &Editor,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
-    let top_anchor = editor.scroll_manager.anchor().anchor;
-    let top = top_anchor.to_display_point(map);
-
-    // new column will be min of current column or length of top row
-    let new_col = point.column().min(map.line_len(top.row()));
-
-    // shift back a character unless there are 0 characters
-    let new_col_shifted = (new_col - 1).max(0);
-    let new_point = DisplayPoint::new(top.row(), new_col_shifted);
-    (new_point, SelectionGoal::None)
+    let first_visible_line = text_layout_details.anchor.to_display_point(map);
+    (first_visible_line, SelectionGoal::None)
 }
 
 #[cfg(test)]

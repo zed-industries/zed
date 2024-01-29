@@ -33,7 +33,6 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
         editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
-            let editor_clone = editor.clone(cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.start == selection.end {
@@ -43,7 +42,6 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
                             count,
                             true,
                             &text_layout_details,
-                            &editor_clone,
                         );
                     }
                     if line_mode {
@@ -58,7 +56,6 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
                             None,
                             false,
                             &text_layout_details,
-                            &editor_clone,
                         );
                         if let Some((point, _)) = (Motion::FirstNonWhitespace {
                             display_lines: false,
@@ -69,7 +66,6 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
                             selection.goal,
                             None,
                             &text_layout_details,
-                            &editor_clone,
                         ) {
                             selection.start = point;
                         }

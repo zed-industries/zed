@@ -9,7 +9,7 @@ use editor::{
     display_map::DisplaySnapshot,
     movement::{self, FindRange, TextLayoutDetails},
     scroll::Autoscroll,
-    DisplayPoint, Editor,
+    DisplayPoint,
 };
 use gpui::WindowContext;
 use language::{char_kind, CharKind, Selection};
@@ -29,7 +29,6 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
-            let editor_clone = editor.clone(cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
                     motion_succeeded |= if let Motion::NextWordStart { ignore_punctuation } = motion
@@ -40,7 +39,6 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             times,
                             ignore_punctuation,
                             &text_layout_details,
-                            &editor_clone,
                         )
                     } else {
                         motion.expand_selection(
@@ -49,7 +47,6 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                             times,
                             false,
                             &text_layout_details,
-                            &editor_clone,
                         )
                     };
                 });
@@ -103,7 +100,6 @@ fn expand_changed_word_selection(
     times: Option<usize>,
     ignore_punctuation: bool,
     text_layout_details: &TextLayoutDetails,
-    editor: &Editor,
 ) -> bool {
     if times.is_none() || times.unwrap() == 1 {
         let scope = map
@@ -132,7 +128,6 @@ fn expand_changed_word_selection(
                 None,
                 false,
                 &text_layout_details,
-                &editor,
             )
         }
     } else {
@@ -142,7 +137,6 @@ fn expand_changed_word_selection(
             times,
             false,
             &text_layout_details,
-            &editor,
         )
     }
 }

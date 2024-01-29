@@ -62,7 +62,6 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
-            let editor_clone = editor.clone(cx);
             if vim.state().mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -73,7 +72,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times, &text_layout_details, &editor_clone)
+                    motion.move_point(map, point, goal, times, &text_layout_details)
                 })
             } else {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -101,7 +100,6 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                             selection.goal,
                             times,
                             &text_layout_details,
-                            &editor_clone,
                         ) else {
                             return;
                         };
