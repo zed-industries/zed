@@ -21,6 +21,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+derive_more.workspace = true
 fs = { path = "../fs" }
 futures.workspace = true
 gpui = { path = "../gpui" }
