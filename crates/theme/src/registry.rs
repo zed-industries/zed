@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
+use derive_more::{Deref, DerefMut};
 use gpui::{AppContext, AssetSource, HighlightStyle, SharedString};
 use refineable::Refineable;
 use util::ResultExt;
@@ -18,6 +19,20 @@ pub struct ThemeMeta {
     pub appearance: Appearance,
 }
 
+/// The global [`ThemeRegistry`].
+///
+/// This newtype exists for obtaining a unique [`TypeId`](std::any::TypeId) when
+/// inserting the [`ThemeRegistry`] into the context as a global.
+///
+/// This should not be exposed outside of this module.
+#[derive(Default, Deref, DerefMut)]
+struct GlobalThemeRegistry(ThemeRegistry);
+
+/// Initializes the theme registry.
+pub fn init(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
+    cx.set_global(GlobalThemeRegistry(ThemeRegistry::new(assets)));
+}
+
 pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
     themes: HashMap<SharedString, Arc<Theme>>,
@@ -26,19 +41,19 @@ pub struct ThemeRegistry {
 impl ThemeRegistry {
     /// Returns the global [`ThemeRegistry`].
     pub fn global(cx: &AppContext) -> &Self {
-        cx.global::<ThemeRegistry>()
+        cx.global::<GlobalThemeRegistry>()
     }
 
     /// Returns a mutable reference to the global [`ThemeRegistry`].
     pub fn global_mut(cx: &mut AppContext) -> &mut Self {
-        cx.global_mut::<ThemeRegistry>()
+        cx.global_mut::<GlobalThemeRegistry>()
     }
 
     /// Returns a mutable reference to the global [`ThemeRegistry`].
     ///
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
     pub fn default_global(cx: &mut AppContext) -> &mut Self {
-        cx.default_global::<ThemeRegistry>()
+        cx.default_global::<GlobalThemeRegistry>()
     }
 
     pub fn new(assets: Box<dyn AssetSource>) -> Self {

@@ -7920,6 +7920,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "color",
+ "derive_more",
  "fs",
  "gpui",
  "indexmap 1.9.3",

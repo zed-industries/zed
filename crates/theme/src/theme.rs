@@ -60,7 +60,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),
     };
-    cx.set_global(ThemeRegistry::new(assets));
+    registry::init(assets, cx);
 
     if load_user_themes {
         ThemeRegistry::global_mut(cx).load_user_themes();
