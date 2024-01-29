@@ -62,7 +62,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
-use theme::{set_system_is_dark_mode, ActiveTheme, SystemAppearance, ThemeSettings};
+use theme::{set_system_is_dark_mode, ActiveTheme, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::Label;

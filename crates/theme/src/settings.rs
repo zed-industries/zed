@@ -33,14 +33,6 @@ pub struct ThemeSettings {
 #[derive(Default)]
 pub(crate) struct AdjustedBufferFontSize(Pixels);
 
-pub struct SystemAppearance(bool);
-
-impl SystemAppearance {
-    pub fn new(is_dark: bool) -> Self {
-        Self(is_dark)
-    }
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFeatures {
     #[serde(default)]
@@ -226,6 +218,8 @@ pub fn reset_font_size(cx: &mut AppContext) {
     }
 }
 
+struct SystemAppearance(bool);
+
 pub fn get_system_is_dark_mode(cx: &AppContext) -> bool {
     cx.try_global::<SystemAppearance>()
         .map(|r| r.0)
@@ -234,7 +228,7 @@ pub fn get_system_is_dark_mode(cx: &AppContext) -> bool {
 
 pub fn set_system_is_dark_mode<V>(cx: &mut ViewContext<V>) {
     let is_dark_mode = cx.is_dark_mode();
-    cx.set_global(SystemAppearance::new(is_dark_mode));
+    cx.set_global(SystemAppearance(is_dark_mode));
 }
 
 impl settings::Settings for ThemeSettings {
