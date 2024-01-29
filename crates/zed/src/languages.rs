@@ -12,6 +12,7 @@ use self::{deno::DenoSettings, elixir::ElixirSettings};
 mod c;
 mod css;
 mod deno;
+mod dockerfile;
 mod elixir;
 mod gleam;
 mod go;
@@ -79,6 +80,13 @@ pub fn init(
             Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
+    );
+    language(
+        "dockerfile",
+        tree_sitter_dockerfile::language(),
+        vec![Arc::new(dockerfile::DockerfileLspAdapter::new(
+            node_runtime.clone(),
+        ))],
     );
 
     match &ElixirSettings::get(None, cx).lsp {
