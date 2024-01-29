@@ -1,4 +1,4 @@
-use gpui::{div, img, px, IntoElement, ParentElement, Render, Styled, ViewContext};
+use gpui::{div, img, px, IntoElement, ParentElement, Render, SharedUrl, Styled, ViewContext};
 use story::Story;
 
 use crate::{ActiveTheme, PlayerColors};
