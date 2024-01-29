@@ -259,7 +259,7 @@ impl ThemeRegistry {
                 continue;
             };
 
-            self.insert_user_themes([theme]);
+            self.insert_user_theme_families([theme]);
         }
 
         Ok(())
