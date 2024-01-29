@@ -984,13 +984,8 @@ fn window_top(
 ) -> (DisplayPoint, SelectionGoal) {
     let first_visible_line = text_layout_details.anchor.to_display_point(map);
     let new_col = point.column().min(map.line_len(first_visible_line.row()));
-    // shift back a character unless there are 0 characters
-    let new_col_shifted = match new_col {
-        0 => 0,
-        _ => new_col - 1,
-    };
-    let new_point = DisplayPoint::new(first_visible_line.row(), new_col_shifted);
-    (new_point, SelectionGoal::None)
+    let new_point = DisplayPoint::new(first_visible_line.row(), new_col);
+    (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
 }
 
 fn window_middle(
@@ -1003,8 +998,8 @@ fn window_middle(
         let max_rows = (visible_rows as u32).min(map.max_buffer_row());
         let new_row = first_visible_line.row() + (max_rows.div_euclid(2));
         let new_col = point.column().min(map.line_len(new_row));
-        let new_display_point = DisplayPoint::new(new_row, new_col);
-        (new_display_point, SelectionGoal::None)
+        let new_point = DisplayPoint::new(new_row, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
     }
@@ -1020,8 +1015,8 @@ fn window_bottom(
         let bottom_row = first_visible_line.row() + (visible_rows) as u32;
         let bottom_row_capped = bottom_row.min(map.max_buffer_row());
         let new_col = point.column().min(map.line_len(bottom_row_capped));
-        let bottom_display_point = DisplayPoint::new(bottom_row_capped, new_col);
-        (bottom_display_point, SelectionGoal::None)
+        let new_point = DisplayPoint::new(bottom_row_capped, new_col);
+        (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
     }
@@ -1199,6 +1194,35 @@ mod test {
           third and
           final"})
             .await;
+
+        // clip point
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          ˇ7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-h"]).await;
+        cx.assert_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
     }
 
     #[gpui::test]
@@ -1220,6 +1244,72 @@ mod test {
           third and
           final"})
             .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 ˇ9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          ˇ7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-m"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
     }
 
     #[gpui::test]
@@ -1240,6 +1330,62 @@ mod test {
           the second
           third and
           fiˇnal"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          4 5 ˇ6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 3
+          ˇ4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          1 2 ˇ3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
+            .await;
+
+        cx.set_shared_state(indoc! {r"
+          ˇ1 2 3
+          4 5 6
+          7 8 9
+          "})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-l"]).await;
+        cx.assert_shared_state(indoc! {r"
+          1 2 3
+          4 5 6
+          7 8 9
+          ˇ"})
             .await;
     }
 }
