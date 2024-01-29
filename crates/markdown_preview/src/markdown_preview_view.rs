@@ -1,7 +1,7 @@
 use editor::{Editor, EditorEvent};
 use gpui::{
-    AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ParentElement, Render, Styled, View, ViewContext,
+    canvas, AnyElement, AppContext, AvailableSpace, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, IntoElement, ParentElement, Render, Styled, View, ViewContext,
 };
 use language::LanguageRegistry;
 use std::sync::Arc;
@@ -140,17 +140,11 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // TODO: This is wrong but I'm unsure how
-        // to make the preview scrollable without specifying
-        // a real height as max_h_full does not work.
-        let viewport_height = cx.viewport_size().height;
-
         let mut container = v_flex()
             .items_start()
             .justify_start()
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle)
-            .max_h(viewport_height)
             .id("MarkdownPreview")
             .overflow_scroll()
             .size_full()
@@ -164,6 +158,15 @@ impl Render for MarkdownPreviewView {
             container = container.child(item.mb_2());
         }
 
-        container.into_any()
+        div().flex_1().child(
+            canvas(move |bounds, cx| {
+                container.into_any().draw(
+                    bounds.origin,
+                    bounds.size.map(AvailableSpace::Definite),
+                    cx,
+                )
+            })
+            .size_full(),
+        )
     }
 }
