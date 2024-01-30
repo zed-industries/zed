@@ -10,6 +10,7 @@ use util::{asset_str, paths::PLUGINS_DIR};
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
+mod csharp;
 mod css;
 mod deno;
 mod elixir;
@@ -72,6 +73,11 @@ pub fn init(
         "cpp",
         tree_sitter_cpp::language(),
         vec![Arc::new(c::CLspAdapter)],
+    );
+    language(
+        "csharp",
+        tree_sitter_c_sharp::language(),
+        vec![Arc::new(csharp::OmniSharpAdapter {})],
     );
     language(
         "css",
