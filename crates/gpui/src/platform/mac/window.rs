@@ -1102,7 +1102,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let mut lock = window_state.as_ref().lock();
 
     let window_height = lock.content_size().height;
-    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
+    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height), None) };
 
     if let Some(PlatformInput::KeyDown(event)) = event {
         // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
@@ -1195,7 +1195,10 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     let window_height = lock.content_size().height;
-    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
+    let scale_factor = lock.scale_factor();
+    let event = unsafe {
+        PlatformInput::from_native(native_event, Some(window_height), Some(scale_factor))
+    };
 
     if let Some(mut event) = event {
         match &mut event {
