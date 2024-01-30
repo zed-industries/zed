@@ -333,8 +333,8 @@
           "advance_downwards": false
         }
       ],
-      "alt-up": "editor::SelectLargerSyntaxNode",
-      "alt-down": "editor::SelectSmallerSyntaxNode",
+      "alt-up": "editor::MoveLineUp",
+      "alt-down": "editor::MoveLineDown"
       "cmd-u": "editor::UndoSelection",
       "cmd-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
