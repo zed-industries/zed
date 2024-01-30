@@ -7,7 +7,6 @@ description = "Zed's GPU-accelerated UI framework"
 publish = false
 license = "Apache-2.0"
 
-
 [features]
 test-support = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
 

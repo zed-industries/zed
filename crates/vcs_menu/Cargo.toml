@@ -3,9 +3,7 @@ name = "vcs_menu"
 version = "0.1.0"
 edition = "2021"
 publish = false
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 license = "GPL-3.0-or-later"
-
 
 [dependencies]
 fuzzy = { path = "../fuzzy"}

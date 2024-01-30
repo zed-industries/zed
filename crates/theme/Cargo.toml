@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
-
 [features]
 default = []
 stories = ["dep:itertools", "dep:story"]

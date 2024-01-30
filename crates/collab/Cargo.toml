@@ -7,7 +7,6 @@ version = "0.42.1"
 publish = false
 license = "AGPL-3.0-or-later"
 
-
 [[bin]]
 name = "collab"
 
