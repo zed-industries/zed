@@ -13,6 +13,7 @@ mod c;
 mod css;
 mod deno;
 mod elixir;
+mod elm;
 mod gleam;
 mod go;
 mod haskell;
@@ -271,7 +272,11 @@ pub fn init(
             node_runtime.clone(),
         ))],
     );
-    language("elm", tree_sitter_elm::language(), vec![]);
+    language(
+        "elm",
+        tree_sitter_elm::language(),
+        vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))],
+    );
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
     language(
