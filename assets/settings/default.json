@@ -69,6 +69,8 @@
   "show_wrap_guides": true,
   // Character counts at which to show wrap guides in the editor.
   "wrap_guides": [],
+  // Hide the values of environment variables from visual display
+  "redact_env_values": false,
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,

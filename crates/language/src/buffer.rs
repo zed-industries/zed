@@ -2886,13 +2886,29 @@ impl BufferSnapshot {
     ) -> impl Iterator<Item = Range<usize>> + 'a {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar.redaction_query.as_ref()
+            grammar
+                .redactions_config
+                .as_ref()
+                .map(|config| &config.query)
         });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.redactions_config.as_ref())
+            .collect::<Vec<_>>();
 
         iter::from_fn(move || {
             let redacted_range = syntax_matches
                 .peek()
-                .map(|mat| mat.captures[0].node.byte_range());
+                .and_then(|mat| {
+                    configs[mat.grammar_index].and_then(|config| {
+                        mat.captures
+                            .iter()
+                            .find(|capture| capture.index == config.redaction_capture_ix)
+                    })
+                })
+                .map(|mat| mat.node.byte_range());
             syntax_matches.advance();
             redacted_range
         })

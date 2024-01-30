@@ -24,7 +24,7 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
+    black, div, fill, outline, overlay, point, px, quad, relative, size, transparent_black, Action,
     AnchorCorner, AnyElement, AvailableSpace, Bounds, ContentMask, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Hsla, InteractiveBounds,
     InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent,
@@ -1160,6 +1160,30 @@ impl EditorElement {
         )
     }
 
+    fn paint_redactions(
+        &mut self,
+        text_bounds: Bounds<Pixels>,
+        layout: &mut LayoutState,
+        cx: &mut ElementContext,
+    ) {
+        let content_origin = text_bounds.origin + point(layout.gutter_margin, Pixels::ZERO);
+        let line_end_overshoot = layout.line_end_overshoot();
+        let redaction_color = black();
+
+        for range in layout.redacted_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                redaction_color,
+                Pixels::ZERO,
+                line_end_overshoot,
+                layout,
+                content_origin,
+                text_bounds,
+                cx,
+            );
+        }
+    }
+
     fn paint_overlays(
         &mut self,
         text_bounds: Bounds<Pixels>,
@@ -1917,6 +1941,8 @@ impl EditorElement {
                 cx.theme().colors(),
             );
 
+            let redacted_ranges = editor.redacted_ranges(start_anchor..end_anchor, &snapshot.display_snapshot, cx);
+
             let mut newest_selection_head = None;
 
             if editor.show_local_selections {
@@ -2254,6 +2280,7 @@ impl EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
+                redacted_ranges,
                 line_numbers,
                 display_hunks,
                 blocks,
@@ -2979,6 +3006,10 @@ impl Element for EditorElement {
                             self.paint_text(text_bounds, &mut layout, cx);
 
                             cx.with_z_index(0, |cx| {
+                                self.paint_redactions(text_bounds, &mut layout, cx)
+                            });
+
+                            cx.with_z_index(0, |cx| {
                                 self.paint_mouse_listeners(
                                     bounds,
                                     gutter_bounds,
@@ -3038,6 +3069,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
+    redacted_ranges: Vec<Range<DisplayPoint>>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -3049,6 +3081,12 @@ pub struct LayoutState {
     fold_indicators: Vec<Option<IconButton>>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
+}
+
+impl LayoutState {
+    fn line_end_overshoot(&self) -> Pixels {
+        0.15 * self.position_map.line_height
+    }
 }
 
 struct CodeActionsIndicator {

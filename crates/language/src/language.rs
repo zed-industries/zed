@@ -620,8 +620,8 @@ pub struct Grammar {
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
-    pub(crate) redaction_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
+    pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
@@ -661,6 +661,11 @@ struct InjectionConfig {
     content_capture_ix: u32,
     language_capture_ix: Option<u32>,
     patterns: Vec<InjectionPatternConfig>,
+}
+
+struct RedactionConfig {
+    pub query: Query,
+    pub redaction_capture_ix: u32,
 }
 
 struct OverrideConfig {
@@ -1289,7 +1294,7 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
-                    redaction_query: None,
+                    redactions_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1583,7 +1588,17 @@ impl Language {
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
         let grammar = self.grammar_mut();
-        grammar.redaction_query = Some(Query::new(&grammar.ts_language, source)?);
+        let query = Query::new(&grammar.ts_language, source)?;
+        let mut redaction_capture_ix = None;
+        get_capture_indices(&query, &mut [("redact", &mut redaction_capture_ix)]);
+
+        if let Some(redaction_capture_ix) = redaction_capture_ix {
+            grammar.redactions_config = Some(RedactionConfig {
+                query,
+                redaction_capture_ix,
+            });
+        }
+
         Ok(self)
     }
 
