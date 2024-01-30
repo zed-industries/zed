@@ -57,6 +57,7 @@
     "!"
     "|"
     "->"
+    "::"
 ] @operator
 
 (unary_op_expr) @operator
@@ -70,28 +71,33 @@
 ] @number
 (var) @variable
 
-(function_clause
-    name: _ @function)
-
 [
-    (module_attribute "(" @open ")" @close)
-    (pp_define "(" @open ")" @close)
+    (module_attribute)
+    (pp_define)
+    (pp_include)
     (spec)
-    (record_decl "(" @open ")" @close)
+    (record_decl)
+    (export_attribute)
+    (compile_options_attribute)
 ] @keyword
 
+(wild_attribute
+    name: (attr_name
+            "-" @keyword
+            name: (atom) @keyword))
+
+[ "(" "{" "[" ] @open
+[ ")" "}" "]" ] @close
+
+(function_clause name: _ @function)
 (spec fun: (atom) @function)
-
-(expr_args "(" @open ")" @close)
-
+(fa fun: (atom) @function)
+(call expr: (atom) @function)
 (external_fun
     module: (module name: (atom) @type)
     fun: (atom) @function)
-
 (remote
     module: (remote_module module: (atom) @type)
     fun: (atom) @function)
-
-(call expr: (atom) @function)
 
 (comment) @comment
