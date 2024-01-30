@@ -288,5 +288,7 @@ impl<T> Flatten<T> for Result<T> {
     }
 }
 
+/// A marker trait for types that can be stored in GPUI's global state.
 ///
+/// Implement this on types you want to store in the context as a global.
 pub trait Global: 'static {}
