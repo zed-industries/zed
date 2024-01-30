@@ -1,6 +1,7 @@
 //! Defines baseline interface of Runnables in Zed.
 // #![deny(missing_docs)]
 mod static_runnable;
+mod static_runner;
 
 use anyhow::Result;
 use core::future::Future;
@@ -10,13 +11,13 @@ use futures::stream::{AbortHandle, AbortRegistration, Abortable};
 use futures::task::{Context, Poll};
 use gpui::AppContext;
 
-struct TaskHandle {
-    fut: Abortable<BoxFuture<'static, ExecutionResult>>,
+struct TaskHandle<'a> {
+    fut: Abortable<BoxFuture<'a, ExecutionResult>>,
     cancel_token: AbortHandle,
 }
 
-impl TaskHandle {
-    pub fn new(fut: BoxFuture<'static, ExecutionResult>) -> Self {
+impl<'a> TaskHandle<'a> {
+    pub fn new(fut: BoxFuture<'a, ExecutionResult>) -> Self {
         let (cancel_token, abort_registration) = AbortHandle::new_pair();
         let fut = Abortable::new(fut, abort_registration);
         Self { fut, cancel_token }
@@ -28,7 +29,7 @@ impl TaskHandle {
     }
 }
 
-impl Future for TaskHandle {
+impl<'a> Future for TaskHandle<'a> {
     type Output = Result<ExecutionResult, TaskTerminated>;
 
     fn poll(
@@ -53,6 +54,6 @@ pub struct ExecutionResult {
 /// is to get spawned
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(&mut self, cx: &mut AppContext) -> TaskHandle;
+    fn exec(self, cx: &mut AppContext) -> TaskHandle;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }
