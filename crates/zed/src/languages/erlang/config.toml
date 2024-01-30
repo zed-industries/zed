@@ -1,6 +1,5 @@
-
 name = "Erlang"
-path_suffixes = ["erl"]
+path_suffixes = ["erl", "hrl"]
 line_comments = ["% "]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
