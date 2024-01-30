@@ -61,6 +61,7 @@ members = [
     "crates/recent_projects",
     "crates/rope",
     "crates/rpc",
+    "crates/runnable",
     "crates/search",
     "crates/semantic_index",
     "crates/settings",
