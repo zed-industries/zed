@@ -28,7 +28,9 @@ impl MarkdownPreviewView {
             }
             let languages = languages.clone();
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                MarkdownPreviewView::deploy_preview(workspace, languages, editor, cx);
+                let view: View<MarkdownPreviewView> =
+                    cx.new_view(|cx| MarkdownPreviewView::new(editor, languages, cx));
+                workspace.split_item(workspace::SplitDirection::Right, Box::new(view.clone()), cx);
                 cx.notify();
             }
         });
@@ -59,49 +61,6 @@ impl MarkdownPreviewView {
             languages,
             contents,
         }
-    }
-
-    // Re-active the most recently active preview, or create a new one if there isn't one.
-    fn deploy_preview(
-        workspace: &mut Workspace,
-        languages: Arc<LanguageRegistry>,
-        active_editor: View<Editor>,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        // TODO: Reactive any other pane used for this active_editor.
-        // for pane in workspace.panes() {
-        //     for item in pane.read(cx).items() {
-        //         if let Some(preview) = item.downcast::<MarkdownPreviewView>() {
-        //             let item_id = preview.item_id();
-        //             let handler = cx.handler_for(pane, move |pane, cx| {
-        //                 pane.close_item_by_id(item_id, workspace::SaveIntent::Close, cx)
-        //                     .detach_and_log_err(cx);
-        //             });
-        //             handler(cx);
-        //         }
-        //     }
-        // }
-
-        Self::existing_or_new_preview(workspace, languages, active_editor, None, cx)
-    }
-
-    fn existing_or_new_preview(
-        workspace: &mut Workspace,
-        languages: Arc<LanguageRegistry>,
-        active_editor: View<Editor>,
-        existing: Option<View<MarkdownPreviewView>>,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        if let Some(existing) = existing {
-            workspace.activate_item(&existing, cx);
-            existing
-        } else {
-            let view: View<MarkdownPreviewView> =
-                cx.new_view(|cx| MarkdownPreviewView::new(active_editor, languages, cx));
-
-            workspace.split_item(workspace::SplitDirection::Right, Box::new(view.clone()), cx);
-            view
-        };
     }
 }
 
