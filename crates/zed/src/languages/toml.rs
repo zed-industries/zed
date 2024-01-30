@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
@@ -33,7 +33,7 @@ impl LspAdapter for TaploLspAdapter {
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            .context(format!("no asset found matching {asset_name:?}"))?;
 
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.name,
@@ -105,7 +105,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             arguments: Default::default(),
         })
     })
