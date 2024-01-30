@@ -8502,6 +8502,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-erlang"
+version = "0.4.0"
+source = "git+https://github.com/WhatsApp/tree-sitter-erlang?rev=54b6f814f43c4eac81eeedefaa7cc8762fec6683#54b6f814f43c4eac81eeedefaa7cc8762fec6683"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-gleam"
 version = "0.34.0"
 source = "git+https://github.com/gleam-lang/tree-sitter-gleam?rev=58b7cac8fc14c92b0677c542610d8738c373fa81#58b7cac8fc14c92b0677c542610d8738c373fa81"
@@ -9818,6 +9827,7 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
+ "tree-sitter-erlang",
  "tree-sitter-gleam",
  "tree-sitter-glsl",
  "tree-sitter-go",

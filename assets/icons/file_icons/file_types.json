@@ -22,6 +22,7 @@
         "doc": "document",
         "docx": "document",
         "eex": "elixir",
+        "erl": "erlang",
         "eslintrc": "eslint",
         "eslintrc.js": "eslint",
         "eslintrc.json": "eslint",

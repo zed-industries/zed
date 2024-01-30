@@ -13,6 +13,7 @@ mod c;
 mod css;
 mod deno;
 mod elixir;
+mod erlang;
 mod gleam;
 mod go;
 mod haskell;
@@ -104,6 +105,8 @@ pub fn init(
             })],
         ),
     }
+
+    language("erlang", tree_sitter_erlang::language(), vec![]);
 
     language(
         "gleam",
