@@ -2072,10 +2072,10 @@ impl EditorElement {
                     (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
                     ||
                     // Symbols Selections
-                     (is_singleton && scrollbar_settings.symbols_selections && editor.has_background_highlights::<BufferSearchHighlights>())
-                     ||
+                    (is_singleton && scrollbar_settings.symbols_selections && editor.has_background_highlights::<BufferSearchHighlights>())
+                    ||
                     // Scrollmanager
-                     editor.scroll_manager.scrollbars_visible()
+                    editor.scroll_manager.scrollbars_visible()
                 }
                 ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
                 ShowScrollbar::Always => true,
