@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, UserStore};
+use client::{zed_server_url, Client, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -200,7 +200,7 @@ fn main() {
         cx.set_global(Arc::downgrade(&app_state));
 
         audio::init(Assets, cx);
-        auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(http.clone(), client::zed_server(), cx);
 
         workspace::init(app_state.clone(), cx);
         recent_projects::init(cx);
@@ -623,7 +623,7 @@ async fn upload_previous_panics(
     http: Arc<dyn HttpClient>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
-    let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+    let panic_report_url = zed_server_url!("/api/panic");
     let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
     while let Some(child) = children.next().await {
         let child = child?;
@@ -698,7 +698,7 @@ async fn upload_previous_crashes(
         .unwrap_or("zed-2024-01-17-221900.ips".to_string()); // don't upload old crash reports from before we had this.
     let mut uploaded = last_uploaded.clone();
 
-    let crash_report_url = format!("{}/api/crash", &*client::ZED_SERVER_URL);
+    let crash_report_url = zed_server_url!("/api/crash");
 
     for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
         let mut children = smol::fs::read_dir(&dir).await?;

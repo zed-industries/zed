@@ -1,6 +1,6 @@
 mod event_coalescer;
 
-use crate::{TelemetrySettings, ZED_SERVER_URL};
+use crate::{zed_server_url, TelemetrySettings};
 use chrono::{DateTime, Utc};
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
@@ -43,10 +43,8 @@ struct TelemetryState {
     max_queue_size: usize,
 }
 
-const EVENTS_URL_PATH: &'static str = "/api/events";
-
 lazy_static! {
-    static ref EVENTS_URL: String = format!("{}{}", *ZED_SERVER_URL, EVENTS_URL_PATH);
+    static ref EVENTS_URL: String = zed_server_url!("/api/events");
 }
 
 #[derive(Serialize, Debug)]

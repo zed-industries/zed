@@ -19,14 +19,14 @@ use gpui::{
     WeakModel,
 };
 use lazy_static::lazy_static;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -50,9 +50,8 @@ pub use telemetry::Event;
 pub use user::*;
 
 lazy_static! {
-    pub static ref ZED_SERVER_URL: String =
-        std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
-    pub static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
+    static ref ZED_SERVER_URL: Option<String> = std::env::var("ZED_SERVER_URL").ok();
+    static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
     pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
@@ -68,13 +67,79 @@ lazy_static! {
         std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| e.len() > 0);
 }
 
+/// A copy of ClientSettings::get(cx).server_url that can be accessed without the AppState lock.
+/// Only public so that `zed_server_url!` can access it, prefer that, or `zed_server()` instead.
+pub static SERVER_URL: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn zed_server() -> String {
+    SERVER_URL.lock().clone().unwrap()
+}
+#[macro_export]
+macro_rules! zed_server_url {
+    ($lit:expr) => {
+        format!("{}{}", *$crate::SERVER_URL.lock().as_ref().unwrap(), $lit)
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        format!("{}{}", *$crate::SERVER_URL.lock().as_ref().unwrap(), format!($fmt, $($arg)*))
+    };
+}
+
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 actions!(client, [SignIn, SignOut, Reconnect]);
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ClientSettingsContent {
+    server_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ClientSettings {
+    server_url: String,
+}
+
+impl Settings for ClientSettings {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = ClientSettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &mut AppContext,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::load_via_json_merge(default_value, user_values)?;
+        if let Some(server_url) = &*ZED_SERVER_URL {
+            result.server_url = server_url.clone()
+        }
+        Ok(result)
+    }
+}
+
 pub fn init_settings(cx: &mut AppContext) {
     TelemetrySettings::register(cx);
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.register_setting::<ClientSettings>(cx);
+    });
+    cx.observe_global::<SettingsStore>(|cx| {
+        let new_url = &ClientSettings::get_global(cx).server_url;
+
+        // we maintain our own copy of this setting so it can be accessed
+        // with an AsyncAppContext.
+        let mut server_url = SERVER_URL.lock();
+        let was_some = *server_url != None;
+        if Some(new_url) != server_url.as_ref() {
+            *server_url = Some(new_url.trim_end_matches('/').into());
+        }
+        if was_some {
+            cx.dispatch_action(&Reconnect)
+        }
+    })
+    .detach();
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
@@ -932,7 +997,7 @@ impl Client {
             return Url::parse(url).context("invalid rpc url");
         }
 
-        let mut url = format!("{}/rpc", *ZED_SERVER_URL);
+        let mut url = zed_server_url!("/rpc");
         if let Some(preview_param) =
             release_channel.and_then(|channel| channel.release_query_param())
         {
@@ -1053,9 +1118,10 @@ impl Client {
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
-                    let mut url = format!(
-                        "{}/native_app_signin?native_app_port={}&native_app_public_key={}",
-                        *ZED_SERVER_URL, port, public_key_string
+                    let mut url = zed_server_url!(
+                        "/native_app_signin?native_app_port={}&native_app_public_key={}",
+                        port,
+                        public_key_string
                     );
 
                     if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
@@ -1088,7 +1154,7 @@ impl Client {
                                     }
 
                                     let post_auth_url =
-                                        format!("{}/native_app_signin_succeeded", *ZED_SERVER_URL);
+                                        zed_server_url!("/native_app_signin_succeeded");
                                     req.respond(
                                         tiny_http::Response::empty(302).with_header(
                                             tiny_http::Header::from_bytes(
@@ -1351,7 +1417,7 @@ async fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credenti
     }
 
     let (user_id, access_token) = cx
-        .update(|cx| cx.read_credentials(&ZED_SERVER_URL))
+        .update(|cx| cx.read_credentials(&zed_server()))
         .log_err()?
         .await
         .log_err()??;
@@ -1368,7 +1434,7 @@ async fn write_credentials_to_keychain(
 ) -> Result<()> {
     cx.update(move |cx| {
         cx.write_credentials(
-            &ZED_SERVER_URL,
+            &zed_server(),
             &credentials.user_id.to_string(),
             credentials.access_token.as_bytes(),
         )
@@ -1377,7 +1443,7 @@ async fn write_credentials_to_keychain(
 }
 
 async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
-    cx.update(move |cx| cx.delete_credentials(&ZED_SERVER_URL))?
+    cx.update(move |cx| cx.delete_credentials(&zed_server()))?
         .await
 }
 
