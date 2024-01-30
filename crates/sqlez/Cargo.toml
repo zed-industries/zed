@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
+rust-version = "1.74"
 
 
 [dependencies]
@@ -15,4 +16,5 @@ thread_local = "1.1.4"
 lazy_static.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
+util = { path = "../util" }
 uuid.workspace = true
