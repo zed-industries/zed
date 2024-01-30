@@ -3,8 +3,8 @@ use std::{iter, mem, ops::Range};
 use crate::{
     black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
     CursorStyle, DefiniteLength, Edges, EdgesRefinement, ElementContext, Font, FontFeatures,
-    FontStyle, FontWeight, Global, Hsla, Length, Pixels, Point, PointRefinement, Rgba,
-    SharedString, Size, SizeRefinement, Styled, TextRun,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
+    SizeRefinement, Styled, TextRun,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -21,7 +21,7 @@ pub use taffy::style::{
 pub struct DebugBelow;
 
 #[cfg(debug_assertions)]
-impl Global for DebugBelow {}
+impl crate::Global for DebugBelow {}
 
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
