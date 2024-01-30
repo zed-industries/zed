@@ -259,7 +259,7 @@ pub enum WorkingDirectory {
     FirstProjectDirectory,
     /// Always use this platform's home directory (if it can be found).
     AlwaysHome,
-    /// Slways use a specific directory. This value will be shell expanded.
+    /// Always use a specific directory. This value will be shell expanded.
     /// If this path is not a valid directory the terminal will default to
     /// this platform's home directory  (if it can be found).
     Always { directory: String },
