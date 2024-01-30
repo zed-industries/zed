@@ -622,6 +622,16 @@ These values take in the same options as the root-level settings with the same n
 
 `boolean` values
 
+## Completion Documentation Debounce Delay
+
+- Description: The debounce delay before re-querying the language server for completion documentation when not included in original completion list.
+- Setting: `completion_documentation_secondary_query_debounce`
+- Default: `300` ms
+
+**Options**
+
+`integer` values
+
 ## Show Copilot Suggestions
 
 - Description: Whether or not to show Copilot suggestions as you type or wait for a `copilot::Toggle`.
