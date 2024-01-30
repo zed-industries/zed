@@ -10,6 +10,7 @@ use core_foundation::{
     array::CFIndex,
     attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
     base::{CFRange, TCFType},
+    number::CFNumber,
     string::CFString,
 };
 use core_graphics::{
@@ -17,7 +18,14 @@ use core_graphics::{
     color_space::CGColorSpace,
     context::CGContext,
 };
-use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
+use core_text::{
+    font::CTFont,
+    font_descriptor::{
+        kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait,
+    },
+    line::CTLine,
+    string_attributes::kCTFontAttributeName,
+};
 use font_kit::{
     font::Font as FontKitFont,
     handle::Handle,
@@ -208,6 +216,35 @@ impl MacTextSystemState {
             let Some(_) = font.glyph_for_char('m') else {
                 continue;
             };
+            // We've seen a number of panics in production caused by calling font.properties()
+            // which unwraps a downcast to CFNumber. This is an attempt to avoid the panic,
+            // and to try and identify the incalcitrant font.
+            let traits = font.native_font().all_traits();
+            if unsafe {
+                !(traits
+                    .get(kCTFontSymbolicTrait)
+                    .downcast::<CFNumber>()
+                    .is_some()
+                    && traits
+                        .get(kCTFontWidthTrait)
+                        .downcast::<CFNumber>()
+                        .is_some()
+                    && traits
+                        .get(kCTFontWeightTrait)
+                        .downcast::<CFNumber>()
+                        .is_some()
+                    && traits
+                        .get(kCTFontSlantTrait)
+                        .downcast::<CFNumber>()
+                        .is_some())
+            } {
+                log::error!(
+                    "Failed to read traits for font {:?}",
+                    font.postscript_name().unwrap()
+                );
+                continue;
+            }
+
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
             let postscript_name = font.postscript_name().unwrap();
