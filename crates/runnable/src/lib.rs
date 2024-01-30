@@ -9,9 +9,11 @@ use futures::future::BoxFuture;
 pub use futures::stream::Aborted as TaskTerminated;
 use futures::stream::{AbortHandle, AbortRegistration, Abortable};
 use futures::task::{Context, Poll};
+use futures::FutureExt;
 use gpui::AppContext;
+pub use static_runner::StaticRunner;
 
-struct TaskHandle<'a> {
+pub struct TaskHandle<'a> {
     fut: Abortable<BoxFuture<'a, ExecutionResult>>,
     cancel_token: AbortHandle,
 }
@@ -33,10 +35,10 @@ impl<'a> Future for TaskHandle<'a> {
     type Output = Result<ExecutionResult, TaskTerminated>;
 
     fn poll(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        Future::poll(self, cx)
+        self.fut.poll_unpin(cx)
     }
 }
 
@@ -54,6 +56,6 @@ pub struct ExecutionResult {
 /// is to get spawned
 pub trait Runnable {
     fn name(&self) -> String;
-    fn exec(self, cx: &mut AppContext) -> TaskHandle;
+    fn exec(self, cx: &mut gpui::AsyncWindowContext) -> TaskHandle;
     fn boxed_clone(&self) -> Box<dyn Runnable>;
 }

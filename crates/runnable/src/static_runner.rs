@@ -4,7 +4,7 @@ use crate::{ExecutionResult, Runnable, TaskHandle};
 use async_process::Command;
 use futures::FutureExt;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StaticRunner {
     runnable: super::static_runnable::Definition,
 }
@@ -14,14 +14,21 @@ impl Runnable for StaticRunner {
         self.runnable.label.clone()
     }
 
-    fn exec(self, _: &mut gpui::AppContext) -> crate::TaskHandle {
+    fn exec(self, _: &mut gpui::AsyncWindowContext) -> crate::TaskHandle {
         TaskHandle::new(
             Command::new("echo")
                 .arg("Hello world!")
                 .output()
-                .map(|fut| ExecutionResult {
-                    status: Result::Ok(()),
-                    details: Default::default(),
+                .map(|output| {
+                    let (status, details) = match output {
+                        Ok(output) => {
+                            let details = std::String::from_utf8_lossy(fut.stdout).into_owned();
+                            (Ok(()), details)
+                        }
+                        e @ Err(_) => (e, "".to_owned()),
+                    };
+
+                    ExecutionResult { status, details }
                 })
                 .boxed(),
         )
