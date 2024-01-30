@@ -1,13 +1,13 @@
 use std::{ops::Range, sync::Arc};
 
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, ElementId, Hsla, ParentElement,
-    SharedString, Styled, StyledText, TextStyle, WindowContext,
+    div, px, rems, AnyElement, DefiniteLength, Div, ElementId, Hsla, ParentElement, SharedString,
+    Styled, StyledText, WindowContext,
 };
 use language::LanguageRegistry;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 use rich_text::render_rich_text;
-use theme::ActiveTheme;
+use theme::{ActiveTheme, Theme};
 use ui::{h_flex, v_flex};
 
 enum TableState {
@@ -83,22 +83,13 @@ impl MarkdownTable {
 
 struct Renderer<I> {
     source_contents: String,
-
     iter: I,
-
+    theme: Arc<Theme>,
     finished: Vec<Div>,
-
     language_registry: Arc<LanguageRegistry>,
-
     table: Option<MarkdownTable>,
     list_depth: usize,
     block_quote_depth: usize,
-
-    ui_text_color: Hsla,
-    ui_text_muted_color: Hsla,
-    ui_code_background: Hsla,
-    ui_border_color: Hsla,
-    ui_text_style: TextStyle,
 }
 
 impl<'a, I> Renderer<I>
@@ -109,50 +100,44 @@ where
         iter: I,
         source_contents: String,
         language_registry: &Arc<LanguageRegistry>,
-        ui_text_color: Hsla,
-        ui_text_muted_color: Hsla,
-        ui_code_background: Hsla,
-        ui_border_color: Hsla,
-        text_style: TextStyle,
+        theme: Arc<Theme>,
     ) -> Self {
         Self {
             iter,
             source_contents,
+            theme,
             table: None,
             finished: vec![],
             language_registry: language_registry.clone(),
             list_depth: 0,
             block_quote_depth: 0,
-            ui_border_color,
-            ui_text_color,
-            ui_text_muted_color,
-            ui_code_background,
-            ui_text_style: text_style,
         }
     }
 
-    fn run(mut self) -> Self {
+    fn run(mut self, cx: &WindowContext) -> Self {
         while let Some((event, source_range)) = self.iter.next() {
             match event {
                 Event::Start(tag) => {
                     self.start_tag(tag);
                 }
                 Event::End(tag) => {
-                    self.end_tag(tag, source_range);
+                    self.end_tag(tag, source_range, cx);
                 }
                 Event::Rule => {
-                    let rule = div().w_full().h(px(2.)).bg(self.ui_border_color);
+                    let rule = div().w_full().h(px(2.)).bg(self.theme.colors().border);
                     self.finished.push(div().mb_4().child(rule));
                 }
-                _ => {
-                    // TODO: SoftBreak, HardBreak, FootnoteReference
-                }
+                _ => {}
             }
         }
         self
     }
 
-    fn render_md_from_range(&self, source_range: Range<usize>) -> gpui::AnyElement {
+    fn render_md_from_range(
+        &self,
+        source_range: Range<usize>,
+        cx: &WindowContext,
+    ) -> gpui::AnyElement {
         let mentions = &[];
         let language = None;
         let paragraph = &self.source_contents[source_range.clone()];
@@ -163,7 +148,7 @@ where
             language,
         );
         let id: ElementId = source_range.start.into();
-        rich_text.element_no_cx(id, self.ui_text_style.clone(), self.ui_code_background)
+        rich_text.element(id, cx)
     }
 
     fn start_tag(&mut self, tag: Tag<'a>) {
@@ -175,20 +160,20 @@ where
                 self.block_quote_depth += 1;
             }
             Tag::Table(_text_alignments) => {
-                self.table = Some(MarkdownTable::new(self.ui_border_color));
+                self.table = Some(MarkdownTable::new(self.theme.colors().border));
             }
             _ => {}
         }
     }
 
-    fn end_tag(&mut self, tag: Tag, source_range: Range<usize>) {
+    fn end_tag(&mut self, tag: Tag, source_range: Range<usize>, cx: &WindowContext) {
         match tag {
             Tag::Paragraph => {
                 if self.list_depth > 0 || self.block_quote_depth > 0 {
                     return;
                 }
 
-                let element = self.render_md_from_range(source_range.clone());
+                let element = self.render_md_from_range(source_range.clone(), cx);
                 let paragraph = h_flex().mb_3().child(element);
 
                 self.finished.push(paragraph);
@@ -199,14 +184,14 @@ where
                     headline = headline.mt_4();
                 }
 
-                let element = self.render_md_from_range(source_range.clone());
+                let element = self.render_md_from_range(source_range.clone(), cx);
                 let headline = headline.child(element);
 
                 self.finished.push(headline);
             }
             Tag::List(_) => {
                 if self.list_depth == 1 {
-                    let element = self.render_md_from_range(source_range.clone());
+                    let element = self.render_md_from_range(source_range.clone(), cx);
                     let list = div().mb_3().child(element);
 
                     self.finished.push(list);
@@ -215,19 +200,19 @@ where
                 self.list_depth -= 1;
             }
             Tag::BlockQuote => {
-                let element = self.render_md_from_range(source_range.clone());
+                let element = self.render_md_from_range(source_range.clone(), cx);
 
                 let block_quote = h_flex()
                     .mb_3()
                     .child(
                         div()
                             .w(px(4.))
-                            .bg(self.ui_border_color)
+                            .bg(self.theme.colors().border)
                             .h_full()
                             .mr_2()
                             .mt_1(),
                     )
-                    .text_color(self.ui_text_muted_color)
+                    .text_color(self.theme.colors().text_muted)
                     .child(element);
 
                 self.finished.push(block_quote);
@@ -251,7 +236,7 @@ where
                     .mb_3()
                     .px_4()
                     .py_0()
-                    .bg(self.ui_code_background)
+                    .bg(self.theme.colors().surface_background)
                     .child(StyledText::new(contents));
 
                 self.finished.push(code_block);
@@ -288,7 +273,7 @@ where
                     return;
                 }
 
-                let contents = self.render_md_from_range(source_range.clone());
+                let contents = self.render_md_from_range(source_range.clone(), cx);
                 self.table.as_mut().unwrap().add_cell(contents);
             }
             _ => {}
@@ -305,12 +290,12 @@ where
             HeadingLevel::H6 => rems(0.85),
         };
 
-        let line_height = DefiniteLength::Absolute(AbsoluteLength::Rems(rems(1.25)));
-
         let color = match level {
-            HeadingLevel::H6 => self.ui_text_muted_color,
-            _ => self.ui_text_color,
+            HeadingLevel::H6 => self.theme.colors().text_muted,
+            _ => self.theme.colors().text,
         };
+
+        let line_height = DefiniteLength::from(rems(1.25));
 
         let headline = h_flex()
             .w_full()
@@ -326,29 +311,18 @@ where
 
 pub fn render_markdown(
     markdown_input: &str,
-    cx: &WindowContext,
     language_registry: &Arc<LanguageRegistry>,
+    cx: &WindowContext,
 ) -> Vec<Div> {
-    // TODO: Move all of this to the renderer
-    let theme = cx.theme();
-    let ui_code_background = theme.colors().surface_background;
-    let ui_text_color = theme.colors().text;
-    let ui_text_muted_color = theme.colors().text_muted;
-    let ui_border_color = theme.colors().border;
-    let text_style = cx.text_style();
-
+    let theme = cx.theme().clone();
     let options = Options::all();
     let parser = Parser::new_ext(markdown_input, options);
     let renderer = Renderer::new(
         parser.into_offset_iter(),
         markdown_input.to_owned(),
         language_registry,
-        ui_text_color,
-        ui_text_muted_color,
-        ui_code_background,
-        ui_border_color,
-        text_style,
+        theme,
     );
-    let renderer = renderer.run();
+    let renderer = renderer.run(cx);
     return renderer.finished;
 }

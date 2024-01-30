@@ -160,7 +160,7 @@ impl Render for MarkdownPreviewView {
             .bg(cx.theme().colors().editor_background)
             .p_4();
 
-        for item in render_markdown(&self.contents, cx, &self.languages).into_iter() {
+        for item in render_markdown(&self.contents, &self.languages, cx).into_iter() {
             container = container.child(item);
         }
 

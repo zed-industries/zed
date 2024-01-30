@@ -47,60 +47,7 @@ pub struct Mention {
 }
 
 impl RichText {
-    pub fn element_no_cx(
-        &self,
-        id: ElementId,
-        text_style: TextStyle,
-        code_background: Hsla,
-    ) -> AnyElement {
-        InteractiveText::new(
-            id,
-            StyledText::new(self.text.clone()).with_highlights(
-                &text_style,
-                self.highlights.iter().map(|(range, highlight)| {
-                    (
-                        range.clone(),
-                        match highlight {
-                            // TODO Changed code and id. need to revisit
-                            Highlight::Code => HighlightStyle {
-                                background_color: Some(code_background),
-                                ..Default::default()
-                            },
-                            Highlight::Id(_id) => HighlightStyle::default(),
-
-                            Highlight::Highlight(highlight) => *highlight,
-                            Highlight::Mention => HighlightStyle {
-                                font_weight: Some(FontWeight::BOLD),
-                                ..Default::default()
-                            },
-                            Highlight::SelfMention => HighlightStyle {
-                                font_weight: Some(FontWeight::BOLD),
-                                ..Default::default()
-                            },
-                        },
-                    )
-                }),
-            ),
-        )
-        .on_click(self.link_ranges.clone(), {
-            let link_urls = self.link_urls.clone();
-            move |ix, cx| cx.open_url(&link_urls[ix])
-        })
-        .tooltip({
-            let link_ranges = self.link_ranges.clone();
-            let link_urls = self.link_urls.clone();
-            move |idx, cx| {
-                for (ix, range) in link_ranges.iter().enumerate() {
-                    if range.contains(&idx) {
-                        return Some(LinkPreview::new(&link_urls[ix], cx));
-                    }
-                }
-                None
-            }
-        })
-        .into_any_element()
-    }
-    pub fn element(&self, id: ElementId, cx: &mut WindowContext) -> AnyElement {
+    pub fn element(&self, id: ElementId, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
 
