@@ -45,7 +45,7 @@ impl<'a> Matcher<'a> {
             lowercase_query,
             query_char_bag,
             min_score: 0.0,
-            last_positions: vec![0; query.len()],
+            last_positions: vec![0; lowercase_query.len()],
             match_positions: vec![0; query.len()],
             score_matrix: Vec::new(),
             best_position_matrix: Vec::new(),
@@ -82,7 +82,7 @@ impl<'a> Matcher<'a> {
             lowercase_candidate_chars.clear();
             for c in candidate.to_string().chars() {
                 candidate_chars.push(c);
-                lowercase_candidate_chars.push(c.to_ascii_lowercase());
+                lowercase_candidate_chars.append(&mut c.to_lowercase().collect::<Vec<_>>());
             }
 
             if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
@@ -380,6 +380,25 @@ mod tests {
                 ("/////ThisIsATestDir", vec![5, 9, 11, 12, 16]),
                 ("thisisatestdir", vec![0, 2, 6, 7, 11]),
             ]
+        );
+    }
+
+    #[test]
+    fn test_lowercase_longer_than_uppercase() {
+        // This character has more chars in lower-case than in upper-case.
+        let paths = vec!["\u{0130}"];
+        let query = "\u{0130}";
+        assert_eq!(
+            match_single_path_query(query, false, &paths),
+            vec![("\u{0130}", vec![0])]
+        );
+
+        // Path is the lower-case version of the query
+        let paths = vec!["i\u{307}"];
+        let query = "\u{0130}";
+        assert_eq!(
+            match_single_path_query(query, false, &paths),
+            vec![("i\u{307}", vec![0])]
         );
     }
 
