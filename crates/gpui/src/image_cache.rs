@@ -1,4 +1,4 @@
-use crate::{AppContext, ImageData, ImageId, SharedUrl, Task};
+use crate::{AppContext, ImageData, ImageId, SharedUri, Task};
 use collections::HashMap;
 use futures::{future::Shared, AsyncReadExt, FutureExt, TryFutureExt};
 use image::ImageError;
@@ -41,7 +41,7 @@ impl From<ImageError> for Error {
 
 pub(crate) struct ImageCache {
     client: Arc<dyn HttpClient>,
-    images: Arc<Mutex<HashMap<SharedUrl, FetchImageTask>>>,
+    images: Arc<Mutex<HashMap<SharedUri, FetchImageTask>>>,
 }
 
 type FetchImageTask = Shared<Task<Result<Arc<ImageData>, Error>>>;
@@ -54,7 +54,7 @@ impl ImageCache {
         }
     }
 
-    pub fn get(&self, uri: impl Into<SharedUrl>, cx: &AppContext) -> FetchImageTask {
+    pub fn get(&self, uri: impl Into<SharedUri>, cx: &AppContext) -> FetchImageTask {
         let uri = uri.into();
         let mut images = self.images.lock();
 
@@ -69,11 +69,11 @@ impl ImageCache {
                             let uri = uri.clone();
                             async move {
                                 match uri {
-                                    SharedUrl::File(uri) => {
+                                    SharedUri::File(uri) => {
                                         let image = image::open(uri.as_ref())?.into_bgra8();
                                         Ok(Arc::new(ImageData::new(image)))
                                     }
-                                    SharedUrl::Network(uri) => {
+                                    SharedUri::Network(uri) => {
                                         let mut response =
                                             client.get(uri.as_ref(), ().into(), true).await?;
                                         let mut body = Vec::new();
