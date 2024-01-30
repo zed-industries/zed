@@ -38,7 +38,7 @@ use std::{
     },
     thread,
 };
-use theme::{ActiveTheme, ThemeRegistry};
+use theme::{ActiveTheme, ThemeRegistry, ThemeSettings};
 use util::{
     async_maybe,
     channel::{parse_zed_link, AppCommitSha, ReleaseChannel, RELEASE_CHANNEL},
@@ -164,17 +164,30 @@ fn main() {
         );
         assistant::init(cx);
 
-        // TODO: This should almost certainly happen somewhere else.
+        // TODO: Should we be loading the themes in a different spot?
         cx.spawn({
             let fs = fs.clone();
             |cx| async move {
                 if let Some(theme_registry) =
                     cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                 {
-                    theme_registry
+                    if let Some(()) = theme_registry
                         .load_user_themes(&paths::THEMES_DIR.clone(), fs)
                         .await
+                        .log_err()
+                    {
+                        cx.update(|cx| {
+                            let mut theme_settings = ThemeSettings::get_global(cx).clone();
+
+                            if let Some(requested_theme) = theme_settings.requested_theme.as_ref() {
+                                if let Some(theme) = theme_registry.get(requested_theme).log_err() {
+                                    theme_settings.active_theme = theme;
+                                    ThemeSettings::override_global(theme_settings, cx);
+                                }
+                            }
+                        })
                         .log_err();
+                    }
                 }
             }
         })

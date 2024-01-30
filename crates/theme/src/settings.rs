@@ -26,6 +26,7 @@ pub struct ThemeSettings {
     pub buffer_font: Font,
     pub buffer_font_size: Pixels,
     pub buffer_line_height: BufferLineHeight,
+    pub requested_theme: Option<String>,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
 }
@@ -182,6 +183,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
+            requested_theme: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap())
                 .or(themes.get(&one_dark().name))
@@ -205,6 +207,8 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = &value.theme {
+                this.requested_theme = Some(value.clone());
+
                 if let Some(theme) = themes.get(value).log_err() {
                     this.active_theme = theme;
                 }
