@@ -16,9 +16,10 @@ use crate::{
     },
     mouse_context_menu,
     scroll::scroll_amount::ScrollAmount,
-    CursorShape, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, HalfPageDown, HalfPageUp, HoveredCursor, LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -2072,7 +2073,7 @@ impl EditorElement {
                     (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
                     ||
                     // Symbols Selections
-                    (is_singleton && scrollbar_settings.symbols_selections && editor.has_background_highlights::<BufferSearchHighlights>())
+                    (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
                     // Scrollmanager
                     editor.scroll_manager.scrollbars_visible()
