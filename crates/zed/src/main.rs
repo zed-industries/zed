@@ -481,7 +481,11 @@ fn init_logger() {
                     .set_intense(true)
                     .clone();
                 write!(buf, "{}", subtle.value("["))?;
-                write!(buf, "{} ", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"))?;
+                write!(
+                    buf,
+                    "{} ",
+                    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z")
+                )?;
                 write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
                 if let Some(path) = record.module_path() {
                     write!(buf, " {}", path)?;
@@ -509,7 +513,7 @@ fn init_logger() {
             .expect("could not open logfile");
 
         let config = ConfigBuilder::new()
-            .set_time_format_str("%Y-%m-%dT%T")
+            .set_time_format_str("%Y-%m-%dT%T%:z")
             .set_time_to_local(true)
             .build();
 
