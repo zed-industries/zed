@@ -3,7 +3,7 @@ use gpui::*;
 #[derive(IntoElement)]
 struct ImageFromResource {
     text: SharedString,
-    resource: SharedUrl,
+    resource: SharedUri,
 }
 
 impl RenderOnce for ImageFromResource {
@@ -20,8 +20,8 @@ impl RenderOnce for ImageFromResource {
 }
 
 struct ImageShowcase {
-    local_resource: SharedUrl,
-    remote_resource: SharedUrl,
+    local_resource: SharedUri,
+    remote_resource: SharedUri,
 }
 
 impl Render for ImageShowcase {
@@ -51,8 +51,8 @@ fn main() {
     App::new().run(|cx: &mut AppContext| {
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|_cx| ImageShowcase {
-                local_resource: SharedUrl::file("../zed/resources/app-icon.png"),
-                remote_resource: SharedUrl::network("https://picsum.photos/512/512"),
+                local_resource: SharedUri::file("../zed/resources/app-icon.png"),
+                remote_resource: SharedUri::network("https://picsum.photos/512/512"),
             })
         });
     });

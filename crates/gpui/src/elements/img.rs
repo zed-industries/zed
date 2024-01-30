@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     point, size, Bounds, DevicePixels, Element, ElementContext, ImageData, InteractiveElement,
-    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUrl, Size,
+    InteractiveElementState, Interactivity, IntoElement, LayoutId, Pixels, SharedUri, Size,
     StyleRefinement, Styled,
 };
 use futures::FutureExt;
@@ -13,7 +13,7 @@ use util::ResultExt;
 #[derive(Clone, Debug)]
 pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
-    Uri(SharedUrl),
+    Uri(SharedUri),
     /// Cached image data
     Data(Arc<ImageData>),
     // TODO: move surface definitions into mac platform module
@@ -21,8 +21,8 @@ pub enum ImageSource {
     Surface(CVImageBuffer),
 }
 
-impl From<SharedUrl> for ImageSource {
-    fn from(value: SharedUrl) -> Self {
+impl From<SharedUri> for ImageSource {
+    fn from(value: SharedUri) -> Self {
         Self::Uri(value)
     }
 }

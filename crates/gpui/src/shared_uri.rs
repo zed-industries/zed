@@ -2,34 +2,34 @@ use std::ops::{Deref, DerefMut};
 
 use crate::SharedString;
 
-/// A URL stored in a `SharedString` pointing to a file or a remote resource.
+/// A URI stored in a [`SharedString`].
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub enum SharedUrl {
+pub enum SharedUri {
     /// A path to a local file.
     File(SharedString),
     /// A URL to a remote resource.
     Network(SharedString),
 }
 
-impl SharedUrl {
-    /// Create a URL pointing to a local file.
+impl SharedUri {
+    /// Creates a [`SharedUri`] pointing to a local file.
     pub fn file<S: Into<SharedString>>(s: S) -> Self {
         Self::File(s.into())
     }
 
-    /// Create a URL pointing to a remote resource.
+    /// Creates a [`SharedUri`] pointing to a remote resource.
     pub fn network<S: Into<SharedString>>(s: S) -> Self {
         Self::Network(s.into())
     }
 }
 
-impl Default for SharedUrl {
+impl Default for SharedUri {
     fn default() -> Self {
         Self::Network(SharedString::default())
     }
 }
 
-impl Deref for SharedUrl {
+impl Deref for SharedUri {
     type Target = SharedString;
 
     fn deref(&self) -> &Self::Target {
@@ -40,7 +40,7 @@ impl Deref for SharedUrl {
     }
 }
 
-impl DerefMut for SharedUrl {
+impl DerefMut for SharedUri {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             Self::File(s) => s,
@@ -49,7 +49,7 @@ impl DerefMut for SharedUrl {
     }
 }
 
-impl std::fmt::Debug for SharedUrl {
+impl std::fmt::Debug for SharedUri {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::File(s) => write!(f, "File({:?})", s),
@@ -58,7 +58,7 @@ impl std::fmt::Debug for SharedUrl {
     }
 }
 
-impl std::fmt::Display for SharedUrl {
+impl std::fmt::Display for SharedUri {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_ref())
     }
