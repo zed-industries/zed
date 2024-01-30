@@ -37,6 +37,8 @@ pub enum Motion {
     Matching,
     FindForward { before: bool, char: char },
     FindBackward { after: bool, char: char },
+    RepeatFind { last_find: Box<Motion> },
+    RepeatFindReversed { last_find: Box<Motion> },
     NextLineStart,
     StartOfLineDownward,
     EndOfLineDownward,
@@ -102,16 +104,9 @@ pub struct StartOfLine {
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
-struct RepeatFind {
-    #[serde(default)]
-    backwards: bool,
-}
-
 impl_actions!(
     vim,
     [
-        RepeatFind,
         StartOfLine,
         EndOfLine,
         FirstNonWhitespace,
@@ -139,6 +134,8 @@ actions!(
         StartOfLineDownward,
         EndOfLineDownward,
         GoToColumn,
+        RepeatFind,
+        RepeatFindReversed,
         WindowTop,
         WindowMiddle,
         WindowBottom,
@@ -234,8 +231,27 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     });
     workspace
         .register_action(|_: &mut Workspace, &GoToColumn, cx: _| motion(Motion::GoToColumn, cx));
-    workspace.register_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
-        repeat_motion(action.backwards, cx)
+
+    workspace.register_action(|_: &mut Workspace, _: &RepeatFind, cx: _| {
+        if let Some(last_find) = Vim::read(cx)
+            .workspace_state
+            .last_find
+            .clone()
+            .map(Box::new)
+        {
+            motion(Motion::RepeatFind { last_find }, cx);
+        }
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &RepeatFindReversed, cx: _| {
+        if let Some(last_find) = Vim::read(cx)
+            .workspace_state
+            .last_find
+            .clone()
+            .map(Box::new)
+        {
+            motion(Motion::RepeatFindReversed { last_find }, cx);
+        }
     });
     workspace.register_action(|_: &mut Workspace, &WindowTop, cx: _| motion(Motion::WindowTop, cx));
     workspace.register_action(|_: &mut Workspace, &WindowMiddle, cx: _| {
@@ -263,35 +279,6 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         }
     }
     Vim::update(cx, |vim, cx| vim.clear_operator(cx));
-}
-
-fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
-    let find = match Vim::read(cx).workspace_state.last_find.clone() {
-        Some(Motion::FindForward { before, char }) => {
-            if backwards {
-                Motion::FindBackward {
-                    after: before,
-                    char,
-                }
-            } else {
-                Motion::FindForward { before, char }
-            }
-        }
-
-        Some(Motion::FindBackward { after, char }) => {
-            if backwards {
-                Motion::FindForward {
-                    before: after,
-                    char,
-                }
-            } else {
-                Motion::FindBackward { after, char }
-            }
-        }
-        _ => return,
-    };
-
-    motion(find, cx)
 }
 
 // Motion handling is specified here:
@@ -325,7 +312,9 @@ impl Motion {
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
-            | FindBackward { .. } => false,
+            | FindBackward { .. }
+            | RepeatFind { .. }
+            | RepeatFindReversed { .. } => false,
         }
     }
 
@@ -339,6 +328,7 @@ impl Motion {
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
+            | RepeatFind { .. }
             | Left
             | Backspace
             | Right
@@ -352,6 +342,7 @@ impl Motion {
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | RepeatFindReversed { .. }
             | WindowTop
             | WindowMiddle
             | WindowBottom
@@ -388,6 +379,9 @@ impl Motion {
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. } => false,
+            RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
+                motion.inclusive()
+            }
         }
     }
 
@@ -456,17 +450,58 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
+            // t f
             FindForward { before, char } => {
-                if let Some(new_point) = find_forward(map, point, *before, *char, times) {
-                    return Some((new_point, SelectionGoal::None));
-                } else {
-                    return None;
-                }
+                return find_forward(map, point, *before, *char, times)
+                    .map(|new_point| (new_point, SelectionGoal::None))
             }
+            // T F
             FindBackward { after, char } => (
                 find_backward(map, point, *after, *char, times),
                 SelectionGoal::None,
             ),
+            // ; -- repeat the last find done with t, f, T, F
+            RepeatFind { last_find } => match **last_find {
+                Motion::FindForward { before, char } => {
+                    let mut new_point = find_forward(map, point, before, char, times);
+                    if new_point == Some(point) {
+                        new_point = find_forward(map, point, before, char, times + 1);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::FindBackward { after, char } => {
+                    let mut new_point = find_backward(map, point, after, char, times);
+                    if new_point == point {
+                        new_point = find_backward(map, point, after, char, times + 1);
+                    }
+
+                    (new_point, SelectionGoal::None)
+                }
+                _ => return None,
+            },
+            // , -- repeat the last find done with t, f, T, F, in opposite direction
+            RepeatFindReversed { last_find } => match **last_find {
+                Motion::FindForward { before, char } => {
+                    let mut new_point = find_backward(map, point, before, char, times);
+                    if new_point == point {
+                        new_point = find_backward(map, point, before, char, times + 1);
+                    }
+
+                    (new_point, SelectionGoal::None)
+                }
+
+                Motion::FindBackward { after, char } => {
+                    let mut new_point = find_forward(map, point, after, char, times);
+                    if new_point == Some(point) {
+                        new_point = find_forward(map, point, after, char, times + 1);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+                _ => return None,
+            },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
@@ -1155,6 +1190,7 @@ mod test {
     async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
+        // f and F
         cx.set_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes(["f", "o"]).await;
         cx.assert_shared_state("one twˇo three four").await;
@@ -1162,6 +1198,21 @@ mod test {
         cx.assert_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes(["2", ";"]).await;
         cx.assert_shared_state("one two three fˇour").await;
+        cx.simulate_shared_keystrokes(["shift-f", "e"]).await;
+        cx.assert_shared_state("one two threˇe four").await;
+        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.assert_shared_state("onˇe two three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("one two thrˇee four").await;
+
+        // t and T
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes(["t", "o"]).await;
+        cx.assert_shared_state("one tˇwo three four").await;
+        cx.simulate_shared_keystrokes([","]).await;
+        cx.assert_shared_state("oˇne two three four").await;
+        cx.simulate_shared_keystrokes(["2", ";"]).await;
+        cx.assert_shared_state("one two three ˇfour").await;
         cx.simulate_shared_keystrokes(["shift-t", "e"]).await;
         cx.assert_shared_state("one two threeˇ four").await;
         cx.simulate_shared_keystrokes(["3", ";"]).await;
