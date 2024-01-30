@@ -509,6 +509,8 @@ impl AppContext {
             let root_view = build_root_view(&mut WindowContext::new(cx, &mut window));
             window.root_view.replace(root_view.into());
             cx.windows.get_mut(id).unwrap().replace(window);
+            // Schedule a draw right after launching the window.
+            cx.refresh();
             handle
         })
     }
