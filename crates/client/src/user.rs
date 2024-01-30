@@ -707,7 +707,7 @@ impl User {
         Arc::new(User {
             id: message.id,
             github_login: message.github_login,
-            avatar_uri: SharedUri::network(message.avatar_url),
+            avatar_uri: message.avatar_url.into(),
         })
     }
 }

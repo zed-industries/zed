@@ -1,4 +1,4 @@
-use gpui::{Render, SharedUri};
+use gpui::Render;
 use story::Story;
 
 use crate::{prelude::*, Avatar};
@@ -45,17 +45,17 @@ impl Render for ListItemStory {
             .child(
                 ListItem::new("with_start slot avatar")
                     .child("Hello, world!")
-                    .start_slot(Avatar::new(SharedUri::network(
+                    .start_slot(Avatar::new(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
-                    ))),
+                    )),
             )
             .child(Story::label("With end slot"))
             .child(
                 ListItem::new("with_left_avatar")
                     .child("Hello, world!")
-                    .end_slot(Avatar::new(SharedUri::network(
+                    .end_slot(Avatar::new(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
-                    ))),
+                    )),
             )
             .child(Story::label("With end hover slot"))
             .child(
@@ -64,25 +64,25 @@ impl Render for ListItemStory {
                     .end_slot(
                         h_flex()
                             .gap_2()
-                            .child(Avatar::new(SharedUri::network(
+                            .child(Avatar::new(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
-                            )))
-                            .child(Avatar::new(SharedUri::network(
+                            ))
+                            .child(Avatar::new(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
-                            )))
-                            .child(Avatar::new(SharedUri::network(
+                            ))
+                            .child(Avatar::new(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
-                            )))
-                            .child(Avatar::new(SharedUri::network(
+                            ))
+                            .child(Avatar::new(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
-                            )))
-                            .child(Avatar::new(SharedUri::network(
+                            ))
+                            .child(Avatar::new(
                                 "https://avatars.githubusercontent.com/u/1789?v=4",
-                            ))),
+                            )),
                     )
-                    .end_hover_slot(Avatar::new(SharedUri::network(
+                    .end_hover_slot(Avatar::new(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
-                    ))),
+                    )),
             )
             .child(Story::label("With `on_click`"))
             .child(

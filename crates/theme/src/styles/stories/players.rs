@@ -53,12 +53,10 @@ impl Render for PlayerStory {
                             .border_2()
                             .border_color(player.cursor)
                             .child(
-                                img(SharedUri::network(
-                                    "https://avatars.githubusercontent.com/u/1714999?v=4",
-                                ))
-                                .rounded_full()
-                                .size_6()
-                                .bg(gpui::red()),
+                                img("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                    .rounded_full()
+                                    .size_6()
+                                    .bg(gpui::red()),
                             )
                     }),
                 ))
@@ -84,12 +82,10 @@ impl Render for PlayerStory {
                                     .border_color(player.background)
                                     .size(px(28.))
                                     .child(
-                                        img(SharedUri::network(
-                                            "https://avatars.githubusercontent.com/u/1714999?v=4",
-                                        ))
-                                        .rounded_full()
-                                        .size(px(24.))
-                                        .bg(gpui::red()),
+                                        img("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                            .rounded_full()
+                                            .size(px(24.))
+                                            .bg(gpui::red()),
                                     ),
                             )
                             .child(
@@ -102,12 +98,10 @@ impl Render for PlayerStory {
                                     .border_color(player.background)
                                     .size(px(28.))
                                     .child(
-                                        img(SharedUri::network(
-                                            "https://avatars.githubusercontent.com/u/1714999?v=4",
-                                        ))
-                                        .rounded_full()
-                                        .size(px(24.))
-                                        .bg(gpui::red()),
+                                        img("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                            .rounded_full()
+                                            .size(px(24.))
+                                            .bg(gpui::red()),
                                     ),
                             )
                             .child(
@@ -120,12 +114,10 @@ impl Render for PlayerStory {
                                     .border_color(player.background)
                                     .size(px(28.))
                                     .child(
-                                        img(SharedUri::network(
-                                            "https://avatars.githubusercontent.com/u/1714999?v=4",
-                                        ))
-                                        .rounded_full()
-                                        .size(px(24.))
-                                        .bg(gpui::red()),
+                                        img("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                            .rounded_full()
+                                            .size(px(24.))
+                                            .bg(gpui::red()),
                                     ),
                             )
                     }),
